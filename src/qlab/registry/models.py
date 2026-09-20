@@ -8,7 +8,7 @@ data-access layer and registry/db.py for engine/session setup.
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
@@ -23,6 +23,11 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def _utcnow() -> datetime:
+    """Timestamp default: rows must never be writable without one."""
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -145,8 +150,12 @@ class Idea(Base):
     status: Mapped[IdeaStatus] = mapped_column(
         _enum_column(IdeaStatus), nullable=False, default=IdeaStatus.CANDIDATE, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
@@ -164,7 +173,9 @@ class Spec(Base):
     rebalance: Mapped[str] = mapped_column(String, nullable=False)
     costs_model: Mapped[dict] = mapped_column(JSON, nullable=False)
     code_ref: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class DataSnapshot(Base):
@@ -216,9 +227,40 @@ class Trial(Base):
 
 
 class Verdict(Base):
-    """`verdict` — a stage decision, rendered by the rules engine (never by a model)."""
+    """`verdict` — a stage decision, rendered by the rules engine (never by a model).
+
+    `value`/`passed` may both be null: this is the rules engine's "unknown"
+    result for a metric it could not evaluate (e.g. missing input) — it is
+    neither a pass nor a fail, but it is worth recording since it says
+    exactly what was missing. The two columns are always null together or
+    non-null together (see `ck_verdict_value_passed_together`).
+
+    `data_range_start`/`data_range_end` may be null only for `source ==
+    "imported"` rows (see `ck_verdict_data_range_required_unless_imported`),
+    for historical verdicts pulled from a graveyard document that did not
+    record a data range. **A verdict with an unknown data range cannot take
+    part in automatic graveyard revival**: `ripe_for_revival` needs the
+    rejection's data end date to tell which data is actually new, so such a
+    row can only ever be read, never used to schedule a `revival_check`.
+
+    Historical verdicts also arrive with `rules_version = "frab-legacy"` —
+    a sentinel meaning "whatever criteria frab used pre-q-lab", not a real
+    `YYYY-MM-DD.N` rules version. Don't parse `rules_version` assuming that
+    format without checking for this sentinel first.
+    """
 
     __tablename__ = "verdict"
+    __table_args__ = (
+        CheckConstraint(
+            "(value IS NULL AND passed IS NULL) OR (value IS NOT NULL AND passed IS NOT NULL)",
+            name="ck_verdict_value_passed_together",
+        ),
+        CheckConstraint(
+            "(data_range_start IS NOT NULL AND data_range_end IS NOT NULL) "
+            "OR source = 'imported'",
+            name="ck_verdict_data_range_required_unless_imported",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
@@ -230,14 +272,17 @@ class Verdict(Base):
     rule_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     rules_version: Mapped[str] = mapped_column(String, nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String, nullable=False)
-    value: Mapped[float] = mapped_column(Float, nullable=False)
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
     comparator: Mapped[str] = mapped_column(String, nullable=False)
     threshold: Mapped[float] = mapped_column(Float, nullable=False)
-    passed: Mapped[bool] = mapped_column(nullable=False, index=True)
-    data_range_start: Mapped[date] = mapped_column(Date, nullable=False)
-    data_range_end: Mapped[date] = mapped_column(Date, nullable=False)
+    passed: Mapped[bool | None] = mapped_column(nullable=True, index=True)
+    data_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     note: Mapped[str | None] = mapped_column(String, nullable=True)
+    source: Mapped[TrialSource] = mapped_column(
+        _enum_column(TrialSource), nullable=False, default=TrialSource.QLAB
+    )
 
 
 class RevivalCheck(Base):

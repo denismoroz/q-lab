@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: 7f9fd9a2aee4
+Revision ID: 4dafebe201ee
 Revises:
-Create Date: 2026-09-20 13:21:22.353289
+Create Date: 2026-09-20 13:28:53.910463
 
 """
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '7f9fd9a2aee4'
+revision: str = '4dafebe201ee'
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -220,14 +220,24 @@ def upgrade() -> None:
         sa.Column('rule_id', sa.String(), nullable=False),
         sa.Column('rules_version', sa.String(), nullable=False),
         sa.Column('metric', sa.String(), nullable=False),
-        sa.Column('value', sa.Float(), nullable=False),
+        sa.Column('value', sa.Float(), nullable=True),
         sa.Column('comparator', sa.String(), nullable=False),
         sa.Column('threshold', sa.Float(), nullable=False),
-        sa.Column('passed', sa.Boolean(), nullable=False),
-        sa.Column('data_range_start', sa.Date(), nullable=False),
-        sa.Column('data_range_end', sa.Date(), nullable=False),
+        sa.Column('passed', sa.Boolean(), nullable=True),
+        sa.Column('data_range_start', sa.Date(), nullable=True),
+        sa.Column('data_range_end', sa.Date(), nullable=True),
         sa.Column('decided_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('note', sa.String(), nullable=True),
+        sa.Column('source', sa.Enum('qlab', 'imported', name='trialsource'), nullable=False),
+        sa.CheckConstraint(
+            "(data_range_start IS NOT NULL AND data_range_end IS NOT NULL) "
+            "OR source = 'imported'",
+            name='ck_verdict_data_range_required_unless_imported',
+        ),
+        sa.CheckConstraint(
+            "(value IS NULL AND passed IS NULL) OR (value IS NOT NULL AND passed IS NOT NULL)",
+            name='ck_verdict_value_passed_together',
+        ),
         sa.ForeignKeyConstraint(['idea_id'], ['idea.id'], ),
         sa.ForeignKeyConstraint(['spec_id'], ['spec.id'], ),
         sa.ForeignKeyConstraint(['trial_id'], ['trial.id'], ),

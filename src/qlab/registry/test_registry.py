@@ -446,6 +446,104 @@ def test_verdict_requires_existing_idea_fk(session):
     session.rollback()
 
 
+def _base_verdict_kwargs(**overrides) -> dict:
+    kwargs = dict(
+        idea_id="perp-funding-carry",
+        stage=VerdictStage.EDGE,
+        rule_id="sharpe_floor",
+        rules_version="2026-09-20.1",
+        metric="sharpe_net",
+        comparator=">=",
+        threshold=0.8,
+        data_range_start=date(2024, 1, 1),
+        data_range_end=date(2024, 6, 1),
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_verdict_unknown_value_and_passed_are_both_null(session):
+    """The rules engine emits value=None, passed=None when a metric could
+    not be evaluated (e.g. missing input) — neither pass nor fail, but
+    worth keeping. This must be writable."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    rows = repo.add_verdicts(
+        session,
+        [_base_verdict_kwargs(value=None, passed=None, note="metric not computable: no data")],
+    )
+    session.commit()
+
+    assert rows[0].value is None
+    assert rows[0].passed is None
+
+
+def test_verdict_value_without_passed_is_rejected(session):
+    """value and passed must be null together or set together — a value
+    with no verdict on it (or vice versa) is not a state the rules engine
+    should ever produce."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    with pytest.raises(IntegrityError):
+        repo.add_verdicts(session, [_base_verdict_kwargs(value=0.5, passed=None)])
+    session.rollback()
+
+    with pytest.raises(IntegrityError):
+        repo.add_verdicts(session, [_base_verdict_kwargs(value=None, passed=False)])
+    session.rollback()
+
+
+def test_verdict_qlab_source_requires_data_range(session):
+    """A verdict q-lab itself computed must carry a data range — revival
+    logic depends on it. Only imported (graveyard) verdicts may omit it,
+    when the source document didn't record one."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    with pytest.raises(IntegrityError):
+        repo.add_verdicts(
+            session,
+            [
+                _base_verdict_kwargs(
+                    value=0.5,
+                    passed=False,
+                    data_range_start=None,
+                    data_range_end=None,
+                    source=TrialSource.QLAB,
+                )
+            ],
+        )
+    session.rollback()
+
+
+def test_verdict_imported_source_allows_null_data_range(session):
+    """Graveyard verdicts imported from documents that never stated a data
+    range must still be recordable — inventing dates is not allowed."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    rows = repo.add_verdicts(
+        session,
+        [
+            _base_verdict_kwargs(
+                value=0.5,
+                passed=False,
+                data_range_start=None,
+                data_range_end=None,
+                rules_version="frab-legacy",
+                source=TrialSource.IMPORTED,
+            )
+        ],
+    )
+    session.commit()
+
+    assert rows[0].data_range_start is None
+    assert rows[0].data_range_end is None
+    assert rows[0].source == TrialSource.IMPORTED
+
+
 # --------------------------------------------------------------------------
 # set_status / stage_transition atomicity
 # --------------------------------------------------------------------------
