@@ -23,6 +23,7 @@ from qlab.registry.models import (
     IdeaStatus,
     Profile,
     RevivalOutcome,
+    ShutdownCause,
     SourceType,
     Spec,
     StageTransition,
@@ -173,6 +174,61 @@ def test_idea_optional_driver_fk(session):
     idea = repo.upsert_idea(session, **_idea_kwargs(driver_id="perp-funding-premium"))
     session.commit()
     assert idea.driver_id == "perp-funding-premium"
+
+
+# --------------------------------------------------------------------------
+# idea: PAPER status and shutdown_cause
+# --------------------------------------------------------------------------
+
+
+def test_idea_paper_status_roundtrips(session):
+    """PAPER sits between BENCH and LIVE and must round-trip like any other
+    non-terminal status — it is a distinct lifecycle stage, not a flavour
+    of bench."""
+    idea = repo.upsert_idea(session, **_idea_kwargs(status=IdeaStatus.PAPER))
+    session.commit()
+
+    fetched = session.get(Idea, "perp-funding-carry")
+    assert fetched.status == IdeaStatus.PAPER
+
+    idea = repo.set_status(
+        session,
+        idea_id="perp-funding-carry",
+        new_status=IdeaStatus.LIVE,
+        reason="cleared paper trading",
+        rules_version="2026-09-20.1",
+    )
+    session.commit()
+    assert idea.status == IdeaStatus.LIVE
+
+
+def test_decayed_idea_without_shutdown_cause_is_rejected(session):
+    """ck_idea_decayed_requires_shutdown_cause: a death cannot be recorded
+    without a cause."""
+    with pytest.raises(IntegrityError):
+        repo.upsert_idea(
+            session, **_idea_kwargs(status=IdeaStatus.DECAYED, shutdown_cause=None)
+        )
+    session.rollback()
+
+
+def test_decayed_idea_with_shutdown_cause_is_accepted(session):
+    idea = repo.upsert_idea(
+        session,
+        **_idea_kwargs(status=IdeaStatus.DECAYED, shutdown_cause=ShutdownCause.EDGE_DECAYED),
+    )
+    session.commit()
+
+    fetched = session.get(Idea, "perp-funding-carry")
+    assert fetched.status == IdeaStatus.DECAYED
+    assert fetched.shutdown_cause == ShutdownCause.EDGE_DECAYED
+    assert idea.shutdown_cause == ShutdownCause.EDGE_DECAYED
+
+
+def test_non_decayed_idea_may_carry_no_shutdown_cause(session):
+    idea = repo.upsert_idea(session, **_idea_kwargs(status=IdeaStatus.LIVE))
+    session.commit()
+    assert idea.shutdown_cause is None
 
 
 # --------------------------------------------------------------------------

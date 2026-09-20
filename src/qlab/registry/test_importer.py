@@ -363,6 +363,37 @@ def test_unknown_kind_imports_and_counts_null_value(session, tmp_path):
     assert verdict.rule_id == "sharpe_floor"
 
 
+def test_decayed_idea_missing_shutdown_cause_fails_before_writing(session, tmp_path):
+    """A decayed idea without shutdown_cause is a structural problem, not a
+    per-verdict data error: the whole import must fail loudly, before a
+    single row is written, and the error must name the offending idea."""
+    data = _minimal_graveyard()
+    data["ideas"][0]["status"] = "decayed"
+    path = _write_yaml(tmp_path, data)
+
+    with pytest.raises(GraveyardImportError) as exc_info:
+        import_graveyard(session, path)
+
+    assert "cross-exchange-spread" in str(exc_info.value)
+    assert "shutdown_cause" in str(exc_info.value)
+    assert session.query(Idea).count() == 0
+
+
+def test_decayed_idea_with_shutdown_cause_imports(session, tmp_path):
+    data = _minimal_graveyard()
+    data["ideas"][0]["status"] = "decayed"
+    data["ideas"][0]["shutdown_cause"] = "false-discovery"
+    path = _write_yaml(tmp_path, data)
+
+    report = import_graveyard(session, path)
+    session.commit()
+
+    assert report.ideas_inserted == 1
+    idea = session.get(Idea, "cross-exchange-spread")
+    assert idea.status.value == "decayed"
+    assert idea.shutdown_cause.value == "false-discovery"
+
+
 def test_null_rule_id_on_a_decision_still_becomes_unidentified(session, tmp_path):
     """rule_id: null can also appear on an ordinary decision row (a
     graveyard document that recorded pass/fail against a threshold but

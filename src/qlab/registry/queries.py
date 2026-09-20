@@ -16,7 +16,7 @@ from datetime import date
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from qlab.registry.models import Idea, Verdict
+from qlab.registry.models import Idea, IdeaStatus, Verdict
 from qlab.rules import NearnessVerdict, RuleSet, classify_nearness, nearness
 
 
@@ -331,6 +331,14 @@ class FunnelStats:
     # missing) / "measurement" (a number with no formal rule behind it —
     # docs/REGISTRY.md's third verdict kind).
     verdicts_by_outcome: dict[str, int]
+    # Breakdown of DECAYED ideas by `shutdown_cause`. Only "edge-decayed"
+    # belongs in the project's "how long does a working strategy last"
+    # statistic — "false-discovery" means the screening was wrong, not
+    # that the market changed, and mixing the two would corrupt that
+    # number. Every DECAYED idea has a cause (enforced at the DB level by
+    # `ck_idea_decayed_requires_shutdown_cause`), so this dict's total
+    # always equals `ideas_by_status["decayed"]`.
+    decayed_by_shutdown_cause: dict[str, int]
 
 
 def funnel_stats(session: Session) -> FunnelStats:
@@ -351,6 +359,16 @@ def funnel_stats(session: Session) -> FunnelStats:
     """
     ideas_rows = session.query(Idea.status, func.count(Idea.id)).group_by(Idea.status).all()
     ideas_by_status = {_enum_value(status): count for status, count in ideas_rows}
+
+    shutdown_cause_rows = (
+        session.query(Idea.shutdown_cause, func.count(Idea.id))
+        .filter(Idea.status == IdeaStatus.DECAYED)
+        .group_by(Idea.shutdown_cause)
+        .all()
+    )
+    decayed_by_shutdown_cause = {
+        _enum_value(cause): count for cause, count in shutdown_cause_rows if cause is not None
+    }
 
     stage_rows = (
         session.query(Verdict.stage, func.count(Verdict.id)).group_by(Verdict.stage).all()
@@ -383,6 +401,7 @@ def funnel_stats(session: Session) -> FunnelStats:
             "unknown": unknown,
             "measurement": measurement,
         },
+        decayed_by_shutdown_cause=decayed_by_shutdown_cause,
     )
 
 

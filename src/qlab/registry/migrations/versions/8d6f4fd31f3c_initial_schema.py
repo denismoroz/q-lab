@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: 8e428cdb67a1
+Revision ID: 8d6f4fd31f3c
 Revises: 
-Create Date: 2026-09-20 17:08:56.542635
+Create Date: 2026-09-20 18:36:22.692512
 
 """
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '8e428cdb67a1'
+revision: str = '8d6f4fd31f3c'
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -48,10 +48,12 @@ def upgrade() -> None:
     sa.Column('asset_class', sa.Enum('crypto-perp', 'crypto-spot', 'defi', 'fx', name='assetclass'), nullable=False),
     sa.Column('driver_id', sa.String(), nullable=True),
     sa.Column('profile', sa.Enum('carry', 'momentum', 'mean-reversion', 'arb', 'other', name='profile'), nullable=False),
-    sa.Column('status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=False),
+    sa.Column('status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'paper', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=False),
+    sa.Column('shutdown_cause', sa.Enum('edge-decayed', 'false-discovery', 'execution', 'owner-choice', name='shutdowncause'), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('notes', sa.String(), nullable=True),
+    sa.CheckConstraint("status != 'decayed' OR shutdown_cause IS NOT NULL", name='ck_idea_decayed_requires_shutdown_cause'),
     sa.ForeignKeyConstraint(['driver_id'], ['driver.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -92,8 +94,8 @@ def upgrade() -> None:
     op.create_table('stage_transition',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('idea_id', sa.String(), nullable=False),
-    sa.Column('from_status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=True),
-    sa.Column('to_status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=False),
+    sa.Column('from_status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'paper', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=True),
+    sa.Column('to_status', sa.Enum('candidate', 'speccing', 'implemented', 'validated', 'bench', 'paper', 'live', 'rejected', 'decayed', 'retired', name='ideastatus'), nullable=False),
     sa.Column('at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('reason', sa.String(), nullable=True),
     sa.Column('rules_version', sa.String(), nullable=True),

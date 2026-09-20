@@ -24,6 +24,7 @@ from qlab.registry.models import (
     Idea,
     IdeaStatus,
     Profile,
+    ShutdownCause,
     SourceType,
     Spec,
     StageTransition,
@@ -80,13 +81,16 @@ def upsert_idea(
     driver_id: str | None = None,
     status: IdeaStatus = IdeaStatus.CANDIDATE,
     notes: str | None = None,
+    shutdown_cause: ShutdownCause | None = None,
 ) -> Idea:
     """Insert or update an `idea` row by its slug id.
 
     This does not touch `stage_transition` — use `set_status` for status
     changes on an idea that already exists, so the funnel ledger stays
     authoritative. This function is for creating an idea or editing its
-    non-status metadata.
+    non-status metadata. `shutdown_cause` is only meaningful for
+    `status=DECAYED` (see `ck_idea_decayed_requires_shutdown_cause`); the
+    caller is responsible for supplying one whenever it sets that status.
     """
     idea = session.get(Idea, id)
     now = _now()
@@ -101,6 +105,7 @@ def upsert_idea(
             driver_id=driver_id,
             profile=profile,
             status=status,
+            shutdown_cause=shutdown_cause,
             created_at=now,
             updated_at=now,
             notes=notes,
@@ -115,6 +120,7 @@ def upsert_idea(
         idea.driver_id = driver_id
         idea.profile = profile
         idea.notes = notes
+        idea.shutdown_cause = shutdown_cause
         idea.updated_at = now
     session.flush()
     return idea

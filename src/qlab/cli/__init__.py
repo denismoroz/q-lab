@@ -227,6 +227,14 @@ def funnel_cmd() -> None:
     for outcome in ("passed", "failed", "unknown", "measurement"):
         typer.echo(f"  {outcome:<16}{stats.verdicts_by_outcome.get(outcome, 0)}")
 
+    typer.echo("")
+    typer.echo("decayed ideas by shutdown cause:")
+    if stats.decayed_by_shutdown_cause:
+        for cause, count in sorted(stats.decayed_by_shutdown_cause.items()):
+            typer.echo(f"  {cause:<16}{count}")
+    else:
+        typer.echo("  (none)")
+
     total_ideas = sum(stats.ideas_by_status.values())
     total_verdicts = sum(stats.verdicts_by_outcome.values())
     typer.echo("")

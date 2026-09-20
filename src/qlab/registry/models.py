@@ -80,11 +80,27 @@ class Profile(enum.StrEnum):
 
 
 class IdeaStatus(enum.StrEnum):
+    """Idea lifecycle: candidate -> speccing -> implemented -> validated ->
+    bench -> paper -> live, with terminal states rejected / decayed / retired.
+
+    BENCH vs PAPER is a distinction worth a dedicated state, not a note in
+    `notes`: BENCH means validated and idle — it cleared the offline checks
+    but nothing is currently running. PAPER means running forward, on live
+    data, with no capital at risk — it is the only stage that produces
+    out-of-sample evidence that cannot be back-fitted, because the data
+    arriving in paper did not exist when the strategy was built. Collapsing
+    the two into one status (as the original graveyard seed did, calling
+    paper-trading strategies "bench") erases exactly that distinction: a
+    strategy sitting idle and a strategy accumulating forward evidence are
+    in fundamentally different places on the road to LIVE.
+    """
+
     CANDIDATE = "candidate"
     SPECCING = "speccing"
     IMPLEMENTED = "implemented"
     VALIDATED = "validated"
     BENCH = "bench"
+    PAPER = "paper"
     LIVE = "live"
     # Terminal states, and the difference between them is the point: REJECTED
     # never traded, DECAYED did and stopped working, RETIRED was withdrawn for
@@ -94,6 +110,33 @@ class IdeaStatus(enum.StrEnum):
     REJECTED = "rejected"
     DECAYED = "decayed"
     RETIRED = "retired"
+
+
+class ShutdownCause(enum.StrEnum):
+    """Why a DECAYED idea was actually shut off — distinct from the fact
+    that it decayed at all.
+
+    This distinction carries the project's weight (docs/PLAN.md: "how long
+    does a working strategy last, and does that price rise" is the whole
+    point of q-lab). Only `EDGE_DECAYED` — a real edge that worked and then
+    stopped — contributes to that survival-time statistic. `FALSE_DISCOVERY`
+    means the screening itself was wrong: the idea was never actually
+    profitable, and whatever validation let it through production was a
+    measurement or selection error (e.g. XSMOM, selected on decorrelation
+    with FRAB alone, called profitable, and only shown never to have been
+    profitable once a real loss forced a re-evaluation). A false discovery
+    that reached production says nothing about the market changing — mixing
+    it into "how long strategies survive" corrupts the one number the owner
+    actually needs to plan replacement capacity around. `EXECUTION` covers
+    a shutdown caused by infrastructure/venue/implementation problems, not
+    the edge itself. `OWNER_CHOICE` covers a deliberate shutdown for reasons
+    unrelated to performance (capital reallocation, venue exit, etc.).
+    """
+
+    EDGE_DECAYED = "edge-decayed"
+    FALSE_DISCOVERY = "false-discovery"
+    EXECUTION = "execution"
+    OWNER_CHOICE = "owner-choice"
 
 
 class TrialStatus(enum.StrEnum):
@@ -139,9 +182,25 @@ class Driver(Base):
 
 
 class Idea(Base):
-    """`idea` — a candidate strategy."""
+    """`idea` — a candidate strategy.
+
+    `shutdown_cause` is required whenever `status = 'decayed'` (see the
+    CheckConstraint below): a death cannot be recorded without a cause. The
+    cause matters more than it looks — see `ShutdownCause`'s docstring —
+    because only `edge-decayed` deaths contribute to the "how long does a
+    working strategy last" statistic that the whole project exists to
+    produce (docs/PLAN.md). A `false-discovery` idea that reached
+    production says the screening was wrong, not that the market changed;
+    counting it as a decayed edge would corrupt that one number.
+    """
 
     __tablename__ = "idea"
+    __table_args__ = (
+        CheckConstraint(
+            "status != 'decayed' OR shutdown_cause IS NOT NULL",
+            name="ck_idea_decayed_requires_shutdown_cause",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
@@ -155,6 +214,9 @@ class Idea(Base):
     profile: Mapped[Profile] = mapped_column(_enum_column(Profile), nullable=False)
     status: Mapped[IdeaStatus] = mapped_column(
         _enum_column(IdeaStatus), nullable=False, default=IdeaStatus.CANDIDATE, index=True
+    )
+    shutdown_cause: Mapped[ShutdownCause | None] = mapped_column(
+        _enum_column(ShutdownCause), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

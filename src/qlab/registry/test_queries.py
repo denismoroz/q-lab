@@ -20,6 +20,7 @@ from qlab.registry.models import (
     Base,
     IdeaStatus,
     Profile,
+    ShutdownCause,
     SourceType,
     TrialSource,
     VerdictStage,
@@ -444,3 +445,46 @@ def test_funnel_stats_verdicts_by_stage(populated):
     stats = funnel_stats(populated)
     assert stats.verdicts_by_stage["edge"] == 6
     assert stats.verdicts_by_stage["correlation"] == 1
+
+
+def test_funnel_stats_decayed_by_shutdown_cause(session):
+    """Two decayed ideas with different causes, plus a live idea that must
+    not appear in the breakdown at all — only DECAYED ideas are counted."""
+    repo.upsert_idea(
+        session,
+        id="decayed-edge",
+        title="Decayed on edge loss",
+        source_type=SourceType.GRAVEYARD,
+        asset_class=AssetClass.CRYPTO_PERP,
+        profile=Profile.MOMENTUM,
+        status=IdeaStatus.DECAYED,
+        shutdown_cause=ShutdownCause.EDGE_DECAYED,
+    )
+    repo.upsert_idea(
+        session,
+        id="decayed-false-discovery",
+        title="Decayed on false discovery",
+        source_type=SourceType.GRAVEYARD,
+        asset_class=AssetClass.CRYPTO_PERP,
+        profile=Profile.MOMENTUM,
+        status=IdeaStatus.DECAYED,
+        shutdown_cause=ShutdownCause.FALSE_DISCOVERY,
+    )
+    repo.upsert_idea(
+        session,
+        id="still-live",
+        title="Still live",
+        source_type=SourceType.GRAVEYARD,
+        asset_class=AssetClass.CRYPTO_PERP,
+        profile=Profile.CARRY,
+        status=IdeaStatus.LIVE,
+    )
+    session.commit()
+
+    stats = funnel_stats(session)
+
+    assert stats.decayed_by_shutdown_cause == {
+        "edge-decayed": 1,
+        "false-discovery": 1,
+    }
+    assert sum(stats.decayed_by_shutdown_cause.values()) == stats.ideas_by_status["decayed"]

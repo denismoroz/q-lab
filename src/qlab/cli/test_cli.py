@@ -156,3 +156,32 @@ def test_funnel_exits_zero_and_shows_three_outcome_kinds(imported_db):
     assert "unknown" in result.output
     assert "measurement" in result.output
     assert "total:" in result.output
+
+
+def test_funnel_shows_shutdown_cause_breakdown(imported_db):
+    """The fixture graveyard has no decayed ideas, so the section prints but
+    is empty; a separate case below covers the populated section."""
+    result = runner.invoke(app, ["funnel"])
+    assert result.exit_code == 0, result.output
+    assert "decayed ideas by shutdown cause:" in result.output
+    assert "(none)" in result.output
+
+
+def test_funnel_shutdown_cause_breakdown_with_decayed_idea(cli_db, tmp_path):
+    runner.invoke(app, ["init-db"])
+    yaml_path = tmp_path / "graveyard.yaml"
+    yaml_path.write_text(
+        _SAMPLE_GRAVEYARD_YAML.replace("status: rejected", "status: decayed", 1).replace(
+            "notes: rejected on stale correlation criterion",
+            "shutdown_cause: false-discovery\n"
+            "    notes: rejected on stale correlation criterion",
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["import-graveyard", "--file", str(yaml_path)])
+    assert result.exit_code == 0, result.output
+
+    result = runner.invoke(app, ["funnel"])
+    assert result.exit_code == 0, result.output
+    assert "decayed ideas by shutdown cause:" in result.output
+    assert "false-discovery" in result.output

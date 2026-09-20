@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from qlab.registry import repo
@@ -42,6 +42,7 @@ from qlab.registry.models import (
     Idea,
     IdeaStatus,
     Profile,
+    ShutdownCause,
     SourceType,
     TrialSource,
     Verdict,
@@ -112,8 +113,22 @@ class IdeaIn(BaseModel):
     driver_id: str | None = None
     profile: Profile
     status: IdeaStatus
+    shutdown_cause: ShutdownCause | None = None
     notes: str | None = None
     verdicts: list[VerdictIn] = []
+
+    @model_validator(mode="after")
+    def _decayed_requires_shutdown_cause(self) -> IdeaIn:
+        """Mirrors `ck_idea_decayed_requires_shutdown_cause`: a death cannot
+        be recorded without a cause, and this must fail loudly and by name
+        here rather than surface later as an opaque IntegrityError from the
+        database."""
+        if self.status == IdeaStatus.DECAYED and self.shutdown_cause is None:
+            raise ValueError(
+                f"idea {self.id!r} has status 'decayed' but no shutdown_cause — "
+                "a death cannot be recorded without a cause"
+            )
+        return self
 
 
 class GraveyardFile(BaseModel):
@@ -438,6 +453,7 @@ def import_graveyard(session: Session, path: Path | str) -> ImportReport:
             profile=idea.profile,
             status=idea.status,
             notes=idea.notes,
+            shutdown_cause=idea.shutdown_cause,
         )
         if is_new:
             report.ideas_inserted += 1
