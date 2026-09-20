@@ -13,8 +13,10 @@ import typer
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
+from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
 from qlab.registry.db import get_db_path, session_scope
 from qlab.registry.importer import ImportReport, import_graveyard
+from qlab.registry.models import DataSnapshot
 from qlab.registry.queries import (
     RevivalReport,
     funnel_stats,
@@ -32,6 +34,8 @@ ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 app = typer.Typer(add_completion=False, help="q-lab registry CLI (research only — never trades).")
 graveyard_app = typer.Typer(add_completion=False, help="Graveyard queries.")
 app.add_typer(graveyard_app, name="graveyard")
+data_app = typer.Typer(add_completion=False, help="Market data snapshots (point-in-time panels).")
+app.add_typer(data_app, name="data")
 
 
 # --------------------------------------------------------------------------
@@ -207,6 +211,113 @@ def graveyard_ripe_cmd(
     with session_scope() as session:
         report = ripe_for_revival(session, min_new_days, today=date.today())
     _print_revival_report(report, min_new_days)
+
+
+# --------------------------------------------------------------------------
+# data fetch / data list
+# --------------------------------------------------------------------------
+
+
+@data_app.command("fetch")
+def data_fetch_cmd(
+    source: str = typer.Option(..., "--source", help="hyperliquid or binance"),
+    instruments: str | None = typer.Option(
+        None,
+        "--instruments",
+        help=(
+            "Comma-separated instrument tickers, e.g. BTC,ETH,SOL. Omit this to fetch the "
+            "source's full discovered universe (survivors + delisted), which is the only "
+            "way to get a snapshot that passes the honest_universe rule."
+        ),
+    ),
+    start: str = typer.Option(..., "--start", help="YYYY-MM-DD (UTC)"),
+    end: str = typer.Option(..., "--end", help="YYYY-MM-DD (UTC)"),
+    interval: str = typer.Option("1h", "--interval", help="1m/5m/15m/1h/4h/1d"),
+) -> None:
+    """Fetch a point-in-time MarketPanel snapshot and register it in data_snapshot.
+
+    Without --instruments, the source's discovered universe (dead coins
+    included) is used and the snapshot is marked universe_complete=True.
+    With --instruments, the snapshot is a hand-picked list and is marked
+    universe_complete=False — a survivorship-biased panel by construction,
+    which the registry's honest_universe rule will reject.
+    """
+    instrument_list = None
+    if instruments is not None:
+        instrument_list = [i.strip() for i in instruments.split(",") if i.strip()]
+    if instrument_list is not None:
+        typer.echo(
+            "warning: --instruments is a manual, hand-picked list -- this snapshot will be "
+            "marked universe_complete=False and will NOT pass the honest_universe rule.",
+            err=True,
+        )
+
+    try:
+        panel = build_snapshot(source, instrument_list, start, end, interval)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"snapshot_id:       {panel.snapshot_id}")
+    typer.echo(f"source:            {source}")
+    typer.echo(f"interval:          {interval}")
+    typer.echo(f"universe_complete: {panel.meta['universe_complete']}")
+    typer.echo(f"instruments:       {', '.join(panel.instruments)}")
+    typer.echo(f"rows:              {len(panel.prices.index)}")
+    typer.echo(f"range:             {panel.prices.index.min()} -> {panel.prices.index.max()}")
+    typer.echo(f"path:              {DEFAULT_SNAPSHOTS_DIR / panel.snapshot_id}")
+
+
+@data_app.command("universe")
+def data_universe_cmd(
+    source: str = typer.Option(..., "--source", help="hyperliquid or binance"),
+) -> None:
+    """Print a source's full point-in-time universe (survivors + delisted),
+    if its free API exposes one -- the list `data fetch` uses by default."""
+    try:
+        described = describe_universe(source)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if described is None:
+        typer.echo(
+            f"{source}: no survivorship-free universe is available from its free API "
+            "(delisted instruments aren't listed anywhere)."
+        )
+        typer.echo(
+            "Pass --instruments explicitly to `qlab data fetch`; the resulting snapshot "
+            "will be marked universe_complete=False."
+        )
+        raise typer.Exit(code=1)
+
+    for name, is_delisted in described:
+        typer.echo(f"{name:<12} {'DELISTED' if is_delisted else 'listed'}")
+
+    n_delisted = sum(1 for _, is_delisted in described if is_delisted)
+    typer.echo("")
+    typer.echo(f"total: {len(described)} instruments ({n_delisted} delisted)")
+
+
+@data_app.command("list")
+def data_list_cmd() -> None:
+    """List registered data_snapshot rows, newest first."""
+    with session_scope() as session:
+        rows = session.query(DataSnapshot).order_by(DataSnapshot.fetched_at.desc()).all()
+        for row in rows:
+            instruments = (
+                ",".join(sorted(row.instruments))
+                if isinstance(row.instruments, dict)
+                else row.instruments
+            )
+            typer.echo(
+                f"{row.id[:16]}  {row.source:<12} {row.range_start} -> {row.range_end}  "
+                f"rows={row.rows:<8} {instruments}"
+            )
+        total = len(rows)
+
+    typer.echo("")
+    typer.echo(f"total: {total} snapshots")
 
 
 # --------------------------------------------------------------------------
