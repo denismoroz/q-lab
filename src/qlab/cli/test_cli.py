@@ -106,6 +106,25 @@ def test_import_graveyard_reports_and_exits_zero(cli_db, tmp_path):
     # idempotent from the CLI too
     result2 = runner.invoke(app, ["import-graveyard", "--file", str(yaml_path)])
     assert result2.exit_code == 0, result2.output
+    assert "status changes" in result2.output
+
+
+def test_import_graveyard_reports_status_change_on_seed_edit(cli_db, tmp_path):
+    """Editing an idea's status in the seed and re-importing must surface
+    the change in the report, not silently leave the old status in place."""
+    runner.invoke(app, ["init-db"])
+    yaml_path = tmp_path / "graveyard.yaml"
+    yaml_path.write_text(_SAMPLE_GRAVEYARD_YAML, encoding="utf-8")
+    runner.invoke(app, ["import-graveyard", "--file", str(yaml_path)])
+
+    yaml_path.write_text(
+        _SAMPLE_GRAVEYARD_YAML.replace("status: rejected", "status: bench", 1),
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["import-graveyard", "--file", str(yaml_path)])
+    assert result.exit_code == 0, result.output
+    assert "status changes (seed re-import):" in result.output
+    assert "cross-exchange-spread: rejected -> bench" in result.output
 
 
 def test_import_graveyard_missing_file_reports_error(cli_db, tmp_path):

@@ -61,12 +61,19 @@ def _print_import_report(report: ImportReport) -> None:
     typer.echo(f"{'drivers updated':<28}{report.drivers_updated}")
     typer.echo(f"{'ideas inserted':<28}{report.ideas_inserted}")
     typer.echo(f"{'ideas updated':<28}{report.ideas_updated}")
+    typer.echo(f"{'status changes':<28}{report.status_changes_count}")
     typer.echo(f"{'verdicts inserted':<28}{report.verdicts_inserted}")
     typer.echo(f"{'  of which measurement':<28}{report.verdicts_measurement}")
     typer.echo(f"{'  of which unknown':<28}{report.verdicts_null_value}")
     typer.echo(f"{'  of which unidentified rule':<28}{report.verdicts_unidentified_rule}")
     typer.echo(f"{'verdicts skipped (dup)':<28}{report.verdicts_skipped_duplicate}")
     typer.echo(f"{'verdicts skipped (bad data)':<28}{report.verdicts_skipped_data_error}")
+
+    if report.status_changes:
+        typer.echo("")
+        typer.echo("status changes (seed re-import):")
+        for idea_id, from_status, to_status in report.status_changes:
+            typer.echo(f"  {idea_id}: {from_status} -> {to_status}")
 
     if report.data_errors:
         typer.echo("")

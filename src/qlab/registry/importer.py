@@ -294,10 +294,22 @@ class ImportReport:
     verdicts_unidentified_rule: int = 0
     verdicts_measurement: int = 0
     data_errors: list[DataError] = field(default_factory=list)
+    # (idea_id, from_status, to_status) for every existing idea whose status
+    # in the seed no longer matches the DB. Applied via `repo.set_status`
+    # (never a direct assignment) so the transition lands in
+    # `stage_transition` and the funnel ledger stays honest — see
+    # `import_graveyard`. Must stay empty on a re-import that changes
+    # nothing: a silent status change would be exactly the kind of quiet
+    # misrepresentation this registry exists to prevent.
+    status_changes: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def verdicts_skipped_data_error(self) -> int:
         return len(self.data_errors)
+
+    @property
+    def status_changes_count(self) -> int:
+        return len(self.status_changes)
 
     @property
     def verdicts_skipped_total(self) -> int:
@@ -395,6 +407,22 @@ def import_graveyard(session: Session, path: Path | str) -> ImportReport:
     running this twice against the same file leaves row counts unchanged
     on the second run.
 
+    `repo.upsert_idea` deliberately never touches `status` on an existing
+    idea — status changes are supposed to go through `repo.set_status` so
+    `stage_transition` (the funnel's ledger) stays authoritative. But that
+    means a bare upsert would silently ignore a status edit made directly
+    in the seed file: the CLI would report success while the registry kept
+    asserting a status the owner had already corrected — a defect that
+    hides behind a green report. So for every idea that already exists,
+    this function compares the seed's `status` against the DB's current
+    one and, on a mismatch, applies it through `repo.set_status` (reason
+    `"seed re-import: <path>"`), which both updates `idea.status` and
+    writes the `stage_transition` row. Every such transition is also
+    recorded in `ImportReport.status_changes` so it's visible, not just
+    logged. Running the same unchanged file twice in a row must produce
+    zero status changes on the second run — that mismatch check is exactly
+    what keeps this idempotent.
+
     Every written verdict gets `source="imported"` and
     `rules_version="frab-legacy"` (`qlab.rules.LEGACY_SENTINEL_VERSION`),
     regardless of what (if anything) the source file says, per
@@ -440,7 +468,10 @@ def import_graveyard(session: Session, path: Path | str) -> ImportReport:
     to_insert: list[dict[str, Any]] = []
 
     for idea in graveyard.ideas:
-        is_new = session.get(Idea, idea.id) is None
+        existing = session.get(Idea, idea.id)
+        is_new = existing is None
+        old_status = existing.status if existing is not None else None
+
         repo.upsert_idea(
             session,
             id=idea.id,
@@ -459,6 +490,20 @@ def import_graveyard(session: Session, path: Path | str) -> ImportReport:
             report.ideas_inserted += 1
         else:
             report.ideas_updated += 1
+
+        # upsert_idea never touches status on an existing row (see this
+        # function's docstring) — apply a seed-driven status edit through
+        # set_status instead, so it lands in stage_transition rather than
+        # silently vanishing behind a "success" report.
+        if old_status is not None and old_status != idea.status:
+            repo.set_status(
+                session,
+                idea_id=idea.id,
+                new_status=idea.status,
+                reason=f"seed re-import: {path}",
+                rules_version=None,
+            )
+            report.status_changes.append((idea.id, old_status.value, idea.status.value))
 
         for v_idx, verdict in enumerate(idea.verdicts):
             kind, error = _classify_verdict(

@@ -20,7 +20,15 @@ from qlab.registry.importer import (
     GraveyardImportError,
     import_graveyard,
 )
-from qlab.registry.models import Base, Driver, Idea, TrialSource, Verdict
+from qlab.registry.models import (
+    Base,
+    Driver,
+    Idea,
+    IdeaStatus,
+    StageTransition,
+    TrialSource,
+    Verdict,
+)
 from qlab.rules import LEGACY_SENTINEL_VERSION
 
 # --------------------------------------------------------------------------
@@ -149,9 +157,74 @@ def test_import_is_idempotent(session, tmp_path):
     assert report2.verdicts_skipped_duplicate == 1
     assert report2.drivers_updated == 1
     assert report2.ideas_updated == 1
+    assert report2.status_changes == []  # unchanged seed -> no phantom transitions
     assert session.query(Verdict).count() == 1
     assert session.query(Idea).count() == 1
     assert session.query(Driver).count() == 1
+
+
+# --------------------------------------------------------------------------
+# Status changes on re-import (repo.set_status, not a silent assignment)
+# --------------------------------------------------------------------------
+
+
+def test_reimport_with_changed_seed_status_applies_transition(session, tmp_path):
+    """A status edit made directly in the seed file must not be silently
+    dropped: upsert_idea never touches status on an existing row (by
+    design — status changes go through set_status so stage_transition
+    stays authoritative), so the importer itself must detect the mismatch
+    and apply it via set_status, and report it."""
+    data = _minimal_graveyard()
+    data["ideas"][0]["status"] = "bench"
+    path = _write_yaml(tmp_path, data)
+
+    report1 = import_graveyard(session, path)
+    session.commit()
+    assert report1.status_changes == []  # first sighting of the idea, not a change
+    assert session.get(Idea, "cross-exchange-spread").status == IdeaStatus.BENCH
+
+    data["ideas"][0]["status"] = "paper"
+    path2 = _write_yaml(tmp_path, data, name="graveyard2.yaml")
+    report2 = import_graveyard(session, path2)
+    session.commit()
+
+    idea = session.get(Idea, "cross-exchange-spread")
+    assert idea.status == IdeaStatus.PAPER
+    assert report2.status_changes == [("cross-exchange-spread", "bench", "paper")]
+    assert report2.status_changes_count == 1
+
+    transitions = (
+        session.query(StageTransition).filter_by(idea_id="cross-exchange-spread").all()
+    )
+    assert len(transitions) == 1
+    assert transitions[0].from_status == IdeaStatus.BENCH
+    assert transitions[0].to_status == IdeaStatus.PAPER
+    assert transitions[0].reason == f"seed re-import: {path2}"
+
+
+def test_reimport_without_status_edit_creates_no_phantom_transitions(session, tmp_path):
+    """Re-running the same (unchanged) file twice in a row must not add any
+    stage_transition rows — only a genuine mismatch between seed and DB
+    should ever produce one."""
+    data = _minimal_graveyard()
+    data["ideas"][0]["status"] = "bench"
+    path = _write_yaml(tmp_path, data)
+
+    import_graveyard(session, path)
+    session.commit()
+
+    data["ideas"][0]["status"] = "paper"
+    path2 = _write_yaml(tmp_path, data, name="graveyard2.yaml")
+    import_graveyard(session, path2)
+    session.commit()
+    assert session.query(StageTransition).count() == 1
+
+    # re-import the same (already-applied) status again: no new transition
+    report3 = import_graveyard(session, path2)
+    session.commit()
+
+    assert report3.status_changes == []
+    assert session.query(StageTransition).count() == 1
 
 
 # --------------------------------------------------------------------------
