@@ -1,46 +1,57 @@
-# Первая версия правил отсева q-lab.
+# First version of the q-lab screening rules.
 #
-# Источники:
-#   - funding-rate-arbitrage/research/SCREENING.md — действующий регламент
-#     отсева (в силе с 2026-09-12), §1-§6.
-#   - docs/PLAN.md — капитал книги, preflight-гейт до расчётов.
-#   - docs/REGISTRY.md — формат конфига и таблица `trial.metrics`
+# Sources:
+#   - funding-rate-arbitrage/research/SCREENING.md — the screening regime in
+#     force since 2026-09-12, sections 1-6.
+#   - funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md — recompute
+#     of the graveyard under SCREENING.md, showing which past rejections
+#     stood and which were wrong criteria.
+#   - docs/PLAN.md — book capital, the preflight-before-computation gate.
+#   - docs/REGISTRY.md — config format and the `trial.metrics` field names
 #     (sharpe_net, ann_return_net, max_dd, turnover, ...).
 #
-# ВАЖНОЕ ОТЛИЧИЕ ОТ ПОРЯДКА В SCREENING.md:
-#   В SCREENING.md порядок фильтров: (1) реален ли net-эдж на честных данных,
-#   (2) исполним ли у нас сейчас, (3) хвостовой риск, (4) профиль
-#   [классификация, не фильтр], (5) корреляция [решение о размере, не
-#   фильтр]. В q-lab стадия `preflight` (= исполнимость, п.2 SCREENING)
-#   выполняется ПЕРВОЙ, до стадии `edge` (= честность net-эджа, п.1
-#   SCREENING) — так решено в docs/PLAN.md, раздел M4: «Гейт исполнимости
-#   под капитал до расчётов». Мотивация: FX и token_unlock в SCREENING.md
-#   умерли на исполнимости, но уже после всей работы по расчёту эджа; в
-#   q-lab это сознательно вынесено раньше, чтобы не повторять ту цену.
-#   Это отражено в `rationale` правил стадии `preflight` ниже.
+# Direct quotes from SCREENING.md are kept verbatim in Russian, in
+# guillemets («...») — translating a quote would make it unverifiable
+# against the source. Everything else (structure, rationale prose) is
+# English, per the project's "code and everything next to it is English"
+# rule.
 #
-# `profile` (carry/momentum) и `correlation` в SCREENING.md — явно НЕ
-# фильтры (§4, §5): классификация и решение о размере капитала
-# соответственно. Ниже сознательно нет ни одного отбраковывающего правила
-# для этих стадий. Правило декорреляции, которое раньше отбраковывало
-# кандидатов по корреляции, отменено 2026-09-12 и вынесено в `retired`.
+# KEY DEVIATION FROM THE SCREENING.md ORDER:
+#   SCREENING.md's filter order is: (1) is the net edge real on honest data,
+#   (2) is it executable for us right now, (3) tail risk, (4) profile
+#   [classification, not a filter], (5) correlation [sizing decision, not a
+#   filter]. In q-lab, the `preflight` stage (= executability, SCREENING §2)
+#   runs FIRST, before `edge` (= honest net-edge reality, SCREENING §1) — per
+#   docs/PLAN.md, milestone M4: "Гейт исполнимости под капитал до расчётов".
+#   Rationale: in SCREENING.md, FX and token_unlock died on executability,
+#   but only after all the edge-computation work was already sunk into them.
+#   q-lab deliberately moves that check earlier to avoid paying that cost
+#   again. This is called out in the `rationale` of each `preflight` rule
+#   below.
 #
-# Стадия `capacity` в этой версии пуста: SCREENING.md не задаёт для неё
-# фильтрующих порогов (обсуждение ёмкости там — про действующий FRAB, не
-# про критерий отбора кандидата); ёмкость как ограничение появляется в
-# M5 (аллокатор), см. docs/PLAN.md.
+# `profile` (carry/momentum) and `correlation` are explicitly NOT filters in
+# SCREENING.md (§4, §5): a classification and a position-sizing decision,
+# respectively. There is deliberately no rejecting rule for either stage
+# below. The decorrelation rule that used to reject candidates on
+# correlation was retired on 2026-09-12 and lives in `retired` below.
 #
-# Флаги-гейты (venue_supported, data_forward_available, atomic_execution,
-# point_in_time_universe, accrual_applied) кодируют качественные условия
-# SCREENING.md как metric == 1 / 0. Это не "выдуманный порог" — единственное
-# осмысленное пороговое значение для булева условия и есть 1; сами имена
-# метрик в SCREENING.md не названы явно и выбраны при реализации.
+# `capacity` is empty in this version: SCREENING.md gives no rejection
+# threshold for it (its capacity discussion is about the live FRAB sleeve,
+# not a candidate-screening criterion); capacity-as-a-constraint arrives in
+# M5 (allocator), see docs/PLAN.md.
+#
+# Boolean gate metrics (venue_supported, data_forward_available,
+# atomic_execution, point_in_time_universe, accrual_applied) encode
+# qualitative SCREENING.md conditions as metric == 1 / 0. That is not a
+# "made-up threshold" — 1 is the only sensible cutoff for a boolean
+# condition — but the metric *names* themselves are not spelled out in
+# SCREENING.md and were chosen during implementation.
 
 version: "2026-09-20.1"
 based_on: null
 
 rules:
-  # --- preflight: исполнимость у нас, сейчас (SCREENING.md §2) --------------
+  # --- preflight: executable for us, right now (SCREENING.md §2) -----------
   - id: venue_supported
     stage: preflight
     metric: venue_supported
@@ -49,9 +60,9 @@ rules:
     fatal: true
     rationale: >
       SCREENING.md §2 «Исполним ли — у нас, сейчас»: «площадка: есть
-      инфраструктура (сейчас только HL)». Проверяется до расчёта эджа
-      (docs/PLAN.md, M4) — в отличие от порядка в SCREENING.md, где
-      исполнимость идёт вторым фильтром.
+      инфраструктура (сейчас только HL)». Checked ahead of edge computation
+      (docs/PLAN.md, M4) — unlike SCREENING.md's own order, where
+      executability is the second filter, not the first.
 
   - id: data_forward_available
     stage: preflight
@@ -61,9 +72,9 @@ rules:
     fatal: true
     rationale: >
       SCREENING.md §2: «данные: бесплатные и доступные forward, а не только
-      исторически». Цитата оттуда же: «FX и token_unlock умерли именно
-      здесь, но уже после всей работы» — в q-lab эта проверка вынесена в
-      preflight, до расчётов.
+      исторически». Same section: «FX и token_unlock умерли именно здесь,
+      но уже после всей работы» — in q-lab this check runs in preflight,
+      before any computation, precisely to avoid repeating that mistake.
 
   - id: atomic_execution
     stage: preflight
@@ -83,14 +94,14 @@ rules:
     fatal: true
     rationale: >
       docs/PLAN.md: «Капитал книги: $5–15k»; docs/REGISTRY.md: «книга $15k,
-      не больше 1/6 в одну стратегию» → 15000 / 6 = 2500 (верхняя граница
-      диапазона книги; при нижней границе $5k тот же принцип даёт ~833 —
-      сознательно взята менее консервативная верхняя граница, как в
-      каноническом примере docs/REGISTRY.md). Также SCREENING.md §2:
+      не больше 1/6 в одну стратегию» -> 15000 / 6 = 2500 (upper end of the
+      book-capital range; the lower end, $5k, would give ~833 by the same
+      rule — the upper, less conservative bound was chosen deliberately,
+      matching docs/REGISTRY.md's own worked example). Also SCREENING.md §2:
       «капитал: помещается ли минимальный размер позиции (HL ~$10, у нас
       min_leg $12)».
 
-  # --- edge: реален ли net-эдж на честных данных (SCREENING.md §1) ----------
+  # --- edge: is the net edge real on honest data (SCREENING.md §1) ---------
   - id: honest_universe
     stage: edge
     metric: point_in_time_universe
@@ -120,56 +131,73 @@ rules:
     fatal: true
     rationale: >
       SCREENING.md §1: «Отсекает: нет gross-эджа, эдж съеден костами, эдж
-      исчез на честном универсе». ann_return_net должен уже включать
-      реальные косты HL (~4.4 б.п. на ногу: taker 3.5 + проскальзывание,
+      исчез на честном универсе». ann_return_net is expected to already
+      include real HL costs (~4.4bp per leg: 3.5bp taker + slippage,
       SCREENING.md §1).
 
-  # TODO: порог не задан в SCREENING.md — sharpe_floor.
-  # SCREENING.md не даёт универсального порога Sharpe для отсева: там
-  # встречаются только частные числа в другом контексте («истинный Sharpe
-  # 0.75» — пример для обсуждения DSR; «OOS медиана Sharpe +0.94» — итог
-  # конкретного кандидата trend TSMOM, не порог). Числа 0.8 / near_margin
-  # 0.25 в примере docs/REGISTRY.md — иллюстрация формата конфига, а не
-  # значение, подтверждённое SCREENING.md, поэтому здесь не используются.
+  # TODO: threshold not given in SCREENING.md — sharpe_floor.
+  # SCREENING.md gives no universal Sharpe rejection threshold: the only
+  # numbers that appear are in a different context («истинный Sharpe 0.75»
+  # — an example used to discuss DSR behaviour; «OOS медиана Sharpe +0.94»
+  # — the outcome for one specific candidate, trend TSMOM, not a cutoff).
+  # The 0.8 threshold / 0.25 near_margin in docs/REGISTRY.md's own example
+  # are a format illustration, not a value backed by SCREENING.md, so they
+  # are not used here.
   # - id: sharpe_floor
   #   stage: edge
   #   metric: sharpe_net
   #   comparator: ">="
-  #   threshold: <не задан в SCREENING.md>
-  #   near_margin: <не задан в SCREENING.md>
-  #   rationale: "TODO: порог не задан в SCREENING.md"
+  #   threshold: <not given in SCREENING.md>
+  #   near_margin: <not given in SCREENING.md>
+  #   rationale: "TODO: threshold not given in SCREENING.md"
 
-  # --- tail: хвостовой риск прямым замером (SCREENING.md §3) ----------------
-  # SCREENING.md требует замерять «худшие недели по типу стресса (крах,
+  # --- tail: tail risk, measured directly (SCREENING.md §3) -----------------
+  # SCREENING.md requires measuring «худшие недели по типу стресса (крах,
   # памп, провал дохода), асимметрию, максимальную просадку, механизм
-  # ликвидации» напрямую, но не задаёт ни одного числового порога отсева —
-  # правила ниже закомментированы, а не выдуманы.
-  # TODO: порог не задан в SCREENING.md — просадка в худшую неделю-крах.
+  # ликвидации» directly, but gives no numeric rejection threshold for any
+  # of them — the rules below are commented out rather than invented.
+  # TODO: threshold not given in SCREENING.md — worst crash-week return.
   # - id: worst_week_crash_floor
   #   stage: tail
   #   metric: worst_week_crash_return
   #   comparator: ">="
-  #   threshold: <не задан в SCREENING.md>
+  #   threshold: <not given in SCREENING.md>
   #   fatal: true
-  #   rationale: "TODO: порог не задан в SCREENING.md"
-  # TODO: порог не задан в SCREENING.md — потолок максимальной просадки.
+  #   rationale: "TODO: threshold not given in SCREENING.md"
+  # TODO: threshold not given in SCREENING.md — max-drawdown ceiling.
   # - id: max_drawdown_ceiling
   #   stage: tail
   #   metric: max_dd
   #   comparator: "<="
-  #   threshold: <не задан в SCREENING.md>
+  #   threshold: <not given in SCREENING.md>
   #   fatal: true
-  #   rationale: "TODO: порог не задан в SCREENING.md"
-  # Асимметрия доходности (SCREENING.md §4) используется там как признак
-  # для классификации профиля carry/momentum, а не как порог отсева — в
-  # `tail` её включать не нужно, даже когда числа появятся.
+  #   rationale: "TODO: threshold not given in SCREENING.md"
+  # Return asymmetry (SCREENING.md §4) is used there as a signal for
+  # classifying the carry/momentum profile, not as a rejection threshold —
+  # it does not belong under `tail` even once a number exists for it.
 
 retired:
   - id: decorrelation_required
     retired_in: "2026-09-12.1"
     reason: >
-      Цель — заработок, а не диверсификация; корреляция влияет на размер,
-      не на допуск (SCREENING.md: «Прежний поиск шёл под цель «третий
-      некоррелированный поток, итог — risk-parity». Решающим фильтром была
-      декорреляция с живыми sleeve'ами... Для этого портфеля цель неверная»;
-      формулировка причины — из docs/REGISTRY.md, канонический пример).
+      The goal is making money, not diversification; correlation informs
+      position size, not admission (SCREENING.md: «Прежний поиск шёл под
+      цель «третий некоррелированный поток, итог — risk-parity». Решающим
+      фильтром была декорреляция с живыми sleeve'ами... Для этого портфеля
+      цель неверная»; this exact phrasing of the reason is docs/REGISTRY.md's
+      own canonical example).
+
+  - id: pbo_threshold_on_homogeneous_menu
+    retired_in: "2026-09-12.1"
+    reason: >
+      A PBO cutoff is not a valid rejection criterion when the backtest menu
+      is variants of a single idea rather than a diverse set of strategies —
+      SCREENING.md §6: «PBO — только когда меню разнородно. На меню из
+      вариантов одной идеи его значение ~0.6 при любом истинном Sharpe (null
+      = 0.605); вердикты по нему на таком меню недействительны.» Confirmed
+      by GRAVEYARD_REVIEW_2026_09.md: trend TSMOM was previously rejected
+      partly on "PBO 0.63 (пустое число)" and the XSMOM overlays on "PBO
+      0.73 (пустое число)" — both single-idea-variant menus, both PBO
+      numbers indistinguishable from the null distribution's ~0.6/0.605,
+      i.e. uninformative by construction, not evidence against the
+      candidate.

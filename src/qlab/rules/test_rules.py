@@ -157,13 +157,17 @@ def test_non_fatal_failure_does_not_stop_next_stage() -> None:
     )
     result = evaluate({"a": 1.0, "b": 1.0}, ruleset)
     ids_seen = [row.rule_id for row in result.rows]
+    # non-fatal failure does not stop the next stage from being evaluated
     assert "soft_fail" in ids_seen
     assert "edge_runs" in ids_seen
-    assert result.overall_passed is True
+    # ... but it is still fail-closed: a non-fatal failure is a failure
+    assert result.overall_passed is False
     assert result.failed_fatal_rule_id is None
+    assert result.failed_rule_ids == ("soft_fail",)
+    assert result.decisive is True
 
 
-def test_missing_metric_is_unknown_not_failure() -> None:
+def test_missing_metric_is_unknown_not_a_fatal_failure_but_is_fail_closed() -> None:
     ruleset = RuleSet(
         version="2026-09-20.1",
         rules=[_rule(id="a", metric="missing", fatal=True)],
@@ -172,9 +176,28 @@ def test_missing_metric_is_unknown_not_failure() -> None:
     assert result.rows[0].passed is None
     assert result.rows[0].value is None
     assert "missing" in result.unknown_metrics
-    # unknown must not trip the fatal short-circuit
-    assert result.overall_passed is True
+    # unknown must not trip the fatal short-circuit ...
     assert result.failed_fatal_rule_id is None
+    assert result.failed_rule_ids == ()
+    # ... but a candidate that wasn't fully computed is not "passed" either
+    assert result.decisive is False
+    assert result.overall_passed is False
+
+
+def test_empty_metrics_against_real_ruleset_is_not_promoted() -> None:
+    # This is the regression the fail-open bug produced: a candidate we
+    # computed nothing for must never come back as having passed.
+    ruleset = RuleSet(
+        version="2026-09-20.1",
+        rules=[
+            _rule(id="a", metric="m1", fatal=True),
+            _rule(id="b", metric="m2", fatal=False),
+        ],
+    )
+    result = evaluate({}, ruleset)
+    assert result.decisive is False
+    assert result.overall_passed is False
+    assert result.unknown_metrics == ("m1", "m2")
 
 
 def test_none_metric_value_is_unknown() -> None:
@@ -182,6 +205,35 @@ def test_none_metric_value_is_unknown() -> None:
     result = evaluate({"m": None}, ruleset)
     assert result.rows[0].passed is None
     assert "m" in result.unknown_metrics
+    assert result.decisive is False
+
+
+def test_overall_passed_true_requires_no_failures_and_no_unknowns() -> None:
+    ruleset = RuleSet(
+        version="2026-09-20.1",
+        rules=[
+            _rule(id="a", metric="m1", comparator=Comparator.GT, threshold=0, fatal=True),
+            _rule(id="b", metric="m2", comparator=Comparator.GE, threshold=0, fatal=False),
+        ],
+    )
+    result = evaluate({"m1": 1.0, "m2": 0.0}, ruleset)
+    assert result.decisive is True
+    assert result.failed_rule_ids == ()
+    assert result.overall_passed is True
+
+
+def test_vacuous_pass_on_empty_ruleset() -> None:
+    # No rules at all -> nothing was computed, nothing failed, nothing is
+    # unknown. Vacuously true, same as `all(())`. Documented in
+    # EvaluationResult's docstring precisely so this isn't mistaken for a
+    # fail-open bug later.
+    ruleset = RuleSet(version="2026-09-20.1", rules=[])
+    result = evaluate({"anything": 1.0}, ruleset)
+    assert result.rows == ()
+    assert result.decisive is True
+    assert result.overall_passed is True
+    assert result.failed_rule_ids == ()
+    assert result.failed_fatal_rule_id is None
 
 
 def test_stages_filter_restricts_evaluation() -> None:
@@ -329,6 +381,49 @@ def test_filename_must_match_version_field(tmp_path: Path) -> None:
         load("2026-09-20.1", rules_dir=tmp_path)
 
 
+def test_based_on_cycle_is_rejected(tmp_path: Path) -> None:
+    # a -> b -> a
+    _write_ruleset(
+        tmp_path,
+        {"version": "2026-09-01.1", "based_on": "2026-09-05.1", "rules": []},
+    )
+    _write_ruleset(
+        tmp_path,
+        {"version": "2026-09-05.1", "based_on": "2026-09-01.1", "rules": []},
+    )
+
+    with pytest.raises(ValueError, match="cycle"):
+        load("2026-09-01.1", rules_dir=tmp_path)
+
+
+def test_based_on_self_cycle_is_rejected(tmp_path: Path) -> None:
+    # a -> a
+    _write_ruleset(
+        tmp_path,
+        {"version": "2026-09-01.1", "based_on": "2026-09-01.1", "rules": []},
+    )
+
+    with pytest.raises(ValueError, match="cycle"):
+        load("2026-09-01.1", rules_dir=tmp_path)
+
+
+def test_based_on_longer_cycle_is_rejected(tmp_path: Path) -> None:
+    # a -> b -> c -> a
+    _write_ruleset(tmp_path, {"version": "2026-09-01.1", "based_on": "2026-09-02.1", "rules": []})
+    _write_ruleset(tmp_path, {"version": "2026-09-02.1", "based_on": "2026-09-03.1", "rules": []})
+    _write_ruleset(tmp_path, {"version": "2026-09-03.1", "based_on": "2026-09-01.1", "rules": []})
+
+    with pytest.raises(ValueError, match="cycle"):
+        load("2026-09-01.1", rules_dir=tmp_path)
+
+
+def test_load_legacy_sentinel_raises_clear_error_not_file_not_found(tmp_path: Path) -> None:
+    from qlab.rules.loader import LEGACY_SENTINEL_VERSION
+
+    with pytest.raises(ValueError, match="sentinel"):
+        load(LEGACY_SENTINEL_VERSION, rules_dir=tmp_path)
+
+
 # --------------------------------------------------------------------------
 # nearness
 # --------------------------------------------------------------------------
@@ -403,6 +498,10 @@ def test_first_ruleset_loads_and_validates() -> None:
 
     retired_ids = {r.id for r in ruleset.retired}
     assert "decorrelation_required" in retired_ids
+    # SCREENING.md §6: PBO is invalid on a menu of variants of one idea
+    # (null ~0.605); trend TSMOM and the XSMOM overlays were previously
+    # rejected partly on that uninformative number.
+    assert "pbo_threshold_on_homogeneous_menu" in retired_ids
 
 
 def test_first_ruleset_evaluates_without_crashing() -> None:

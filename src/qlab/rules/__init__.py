@@ -7,7 +7,7 @@ does.
 """
 
 from qlab.rules.engine import EvaluationResult, VerdictRow, evaluate
-from qlab.rules.loader import list_versions, load, load_latest
+from qlab.rules.loader import LEGACY_SENTINEL_VERSION, list_versions, load, load_latest
 from qlab.rules.nearness import is_near, nearness
 from qlab.rules.schema import (
     STAGE_ORDER,
@@ -20,6 +20,7 @@ from qlab.rules.schema import (
 )
 
 __all__ = [
+    "LEGACY_SENTINEL_VERSION",
     "STAGE_ORDER",
     "Comparator",
     "EvaluationResult",

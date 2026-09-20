@@ -2,7 +2,9 @@
 
 Supports `based_on` inheritance: a version that declares `based_on` starts
 from the base version's active rules, overrides them by `id`, and drops any
-`id` that appears in its own `retired` section from the inherited set.
+`id` that appears in its own `retired` section from the inherited set. A
+cycle in the `based_on` chain (e.g. a -> b -> a) is rejected with a
+`ValueError` rather than recursing forever.
 """
 
 from __future__ import annotations
@@ -15,6 +17,13 @@ from qlab.rules.schema import RetiredRule, Rule, RuleSet, parse_version
 
 # src/qlab/rules/loader.py -> parents[3] is the project root (q-lab/).
 DEFAULT_RULES_DIR = Path(__file__).resolve().parents[3] / "rules"
+
+# Sentinel `rules_version` used on historical verdicts imported from the
+# funding-rate-arbitrage graveyard that predate this versioned rules engine
+# and were never fully formalized into a `rules/<version>.yaml` file. There
+# is, deliberately, no such file to load: those verdicts are matched to the
+# current ruleset by `rule_id` against its `retired` section instead.
+LEGACY_SENTINEL_VERSION = "frab-legacy"
 
 
 def _rules_dir(rules_dir: Path | str | None) -> Path:
@@ -58,8 +67,28 @@ def load(version: str, rules_dir: Path | str | None = None) -> RuleSet:
 
     The returned `RuleSet.version`/`based_on` reflect the requested version's
     own file; `rules` and `retired` are the fully-merged, effective sets.
+
+    Raises `ValueError` if `version` is `LEGACY_SENTINEL_VERSION`
+    (`"frab-legacy"`) — that version intentionally has no backing file — or
+    if the `based_on` chain cycles back on itself.
     """
-    directory = _rules_dir(rules_dir)
+    if version == LEGACY_SENTINEL_VERSION:
+        raise ValueError(
+            f"{LEGACY_SENTINEL_VERSION!r} is a sentinel rules_version for pre-engine "
+            "funding-rate-arbitrage graveyard verdicts that were never fully "
+            "formalized into a rules/<version>.yaml file — there is nothing to load. "
+            "Match those verdicts by rule_id against the current ruleset's `retired` "
+            "section instead."
+        )
+    return _load(version, _rules_dir(rules_dir), chain=())
+
+
+def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
+    if version in chain:
+        cycle = " -> ".join((*chain, version))
+        raise ValueError(f"cycle in based_on chain: {cycle}")
+    chain = (*chain, version)
+
     path = directory / f"{version}.yaml"
     ruleset = _read_ruleset_file(path)
 
@@ -72,7 +101,7 @@ def load(version: str, rules_dir: Path | str | None = None) -> RuleSet:
     if ruleset.based_on is None:
         return ruleset
 
-    base = load(ruleset.based_on, rules_dir=directory)
+    base = _load(ruleset.based_on, directory, chain)
 
     merged_rules: dict[str, Rule] = {rule.id: rule for rule in base.rules}
     for rule in ruleset.rules:

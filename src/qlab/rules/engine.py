@@ -38,12 +38,28 @@ class VerdictRow:
 
 @dataclass(frozen=True, slots=True)
 class EvaluationResult:
-    """Aggregate result of evaluating a full ruleset against one metrics set."""
+    """Aggregate result of evaluating a full ruleset against one metrics set.
+
+    Fail-closed by design: `overall_passed` is `True` only when every rule
+    that was actually computed passed *and* none of them came back unknown.
+    A candidate we couldn't fully compute is not promoted just because
+    nothing computed happened to fail.
+
+    Vacuous case: if no rule ends up being evaluated at all (empty ruleset,
+    or every requested stage has no rules), `rows` is empty, `decisive` is
+    `True` (there are zero unknown rows) and `overall_passed` is `True`
+    (there are zero failures) — a vacuous pass. This mirrors ordinary
+    "all() of an empty sequence is True" logic; callers that must not treat
+    "nothing was checked" as a pass should check `rows` (or `decisive`
+    together with a minimum expected rule count) themselves.
+    """
 
     rows: tuple[VerdictRow, ...]
     overall_passed: bool
     failed_fatal_rule_id: str | None
+    failed_rule_ids: tuple[str, ...]
     unknown_metrics: tuple[str, ...]
+    decisive: bool
 
 
 def evaluate(
@@ -65,6 +81,11 @@ def evaluate(
     - If a fatal rule fails, every other rule in that *same* stage is still
       evaluated (a full picture of the stage is needed to reconsider
       graveyard verdicts later), but no further stage is processed.
+    - `overall_passed` is fail-closed: it is `True` only if every computed
+      row passed and none came back unknown. An unknown row (missing
+      metric) or a failing *non-fatal* rule both make `overall_passed`
+      `False`, even though neither one is a `failed_fatal_rule_id`. See
+      `EvaluationResult` for the empty-ruleset vacuous-pass case.
     """
     allowed_stages = set(stages) if stages is not None else None
 
@@ -128,9 +149,14 @@ def evaluate(
         if stage_has_fatal_failure:
             break
 
+    failed_rule_ids = tuple(row.rule_id for row in rows if row.passed is False)
+    decisive = not any(row.passed is None for row in rows)
+
     return EvaluationResult(
         rows=tuple(rows),
-        overall_passed=failed_fatal_rule_id is None,
+        overall_passed=decisive and not failed_rule_ids,
         failed_fatal_rule_id=failed_fatal_rule_id,
+        failed_rule_ids=failed_rule_ids,
         unknown_metrics=tuple(sorted(unknown_metrics)),
+        decisive=decisive,
     )
