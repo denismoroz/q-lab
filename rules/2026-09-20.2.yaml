@@ -1,0 +1,46 @@
+# Capital becomes a measurement, not a gate.
+#
+# Supersedes the `capital_fit` rule of 2026-09-20.1, which rejected any
+# candidate needing more than the book's per-strategy share ($2,500, derived
+# from a $15k book and a 1/6 cap).
+#
+# Owner's decision, 2026-09-20: the useful question is not "does it fit the
+# capital we have" but "what is the minimum capital it needs". A binary gate
+# makes a strategy needing $2,200 and one needing $500k equally "rejected",
+# although the first is unlocked by the next funding step and the second never
+# is. Measuring it turns a capital increase into a registry query instead of a
+# recomputation of everything.
+#
+# `min_capital_usd` is therefore computed by the harness and recorded on every
+# candidate. Screening only rejects a candidate whose minimum capital exceeds
+# the owner's whole capital horizon — beyond that it can never run here, which
+# is a real and permanent kill. Everything below the horizon is evaluated on
+# its merits and routed by its number: fundable now, or on the shelf until
+# capital reaches it.
+#
+# A strategy executed only partially is a DIFFERENT strategy with a different
+# edge, not the same one for less money — measured directly in the source
+# project, where the full trend version needs ~$2,200 and the variant
+# executable with ~$410 was "уже не лучше XSMOM". So a cheaper variant is a
+# separate spec with its own verdict, never an implied fallback of this one.
+
+version: "2026-09-20.2"
+based_on: "2026-09-20.1"
+
+rules:
+  - id: capital_fit
+    stage: preflight
+    metric: min_capital_usd
+    comparator: "<="
+    threshold: 120000
+    fatal: true
+    rationale: >
+      Capital horizon stated by the owner on 2026-09-20: «конечная цель
+      разместить 100-120к. на все стратегии». A candidate needing more than
+      the entire horizon can never be run here, so this is a permanent
+      rejection rather than a scheduling decision. Candidates below it are
+      routed by their measured `min_capital_usd` against what is actually
+      deployable — currently «уверенности нет на размещение более 1к» —
+      which is a capital-ladder question, not a screening one.
+
+retired: []
