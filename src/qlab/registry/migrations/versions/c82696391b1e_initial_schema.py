@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: 4dafebe201ee
+Revision ID: c82696391b1e
 Revises:
-Create Date: 2026-09-20 13:28:53.910463
+Create Date: 2026-09-20 14:05:00.000000
 
 """
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '4dafebe201ee'
+revision: str = 'c82696391b1e'
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -221,8 +221,8 @@ def upgrade() -> None:
         sa.Column('rules_version', sa.String(), nullable=False),
         sa.Column('metric', sa.String(), nullable=False),
         sa.Column('value', sa.Float(), nullable=True),
-        sa.Column('comparator', sa.String(), nullable=False),
-        sa.Column('threshold', sa.Float(), nullable=False),
+        sa.Column('comparator', sa.String(), nullable=True),
+        sa.Column('threshold', sa.Float(), nullable=True),
         sa.Column('passed', sa.Boolean(), nullable=True),
         sa.Column('data_range_start', sa.Date(), nullable=True),
         sa.Column('data_range_end', sa.Date(), nullable=True),
@@ -230,13 +230,27 @@ def upgrade() -> None:
         sa.Column('note', sa.String(), nullable=True),
         sa.Column('source', sa.Enum('qlab', 'imported', name='trialsource'), nullable=False),
         sa.CheckConstraint(
+            "passed IS NULL OR "
+            "(value IS NOT NULL AND comparator IS NOT NULL AND threshold IS NOT NULL)",
+            name='ck_verdict_decision_requires_value_comparator_threshold',
+        ),
+        sa.CheckConstraint(
+            "(comparator IS NULL AND threshold IS NULL) "
+            "OR (comparator IS NOT NULL AND threshold IS NOT NULL)",
+            name='ck_verdict_comparator_threshold_together',
+        ),
+        sa.CheckConstraint(
+            "comparator IS NOT NULL OR source = 'imported'",
+            name='ck_verdict_measurement_requires_imported',
+        ),
+        sa.CheckConstraint(
+            "value IS NOT NULL OR passed IS NULL",
+            name='ck_verdict_unevaluated_metric_has_no_decision',
+        ),
+        sa.CheckConstraint(
             "(data_range_start IS NOT NULL AND data_range_end IS NOT NULL) "
             "OR source = 'imported'",
             name='ck_verdict_data_range_required_unless_imported',
-        ),
-        sa.CheckConstraint(
-            "(value IS NULL AND passed IS NULL) OR (value IS NOT NULL AND passed IS NOT NULL)",
-            name='ck_verdict_value_passed_together',
         ),
         sa.ForeignKeyConstraint(['idea_id'], ['idea.id'], ),
         sa.ForeignKeyConstraint(['spec_id'], ['spec.id'], ),

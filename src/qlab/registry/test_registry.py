@@ -462,10 +462,30 @@ def _base_verdict_kwargs(**overrides) -> dict:
     return kwargs
 
 
-def test_verdict_unknown_value_and_passed_are_both_null(session):
-    """The rules engine emits value=None, passed=None when a metric could
-    not be evaluated (e.g. missing input) — neither pass nor fail, but
-    worth keeping. This must be writable."""
+# --------------------------------------------------------------------------
+# verdict: the three legitimate kinds of row (docs/REGISTRY.md)
+# --------------------------------------------------------------------------
+
+
+def test_verdict_kind_decision(session):
+    """decision: value, comparator/threshold and passed are all set — a
+    rule was applied to a computed metric."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    rows = repo.add_verdicts(session, [_base_verdict_kwargs(value=0.5, passed=False)])
+    session.commit()
+
+    assert rows[0].value == 0.5
+    assert rows[0].comparator == ">="
+    assert rows[0].threshold == 0.8
+    assert rows[0].passed is False
+
+
+def test_verdict_kind_unknown(session):
+    """unknown: the rule exists (comparator/threshold set) but the metric
+    could not be computed — value and passed are both null. Neither a pass
+    nor a fail, but worth keeping since it says what was missing."""
     repo.upsert_idea(session, **_idea_kwargs())
     session.commit()
 
@@ -476,20 +496,159 @@ def test_verdict_unknown_value_and_passed_are_both_null(session):
     session.commit()
 
     assert rows[0].value is None
+    assert rows[0].comparator == ">="
+    assert rows[0].threshold == 0.8
     assert rows[0].passed is None
 
 
-def test_verdict_value_without_passed_is_rejected(session):
-    """value and passed must be null together or set together — a value
-    with no verdict on it (or vice versa) is not a state the rules engine
-    should ever produce."""
+def test_verdict_kind_measurement(session):
+    """measurement: a number was observed in an old dossier with no
+    formalized rule behind it — comparator/threshold are null, and so is
+    passed (it never participates in screening). Only legal for imported
+    history, since q-lab itself never writes a ruleless row."""
     repo.upsert_idea(session, **_idea_kwargs())
     session.commit()
 
+    rows = repo.add_verdicts(
+        session,
+        [
+            _base_verdict_kwargs(
+                rule_id="unidentified",
+                rules_version="frab-legacy",
+                value=0.77,
+                passed=None,
+                comparator=None,
+                threshold=None,
+                source=TrialSource.IMPORTED,
+            )
+        ],
+    )
+    session.commit()
+
+    assert rows[0].value == 0.77
+    assert rows[0].comparator is None
+    assert rows[0].threshold is None
+    assert rows[0].passed is None
+
+
+# --------------------------------------------------------------------------
+# verdict: the four CheckConstraints, each direction
+# --------------------------------------------------------------------------
+
+
+def test_ck_decision_requires_value_comparator_threshold(session):
+    """passed IS NOT NULL => value, comparator, threshold are all NOT NULL."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    # accept: a full decision
+    repo.add_verdicts(session, [_base_verdict_kwargs(value=0.5, passed=False)])
+    session.commit()
+
+    # reject: passed is set but comparator/threshold are missing
     with pytest.raises(IntegrityError):
-        repo.add_verdicts(session, [_base_verdict_kwargs(value=0.5, passed=None)])
+        repo.add_verdicts(
+            session,
+            [
+                _base_verdict_kwargs(
+                    value=0.5,
+                    passed=True,
+                    comparator=None,
+                    threshold=None,
+                    source=TrialSource.IMPORTED,
+                )
+            ],
+        )
     session.rollback()
 
+
+def test_ck_comparator_threshold_together(session):
+    """comparator IS NULL <=> threshold IS NULL — a threshold with no
+    operator (or vice versa) is meaningless."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    # accept: both null (measurement)
+    repo.add_verdicts(
+        session,
+        [
+            _base_verdict_kwargs(
+                value=0.77,
+                passed=None,
+                comparator=None,
+                threshold=None,
+                source=TrialSource.IMPORTED,
+            )
+        ],
+    )
+    session.commit()
+
+    # reject: comparator set, threshold missing
+    with pytest.raises(IntegrityError):
+        repo.add_verdicts(
+            session,
+            [
+                _base_verdict_kwargs(
+                    value=0.5,
+                    passed=None,
+                    comparator=">=",
+                    threshold=None,
+                    source=TrialSource.IMPORTED,
+                )
+            ],
+        )
+    session.rollback()
+
+
+def test_ck_measurement_requires_imported(session):
+    """comparator IS NULL => source = 'imported' — q-lab always applies a
+    real rule, so a ruleless row can only come from imported history."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    # accept: ruleless row from imported history
+    repo.add_verdicts(
+        session,
+        [
+            _base_verdict_kwargs(
+                value=0.77,
+                passed=None,
+                comparator=None,
+                threshold=None,
+                source=TrialSource.IMPORTED,
+            )
+        ],
+    )
+    session.commit()
+
+    # reject: ruleless row claiming to be q-lab's own
+    with pytest.raises(IntegrityError):
+        repo.add_verdicts(
+            session,
+            [
+                _base_verdict_kwargs(
+                    value=0.77,
+                    passed=None,
+                    comparator=None,
+                    threshold=None,
+                    source=TrialSource.QLAB,
+                )
+            ],
+        )
+    session.rollback()
+
+
+def test_ck_unevaluated_metric_has_no_decision(session):
+    """value IS NULL => passed IS NULL — an uncomputed metric cannot carry
+    a decision."""
+    repo.upsert_idea(session, **_idea_kwargs())
+    session.commit()
+
+    # accept: unknown (value and passed both null)
+    repo.add_verdicts(session, [_base_verdict_kwargs(value=None, passed=None)])
+    session.commit()
+
+    # reject: no value, but a decision is claimed anyway
     with pytest.raises(IntegrityError):
         repo.add_verdicts(session, [_base_verdict_kwargs(value=None, passed=False)])
     session.rollback()

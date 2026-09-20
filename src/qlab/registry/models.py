@@ -229,11 +229,26 @@ class Trial(Base):
 class Verdict(Base):
     """`verdict` — a stage decision, rendered by the rules engine (never by a model).
 
-    `value`/`passed` may both be null: this is the rules engine's "unknown"
-    result for a metric it could not evaluate (e.g. missing input) — it is
-    neither a pass nor a fail, but it is worth recording since it says
-    exactly what was missing. The two columns are always null together or
-    non-null together (see `ck_verdict_value_passed_together`).
+    There are exactly three legitimate kinds of row, and mixing them up
+    means fabricated thresholds silently entering the registry:
+
+    | kind        | `value` | comparator/threshold | `passed` | when                     |
+    |-------------|---------|-----------------------|----------|--------------------------|
+    | decision    | set     | set                   | set      | rule applied to a metric |
+    | unknown     | null    | set                   | null     | rule exists, no metric   |
+    | measurement | set     | **null**              | null     | eyeballed number, no rule |
+
+    **Measurement** rows exist for old dossiers full of numbers ("Sharpe
+    0.77") that a human judged by eye, with no formalized rule behind them.
+    Recording such a row as a decision would require inventing a threshold —
+    and that invented threshold would later surface in `near_threshold()` as
+    a real near-miss, and could steer real capital. So a measurement is
+    stored with no comparator/threshold, conventionally `rule_id =
+    "unidentified"`, and never participates in screening (`passed` is
+    always null for it). q-lab itself always applies a real rule, so a null
+    comparator/threshold is only legal for `source == "imported"`. The four
+    CheckConstraints below encode exactly the three rows above and nothing
+    else — see each constraint's name for which invariant it is.
 
     `data_range_start`/`data_range_end` may be null only for `source ==
     "imported"` rows (see `ck_verdict_data_range_required_unless_imported`),
@@ -252,8 +267,22 @@ class Verdict(Base):
     __tablename__ = "verdict"
     __table_args__ = (
         CheckConstraint(
-            "(value IS NULL AND passed IS NULL) OR (value IS NOT NULL AND passed IS NOT NULL)",
-            name="ck_verdict_value_passed_together",
+            "passed IS NULL OR "
+            "(value IS NOT NULL AND comparator IS NOT NULL AND threshold IS NOT NULL)",
+            name="ck_verdict_decision_requires_value_comparator_threshold",
+        ),
+        CheckConstraint(
+            "(comparator IS NULL AND threshold IS NULL) "
+            "OR (comparator IS NOT NULL AND threshold IS NOT NULL)",
+            name="ck_verdict_comparator_threshold_together",
+        ),
+        CheckConstraint(
+            "comparator IS NOT NULL OR source = 'imported'",
+            name="ck_verdict_measurement_requires_imported",
+        ),
+        CheckConstraint(
+            "value IS NOT NULL OR passed IS NULL",
+            name="ck_verdict_unevaluated_metric_has_no_decision",
         ),
         CheckConstraint(
             "(data_range_start IS NOT NULL AND data_range_end IS NOT NULL) "
@@ -273,8 +302,8 @@ class Verdict(Base):
     rules_version: Mapped[str] = mapped_column(String, nullable=False, index=True)
     metric: Mapped[str] = mapped_column(String, nullable=False)
     value: Mapped[float | None] = mapped_column(Float, nullable=True)
-    comparator: Mapped[str] = mapped_column(String, nullable=False)
-    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    comparator: Mapped[str | None] = mapped_column(String, nullable=True)
+    threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
     passed: Mapped[bool | None] = mapped_column(nullable=True, index=True)
     data_range_start: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_range_end: Mapped[date | None] = mapped_column(Date, nullable=True)
