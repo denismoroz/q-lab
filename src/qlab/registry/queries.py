@@ -17,7 +17,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from qlab.registry.models import Idea, Verdict
-from qlab.rules import RuleSet, is_near
+from qlab.rules import NearnessVerdict, RuleSet, classify_nearness, nearness
 
 
 def _enum_value(x: object) -> str:
@@ -98,39 +98,68 @@ class NearMiss:
     margin_used: float
 
 
+@dataclass(slots=True)
+class UndefinedNearness:
+    """A FAILED verdict whose closeness to its threshold cannot be judged.
+
+    In practice this is almost always `threshold == 0` (the single most
+    common rule in the graveyard, "net edge positive") with no
+    `near_margin_abs` configured on the rule: relative nearness — "value is
+    within X% of the threshold" — is meaningless when the threshold itself
+    is zero (a Sharpe of -0.22 is *not* "almost 0", not by any sane
+    definition), and no rule has an absolute margin defined yet because
+    that number isn't in any source document and must not be invented
+    (see `qlab.rules.nearness.classify_nearness`). `raw_distance` —
+    `|value - threshold|`, in the metric's own units — is included so a
+    human can still judge it by eye instead of q-lab making up an opinion.
+    """
+
+    idea: Idea
+    verdict: Verdict
+    raw_distance: float
+
+
+@dataclass(slots=True)
+class NearThresholdReport:
+    near: list[NearMiss]
+    undefined_nearness: list[UndefinedNearness]
+
+
 def near_threshold(
     session: Session, margin: float, ruleset: RuleSet | None = None
-) -> list[NearMiss]:
-    """FAILED verdicts that came close to passing (`qlab.rules.nearness.is_near`).
+) -> NearThresholdReport:
+    """FAILED verdicts that came close to passing.
 
-    A verdict with a null `value` cannot be "near" anything — there is no
-    number to compare — so those are excluded up front by the SQL filter,
-    not by `is_near` (which would also return `False` for them, but
-    filtering in SQL avoids pulling rows that can never match).
+    Classifies every FAILED decision with `qlab.rules.nearness.classify_nearness`
+    into two groups instead of one boolean:
 
-    **Measurement** rows (docs/REGISTRY.md's third verdict kind: a value
-    with no `comparator`/`threshold` behind it, imported from graveyard
-    documents where a human decided rather than a formal rule) are
-    excluded for the same reason as a null value, not despite having one:
-    they have `passed IS NULL`, so the `passed.is_(False)` filter already
-    drops them, and the extra `threshold.isnot(None)` filter makes that
-    exclusion explicit rather than incidental. "Near" a threshold that was
-    never fixed is not a real number — reporting one would pass off an
-    invented near-miss as a genuine one, which docs/REGISTRY.md explicitly
-    warns against for the sibling case of an invented threshold.
+    - `.near` — genuinely close, in a well-defined sense (a real margin, in
+      the right units, was available to compare against).
+    - `.undefined_nearness` — closeness literally cannot be computed with
+      what's configured (typically: zero threshold, no `near_margin_abs`
+      on the rule). These are **not** "not near" — collapsing "clearly far"
+      and "we have no way to tell" into one bucket is exactly what
+      produced Sharpe -0.22 being reported as "almost passed" against a
+      threshold of 0.0 before this function used `classify_nearness`.
+      A verdict that *is* comfortably far from its threshold (genuine
+      `NOT_NEAR`) is silently dropped, same as before — it belongs in
+      neither list.
 
-    When a rule in `ruleset` declares its own `near_margin`, that value is
-    used for verdicts against that rule instead of `margin`
-    (docs/REGISTRY.md: `sharpe_floor` example). `ruleset` is optional
-    because a graveyard's older verdicts may reference `rule_id`s that no
-    longer exist in any ruleset at all (frab-legacy imports, or rules that
-    were later retired) — those simply fall back to `margin`.
+    Only FAILED **decisions** (docs/REGISTRY.md's first verdict kind) are
+    considered: `passed IS NOT FALSE` already excludes both "unknown" rows
+    (no `value`) and "measurement" rows (no `comparator`/`threshold`) —
+    there is no threshold to be near for either.
+
+    When the verdict's `rule_id` names a rule in `ruleset`, that rule's own
+    `near_margin`/`near_margin_abs` are used (a rule with no `near_margin`
+    set still falls back to `margin`, but its `near_margin_abs` — even if
+    null — is used as-is, since there is no argument-level fallback for the
+    absolute margin). When `rule_id` doesn't match any rule in `ruleset`
+    (an unrecognized or retired id, or `ruleset=None`), only the plain
+    `margin` argument applies, so a zero-threshold verdict in that case has
+    no `margin_abs` at all and lands in `undefined_nearness`.
     """
-    rule_margins: dict[str, float] = {}
-    if ruleset is not None:
-        for rule in ruleset.rules:
-            if rule.near_margin is not None:
-                rule_margins[rule.id] = rule.near_margin
+    rules_by_id = {rule.id: rule for rule in ruleset.rules} if ruleset is not None else {}
 
     failed = (
         session.query(Verdict)
@@ -143,19 +172,46 @@ def near_threshold(
         .all()
     )
     if not failed:
-        return []
+        return NearThresholdReport(near=[], undefined_nearness=[])
 
     ideas_by_id = _ideas_by_id(session, {verdict.idea_id for verdict in failed})
 
-    results: list[NearMiss] = []
+    near: list[NearMiss] = []
+    undefined: list[UndefinedNearness] = []
     for verdict in failed:
         idea = ideas_by_id.get(verdict.idea_id)
         if idea is None:
             continue
-        effective_margin = rule_margins.get(verdict.rule_id, margin)
-        if is_near(verdict.value, verdict.threshold, verdict.comparator, effective_margin):
-            results.append(NearMiss(idea=idea, verdict=verdict, margin_used=effective_margin))
-    return results
+
+        rule = rules_by_id.get(verdict.rule_id)
+        effective_margin = margin if rule is None or rule.near_margin is None else rule.near_margin
+        effective_margin_abs = rule.near_margin_abs if rule is not None else None
+
+        outcome = classify_nearness(
+            verdict.value,
+            verdict.threshold,
+            verdict.comparator,
+            margin=effective_margin,
+            margin_abs=effective_margin_abs,
+        )
+        if outcome is NearnessVerdict.NEAR:
+            near.append(NearMiss(idea=idea, verdict=verdict, margin_used=effective_margin))
+        elif outcome is NearnessVerdict.UNDEFINED:
+            undefined.append(
+                UndefinedNearness(
+                    idea=idea,
+                    verdict=verdict,
+                    raw_distance=abs(verdict.value - verdict.threshold),
+                )
+            )
+        # NearnessVerdict.NOT_NEAR: comfortably far, reported in neither list.
+
+    # Closest first in both lists: the top of an undefined-nearness list is
+    # where the owner looks to decide whether an absolute margin is worth
+    # setting, and a list sorted by idea name buries it.
+    near.sort(key=lambda m: nearness(m.verdict.value, m.verdict.threshold))
+    undefined.sort(key=lambda u: u.raw_distance)
+    return NearThresholdReport(near=near, undefined_nearness=undefined)
 
 
 # --------------------------------------------------------------------------
@@ -333,9 +389,11 @@ def funnel_stats(session: Session) -> FunnelStats:
 __all__ = [
     "FunnelStats",
     "NearMiss",
+    "NearThresholdReport",
     "RetiredRuleKill",
     "RevivalReport",
     "RipeIdea",
+    "UndefinedNearness",
     "UnknownDataRange",
     "funnel_stats",
     "killed_by_retired_rules",
