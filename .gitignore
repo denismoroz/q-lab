@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# data & artifacts
+data/*.db
+data/*.db-journal
+data/snapshots/
+!data/.gitkeep
+dossiers/*.md
+!dossiers/.gitkeep
+
+# web
+web/node_modules/
+web/dist/
+
+.DS_Store
+.env
