@@ -95,7 +95,21 @@ class Rule(BaseModel):
     comparator: Comparator
     threshold: float
     fatal: bool = False
-    near_margin: float | None = None
+    near_margin: float | None = Field(
+        default=None,
+        description=(
+            "Relative 'almost passed' margin, as a fraction of |threshold|. "
+            "Meaningless when threshold == 0 — use near_margin_abs instead."
+        ),
+    )
+    near_margin_abs: float | None = Field(
+        default=None,
+        description=(
+            "Absolute 'almost passed' margin, in the metric's own units. "
+            "Required (not derivable) when threshold == 0: see "
+            "qlab.rules.nearness.classify_nearness()."
+        ),
+    )
     rationale: str | None = None
 
     @field_validator("id", "metric")
@@ -105,11 +119,11 @@ class Rule(BaseModel):
             raise ValueError("must not be blank")
         return value
 
-    @field_validator("near_margin")
+    @field_validator("near_margin", "near_margin_abs")
     @classmethod
     def _margin_non_negative(cls, value: float | None) -> float | None:
         if value is not None and value < 0:
-            raise ValueError("near_margin must be >= 0")
+            raise ValueError("near margin must be >= 0")
         return value
 
 

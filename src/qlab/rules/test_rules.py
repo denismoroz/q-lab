@@ -9,7 +9,7 @@ import yaml
 
 from qlab.rules.engine import evaluate
 from qlab.rules.loader import DEFAULT_RULES_DIR, list_versions, load, load_latest
-from qlab.rules.nearness import is_near, nearness
+from qlab.rules.nearness import NearnessVerdict, classify_nearness, is_near, nearness
 from qlab.rules.schema import Comparator, Rule, RuleSet, Stage, parse_version
 
 # --------------------------------------------------------------------------
@@ -50,6 +50,21 @@ def test_comparator_is_strict_enum() -> None:
 def test_stage_is_strict_enum() -> None:
     with pytest.raises(ValueError):
         Rule(id="r", stage="not-a-stage", metric="x", comparator=">", threshold=0)
+
+
+def test_near_margin_abs_defaults_to_none() -> None:
+    rule = Rule(id="r", stage="edge", metric="x", comparator=">", threshold=0)
+    assert rule.near_margin_abs is None
+
+
+def test_near_margin_abs_rejects_negative() -> None:
+    with pytest.raises(ValueError):
+        Rule(id="r", stage="edge", metric="x", comparator=">", threshold=0, near_margin_abs=-0.1)
+
+
+def test_near_margin_abs_accepts_non_negative() -> None:
+    rule = Rule(id="r", stage="edge", metric="x", comparator=">", threshold=0, near_margin_abs=0.1)
+    assert rule.near_margin_abs == 0.1
 
 
 @pytest.mark.parametrize(
@@ -441,13 +456,67 @@ def test_nearness_threshold_zero_uses_absolute_difference() -> None:
     assert nearness(0.0, 0.0) == 0.0
 
 
-def test_is_near_true_for_close_failure() -> None:
+# --- classify_nearness(): the five branches -------------------------------
+
+
+def test_classify_nearness_undefined_for_none_value() -> None:
+    assert classify_nearness(None, 0.8, Comparator.GE, margin=1.0) is NearnessVerdict.UNDEFINED
+    # even with threshold == 0 and margin_abs given, a missing value is
+    # still undefined, not "not near"
+    assert classify_nearness(None, 0.0, Comparator.GT, margin_abs=0.1) is NearnessVerdict.UNDEFINED
+
+
+def test_classify_nearness_not_near_for_passing_value() -> None:
+    # value satisfies the comparator -> it's a pass, not a near-miss
+    assert classify_nearness(0.9, 0.8, Comparator.GE, margin=0.5) is NearnessVerdict.NOT_NEAR
+    assert classify_nearness(0.1, 0.0, Comparator.GT, margin_abs=0.01) is NearnessVerdict.NOT_NEAR
+
+
+def test_classify_nearness_relative_threshold_nonzero() -> None:
     # sharpe_net >= 0.8, value 0.79 is a failure close to the threshold
+    assert classify_nearness(0.79, 0.8, Comparator.GE, margin=0.05) is NearnessVerdict.NEAR
+    # value 0.1 is far below 0.8 -> outside a 5% relative margin
+    assert classify_nearness(0.1, 0.8, Comparator.GE, margin=0.05) is NearnessVerdict.NOT_NEAR
+
+
+def test_classify_nearness_threshold_zero_with_margin_abs() -> None:
+    # comparator ">" 0.0, value slightly negative (a failure) and close to 0
+    assert classify_nearness(-0.001, 0.0, Comparator.GT, margin_abs=0.01) is NearnessVerdict.NEAR
+    assert classify_nearness(-1.0, 0.0, Comparator.GT, margin_abs=0.01) is NearnessVerdict.NOT_NEAR
+
+
+def test_classify_nearness_threshold_zero_without_margin_abs_is_undefined() -> None:
+    # This is the regression the incident report describes: sharpe_net
+    # -0.22 against threshold 0.0 must NOT come back "near" just because a
+    # *relative* margin happens to be set — a relative margin is
+    # meaningless at threshold == 0, and no margin_abs was supplied.
+    result = classify_nearness(-0.22, 0.0, Comparator.GT, margin=0.25)
+    assert result is NearnessVerdict.UNDEFINED
+    assert result is not NearnessVerdict.NOT_NEAR  # "undefined" != "definitely not near"
+
+    # a real annual-return-losing candidate from the incident report
+    result_fx = classify_nearness(-0.14, 0.0, Comparator.GT, margin=0.25)
+    assert result_fx is NearnessVerdict.UNDEFINED
+
+
+def test_classify_nearness_relative_without_margin_is_undefined() -> None:
+    # threshold != 0 but no relative margin supplied -> nothing to compare
+    # against, same "don't guess" principle as the threshold == 0 case
+    assert classify_nearness(0.79, 0.8, Comparator.GE) is NearnessVerdict.UNDEFINED
+
+
+def test_classify_nearness_accepts_comparator_as_string() -> None:
+    assert classify_nearness(0.79, 0.8, ">=", margin=0.05) is NearnessVerdict.NEAR
+
+
+# --- is_near(): thin wrapper over classify_nearness() ----------------------
+
+
+def test_is_near_true_only_for_near_verdict() -> None:
     assert is_near(0.79, 0.8, Comparator.GE, margin=0.05) is True
 
 
 def test_is_near_false_for_passing_value() -> None:
-    # value satisfies the comparator -> not a "near miss", it's a pass
     assert is_near(0.9, 0.8, Comparator.GE, margin=0.5) is False
 
 
@@ -459,14 +528,12 @@ def test_is_near_false_for_none_value() -> None:
     assert is_near(None, 0.8, Comparator.GE, margin=1.0) is False
 
 
-def test_is_near_accepts_comparator_as_string() -> None:
-    assert is_near(0.79, 0.8, ">=", margin=0.05) is True
-
-
-def test_is_near_threshold_zero() -> None:
-    # comparator ">" 0.0, value slightly negative (a failure) and close to 0
-    assert is_near(-0.001, 0.0, Comparator.GT, margin=0.01) is True
-    assert is_near(-1.0, 0.0, Comparator.GT, margin=0.01) is False
+def test_is_near_collapses_undefined_to_false() -> None:
+    # This is exactly the pitfall the docstring warns about: is_near()
+    # cannot distinguish "definitely not near" from "undefined because no
+    # margin_abs was configured for a threshold == 0 rule". Both are False.
+    assert is_near(-0.22, 0.0, Comparator.GT, margin=0.25) is False
+    assert classify_nearness(-0.22, 0.0, Comparator.GT, margin=0.25) is NearnessVerdict.UNDEFINED
 
 
 # --------------------------------------------------------------------------

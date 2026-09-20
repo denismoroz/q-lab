@@ -129,6 +129,16 @@ rules:
     comparator: ">"
     threshold: 0.0
     fatal: true
+    # No `near_margin_abs` here, deliberately. threshold == 0.0, so a
+    # relative "almost passed" margin is meaningless (see
+    # qlab.rules.nearness.classify_nearness()) and only an absolute one, in
+    # ann_return_net's own units, could answer "almost profitable". This is
+    # the single most common failure in the graveyard (28 verdicts), so
+    # guessing that number would shape the near-threshold query's output
+    # for most of the dataset. SCREENING.md gives no such figure, and one
+    # was not invented here — classify_nearness() will honestly return
+    # UNDEFINED for this rule until the book owner picks what "almost
+    # profitable" means in annual-return terms.
     rationale: >
       SCREENING.md §1: «Отсекает: нет gross-эджа, эдж съеден костами, эдж
       исчез на честном универсе». ann_return_net is expected to already
