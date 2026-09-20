@@ -86,7 +86,13 @@ class IdeaStatus(enum.StrEnum):
     VALIDATED = "validated"
     BENCH = "bench"
     LIVE = "live"
+    # Terminal states, and the difference between them is the point: REJECTED
+    # never traded, DECAYED did and stopped working, RETIRED was withdrawn for
+    # a reason other than decay (superseded, venue gone, owner's choice).
+    # Only DECAYED carries a survival time, which is what answers "how long
+    # does a working strategy last" — the other half of the ceiling question.
     REJECTED = "rejected"
+    DECAYED = "decayed"
     RETIRED = "retired"
 
 
