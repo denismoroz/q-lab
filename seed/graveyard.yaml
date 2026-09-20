@@ -1,0 +1,1643 @@
+# Кладбище стратегий funding-rate-arbitrage, извлечённое в структурный формат.
+#
+# Источники — /Users/d/prj/funding-rate-arbitrage/research/*.md (только чтение).
+# Все числа снабжены source_quote — точной цитатой из документа. Если число не
+# найдено в документах, соответствующее поле оставлено null (см. EXTRACTION_NOTES.md
+# по всем случаям, где это произошло, и по всем противоречиям между документами).
+#
+# Многие driver.description/kill_condition сформулированы НЕ дословной цитатой, а
+# выведены агентом из описанного в документах механизма — это отмечено в notes
+# соответствующих idea записей формулировкой "выведено", а не "процитировано".
+
+drivers:
+  - id: perp-funding-premium
+    title: "Премия funding, которую платят лонги со плечом"
+    description: >-
+      На перп-биржах (HL и конкурентах) funding rate держит цену перпа у спота:
+      когда лонги с плечом преобладают над шортами, они платят funding шортам.
+      Стратегия занимает противоположную либо захеджированную по цене сторону и
+      собирает эту выплату. Питает FRAB (spot против перп-шорта), кросс-биржевой
+      funding-спред (шорт там, где funding выше) и кросс-секционный crypto-carry
+      (ранжирование монет по funding). Выведено агентом из описания механизма в
+      SCREENING.md и cross_exchange/PLAN.md, не дословная цитата.
+    kill_condition: >-
+      Устойчивое схлопывание перекоса funding в ноль на целевой площадке —
+      переход рынка к преобладанию шортов или к дешёвому институциональному
+      арбитражу, который сводит funding к издержкам хранения.
+    observable: >-
+      Средний/медианный funding rate по перпам HL (и конкурентов) на скользящем
+      окне 30-90 дней; доля времени funding>0; funding history API HL/Binance/Bybit.
+
+  - id: cross-sectional-momentum
+    title: "Кросс-секционный ценовой моментум крипто-перпов"
+    description: >-
+      Монеты, выросшие относительно рынка за последние недели, в среднем
+      продолжают обгонять упавшие ещё несколько недель — поведенческий эффект
+      недоинвестирования в тренд плюс каскады ликвидаций. Long верхней трети /
+      short нижней трети по z-score моментума собирает этот дрейф. Питает XSMOM.
+      Выведено агентом из cross_sectional/PLAN.md и CRITICAL_REVIEW.md.
+    kill_condition: >-
+      Устойчивый переход рынка к отрицательной автокорреляции недельных
+      доходностей, либо переполненность сделки (funding на лонг-ноге
+      систематически съедает премию — на живой книге XSMOM задокументирован
+      funding-драг −4.65%/год), либо арбитраж тем же сигналом со стороны рынка.
+    observable: >-
+      Rolling 52-week Sharpe long-top-tercile-minus-short-bottom-tercile книги
+      на HL-перпах; funding, платимый лонг-ногой (weekly_attrib.py).
+
+  - id: trend-following-premium
+    title: "Временной тренд (TSMOM) на направленных активах"
+    description: >-
+      Актив, росший или падавший последние 1-4 месяца, с большей вероятностью
+      продолжит движение в том же направлении ближайшие недели — премия managed
+      futures. Позиция направленная (long при росте, short/flat при падении), не
+      dollar-neutral, несёт выпуклость/crisis-alpha. Питает trend TSMOM (крипто),
+      trend на индексах+золоте, trend на FX, и частично — трендовый тайминг входа
+      в Strategy B. Выведено агентом из trend_following/PLAN.md.
+    kill_condition: >-
+      Структурный переход рынка в диапазонный/пилообразный режим на всех
+      горизонтах разом — уже произошло на FX и индексах/золоте после 2011 года
+      ("смерть трендового следования": Sharpe второй половины выборки упал с
+      +0.67 до +0.07), либо арбитраж тем же сигналом со стороны систематических
+      трендовых фондов.
+    observable: >-
+      Sharpe ансамбля TSMOM (lookback 30/60/90/120) на скользящем 2-3-летнем
+      окне по целевому классу активов; доля прибыльных лет; net-exposure книги.
+
+  - id: crypto-spot-risk-premium
+    title: "Долгосрочная премия за риск от держания крипто-спота, снимаемая трендовым таймингом"
+    description: >-
+      Крупные криптоактивы (BTC/ETH/SOL/AVAX) долгосрочно дорожают быстрее
+      безрискового актива — компенсация за волатильность и технологический риск.
+      Strategy B держит эту премию в споте, но временно снимает экспозицию
+      (шорт-перп хедж) на нисходящем 14/30-дневном моментуме, чтобы сохранить
+      капитал в падении ценой части роста в быке. Выведено агентом из описания
+      механизма в GRAVEYARD_REVIEW_2026_09.md ("держи и страхуй").
+    kill_condition: >-
+      Долгосрочный рост крупных криптоактивов прекращается (класс активов
+      входит в структурную стагнацию) — тогда хеджу нечего сохранять. Проверено
+      эмпирически: то же правило B на FX (где у валютной пары нет долгосрочного
+      роста) даёт −1.5%/год с 2011 года — "половина от нуля — ноль минус комиссии".
+    observable: >-
+      Долгосрочный CAGR BTC/ETH/SOL/AVAX спот; доля времени в хедже; funding
+      cost хеджа (per-coin funding rate шорта).
+
+  - id: fx-rate-carry
+    title: "Кэрри по разнице процентных ставок на FX"
+    description: >-
+      Валюты с более высокой ставкой центробанка в среднем не дешевеют
+      настолько, чтобы по паритету процентных ставок компенсировать разницу —
+      долгая позиция в высокодоходных / короткая в низкодоходных валютах
+      собирает эту разницу (нарушение непокрытого процентного паритета).
+      Выведено агентом из fx_carry/REPORT.md.
+    kill_condition: >-
+      Схлопывание межстрановых спредов ставок (синхронизация мировой
+      монетарной политики), либо рост наценки посредника (своп/спред) выше
+      самой разницы ставок — что уже наблюдается у розничных FX-брокеров.
+    observable: >-
+      3-месячные межбанковские ставки G10/EM (FRED/OECD) минус ставка США;
+      своп-пункты форварда против спота у конкретного брокера.
+
+  - id: token-unlock-selling-pressure
+    title: "Механическое давление продаж от плановых анлоков токенов"
+    description: >-
+      Крупная плановая разблокировка токенов инвесторам/команде создаёт
+      известную заранее продажу; рынок закладывает её в цену лишь частично —
+      захеджированная по рынку короткая позиция в окне перед анлоком собирает
+      недоучтённую часть движения. Формулировка близка к token_unlock/README.md
+      ("Thesis").
+    kill_condition: >-
+      Рынок начинает полностью закладывать анлок в цену заранее (сигнал
+      становится consensus trade и арбитражируется до нуля), либо эмитенты
+      массово переходят на линейный вестинг без резких клифов.
+    observable: >-
+      Event-study CAR в окне [-10,-1] день перед крупными (≥1% supply)
+      анлоками; DeFiLlama emissions API (`defillama-datasets.llama.fi/emissions/{slug}`).
+
+  - id: onchain-protocol-revenue-growth
+    title: "Рост реальных комиссий/доходов протокола"
+    description: >-
+      Токены протоколов с ускоряющимся ростом собираемых он-чейн комиссий
+      (реальная экономическая активность) должны переоцениваться относительно
+      токенов с падающими комиссиями — фундаментальный, не ценовой сигнал.
+      Близко к формулировке onchain_fundamental/FINDINGS.md ("Hypothesis").
+    kill_condition: >-
+      Сигнал перестаёт быть отделим от цены/моментума (корреляция с
+      cross-sectional momentum вырастает выше ~0.3), либо данные о комиссиях
+      становятся ненадёжными (DefiLlama задним числом пересчитывает историю).
+    observable: >-
+      DefiLlama daily fees по протоколам/сетям, рост за 30/60/90 дней,
+      z-score внутри группы (DeFi-приложения vs L1-газ).
+
+  - id: sector-pair-cointegration
+    title: "Коинтеграция цен монет одного сектора (гипотеза, эмпирически не подтвердилась)"
+    description: >-
+      Гипотеза: две монеты одного сектора (L1, DeFi, LST) связаны общими
+      фундаментальными факторами сверх рыночной беты, поэтому отклонение
+      спреда их цен от нормы должно возвращаться — pairs-trade механизм из
+      equities/FX, перенесённый на крипту. Выведено агентом из
+      pairs_cointegration/PLAN.md.
+    kill_condition: >-
+      Уже наступило по факту: на дневном горизонте, после нейтрализации общей
+      BTC-беты, спред не возвращается, а продолжает расходиться (устойчивый
+      слабый анти-сигнал, equal-weight book gross Sharpe ≈ −0.17). Драйвер
+      эмпирически отсутствует в данных 2023-2026 на обеих проверенных осях
+      (крипто-сектора и FX G10).
+    observable: >-
+      ADF/Engle-Granger p-value стационарности BTC-нейтрального (или
+      USD-нейтрального для FX) спреда пары на скользящем окне; half-life
+      реверсии; доля пар с положительным Sharpe.
+
+  - id: price-mean-reversion-daily
+    title: "Возврат цены монеты к своей скользящей средней (гипотеза, эмпирически не подтвердилась)"
+    description: >-
+      Гипотеза: монета, отклонившаяся от собственной скользящей средней
+      (перекуплена/перепродана), должна скорректироваться обратно в течение
+      нескольких дней — классический contrarian time-series механизм. Выведено
+      агентом из cross_sectional/crypto/CRITICAL_REVIEW.md, раздел G.
+    kill_condition: >-
+      Уже наступило по факту: на дневном горизонте крипто-цена не revert, а
+      трендит — gross Sharpe отрицателен на всех окнах {3,5,10,20,40} дней ДО
+      костов. Возможно жив на внутридневном масштабе — не тестировался, нужны
+      sub-daily данные и maker-исполнение.
+    observable: >-
+      Автокорреляция дневных доходностей монеты; z-score отклонения от rolling MA.
+
+  - id: short-term-overreaction
+    title: "Разворот после краткосрочного overreaction (гипотеза, эмпирически не подтвердилась)"
+    description: >-
+      Гипотеза: резкое относительное движение цены монеты за несколько дней
+      или месяцев — overreaction, которое корректируется в последующие дни
+      (short-/long-term reversal factor из equities). Выведено агентом из
+      структуры факторов в cross_sectional/crypto (signals.reversal,
+      value_signals.long_term_reversal).
+    kill_condition: >-
+      Уже наступило по факту: в крипте на горизонтах 7 и 120 дней доминирует
+      momentum, а не reversal — стратегия устойчиво убыточна (Sharpe от −0.58
+      до −0.95 после честного пересчёта на point-in-time универсе); умершие
+      монеты — это и есть "дешёвые", что усиливает минус, а не создаёт эдж.
+    observable: >-
+      Кросс-секционный Sharpe стратегии long-losers/short-winners за 7 либо
+      120 дней, дневной/недельный ребаланс.
+
+  - id: crypto-value-contrarian
+    title: "Дешевизна относительно недавнего максимума/средней (гипотеза, эмпирически не подтвердилась)"
+    description: >-
+      Гипотеза: монеты, сильно просевшие от своего максимума (дёшевы
+      относительно собственной истории), должны опережать доходность дорогих
+      монет — перенос equity value-фактора на крипту. Выведено агентом из
+      cross_sectional/crypto/CRITICAL_REVIEW.md, раздел F.
+    kill_condition: >-
+      Уже наступило по факту: "дёшево" в крипте оказалось прокси на
+      умирающие/делистнутые монеты, а не на недооценку (на честном
+      point-in-time универсе фактор становится ещё отрицательнее). Фактор к
+      тому же антикоррелирован с моментумом (−0.36…−0.84) — это перевёрнутый
+      моментум, а не независимая премия.
+    observable: >-
+      Просадка монеты от 90/180-дневного максимума; дистанция от MA100;
+      кросс-секционный z-score.
+
+ideas:
+  # ---------------------------------------------------------------------
+  - id: cross-exchange-spread
+    title: "Кросс-биржевой funding-спред (HL против Binance/Bybit)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Шорт перпа на бирже с высоким funding, лонг на бирже с низким — собираешь
+      разницу funding при захеджированной цене; committed-конфиг (trailing
+      direction lb90/rb21) заявлен NET +9.26%/год, DSR(N=18)=1.0, PBO 0.21,
+      OOS-знак 100% сегментов положительны.
+    asset_class: crypto-perp
+    driver_id: perp-funding-premium
+    profile: carry
+    status: rejected
+    notes: >-
+      Первично отсеян неверным критерием (декорреляция с FRAB) — SCREENING.md
+      относит его к "перепрогнать". Пересчитан на свежих данных в
+      GRAVEYARD_REVIEW_2026_09.md: доход выдохся с +18.2%/год (2023) до
+      +3.0%/год (май-сентябрь 2026); на капитал с учётом маржи на двух биржах
+      ~3.1-5.0%, вдвое ниже FRAB (~10% за тот же сезон). Корреляция +0.86 с
+      FRAB-прокси означает, что это переэкспрессия того же funding-источника,
+      а не диверсификатор — решающий довод отказа. Оставлен как
+      validated-но-отвергнутый: пересмотреть, если funding на HL снова
+      разогреется. rule_id=decorrelation_required проставлен на отдельном
+      вердикте (тот же corr_to_frab_proxy=0.86), потому что
+      GRAVEYARD_REVIEW_2026_09.md прямым текстом указывает эту корреляцию как
+      "на чём стоял отказ" в исходном (до 2026-09-12) вердикте — это и есть
+      причина, по которой владелец лично воскресил идею после отмены правила.
+    verdicts:
+      - stage: edge
+        metric: ann_return_net
+        value: 0.0926
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-16
+        rule_id: net_edge_positive
+        source_file: research/cross_exchange/FINDINGS.md
+        source_quote: "**Trailing-direction lb90/rb21 → NET +9.26%/год, turnover 62/год** (vs 1170)."
+      - stage: correlation
+        metric: corr_to_frab_proxy
+        value: 0.86
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-16
+        rule_id: null
+        source_file: research/cross_exchange/FINDINGS.md
+        source_quote: "**SPREAD ⟂ FRAB-proxy (HL carry) = +0.86** — высоко коррелирован."
+      - stage: correlation
+        metric: corr_to_frab_proxy
+        value: 0.86
+        comparator: "<"
+        threshold: 0.30
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: decorrelation_required
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| **cross-exchange spread** | корреляция +0.86 с FRAB | **пересчитан, см. ниже** |"
+      - stage: edge
+        metric: ann_return_net
+        value: 0.03
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "**май–сентябрь 2026, свежие данные с бирж** | **+3.0%** (плюсовых дней 84%)"
+      - stage: capacity
+        metric: ann_return_on_capital
+        value: 0.031
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| все 9 монет, честно | 3.8% | 1.20 | **3.1%** |"
+      - stage: edge
+        metric: pbo
+        value: 0.21
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/SCREENING.md
+        source_quote: "cross-exchange spread | +9.26%/год net, PBO 0.21, OOS-знак 100%"
+
+  # ---------------------------------------------------------------------
+  - id: trend-tsmom-crypto
+    title: "Трендовое следование (TSMOM-ансамбль) на крипто-перпах"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Направленный тренд по каждой монете (лонг при росте, шорт при падении
+      на 30-120-дневном горизонте), размер под волатильность. Изначально
+      DSR(N=1)=0.89, pooled-OOS median Sharpe +0.94, 84% сегментов положительны.
+    asset_class: crypto-perp
+    driver_id: trend-following-premium
+    profile: momentum
+    status: bench
+    notes: >-
+      Прошёл несколько раундов пересмотра. 2026-06 (trend_following/FINDINGS.md):
+      standalone маргинален (DSR 0.81 WARN, PBO 0.63 — высокий риск переподбора),
+      коррелирован с XSMOM +0.40 — решение "не строить live". 2026-09-12/13
+      (GRAVEYARD_REVIEW): реабилитирован из кладбища — отказ стоял на неверном
+      критерии (корреляция с XSMOM), пересчитан с реальными костами HL: полная
+      книга Sharpe 0.77, но нужен капитал ~$2200; версия на 10 мажорах
+      помещается в ~$410, но по форме не лучше XSMOM. 2026-09-14
+      (long_history.py, 6.7 лет вместо 3): PBO упал до 0.209 (было 0.63),
+      впервые виден медведь 2022 (+4.6%), ортогонален и к B v2 (corr −0.004), и
+      к carry-прокси FRAB (+0.097) — первая настоящая ортогональность. По
+      заранее заданному 4-пунктовому правилу (2026-09-14) — NO-GO по одному
+      пункту из четырёх (DSR 0.767 < 0.90), но рекомендован как "лучший
+      кандидат на бумажный тест". Статус bench отражает именно это последнее,
+      самое свежее решение, а не более ранние "не строить live". ВАЖНО: Sharpe
+      0.77 (пересчёт GRAVEYARD_REVIEW, 2026-09-13) сам по себе — измеренное
+      число БЕЗ формализованного порога в источнике (решение "не лучше
+      XSMOM" принимал человек, а не правило); записано ниже как измерение
+      (`comparator/threshold/passed = null`), а не как решение —
+      придуманного порога 0.8 для sharpe_net ни в одном документе нет.
+      Формальные пороги ЕСТЬ: в заранее зарегистрированной 4-пунктовой
+      таблице от 2026-09-14 (используется ниже с decided_at 2026-09-14), в
+      первом DSR-тесте от 2026-06 (">0.95", дословно в тексте), и в ДВУХ
+      исходных, ныне отменённых правилах (`rules/2026-09-20.1.yaml`,
+      секция `retired`) — именно ЭТИ два вердикта (corr_to_xsmom=0.40 и
+      pbo=0.63, оба decided_at 2026-09-12) были причиной первоначального
+      отказа: GRAVEYARD_REVIEW_2026_09.md прямо перечисляет их в столбце "на
+      чём стоял отказ" одной строкой ("корреляция +0.40 с XSMOM; PBO 0.63
+      (пустое число)"), и именно на этом основании владелец лично воскресил
+      идею после того, как оба правила (`decorrelation_required`,
+      `pbo_threshold_on_homogeneous_menu`) были отменены 2026-09-12. Меню
+      trend TSMOM было однородным (8 вариантов TSMOM/Donchian одной идеи,
+      "Меню коррелировано" — trend_following/FINDINGS.md), поэтому PBO-гейт
+      применялся именно к тому случаю, для которого он и был отменён.
+    verdicts:
+      - stage: edge
+        metric: dsr
+        value: 0.81
+        comparator: ">"
+        threshold: 0.95
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-16
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "DSR(committed, N=8 меню) = **0.81** → WARN (не PASS >0.95)."
+      - stage: correlation
+        metric: corr_to_xsmom
+        value: 0.40
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-16
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "**Pearson +0.40**, Spearman +0.39."
+      - stage: correlation
+        metric: corr_to_xsmom
+        value: 0.40
+        comparator: "<"
+        threshold: 0.30
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: decorrelation_required
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| **trend TSMOM** | корреляция +0.40 с XSMOM; PBO 0.63 (пустое число) | **пересчитан, см. ниже** |"
+      - stage: edge
+        metric: pbo
+        value: 0.63
+        comparator: "<"
+        threshold: 0.20
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: pbo_threshold_on_homogeneous_menu
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| **trend TSMOM** | корреляция +0.40 с XSMOM; PBO 0.63 (пустое число) | **пересчитан, см. ниже** |"
+      - stage: edge
+        metric: sharpe_net
+        value: 0.77
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| полная книга (46 позиций) | **0.77** | +15.5% | −23% | −0.06 |"
+      - stage: capacity
+        metric: min_capital_usd
+        value: 2200
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "Чтобы самая мелкая нога была не меньше $12, нужно **около $2 200** капитала."
+      - stage: edge
+        metric: sharpe_net
+        value: 0.56
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| весь период | +0.56 | +13.2%/год | 42% |"
+      - stage: edge
+        metric: sharpe_net_unseen_window_2020_2023
+        value: 0.49
+        comparator: ">="
+        threshold: 0.4
+        passed: true
+        data_range_start: 2020-01-01
+        data_range_end: 2023-06-01
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| невиданное окно 2020–2023 | Шарп ≥ 0.4, доход > 0 при 8.5 б.п. | 0.49, +9.2%/год | ✅ |"
+      - stage: edge
+        metric: ann_return_net_unseen_window_2020_2023
+        value: 0.092
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2020-01-01
+        data_range_end: 2023-06-01
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| невиданное окно 2020–2023 | Шарп ≥ 0.4, доход > 0 при 8.5 б.п. | 0.49, +9.2%/год | ✅ |"
+      - stage: edge
+        metric: ann_return_net_bear_2022
+        value: 0.046
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2022-01-01
+        data_range_end: 2022-12-31
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| медведь 2022 | доход > 0 | +4.6% | ✅ |"
+      - stage: correlation
+        metric: corr_to_strategy_b
+        value: -0.004
+        comparator: "<="
+        threshold: 0.30
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| корреляция с B и carry | ≤ 0.3 | −0.00 и +0.10 | ✅ |"
+      - stage: correlation
+        metric: corr_to_frab_proxy
+        value: 0.10
+        comparator: "<="
+        threshold: 0.30
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| корреляция с B и carry | ≤ 0.3 | −0.00 и +0.10 | ✅ |"
+      - stage: edge
+        metric: dsr
+        value: 0.767
+        comparator: ">="
+        threshold: 0.90
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| DSR ≥ 0.90 и PBO ≤ 0.5 | | DSR 0.767, PBO 0.209 | ❌ |"
+      - stage: edge
+        metric: pbo
+        value: 0.209
+        comparator: "<="
+        threshold: 0.50
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| DSR ≥ 0.90 и PBO ≤ 0.5 | | DSR 0.767, PBO 0.209 | ❌ |"
+
+  # ---------------------------------------------------------------------
+  - id: strategy-b-v2
+    title: "Strategy B v2 — держи спот, страхуй трендовым хеджем (версия для HL)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Спот BTC/ETH/SOL/AVAX + шорт-перп хедж при отрицательном 14- или
+      30-дневном моментуме; carry на простаивающем кэше; липкий выход 12ч.
+    asset_class: crypto-spot
+    driver_id: crypto-spot-risk-premium
+    profile: other
+    status: bench
+    notes: >-
+      Пересмотр 2026-09-12/13 в GRAVEYARD_REVIEW: прежний вердикт "не проходит
+      проверку вперёд: 6%/год" был в основном ошибкой сравнения — B держит лишь
+      половину капитала в споте, а сравнивали с полным холдингом; против
+      честного ориентира "50% спот + 50% кэш без хеджа" даёт +23.5 п.п. за весь
+      период. B v2 (strategy_b_v2/REPORT.md, 2026-09-13) — версия под HL,
+      прошла все заранее заданные проверки (доходность>0, DD≤15%, лучше
+      нынешней, 7 из 7 сдвигов старта). LIMITS.md (2026-09-14): честная маржа
+      срезает ~1/5 дохода; долгий бэктест 2020-2026 показывает медиану
+      скользящего года +25-30%, но последние 12 месяцев — худший период за 6
+      лет (медиана +6%, минимум −12%). Статус bench: это бумажный тест
+      (src/frab/strategy/b2), не боевые деньги — "первая настоящая проверка
+      исполнения — через 2 недели" по состоянию на 2026-09-14.
+    verdicts:
+      - stage: edge
+        metric: ann_return_net
+        value: 0.428
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2023-06-01
+        data_range_end: 2025-05-31
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/strategy_b_v2/REPORT.md
+        source_quote: "| **B v2** | **+42.8%/год, DD 7.2%** | **+2.0%, DD 6.3%** | **+5.7%, DD 3.0%** |"
+      - stage: tail
+        metric: max_dd
+        value: -0.072
+        comparator: ">="
+        threshold: -0.15
+        passed: true
+        data_range_start: 2023-06-01
+        data_range_end: 2025-05-31
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/strategy_b_v2/REPORT.md
+        source_quote: "| **B v2** | **+42.8%/год, DD 7.2%** | **+2.0%, DD 6.3%** | **+5.7%, DD 3.0%** |"
+      - stage: edge
+        metric: ann_return_net
+        value: 0.057
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2026-06-01
+        data_range_end: 2026-09-13
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/strategy_b_v2/REPORT.md
+        source_quote: "HL перп-свечи + funding (2026-06-01 — 09-13), в подборе не участвовали."
+      - stage: edge
+        metric: forward_test_pass_count_of_7
+        value: 7
+        comparator: ">="
+        threshold: 6
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/strategy_b_v2/REPORT.md
+        source_quote: "лучше на ≥ 6 из 7 сдвигов старта (получилось 7 из 7) — **все пройдены.**"
+      - stage: edge
+        metric: ann_return_net
+        value: 0.15
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2022-01-01
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/strategy_b_v2/LIMITS.md
+        source_quote: "| BTC+ETH | 4% | +22% | **+15%/год, просадка 12%** | +3%/год, просадка 70% |"
+      - stage: tail
+        metric: worst_rolling_12m_return
+        value: -0.124
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/strategy_b_v2/LIMITS.md
+        source_quote: "4 монеты −0.7%, +0.5%, −12.4%, −1.6%; BTC+ETH +6%, +7%, −9%, −3%."
+
+  # ---------------------------------------------------------------------
+  - id: pairs-cointegration-crypto
+    title: "Пары / коинтеграция — крипто-сектора (BTC-нейтральные остатки)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Гипотеза: mean-reversion спреда коинтегрированных пар одного сектора
+      (L1/DeFi/LST) даёт OOS-эдж с DSR>0.95, PBO<0.2, |corr|<0.3 к BTC/FRAB/XSMOM.
+    asset_class: crypto-perp
+    driver_id: sector-pair-cointegration
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      NO-GO. 32 пары по секторам, dollar-neutral, perp-TAKER 4.4bps + held
+      funding. Причина отказа — не "нет эджа", а эдж ОТРИЦАТЕЛЬНЫЙ: спреды в
+      крипте трендят, а не возвращаются к среднему. Зеркальный
+      momentum-вариант на том же спреде показал положительный ортогональный
+      сигнал (DSR 0.68 для варианта "oneb"), но остался NO-GO — величина
+      сильно зависит от невалидированной exit-логики (README.md, раздел
+      "Зеркало").
+    verdicts:
+      - stage: edge
+        metric: dsr
+        value: 0.107
+        comparator: ">"
+        threshold: 0.95
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "| DSR | **0.107** | >0.95 | ❌ |"
+      - stage: edge
+        metric: oos_median_sharpe
+        value: -0.71
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: net_edge_positive
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "| OOS медиана Sharpe | **−0.71** (IQR [−4.54, 3.09]) | >0 | ❌ |"
+      - stage: correlation
+        metric: corr_to_xsmom
+        value: 0.026
+        comparator: "<"
+        threshold: 0.30
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "| corr → XSMOM momentum | +0.026 | <0.30 | ✅ |"
+      - stage: edge
+        metric: book_pnl_531d
+        value: -57.48
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: net_edge_positive
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "Книга за 531 день: PnL ≈ **−57.5** (с поправленным знаком funding)."
+
+  # ---------------------------------------------------------------------
+  - id: pairs-cointegration-fx
+    title: "Пары / коинтеграция — FX G10 (fallback-проверка гипотезы)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Та же гипотеза на 36 парах G10-валют (все C(9,2)), USD-нейтрализация
+      остатков вместо BTC-нейтрализации, held-carry = разница ставок.
+    asset_class: fx
+    driver_id: sector-pair-cointegration
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      Fallback-проверка после провала крипто-версии (см. pairs-cointegration-crypto).
+      Тот же паттерн — симметрично вокруг слегка отрицательного, доля
+      выигрышных сегментов ≈ монетка (41%). PBO формально прошёл (0.018), но
+      это перенос ОТРИЦАТЕЛЬНОГО эджа, вердикта не меняет.
+    verdicts:
+      - stage: edge
+        metric: dsr
+        value: 0.342
+        comparator: ">"
+        threshold: 0.95
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "| DSR | **0.342** | >0.95 | ❌ |"
+      - stage: edge
+        metric: oos_median_sharpe
+        value: -0.625
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: net_edge_positive
+        source_file: research/pairs_cointegration/README.md
+        source_quote: "| OOS медиана Sharpe | **−0.625** (IQR [−2.64, 1.70]) | >0 | ❌ |"
+
+  # ---------------------------------------------------------------------
+  - id: reversal-short-7d
+    title: "Кросс-секционный краткосрочный разворот (7 дней)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Long монеты, упавшие за 7 дней / short выросшие — ставка на короткий
+      overreaction.
+    asset_class: crypto-perp
+    driver_id: short-term-overreaction
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      Первый вердикт (survivors, 8.5bps, funding) Sharpe −1.00; на честном
+      point-in-time универсе с реальными костами HL 4.4bps Sharpe улучшается
+      до −0.58 (косты объясняли больше половины минуса), но остаётся
+      убыточным. Отказ по прибыльности новыми правилами SCREENING.md не
+      пересматривается (GRAVEYARD_REVIEW_2026_09.md, раздел "Всё кладбище").
+    verdicts:
+      - stage: edge
+        metric: sharpe_net
+        value: -1.00
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| короткий разворот 7д | −1.00 | −0.58 | косты вдвое ниже, всё равно минус |"
+      - stage: edge
+        metric: sharpe_net
+        value: -0.58
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| короткий разворот 7д | −1.00 | −0.58 | косты вдвое ниже, всё равно минус |"
+
+  # ---------------------------------------------------------------------
+  - id: reversal-long-120d
+    title: "Кросс-секционный долгий разворот (120 дней)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Long монеты, упавшие за 120 дней / short выросшие — ставка на
+      долгосрочный overreaction (long-term reversal).
+    asset_class: crypto-perp
+    driver_id: short-term-overreaction
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      Пересчёт на честном point-in-time универсе ХУЖЕ первоначального: OLD
+      Sharpe −0.31 → NEW −0.95, потому что "умершие монеты — это и есть
+      дешёвые" (GRAVEYARD_REVIEW_2026_09.md). Тот же вычислительный конвейер,
+      что и value-crypto (value_signals.long_term_reversal), но
+      классифицирован документами отдельно от "value".
+    verdicts:
+      - stage: edge
+        metric: sharpe_net
+        value: -0.31
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| долгий разворот 120д | −0.31 | **−0.95** | то же |"
+      - stage: edge
+        metric: sharpe_net
+        value: -0.95
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| долгий разворот 120д | −0.31 | **−0.95** | то же |"
+
+  # ---------------------------------------------------------------------
+  - id: value-crypto
+    title: "Крипто 'value' — дешевизна от максимума / отклонение от MA (3 варианта)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Гипотеза переноса equity value-фактора: монеты, просевшие от максимума
+      или далёкие от MA100, должны опережать доходность. Первоначальный тест
+      (7 факторов, CRITICAL_REVIEW.md 2026-06-13) резюмирован как "ВСЕ 7
+      факторов мертвы, Sharpe от −0.88 до +0.04".
+    asset_class: crypto-perp
+    driver_id: crypto-value-contrarian
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      Три конкретных варианта из value_signals.py, для которых нашлись точные
+      цифры: drawdown-from-high 90д, drawdown-from-high 180д, dist-from-MA100
+      (это и есть "value (3 варианта)" в графе кладбища GRAVEYARD_REVIEW_2026_09.md).
+      ПРОТИВОРЕЧИЕ ДЕТАЛИЗАЦИИ (см. EXTRACTION_NOTES.md): агрегатная фраза
+      CRITICAL_REVIEW.md "Sharpe от −0.88 до +0.04" не совпадает по краям
+      диапазона с точными числами −0.73/−1.01, −0.50/−1.09, −0.79/−0.91 из
+      GRAVEYARD_REVIEW_2026_09.md — вероятно, разные подмножества из 7
+      протестированных факторов (в CRITICAL_REVIEW их 7: dd90/180/expanding,
+      dist-MA100/200, ltr120/180). Пересчитаны на честном point-in-time
+      универсе — стали ХУЖЕ, а не лучше. Бленд с momentum НЕ диверсифицирует:
+      корреляция momentum↔value везде отрицательная (−0.36…−0.84), то есть это
+      разбавленный анти-momentum, а не независимая премия.
+    verdicts:
+      - stage: edge
+        metric: sharpe_net_dd90
+        value: -0.73
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, просадка от максимума 90д | −0.73 | **−1.01** | умершие монеты — это и есть «дешёвые» |"
+      - stage: edge
+        metric: sharpe_net_dd90
+        value: -1.01
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, просадка от максимума 90д | −0.73 | **−1.01** | умершие монеты — это и есть «дешёвые» |"
+      - stage: edge
+        metric: sharpe_net_dd180
+        value: -0.50
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, просадка 180д | −0.50 | **−1.09** | то же |"
+      - stage: edge
+        metric: sharpe_net_dd180
+        value: -1.09
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, просадка 180д | −0.50 | **−1.09** | то же |"
+      - stage: edge
+        metric: sharpe_net_dist_ma100
+        value: -0.79
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, отклонение от MA100 | −0.79 | −0.91 | то же |"
+      - stage: edge
+        metric: sharpe_net_dist_ma100
+        value: -0.91
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| value, отклонение от MA100 | −0.79 | −0.91 | то же |"
+      - stage: correlation
+        metric: corr_to_momentum_range_low
+        value: -0.36
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-13
+        rule_id: null
+        source_file: research/cross_sectional/crypto/CRITICAL_REVIEW.md
+        source_quote: "momentum↔value корреляция везде ОТРИЦАТЕЛЬНАЯ (−0.36…−0.84) — крипто-«value» это просто разбавленный анти-momentum."
+
+  # ---------------------------------------------------------------------
+  - id: mean-reversion-time
+    title: "Time-series mean-reversion (возврат монеты к своей MA), raw и бета-нейтральный"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      z-score отклонения монеты от собственной MA как сигнал: перепродан →
+      лонг, перекуплен → шорт.
+    asset_class: crypto-perp
+    driver_id: price-mean-reversion-daily
+    profile: mean-reversion
+    status: rejected
+    notes: >-
+      Мёртв ДО костов, не из-за них (CRITICAL_REVIEW.md, 2026-06-13, раздел
+      G): beta-neutral gross Sharpe −1.32, RAW gross −0.29. Плато
+      отрицательное на всех окнах {3,5,10,20,40}. Пересчёт на честном
+      универсе (GRAVEYARD_REVIEW, 2026-09-13) снижает абсолютную величину
+      минуса для обоих вариантов, но знак не меняется. Честная оговорка
+      авторов: дневной минус НЕ опровергает возможность intraday
+      mean-reversion — не тестировался, нужны sub-daily данные.
+    verdicts:
+      - stage: edge
+        metric: sharpe_net_raw
+        value: -0.48
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| mean reversion по времени (день) | −0.48 | −0.30 | косты, всё равно минус |"
+      - stage: edge
+        metric: sharpe_net_raw
+        value: -0.30
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| mean reversion по времени (день) | −0.48 | −0.30 | косты, всё равно минус |"
+      - stage: edge
+        metric: sharpe_net_beta_neutral
+        value: -2.11
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| mean reversion, бета-нейтральный | −2.11 | −1.00 | косты, всё равно минус |"
+      - stage: edge
+        metric: sharpe_net_beta_neutral
+        value: -1.00
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| mean reversion, бета-нейтральный | −2.11 | −1.00 | косты, всё равно минус |"
+      - stage: edge
+        metric: gross_sharpe_precost_beta_neutral
+        value: -1.32
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-13
+        rule_id: null
+        source_file: research/cross_sectional/crypto/CRITICAL_REVIEW.md
+        source_quote: "Beta-neutral gross Sharpe = **−1.32** (net 8.5bps −2.10); RAW gross −0.29."
+
+  # ---------------------------------------------------------------------
+  - id: crypto-carry-xsec
+    title: "Кросс-секционный carry (ранжирование монет по funding)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Long монеты с низким funding / short с высоким funding в кросс-секции —
+      carry-версия XSMOM.
+    asset_class: crypto-perp
+    driver_id: perp-funding-premium
+    profile: carry
+    status: rejected
+    notes: >-
+      Единственный отказ в этой волне пересчёта, сменивший знак: изначальный
+      тест не начислял funding (методологическая ошибка — считали
+      "carry"-стратегию без самого funding), Sharpe −0.22; с funding
+      включённым и честными костами HL Sharpe становится +0.14, но
+      просадка −45% и премия признана слабой (GRAVEYARD_REVIEW_2026_09.md).
+      Не рекомендован к запуску, но это не однозначный NO-GO по
+      прибыльности, как остальные факторы этой волны.
+    verdicts:
+      - stage: edge
+        metric: sharpe_net
+        value: -0.22
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: null
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| crypto carry (кросс-секция) | −0.22 (без funding) | **+0.14** | funding включён — знак сменился, но слабо, DD −45% |"
+      - stage: edge
+        metric: sharpe_net
+        value: 0.14
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| crypto carry (кросс-секция) | −0.22 (без funding) | **+0.14** | funding включён — знак сменился, но слабо, DD −45% |"
+
+  # ---------------------------------------------------------------------
+  - id: onchain-fee-growth
+    title: "Он-чейн рост комиссий протокола (fee-growth) — кросс-секционный фактор"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Long протоколы с растущими он-чейн комиссиями / short с падающими —
+      фундаментальный, не ценовой сигнал; изначально DSR 0.690, corr к XSMOM
+      +0.14, corr к carry/BTC ≈0.
+    asset_class: crypto-perp
+    driver_id: onchain-protocol-revenue-growth
+    profile: momentum
+    status: rejected
+    notes: >-
+      NO-GO, но "информативный" (onchain_fundamental/FINDINGS.md): гипотеза
+      "fee-growth это переодетый momentum" ОТВЕРГНУТА (corr к XSMOM всего
+      +0.14) — подтверждённая независимая информационная ось, но
+      недостаточно мощная (DSR 0.69 < 0.95 на ~3 годах/18 монетах) и
+      выцветающая (Sharpe тертиля +1.40 в 2023-24 → −0.64 в 2025-26).
+      Пересчитано в GRAVEYARD_REVIEW на честных костах 4.4bps с funding:
+      Sharpe +0.40 (было +0.54 без funding), помечено как "слабо и грязно"
+      из-за шумного сопоставления монет с протоколами DefiLlama при
+      перезагрузке (к SOL прилипло solana-name-service и т.п.).
+    verdicts:
+      - stage: edge
+        metric: dsr
+        value: 0.690
+        comparator: ">"
+        threshold: 0.95
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/onchain_fundamental/FINDINGS.md
+        source_quote: "| DSR | **0.690** | > 0.95 | ❌ |"
+      - stage: correlation
+        metric: corr_to_xsmom
+        value: 0.14
+        comparator: "<"
+        threshold: 0.30
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/onchain_fundamental/FINDINGS.md
+        source_quote: "| corr → XSMOM momentum | **+0.14** | < 0.30 | ✅ |"
+      - stage: edge
+        metric: sharpe_net
+        value: 0.5375
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| on-chain fee growth | +0.54 (без funding) | +0.40 | funding включён; слабый плюс |"
+      - stage: edge
+        metric: sharpe_net
+        value: 0.4029
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| on-chain fee growth | +0.54 (без funding) | +0.40 | funding включён; слабый плюс |"
+      - stage: edge
+        metric: tercile_sharpe_recent_period
+        value: -0.64
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/onchain_fundamental/FINDINGS.md
+        source_quote: "Tercile Sharpe over time: **+1.40 (2023-24) → +0.27 (24-25) → −0.64 (25-26)**"
+
+  # ---------------------------------------------------------------------
+  - id: indices-gold-trend
+    title: "TSMOM на биржевых индексах и золоте/серебре"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Трендовое следование (ансамбль 3/6/12мес) на 11 индексах + gold/silver —
+      гипотеза: та же премия, что и крипто-тренд, но ортогональна крипте.
+      DSR 0.965 на полной выборке.
+    asset_class: fx
+    driver_id: trend-following-premium
+    profile: momentum
+    status: rejected
+    notes: >-
+      DSR 0.965 формально проходит, но это мираж полной выборки: премия
+      целиком из режима 2004-2012 ("смерть трендового следования" после 2011,
+      как в SG Trend Index). Последние 15 лет практически плоские
+      (Sharpe +0.07). Ортогональность к крипте подтверждена (corr к BTC
+      +0.06, к XSMOM −0.04, к FRAB +0.005), но мёртвый сигнал на
+      ортогональной оси всё равно бесполезен для риск-паритетного бленда
+      (indices_gold/FINDINGS.md). Схема asset_class enum q-lab не имеет
+      отдельной категории "equity-index/commodity" — здесь условно
+      использован "fx" как ближайший недоступный-в-крипте макро-класс
+      (см. EXTRACTION_NOTES.md).
+    verdicts:
+      - stage: edge
+        metric: dsr
+        value: 0.965
+        comparator: ">"
+        threshold: 0.95
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/indices_gold/FINDINGS.md
+        source_quote: "| DSR | **0.965** | > 0.95 | ✅ *but see decay* |"
+      - stage: edge
+        metric: sharpe_net_second_half_2011_2026
+        value: 0.07
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: 2011-01-01
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/indices_gold/FINDINGS.md
+        source_quote: "**H2 (11–26)** | **+0.07** |"
+      - stage: correlation
+        metric: corr_to_xsmom
+        value: -0.04
+        comparator: "<"
+        threshold: 0.30
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/indices_gold/FINDINGS.md
+        source_quote: "| corr → XSMOM momentum | **−0.04** | < 0.30 | ✅ |"
+      - stage: edge
+        metric: pbo
+        value: 0.800
+        comparator: "<"
+        threshold: 0.20
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-25
+        rule_id: null
+        source_file: research/indices_gold/FINDINGS.md
+        source_quote: "| PBO | 0.800 | < 0.20 | ❌ |"
+
+  # ---------------------------------------------------------------------
+  - id: fx-carry
+    title: "FX carry (G10 фьючерсы/спот + развивающиеся валюты)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Долго высокодоходные / коротко низкодоходные валюты по 3-месячной
+      ставке; на фьючерсах CME эдж жив (Sharpe +0.23).
+    asset_class: fx
+    driver_id: fx-rate-carry
+    profile: carry
+    status: rejected
+    notes: >-
+      Отказ по исполнимости, не по эджу: на фьючерсах CME эдж жив (не умер,
+      как тренд), но у розничного FX-брокера наценка на своп (1.5%/год)
+      переворачивает знак в минус. Развивающиеся валюты платят больше, но и
+      падают глубже (просадка длинно-короткой книги до 20%, чисто длинной —
+      до 27%). Для нашего размера капитала это "хуже того, что уже
+      работает" — FRAB даёт ~10%/год на занятый капитал за сравнимый сезон
+      (fx_carry/REPORT.md).
+    verdicts:
+      - stage: edge
+        metric: sharpe_net_cme
+        value: 0.23
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/fx_carry/REPORT.md
+        source_quote: "| **фьючерсы CME** | 0.5 б.п., наценки нет | **+1.9%/год** | 32% | **+0.23** |"
+      - stage: preflight
+        metric: ann_return_net_retail_broker
+        value: -0.013
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/fx_carry/REPORT.md
+        source_quote: "| розничный брокер | 1.5 б.п. + 1.5% в год | **−1.3%/год** | 43% | −0.08 |"
+      - stage: edge
+        metric: ann_return_net_em_5bps
+        value: 0.022
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2001-01-01
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/fx_carry/REPORT.md
+        source_quote: "| длинно-короткая | 5 б.п. | +2.2%/год (Шарп 0.26) | +3.3% | **+8.0%** (Шарп 0.82) | −11.0% (март 2020) |"
+
+  # ---------------------------------------------------------------------
+  - id: fx-trend-following
+    title: "Trend-following на FX G10 (перенос крипто-тренда на валюты)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Тот же ансамбль TSMOM 30/60/90/120 (цель по волатильности книги
+      14%/год) на 9 валютах G10 против доллара, 2006-2026.
+    asset_class: fx
+    driver_id: trend-following-premium
+    profile: momentum
+    status: rejected
+    notes: >-
+      NO-GO: тренд на валютах жил только до 2011 года, с тех пор мёртв — то
+      же самое, что нашли на индексах и золоте (indices-gold-trend).
+      Диверсификатор честный (corr к крипто-тренду +0.045), но
+      диверсифицировать нечем — у самой ноги нет дохода (trend_following/FINDINGS.md,
+      2026-09-14). По валютам поодиночке с 2011 года в плюсе только 4 из 9,
+      лучший Sharpe 0.25 — неотличимо от шума.
+    verdicts:
+      - stage: edge
+        metric: sharpe_net_2011_2026
+        value: -0.14
+        comparator: ">"
+        threshold: 0.0
+        passed: false
+        data_range_start: 2011-01-01
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "| 2011–2026 | **−3.1%** | 39% | −0.14 |"
+      - stage: correlation
+        metric: corr_to_crypto_trend
+        value: 0.045
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/trend_following/FINDINGS.md
+        source_quote: "Корреляция с крипто-трендом +0.045, то есть диверсификатор он честный, но диверсифицировать нечем: у самой ноги нет дохода."
+
+  # ---------------------------------------------------------------------
+  - id: token-unlock
+    title: "Шорт перед плановым анлоком токенов (cliff unlock)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Захеджированный по рынку шорт в окне [-10,-1] день перед крупным
+      (≥1% supply) анлоком; event-study CAR значим на всех порогах,
+      Sharpe 0.71, corr к momentum/carry ~0 (near-zero orthogonality).
+    asset_class: crypto-perp
+    driver_id: token-unlock-selling-pressure
+    profile: other
+    status: rejected
+    notes: >-
+      Текущий статус (после 2026-09-12) официально стоит на исполнимости
+      (нет бесплатных forward-данных за пределами исследовательского окна) —
+      SCREENING.md: "закрыт: нет бесплатных данных". Но ИСХОДНЫЙ (до
+      2026-09-12) отказ прямо назван в том же SCREENING.md, в столбце "отказ
+      стоял на": "PBO 0.605 (null) + хвост" — то есть PBO на однородном меню
+      вариантов (W/threshold/sizing одной и той же стратегии) БЫЛ одной из
+      двух причин исходного отказа наряду с хвостовым риском. Отсюда два
+      разных вердикта по PBO ниже: измерение (0.57, точное число из
+      собственной harness-таблицы token_unlock/README.md, без сопоставленного
+      порога в этой таблице) и отдельное решение (0.605, ровно то число,
+      что в SCREENING.md названо основанием отказа, с rule_id
+      `pbo_threshold_on_homogeneous_menu`). Расхождение 0.57 vs 0.605 не
+      объяснено документами — похоже, что автор SCREENING.md подставил в
+      сводную таблицу калибровочное null-значение (AUDIT_2026_09.md,
+      таблица PBO на однородном меню при истинном Sharpe=0 даёт медиану
+      0.605) вместо собственного измеренного числа token_unlock; см.
+      EXTRACTION_NOTES.md. По расследованию валидационного стенда
+      (xsmom_live_recon/AUDIT_2026_09.md, раздел 6.5) PBO на однородном меню
+      структурно вырожден (~0.605) при ЛЮБОМ истинном Sharpe — эта опора
+      отказа формально недействительна, что и стало причиной отмены правила
+      2026-09-12, но статус token_unlock это не меняет: вторая опора
+      (хвостовой риск: skew −5.1, один день −39.6% на JUP-сквизе) остаётся
+      валидной, а текущий отказ и вовсе держится на другом основании
+      (данные). Это единственный кандидат кладбища, который сами документы
+      прямо рекомендуют перечитать всерьёз: "Единственный кандидат, который
+      стоит перечитать всерьёз — token_unlock."
+    verdicts:
+      - stage: edge
+        metric: sharpe_net
+        value: 0.71
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: 2023-06-08
+        data_range_end: 2026-06-13
+        decided_at: 2026-06-24
+        rule_id: net_edge_positive
+        source_file: research/token_unlock/README.md
+        source_quote: "| Sharpe | 0.71 |"
+      - stage: edge
+        metric: pbo
+        value: 0.57
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-24
+        rule_id: null
+        source_file: research/token_unlock/README.md
+        source_quote: "| **PBO** | **0.57** ❌ | Config selection does NOT transfer OOS (high PBO) |"
+      - stage: edge
+        metric: pbo
+        value: 0.605
+        comparator: "<"
+        threshold: 0.20
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: pbo_threshold_on_homogeneous_menu
+        source_file: research/SCREENING.md
+        source_quote: "| token_unlock | Sharpe 0.71 | PBO 0.605 (null) + хвост | закрыт: нет бесплатных данных |"
+      - stage: tail
+        metric: skew
+        value: -5.13
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-24
+        rule_id: null
+        source_file: research/token_unlock/README.md
+        source_quote: "| Skew | -5.13 |"
+      - stage: tail
+        metric: max_dd
+        value: -0.563
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-06-24
+        rule_id: null
+        source_file: research/token_unlock/README.md
+        source_quote: "| Max drawdown | -56.3% |"
+
+  # ---------------------------------------------------------------------
+  - id: xsmom
+    title: "XSMOM — кросс-секционный моментум на HL-перпах (живая стратегия)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Long топ-8 / short топ-8 по ансамблю моментума (lookbacks 14-60д),
+      еженедельный ребаланс; изначально заявленный Sharpe 1.80 (survivor-универс,
+      окно 2023+).
+    asset_class: crypto-perp
+    driver_id: cross-sectional-momentum
+    profile: momentum
+    status: live
+    notes: >-
+      Реально развёрнута на HL с 2026-06-15. AUDIT_2026_09.md (2026-09-12)
+      реконструирует "лестницу честности" изначального Sharpe 1.80: минус
+      выбор окна (→1.21), минус survivorship (→0.76), минус funding-драг
+      −4.65%/год (→≈0.53) — реальное ожидание было завышено примерно в 3.4
+      раза. За первые 13 недель живой торговли книга потеряла −11.19% (0.7-й
+      перцентиль исторического распределения 13-недельных окон), но
+      исполнение доказано чистым (корреляция live/модель +0.86, drag
+      +0.02%/нед) — проблема целиком в "модельном" решении сигнала, не в
+      инфраструктуре. РАСХОЖДЕНИЕ МЕЖДУ ДОКУМЕНТАМИ (см. EXTRACTION_NOTES.md):
+      xsmom_v2/REPORT.md — самый свежий из прочитанных документов
+      (2026-09-14, заголовок документа — "XSMOM v2 — итог: NO-GO") — по
+      итогам отдельного поиска улучшений прямо рекомендует выключить
+      стратегию: "**XSMOM не включать.** Капитал в B или FRAB даёт больше на
+      единицу риска." На честном универсе ≥547 дней эдж практически нулевой
+      (Sharpe 0.10 на обучении), а DSR по всему меню улучшений 0.51 не
+      проходит заявленный в этом же документе порог ≥0.95. Статус live в
+      этом файле отражает документированное текущее развёртывание (последнее
+      прямое подтверждение работы — AUDIT_2026_09.md, 2026-09-12), а не
+      согласие всех источников с целесообразностью держать её включённой —
+      расхождение оставлено на решение владельца, не разрешается этим
+      реестром. Числа Sharpe 1.80/0.53/0.10 ниже — измерения ("лестница
+      честности" одной и той же оценки во времени), а не решения: ни в одном
+      документе для sharpe_net не указан формализованный порог 0.8 — это
+      было бы заимствованием иллюстративного числа из примера
+      `docs/REGISTRY.md`, а не критерием из исследования.
+    verdicts:
+      - stage: edge
+        metric: sharpe_net_claimed_at_launch
+        value: 1.80
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/xsmom_live_recon/AUDIT_2026_09.md
+        source_quote: "| заявлено при запуске | **1.80** |"
+      - stage: edge
+        metric: sharpe_net_honest_full_deflation
+        value: 0.53
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/xsmom_live_recon/AUDIT_2026_09.md
+        source_quote: "| − funding drag (−4.65%/год при vol 20%) | **≈0.53** |"
+      - stage: edge
+        metric: live_return_13w
+        value: -0.1119
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: 2026-06-15
+        data_range_end: 2026-09-12
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/xsmom_live_recon/AUDIT_2026_09.md
+        source_quote: "| **LIVE 13 недель** | **−11.19% → 0.7-й перцентиль** (хуже были 2 окна из 276) |"
+      - stage: edge
+        metric: sharpe_net_honest_universe_ge547d_train
+        value: 0.10
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: 2020-07-01
+        data_range_end: 2025-03-01
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/xsmom_v2/REPORT.md
+        source_quote: "| обучение 2020-07 — 2025-03 | Шарп 0.61, +16%/год, просадка 47% | **Шарп 0.10, ~0%/год**, просадка 34% |"
+      - stage: edge
+        metric: dsr_search_menu
+        value: 0.51
+        comparator: ">="
+        threshold: 0.95
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: null
+        source_file: research/xsmom_v2/REPORT.md
+        source_quote: "| DSR по всему меню | ≥ 0.95 | 0.51 | ❌ |"
+
+  # ---------------------------------------------------------------------
+  - id: xsmom-overlays
+    title: "Оверлеи и внутренние модификации XSMOM (веса/ребаланс/value-tilt/replacement)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Набор внутренних улучшений XSMOM (inverse-vol/covariance веса, частота
+      ребаланса 7/14/21, value-tilt, K_rank replacement) — надежда получить
+      прирост без новой информации.
+    asset_class: crypto-perp
+    driver_id: cross-sectional-momentum
+    profile: momentum
+    status: rejected
+    notes: >-
+      Отказ формально стоял на PBO 0.73 (GRAVEYARD_REVIEW_2026_09.md называет
+      это прямо в столбце "на чём стоял отказ") — меню было однородным
+      (варианты одной идеи: веса/ребаланс/value-tilt/replacement поверх
+      того же XSMOM-ранкинга), поэтому теперь этот вердикт помечен
+      `rule_id: pbo_threshold_on_homogeneous_menu` — тем же ныне отменённым
+      правилом, что и trend TSMOM. По расследованию валидационного стенда
+      (xsmom_live_recon/AUDIT_2026_09.md, раздел 6.2) PBO~0.73 на однородном
+      меню близнецов является "null-значением": варианты одной и той же идеи
+      дают PBO~0.6-0.73 при ЛЮБОМ истинном Sharpe, включая истинный Sharpe
+      3.0 — формально эта опора вердикта недействительна, что и стало
+      причиной отмены правила 2026-09-12. Но качественный вывод
+      (xsmom_signal_improve/GRAVEYARD_LESSONS.md) держится по другой
+      причине: перестановка того же сигнала (когда выходишь / как
+      взвешиваешь / насколько концентрируешь) не добавляет новой информации
+      и не может создать эдж, которого нет в исходном ранкинге ("Режим 1" в
+      этом документе) — поэтому status остаётся rejected, а не переходит в
+      candidate для перепрогона, в отличие от cross-exchange-spread/trend
+      TSMOM, у которых был независимый положительный довод (реальный эдж на
+      честных данных) для реабилитации.
+    verdicts:
+      - stage: edge
+        metric: pbo
+        value: 0.73
+        comparator: "<"
+        threshold: 0.20
+        passed: false
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: pbo_threshold_on_homogeneous_menu
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "| оверлеи XSMOM | PBO 0.73 (пустое число) | неактуально — надстройка над XSMOM |"
+      - stage: edge
+        metric: pbo_null_value_at_true_sharpe_3
+        value: 0.618
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/xsmom_live_recon/AUDIT_2026_09.md
+        source_quote: "| **3.0** | **0.618** | **8%** |"
+
+  # ---------------------------------------------------------------------
+  - id: frab
+    title: "FRAB — funding-rate arbitrage (spot против перп-шорта на HL, живая стратегия)"
+    source_type: graveyard
+    source_url: null
+    claimed_edge: >-
+      Delta-neutral spot-long + perp-short на HL, собирает funding, который
+      лонги с плечом платят шортам (Strategy A, продовая paper-trading
+      платформа).
+    asset_class: crypto-perp
+    driver_id: perp-funding-premium
+    profile: carry
+    status: live
+    notes: >-
+      Действующая живая стратегия (paper-trading платформа на прод-хосте,
+      см. AGENTS.md/README.md проекта funding-rate-arbitrage). Оба хвоста
+      закрыты конструкцией: крах — спот против перп-шорта, памп —
+      маржинальная нога под волатильность монеты (SCREENING.md: ETH 15%,
+      HYPE 31%, PURR/AVAX ~100% перпа). Упирается в ёмкость (95% времени
+      заняты 4 из 4 слотов), а не в риск — расширения (вторая площадка,
+      больше слотов) в документах прямо названы недоделанной работой, а не
+      отвергнутыми стратегиями (см. EXTRACTION_NOTES.md).
+    verdicts:
+      - stage: edge
+        metric: ann_return_on_occupied_capital
+        value: 0.10
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-13
+        rule_id: net_edge_positive
+        source_file: research/GRAVEYARD_REVIEW_2026_09.md
+        source_quote: "Для сравнения: **FRAB за тот же сезон — около 10% на занятый капитал.**"
+      - stage: edge
+        metric: return_3m_on_occupied_capital
+        value: 0.0465
+        comparator: ">"
+        threshold: 0.0
+        passed: true
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-14
+        rule_id: net_edge_positive
+        source_file: research/fx_carry/REPORT.md
+        source_quote: "FRAB на живых деньгах принёс 4.65% за три месяца на занятый капитал при волатильности 5%."
+      - stage: capacity
+        metric: slot_utilization
+        value: 0.95
+        comparator: null
+        threshold: null
+        passed: null
+        data_range_start: null
+        data_range_end: null
+        decided_at: 2026-09-12
+        rule_id: null
+        source_file: research/SCREENING.md
+        source_quote: "**FRAB упирается в ёмкость, а не в риск.** 95% времени занято 4 из 4 слотов."
