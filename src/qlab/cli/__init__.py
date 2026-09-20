@@ -14,6 +14,8 @@ from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
 from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
+from qlab.pipeline.evaluate import evaluate_spec
+from qlab.pipeline.spec import load_spec
 from qlab.registry.db import get_db_path, session_scope
 from qlab.registry.importer import ImportReport, import_graveyard
 from qlab.registry.models import DataSnapshot
@@ -24,7 +26,7 @@ from qlab.registry.queries import (
     near_threshold,
     ripe_for_revival,
 )
-from qlab.rules import load_latest
+from qlab.rules import load, load_latest
 
 # src/qlab/cli/__init__.py -> parents[3] is the project root (q-lab/), same
 # depth as qlab.rules.loader.DEFAULT_RULES_DIR.
@@ -318,6 +320,80 @@ def data_list_cmd() -> None:
 
     typer.echo("")
     typer.echo(f"total: {total} snapshots")
+
+
+# --------------------------------------------------------------------------
+# evaluate
+# --------------------------------------------------------------------------
+
+
+@app.command("evaluate")
+def evaluate_cmd(
+    spec_path: Path = typer.Argument(  # noqa: B008 - idiomatic typer default, not a mutable-default bug
+        ..., metavar="SPEC", help="Path to a spec YAML file"
+    ),
+    capital: float = typer.Option(
+        1000.0, "--capital", help="Capital currently deployable now (USD)"
+    ),
+    rules_version: str | None = typer.Option(
+        None, "--rules", help="Rules version to evaluate against (default: latest)"
+    ),
+) -> None:
+    """Run the full pipeline: spec -> data -> backtest -> metrics -> verdict.
+
+    Prints the computed metrics, every verdict row with its rule and
+    numbers, and the routing decision (`reject` / `needs-more-data` /
+    `shelf` / `paper`) with its reason. `qlab evaluate` never returns
+    `live` — see `qlab.pipeline.evaluate.decide_route`.
+    """
+    try:
+        spec = load_spec(spec_path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: invalid spec: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+
+    with session_scope() as session:
+        try:
+            result = evaluate_spec(
+                spec, session=session, ruleset=ruleset, deployable_capital_usd=capital
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator, not swallowed
+            typer.echo(
+                f"error: evaluation failed before a trial could be recorded: {exc}", err=True
+            )
+            raise typer.Exit(code=1) from exc
+
+    typer.echo(f"idea:         {spec.idea_id}  ({spec.title})")
+    typer.echo(f"rules:        {ruleset.version}")
+    typer.echo(f"trial_id:     {result.trial_id}")
+    typer.echo("")
+
+    if result.error is not None:
+        typer.echo(f"run FAILED: {result.error}")
+        typer.echo("")
+        typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
+        raise typer.Exit(code=1)
+
+    typer.echo("metrics:")
+    for name, value in sorted(result.metrics.items()):
+        typer.echo(f"  {name:<24}{value}")
+    typer.echo("")
+
+    typer.echo("verdicts:")
+    for row in result.rules_result.rows:
+        passed = "unknown" if row.passed is None else ("pass" if row.passed else "fail")
+        value_str = "?" if row.value is None else f"{row.value:g}"
+        typer.echo(
+            f"  [{passed:<7}] {row.stage.value:<12} {row.rule_id:<24} "
+            f"{row.metric}={value_str} {row.comparator}{row.threshold:g}"
+        )
+    typer.echo("")
+
+    typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
+    if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
+        typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
 
 
 # --------------------------------------------------------------------------
