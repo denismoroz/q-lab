@@ -1,0 +1,96 @@
+# Venue capability facts for Hyperliquid — q-lab task T13 (docs/TASKS.md).
+#
+# Every field below states a fact about OUR infrastructure or the exchange's
+# public interface, not about the market. rules/2026-09-20.1.yaml's
+# preflight stage encodes exactly these three questions from
+# funding-rate-arbitrage/research/SCREENING.md §2 ("Исполним ли — у нас,
+# сейчас": площадка / данные / атомарность), and none of them can be
+# answered from a backtest — see src/qlab/venues/derive.py for the pure
+# functions that turn these facts (plus a spec's `simultaneous_legs`) into
+# `venue_supported` / `data_forward_available` / `atomic_execution`.
+#
+# Every citation below is to a file in this repo, or in the read-only
+# sibling project /Users/d/prj/funding-rate-arbitrage (the live trading
+# engine — q-lab's own pipeline never places an order there or anywhere,
+# per CLAUDE.md: "Ордеров не ставит никогда").
+
+id: hyperliquid
+title: "Hyperliquid"
+
+# execution_adapter — we run FRAB live on Hyperliquid today through a real
+# order-placing adapter, not a hypothetical integration.
+#   - docs/PLAN.md: "Paper/live — на 10.8.0.5 через расширение frab."
+#   - funding-rate-arbitrage/research/SCREENING.md §2: «площадка: есть ли
+#     инфраструктура (сейчас только HL)».
+#   - funding-rate-arbitrage/README.md: "Async paper-trading platform for
+#     Hyperliquid funding-harvest strategy (Strategy A)."
+#   - The adapter itself is real, working code, not a stub:
+#     funding-rate-arbitrage/src/frab/exchanges/hyperliquid/client.py
+#     (real REST calls: market_open, market_close, update_leverage,
+#     usd_class_transfer, user_state, ...) and
+#     .../hyperliquid/actions/{open_position,close_position,transfer}.py.
+execution_adapter: true
+
+# min_leg_notional_usd — Hyperliquid's own minimum order size.
+#   - funding-rate-arbitrage/research/SCREENING.md §2: «капитал: помещается
+#     ли минимальный размер позиции (HL ~$10, у нас `min_leg` $12)» — $10 is
+#     HL's own floor; the $12 mentioned alongside it is frab/q-lab's own
+#     operating floor with a slippage buffer, not the exchange's number
+#     (rules/2026-09-20.1.yaml's `capital_fit` rule cites that same $12 as
+#     ours, separately).
+#   - funding-rate-arbitrage/src/frab/strategy/trend/params.py:62:
+#     `min_order_usd: float = 10.0` (live strategy default, this exchange).
+min_leg_notional_usd: 10.0
+
+# free_public_data — q-lab's own Hyperliquid fetcher uses only the free,
+# no-key /info endpoint, and is queried against it right now (forward, not
+# only historical) every time a spec asks for `source: hyperliquid` data.
+#   - src/qlab/data/sources/hyperliquid.py module docstring: "Hyperliquid
+#     perpetuals fetcher — free public ``/info`` endpoint, no API key."
+free_public_data: true
+
+# supports_atomic_multileg — Hyperliquid has no order primitive that fills
+# a spot leg and a perp leg as one all-or-nothing unit. The live engine
+# places them as two SEPARATE, sequential exchange calls, each of which can
+# independently succeed or fail.
+#   - funding-rate-arbitrage/src/frab/exchanges/hyperliquid/client.py:
+#     `market_open`/`market_close` are single-market order calls (lines
+#     446-467); no batched or atomic multi-market order method exists
+#     anywhere in this client.
+#   - funding-rate-arbitrage/src/frab/strategy/two_phase/states/opening_long.py
+#     and .../opening_short.py: entry calls `exchange.open_position(...)`
+#     for the SPOT leg in OPENING_LONG, transitions state, THEN calls it
+#     again for the PERP leg in OPENING_SHORT — two independent round
+#     trips through the state machine, not one combined order.
+supports_atomic_multileg: false
+
+# uncovered_leg_recovery — the live engine actively unwinds whichever leg
+# DID open before giving up, rather than leaving it stranded. This is what
+# SCREENING.md's «не остаётся ли неприкрытая нога при сбое» actually asks:
+# whether an uncovered leg REMAINS after a failure, not whether fills
+# happen simultaneously (see src/qlab/venues/derive.py's docstring for why
+# that distinction is load-bearing for `atomic_execution`).
+#   - funding-rate-arbitrage/src/frab/strategy/two_phase/strategy.py,
+#     `_advance_one` (lines ~187-234): any exception raised by a state
+#     handler is caught; `self._rollback(current, partial_state=current.state,
+#     error=exc)` runs BEFORE the FarbPosition is marked FAILED (a terminal
+#     state) and a `farb.failed` event is published. The position is never
+#     left sitting mid-entry with no further action taken.
+#   - funding-rate-arbitrage/src/frab/strategy/two_phase/actions/rollback.py,
+#     `RollbackAction.execute`: if the failure happened in OPENING_SHORT
+#     (spot leg already open, perp-leg attempt failed), it closes the spot
+#     leg; if in OPENING_LONG (margin already reserved, spot-leg attempt
+#     failed), it transfers the reserved margin back to spot. This is
+#     best-effort — a failure *during* rollback itself is logged at ERROR
+#     ("manual intervention required, NOT auto-reopening"), not silently
+#     dropped or retried blindly — but it is a real, exercised code path in
+#     the same production engine named under `execution_adapter` above, not
+#     an aspirational description.
+uncovered_leg_recovery: >-
+  sequential-leg rollback: on an entry-sequence failure, the live engine's
+  TwoPhaseStrategy._advance_one (funding-rate-arbitrage/src/frab/strategy/
+  two_phase/strategy.py) closes/unwinds whichever leg had already opened —
+  via RollbackAction (.../two_phase/actions/rollback.py) — before marking
+  the position terminally FAILED. Best-effort: an inner failure during the
+  unwind itself is logged for manual intervention rather than retried
+  silently.

@@ -1,0 +1,61 @@
+# Venue capability facts for Binance USDT-margined perpetual futures — q-lab
+# task T13 (docs/TASKS.md). See venues/hyperliquid.yaml for the field-by-field
+# format and rationale, and src/qlab/venues/derive.py for how these facts
+# become preflight metrics.
+
+id: binance
+title: "Binance USDT-margined perpetual futures"
+
+# execution_adapter — no order-placing integration with Binance exists in
+# either this repo or funding-rate-arbitrage; only a read-only market-data
+# fetcher exists here.
+#   - src/qlab/data/sources/binance.py module docstring: "Binance
+#     USDT-margined perpetual futures fetcher — free public REST API, no
+#     API key" — the whole module fetches candles/funding/exchangeInfo only
+#     (`fetch_candles`, `fetch_funding`, `fetch_exchange_info`); it contains
+#     no order-placement function.
+#   - funding-rate-arbitrage/src/frab/exchanges/ contains a `hyperliquid/`
+#     package only (client.py, exchange.py, actions/); no `binance/`
+#     execution package exists anywhere in that tree.
+#   - docs/PLAN.md: "Paper/live — на 10.8.0.5 через расширение frab" names
+#     only the Hyperliquid-backed frab deployment; no Binance venue is live.
+execution_adapter: false
+
+# min_leg_notional_usd — Binance USDT-M futures' own MIN_NOTIONAL filter,
+# read directly from the exchange's public exchangeInfo endpoint.
+#   - live query, 2026-09-21: `curl https://fapi.binance.com/fapi/v1/exchangeInfo`
+#     -> BTCUSDT's filters include
+#     {"filterType": "MIN_NOTIONAL", "notional": "50"}.
+#   - Not consumed by any q-lab rule today — `execution_adapter: false`
+#     above already fails this venue at the first preflight rule — recorded
+#     here only because the field is required and must be sourced, not
+#     guessed.
+min_leg_notional_usd: 50.0
+
+# free_public_data — the fetcher itself needs no key and returns candles and
+# funding for free, but its own module docstring is explicit that a
+# survivorship-free UNIVERSE (delisted symbols) cannot be built from it at
+# all — a data-completeness problem, which is the SEPARATE
+# `point_in_time_universe` rule (edge stage, rules/2026-09-20.1.yaml), not
+# this field. This field only asks "is the data free and available going
+# forward, not just historically" — and for an explicitly named instrument
+# list, it is.
+#   - src/qlab/data/sources/binance.py module docstring: "Binance does not
+#     expose a historical *delisting* date for a symbol once it drops out
+#     of ``exchangeInfo``" and "**A survivorship-free universe cannot be
+#     built from Binance's free API at all.**"; the same docstring confirms
+#     the klines/funding endpoints used are the ordinary free public REST
+#     API, no key, same access model as Hyperliquid.
+free_public_data: true
+
+# supports_atomic_multileg — left unset (null), not guessed. No execution
+# adapter exists for this venue (see `execution_adapter` above), so there is
+# no order API this repo has ever exercised to observe atomicity from — the
+# honest answer is "we don't know," not "false by association with
+# Hyperliquid."
+supports_atomic_multileg: null
+
+# uncovered_leg_recovery — left unset (null) for the same reason: no
+# execution adapter means no recovery mechanism has ever been built or
+# exercised here to name.
+uncovered_leg_recovery: null

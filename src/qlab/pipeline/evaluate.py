@@ -5,12 +5,14 @@ This is `qlab evaluate`'s engine (docs/PLAN.md, "Что такое фреймв�
     spec -> panel -> weights -> backtest -> metrics -> rules -> verdict
 
 Every step below reuses an existing, already-merged building block
-(`qlab.data.snapshot`, `qlab.harness`, `qlab.rules`, `qlab.registry`) — this
-module's only job is sequencing them and persisting the result. See each
-function's docstring for the judgment calls this task's spec left open
-(pipeline ordering around the `trial.snapshot_id` constraint, how an
-existing snapshot is found without a network round trip, and which extra
-preflight metrics this module does — and does not — synthesize).
+(`qlab.data.snapshot`, `qlab.harness`, `qlab.rules`, `qlab.registry`,
+`qlab.venues`) — this module's only job is sequencing them and persisting
+the result. See each function's docstring for the judgment calls this
+task's spec left open (pipeline ordering around the `trial.snapshot_id`
+constraint, how an existing snapshot is found without a network round
+trip, and which extra preflight metrics this module does — and does not —
+synthesize; `venue_supported`/`data_forward_available`/`atomic_execution`
+are read from `qlab.venues`, never synthesized here).
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ from qlab.registry.models import Spec as SpecRow
 from qlab.rules.engine import EvaluationResult
 from qlab.rules.engine import evaluate as evaluate_rules
 from qlab.rules.schema import RuleSet
+from qlab.venues.config import load_venue
+from qlab.venues.derive import derive_venue_metrics
 
 Route = Literal["reject", "needs-more-data", "shelf", "paper", "error"]
 
@@ -418,6 +422,23 @@ def evaluate_spec(
         # `accrual_applied` is therefore honestly always 1 for any run that
         # reaches this point, not a fabricated pass-through value.
         metrics["accrual_applied"] = 1.0
+        # venue_supported / data_forward_available / atomic_execution
+        # (docs/TASKS.md T13): infrastructure facts a backtest cannot
+        # derive, read from `venues/<source>.yaml` (qlab.venues.config) and
+        # combined with this spec's `simultaneous_legs`
+        # (qlab.venues.derive.derive_venue_metrics). A venue with no config
+        # file, or a fact left unset in it, is silently absent from
+        # `metrics` here -- never guessed -- so `qlab.rules.engine.evaluate`
+        # honestly reports the corresponding rule as unknown rather than
+        # passing or failing it.
+        metrics.update(
+            derive_venue_metrics(
+                load_venue(spec.data.source),
+                snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+                venue_id=spec.data.source,
+                simultaneous_legs=spec.simultaneous_legs,
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary; this
         # is the pipeline's error-isolation boundary. Anything from here on
         # (a missing code_ref, a strategy that raises, invalid weights, a

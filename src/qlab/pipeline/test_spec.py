@@ -82,6 +82,26 @@ def test_zero_min_leg_notional_fails_validation() -> None:
         StrategySpec.model_validate(raw)
 
 
+def test_simultaneous_legs_defaults_to_one() -> None:
+    spec = StrategySpec.model_validate(_spec_dict())
+    assert spec.simultaneous_legs == 1
+
+
+def test_simultaneous_legs_explicit_value_accepted() -> None:
+    spec = StrategySpec.model_validate(_spec_dict(simultaneous_legs=2))
+    assert spec.simultaneous_legs == 2
+
+
+def test_simultaneous_legs_zero_fails_validation() -> None:
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(_spec_dict(simultaneous_legs=0))
+
+
+def test_simultaneous_legs_negative_fails_validation() -> None:
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(_spec_dict(simultaneous_legs=-1))
+
+
 def test_unknown_field_rejected() -> None:
     raw = _spec_dict(unexpected_field="nope")
     with pytest.raises(ValidationError):

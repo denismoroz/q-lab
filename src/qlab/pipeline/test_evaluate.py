@@ -497,6 +497,122 @@ def test_snapshot_not_refetched_when_already_registered(session, tmp_path) -> No
     assert result.routing.route == "paper"
 
 
+# --------------------------------------------------------------------------
+# venue metrics (docs/TASKS.md T13): venue_supported / data_forward_available
+# / atomic_execution, sourced from `venues/*.yaml` via `qlab.venues`.
+# --------------------------------------------------------------------------
+
+
+def test_venue_metrics_present_for_configured_hyperliquid_source(session, tmp_path) -> None:
+    """The real `venues/hyperliquid.yaml` this task ships is read straight
+    off disk (no network) and turns into all three preflight metrics for a
+    single-leg spec."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert result.metrics["venue_supported"] == 1.0
+    assert result.metrics["data_forward_available"] == 1.0
+    assert result.metrics["atomic_execution"] == 1.0
+
+
+def test_frab_like_multileg_spec_passes_atomic_execution_via_recovery(session, tmp_path) -> None:
+    """The task's central question: a two-leg (spot + perp short) spec on
+    Hyperliquid must NOT be rejected just because the two legs fill as
+    separate, sequential orders (`venues/hyperliquid.yaml`:
+    `supports_atomic_multileg: false`). It passes because the live engine
+    names a real recovery mechanism (`uncovered_leg_recovery`) that unwinds
+    an uncovered leg after a failure -- exactly what SCREENING.md's
+    atomicity rule actually asks for. This is the FRAB scenario from
+    docs/TASKS.md T13."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4}, simultaneous_legs=2)
+    atomic_rule = Rule(
+        id="atomic_execution",
+        stage=Stage.PREFLIGHT,
+        metric="atomic_execution",
+        comparator=Comparator.EQ,
+        threshold=1,
+        fatal=True,
+    )
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, atomic_rule])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert result.metrics["atomic_execution"] == 1.0
+    assert result.routing.route == "paper"
+
+
+def test_venue_metrics_absent_when_venue_unconfigured(session, tmp_path) -> None:
+    """A spec naming a venue with no `venues/<id>.yaml` file must not crash
+    the pipeline -- venue_supported/data_forward_available/atomic_execution
+    are simply absent from `metrics`, so a preflight rule on any of them
+    honestly reports `needs-more-data` (docs/TASKS.md T13) instead of a
+    guessed pass or fail."""
+    unconfigured_source = "no-such-venue"
+    _, prices, funding, tradeable = _fixture_frames(INSTRUMENTS)
+    snap_dir = tmp_path / "snap-unconfigured"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    for name, frame in (("prices", prices), ("funding", funding), ("tradeable", tradeable)):
+        frame.to_parquet(snap_dir / f"{name}.parquet", engine="pyarrow", index=True)
+    manifest = {
+        "source": unconfigured_source,
+        "instruments": sorted(INSTRUMENTS),
+        "start": pd.Timestamp(START, tz="UTC").isoformat(),
+        "end": pd.Timestamp(END, tz="UTC").isoformat(),
+        "interval": INTERVAL,
+        "universe_complete": True,
+    }
+    (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    repo.add_data_snapshot(
+        session,
+        id="snap-unconfigured",
+        source=unconfigured_source,
+        instruments=dict.fromkeys(sorted(INSTRUMENTS), True),
+        range_start=START,
+        range_end=END,
+        path=str(snap_dir),
+        rows=len(prices.index),
+        fetched_at=datetime.now(UTC),
+    )
+    spec = _make_spec(
+        params={"weight": 0.4},
+        data={
+            "source": unconfigured_source,
+            "interval": INTERVAL,
+            "start": START,
+            "end": END,
+            "instruments": None,
+        },
+    )
+    venue_rule = Rule(
+        id="venue_supported",
+        stage=Stage.PREFLIGHT,
+        metric="venue_supported",
+        comparator=Comparator.EQ,
+        threshold=1,
+        fatal=True,
+    )
+    ruleset = _ruleset([venue_rule])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert "venue_supported" not in result.metrics
+    assert "data_forward_available" not in result.metrics
+    # atomic_execution IS present here, honestly: this spec's default
+    # `simultaneous_legs=1` satisfies it trivially regardless of venue
+    # (qlab.venues.derive.atomic_execution) -- it is venue_supported that
+    # stays absent, since no `venues/no-such-venue.yaml` file exists.
+    assert result.metrics["atomic_execution"] == 1.0
+    assert result.rules_result.decisive is False
+    assert result.routing.route == "needs-more-data"
+
+
 def test_repeated_evaluation_reuses_registry_spec_row(session, tmp_path) -> None:
     """Two evaluations of byte-identical spec content append two `trial`
     rows (every run counts) but only one `spec` row (content-versioned)."""

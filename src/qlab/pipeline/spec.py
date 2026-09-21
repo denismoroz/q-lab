@@ -93,6 +93,24 @@ class StrategySpec(BaseModel):
     data: SpecData
     costs: SpecCosts
     min_leg_notional: float
+    simultaneous_legs: int = Field(
+        default=1,
+        description=(
+            "How many legs this strategy must have open TOGETHER for one "
+            "entry to make economic sense — the input `qlab.venues.derive."
+            "atomic_execution` needs to know whether an uncovered-leg-after-"
+            "failure question even applies. Defaults to 1: a strategy that "
+            "never needs more than one leg open at a time satisfies "
+            "atomic_execution trivially, since there is no partner leg a "
+            "failure could ever strand. A MULTI-leg strategy (e.g. FRAB's "
+            "spot-plus-perp-short, where a lone perp short or a lone spot "
+            "long is not the strategy) MUST say so explicitly here — "
+            "silently defaulting to 1 for a multi-leg strategy would make "
+            "atomic_execution pass by construction, which is exactly the "
+            "kind of guessed metric this pipeline exists to refuse (see "
+            "qlab.venues.derive.atomic_execution)."
+        ),
+    )
 
     @field_validator("idea_id", "title", "code_ref")
     @classmethod
@@ -106,6 +124,13 @@ class StrategySpec(BaseModel):
     def _positive(cls, value: float) -> float:
         if value <= 0:
             raise ValueError(f"min_leg_notional must be > 0, got {value}")
+        return value
+
+    @field_validator("simultaneous_legs")
+    @classmethod
+    def _at_least_one(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"simultaneous_legs must be >= 1, got {value}")
         return value
 
 
