@@ -13,14 +13,20 @@ from dataclasses import dataclass
 
 import httpx
 import pandas as pd
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-# Conservative fixed delay between successive HTTP requests to a free public
-# endpoint. Both Hyperliquid and Binance publish per-IP rate limits well
-# above this; a fixed delay is simpler than per-venue token-bucket
-# accounting and comfortably avoids 429s for the request volumes this
-# research tool makes (a handful of instruments, occasional fetches).
-REQUEST_DELAY_SECONDS = 0.25
+# Fixed delay between successive HTTP requests to a free public endpoint.
+# A whole-universe fetch is hundreds of instruments and several paginated
+# calls each, which is well past the "handful of instruments" this was first
+# sized for — that combination is what produced 429s in practice, so the
+# delay is paced for the bulk case and the retry policy below carries the
+# rest.
+REQUEST_DELAY_SECONDS = 0.5
+
+# A rate-limited endpoint needs to be waited out, not hammered: five tries
+# capped at eight seconds cannot outlast a per-minute limit window.
+RATE_LIMIT_MAX_ATTEMPTS = 8
+RATE_LIMIT_MAX_WAIT_SECONDS = 60.0
 
 INTERVAL_TO_TIMEDELTA: dict[str, pd.Timedelta] = {
     "1m": pd.Timedelta(minutes=1),
@@ -61,15 +67,28 @@ def polite_sleep() -> None:
     time.sleep(REQUEST_DELAY_SECONDS)
 
 
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry what waiting can fix, and nothing else.
+
+    A transport error or a 5xx is the venue or the network having a bad
+    moment. A 429 is us asking too fast — also worth waiting out, and the
+    reason the backoff below reaches a full minute. Every other 4xx is a
+    malformed request, i.e. a bug on our side: retrying it burns rate limit
+    and hides the defect, so it propagates immediately.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return isinstance(exc, httpx.HTTPError)
+
+
 def http_retry():
-    """Shared tenacity retry policy for flaky/rate-limited public endpoints:
-    exponential backoff, 5 attempts, only on network/HTTP errors — a bug in
-    our own request-building must never be silently retried away."""
+    """Shared tenacity retry policy for free public endpoints."""
     return retry(
         reraise=True,
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
-        retry=retry_if_exception_type(httpx.HTTPError),
+        stop=stop_after_attempt(RATE_LIMIT_MAX_ATTEMPTS),
+        wait=wait_exponential(multiplier=1.0, min=1.0, max=RATE_LIMIT_MAX_WAIT_SECONDS),
+        retry=retry_if_exception(_is_retryable),
     )
 
 
