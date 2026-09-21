@@ -40,7 +40,15 @@
       "Edit(tools/**)",
       "Edit(tests/**)",
       "Edit(CLAUDE.md)",
-      "Edit(README.md)"
+      "Edit(README.md)",
+      "mcp__ccd_session_mgmt__get_usage",
+      "mcp__scheduled-tasks__create_scheduled_task",
+      "mcp__scheduled-tasks__list_scheduled_tasks",
+      "mcp__scheduled-tasks__list_task_runs",
+      "Agent",
+      "TaskOutput",
+      "SendMessage",
+      "Write"
     ],
     "deny": [
       "Bash(git push --force*)",
