@@ -1,0 +1,57 @@
+# XSMOM control run: honest discovered universe, LIVE BOOK BREADTH.
+#
+# WHY THIS SPEC EXISTS. The first pair of xsmom specs differ in two ways at
+# once, not one, so the gap between them cannot be called a survivorship
+# effect:
+#
+#   specs/xsmom-frozen-universe.yaml   32 candidates -> k=10  ->  20 legs
+#   specs/xsmom.yaml                  222 candidates -> k=74  -> 148 legs
+#
+# `XsmomParams.compute_k`'s auto tercile rule (`k = universe_len // 3`) makes
+# book breadth a FUNCTION of universe size, so widening the candidate pool
+# also multiplies the number of legs by 7.4x. A 148-leg book is a different
+# strategy from a 20-leg book -- the same trap docs/TASKS.md T18 records for
+# trend, where the same idea on 222 instruments and on 25 needed capital an
+# order of magnitude apart. Confirmed by the runs' own min_capital_usd:
+# $1 776 (148 legs) against $240 (20 legs).
+#
+# This spec holds breadth fixed at the live value and varies ONLY the
+# candidate pool, which is what the survivorship question actually asks.
+# With the three runs together the gap decomposes:
+#
+#   frozen 32 coins, 20 legs   -> survivorship + nothing
+#   honest 222 coins, 20 legs  -> this spec: survivorship removed, breadth kept
+#   honest 222 coins, 148 legs -> survivorship removed, breadth changed too
+#
+# `n_positions: 20` is NOT a tuned number and not an invention: it is the
+# live engine's own manual mode (`XsmomParams.n_positions`, params.py:31,
+# "the *total* even count of long+short legs"), set to exactly the leg count
+# the live auto rule produces on the live 32-coin universe (k=10 per side).
+# It is a control, not a configuration anyone ran -- stated here so it is
+# never mistaken for the shipped setup.
+
+idea_id: xsmom-honest-20legs
+title: "XSMOM — честный универс при живой ширине книги (20 ног, контроль на survivorship)"
+code_ref: "qlab.strategies.xsmom:XsmomCrossSectionalMomentum"
+
+params:
+  universe: null
+  lookbacks_days: [14, 21, 30, 45, 60]
+  rebalance_days: 7
+  anchor_dow: 3
+  # Manual mode: 20 total legs = 10 long + 10 short, matching the live
+  # auto-tercile result on the 32-coin universe.
+  n_positions: 20
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 12.0
+simultaneous_legs: 1

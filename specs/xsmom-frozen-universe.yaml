@@ -1,0 +1,90 @@
+# XSMOM cross-sectional momentum, FROZEN 32-coin universe -- the literal
+# list the live engine shipped with (`DEFAULT_XSMOM_UNIVERSE`,
+# funding-rate-arbitrage/src/frab/strategy/xsmom/params.py:13-18).
+#
+# Same strategy code, same params, same window, same costs as
+# `specs/xsmom.yaml` -- this file differs ONLY in the instrument universe.
+# That is the entire point (docs/TASKS.md, T21): comparing the two specs'
+# verdicts measures q-lab's OWN estimate of the survivorship gap the audit
+# quotes, instead of quoting the audit's number secondhand.
+#
+# **Why this universe is survivorship selection by construction.**
+# `params.py:7-12`'s own comment: "Default candidate universe = the frozen,
+# backtest-validated HL set (research/cross_sectional/crypto/universe.json,
+# snapshot 2026-06-12, originally 34 coins: vol>=$1M, >=547d history,
+# fresh <=5d) ... HMSTR and TON dropped post-launch (2026-06-18): HMSTR too
+# thin (~$100k/day on HL), TON delisted on HL (isDelisted=true, $0
+# volume/OI) -> 32 coins." Every one of those filters -- minimum volume,
+# minimum history, "still listed and fresh" -- was evaluated in June 2026
+# and then applied BACKWARD to a backtest starting 2025-01-01
+# (`specs/xsmom.yaml`'s own window). A coin only made this list because it
+# was STILL liquid and alive in June 2026; any coin that would have failed
+# that test by then (because it died, thinned out, or got delisted along
+# the way) is invisible to this spec for the entire window, including the
+# months before it died. `AUDIT_2026_09.md` attributes exactly this effect
+# to a Sharpe drop from 1.21 (2021+ window, survivor universe) to 0.76
+# (point-in-time, +28 dead coins added back) -- see xsmom.py's module
+# docstring for the full ladder. Running both specs through the SAME
+# harness lets that delta be measured directly rather than quoted.
+
+# idea_id: a SEPARATE idea row from `specs/xsmom.yaml`'s `xsmom` (same
+# convention the registry already uses for `xsmom-overlays` -- a sibling
+# idea about the same driver, not a new version of the original). This is
+# a methodological fork for measuring the survivorship gap, not the same
+# formalization as the honest-universe spec, so it gets its own idea
+# identity rather than a second `spec` version under `xsmom` (see
+# qlab.registry.repo.upsert_idea for how this row is created before the
+# first trial references it).
+idea_id: xsmom-frozen-universe
+title: "XSMOM — кросс-секционный моментум-ансамбль на крипто-перпах HL (заморож. 32-монетный универс, снапшот 2026-06-12)"
+code_ref: "qlab.strategies.xsmom:XsmomCrossSectionalMomentum"
+
+params:
+  # DEFAULT_XSMOM_UNIVERSE, params.py:13-18 -- the exact 32-coin list, same
+  # order as the source (order has no effect on the ranking math, kept
+  # identical to the source purely so a diff against params.py is trivial).
+  universe:
+    [
+      "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "BCH", "BNB", "BTC", "CRV",
+      "DOGE", "DOT", "EIGEN", "ENA", "ETH", "INJ", "JTO", "JUP", "LINK", "LTC",
+      "NEAR", "PENDLE", "PYTH", "SOL", "SUI", "TAO", "TRX", "UNI", "WLD", "XLM",
+      "XRP", "ZRO",
+    ]
+  # XsmomParams.lookbacks = (14, 21, 30, 45, 60) -- params.py:35
+  lookbacks_days: [14, 21, 30, 45, 60]
+  # XsmomParams.rebalance_days = 7 -- params.py:36
+  rebalance_days: 7
+  # XsmomParams.anchor_dow = 3 (Thursday) -- params.py:37
+  anchor_dow: 3
+  # XsmomParams.n_positions = None -> auto tercile sizing -- params.py:31
+  n_positions: null
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+  # Restricted to the same 32 tickers named in params.universe above, so
+  # the SNAPSHOT itself only ever contains this strategy's candidate pool
+  # (universe_complete=False by construction -- this is the honest_universe
+  # rule's exact target, and this spec is EXPECTED to read as a hand-picked
+  # universe, not a bug). Naming it twice (here and in params.universe)
+  # is deliberate, not redundant: qlab.pipeline.spec.SpecData.instruments
+  # controls what the PANEL contains, params.universe controls what the
+  # STRATEGY is willing to trade -- see qlab.strategies.frab's own params
+  # docstring for the same distinction made explicit for another strategy.
+  instruments:
+    [
+      "AAVE", "ADA", "APT", "ARB", "ATOM", "AVAX", "BCH", "BNB", "BTC", "CRV",
+      "DOGE", "DOT", "EIGEN", "ENA", "ETH", "INJ", "JTO", "JUP", "LINK", "LTC",
+      "NEAR", "PENDLE", "PYTH", "SOL", "SUI", "TAO", "TRX", "UNI", "WLD", "XLM",
+      "XRP", "ZRO",
+    ]
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 12.0
+
+simultaneous_legs: 1

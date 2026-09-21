@@ -1,0 +1,98 @@
+# XSMOM cross-sectional momentum, HONEST discovered universe --
+# qlab.strategies.xsmom.XsmomCrossSectionalMomentum.
+#
+# **This is the strategy that caused q-lab to exist** (docs/TASKS.md, T21):
+# the previous validation process rated it profitable, it was funded with
+# real money, and it lost -11.19% over 13 weeks live
+# (`funding-rate-arbitrage/research/xsmom_live_recon/AUDIT_2026_09.md`).
+# The acceptance condition here is INVERTED from every other spec in this
+# directory: the rules engine is expected to REJECT this. If it does not,
+# that is a finding about the framework, more important than any other
+# result from this task, and is not to be worked around here.
+#
+# Every param below is `XsmomParams`'s own default
+# (`funding-rate-arbitrage/src/frab/strategy/xsmom/params.py`) -- see
+# `src/qlab/strategies/xsmom.py`'s module and class docstrings for the exact
+# line-by-line citation of each one. Nothing here is tuned or invented.
+#
+# `universe: null` -- the ONE deliberate methodological choice this file
+# makes, not a value read off the live config (see xsmom.py's "Instrument
+# universe" docstring section for the full argument): production always
+# ran against a small, fixed, operator-curated list (never "every
+# instrument"), so `null` here does not reproduce a literal production
+# setting -- it reproduces `specs/trend.yaml`'s own honest-universe
+# convention, applied to XSMOM's ranking mechanism, so the discovered
+# universe and the frozen 32-coin universe below can be compared
+# apples-to-apples on the SAME strategy code. Paired with
+# `specs/xsmom-frozen-universe.yaml`, which restricts to the literal
+# `DEFAULT_XSMOM_UNIVERSE` list -- see that file's header for why running
+# both is the point.
+
+# idea_id: reuses the EXISTING graveyard idea `xsmom` (status=decayed,
+# shutdown_cause=false-discovery -- see docs/REGISTRY.md's `idea` table and
+# the row itself). This spec is the actual, best-faith formalization of
+# that same idea on q-lab's own harness -- the same relationship
+# `specs/trend.yaml`/`specs/frab.yaml` have to their own pre-existing
+# graveyard rows -- not a new candidate.
+idea_id: xsmom
+title: "XSMOM — кросс-секционный моментум-ансамбль на крипто-перпах HL (честный дискаверед-универс)"
+code_ref: "qlab.strategies.xsmom:XsmomCrossSectionalMomentum"
+
+params:
+  universe: null
+  # XsmomParams.lookbacks = (14, 21, 30, 45, 60) -- params.py:35
+  lookbacks_days: [14, 21, 30, 45, 60]
+  # XsmomParams.rebalance_days = 7 -- params.py:36
+  rebalance_days: 7
+  # XsmomParams.anchor_dow = 3 (Thursday) -- params.py:37
+  anchor_dow: 3
+  # XsmomParams.n_positions = None -> auto tercile sizing -- params.py:31
+  n_positions: null
+
+data:
+  source: hyperliquid
+  # Daily bars: every XSMOM param is in DAYS (lookbacks 14/21/30/45/60,
+  # weekly rebalance) and the live signal itself is computed off daily
+  # closes (`evaluators/signal.py`'s own docstring: "Mirrors the math in
+  # research/cross_sectional/crypto/signals.py::momentum_ensemble exactly",
+  # operating on one row per day). Hourly bars would add row volume without
+  # adding information this strategy uses; `align_funding_to_index` still
+  # sums the underlying hourly HL funding settlements into each daily
+  # bucket correctly.
+  interval: "1d"
+  # Same window as specs/trend.yaml, for the same reason: the venue's full
+  # history (2023-01-01..2026-09-20) hits Hyperliquid's own rate limit
+  # partway through a discovered-universe fetch (docs/ACCEPTANCE_M2.md);
+  # 2025-01-01..2026-09-20 (~1.7 years) is the window a normal fetch
+  # completes on after the data-layer fixes documented there.
+  start: 2025-01-01
+  end: 2026-09-20
+  # instruments intentionally omitted -> discovered universe (survivors +
+  # delisted), universe_complete=True, honest_universe can pass. This is
+  # the data-layer-level "honest universe"; params.universe: null above is
+  # the SEPARATE, strategy-level choice to actually trade all of it rather
+  # than filter down to a fixed candidate list -- see this file's header.
+
+costs:
+  # Same cost shape as specs/trend.yaml and specs/frab.yaml's own costs
+  # block, for the same reason: XSMOM is ALSO a perps-only directional book
+  # (long/short perp legs, no spot leg) -- SCREENING.md's own quoted figure
+  # for exactly this book shape: "реальные косты HL: ~4.4 б.п. на ногу
+  # (taker 3.5 + проскальзывание)"
+  # (funding-rate-arbitrage/research/SCREENING.md line 32), taker itself
+  # pinned to `frab/constants.py`'s `PERP_TAKER = 0.00035`.
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+# `XsmomParams.sizing_breakdown`'s own minimum-leg floor
+# (`frab/strategy/xsmom/params.py:141`: `_MIN_LEG = 12.0  # HL ~$10 min
+# order + slippage buffer`) -- XSMOM's own documented floor, not borrowed
+# from trend/frab's $10 (HL's raw exchange minimum); XSMOM's live sizing
+# code adds its own slippage buffer on top of that raw floor.
+min_leg_notional: 12.0
+
+# Cross-sectional long/short, one perp leg per selected coin -- no partner
+# leg a failure could ever strand, same reasoning as specs/trend.yaml (a
+# genuinely 1-leg-per-position strategy, just with many positions open at
+# once).
+simultaneous_legs: 1

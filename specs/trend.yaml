@@ -1,0 +1,78 @@
+# TSMOM ensemble on crypto perps -- qlab.strategies.trend.TrendTSMOMEnsemble.
+#
+# Every param below is the COMMITTED live configuration, transcribed from
+# `frab/strategy/trend/params.py`'s `TrendParams` defaults and confirmed by
+# `research/trend_following/FINDINGS.md` ("Committed = TSMOM-ENSEMBLE
+# (lookbacks 30/60/90/120). Константы: VOL_TARGET=0.02/день, LEVERAGE_CAP=3.0")
+# -- see `src/qlab/strategies/trend.py`'s module and class docstrings for the
+# exact citation of each field. Nothing here is tuned or invented.
+#
+# No coin universe is named in params: trend.py's own docstring says so
+# deliberately -- "the instrument universe is whatever columns panel.prices
+# has" -- so this spec leaves `data.instruments` unset (discovered universe)
+# and lets the strategy trade every instrument the snapshot actually
+# contains. This is also the one spec of the three that can pass
+# `honest_universe` end to end without a data-layer gap (see frab.yaml /
+# bv2.yaml for why those two cannot).
+
+idea_id: trend-tsmom-crypto
+title: "TSMOM-ансамбль на крипто-перпах HL (полный дискаверед-универс)"
+code_ref: "qlab.strategies.trend:TrendTSMOMEnsemble"
+
+params:
+  lookbacks_days: [30, 60, 90, 120]
+  vol_window_days: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  min_history_days: 151
+
+data:
+  source: hyperliquid
+  # Daily bars: every trend param is in DAYS (lookbacks 30/60/90/120, vol
+  # window 30) -- hourly bars would add row volume without adding
+  # information the strategy actually uses. `qlab.data.sources.base
+  # .align_funding_to_index` still sums the underlying hourly HL funding
+  # settlements into each daily bucket correctly; nothing about accrual is
+  # lost by choosing this interval.
+  interval: "1d"
+  # A first attempt at a narrower 1-year window (2024-09-01..2025-09-01)
+  # failed outright under the data layer's ORIGINAL behaviour:
+  # `hyperliquid.fetch_universe` raised on the first currently-listed coin
+  # ("0G") with zero candles anywhere inside that window (listed after it
+  # ended) -- `discover_universe` has no per-instrument listing dates to
+  # avoid this ahead of time. That forced widening to the venue's entire
+  # history (2023-01-01..2026-09-20), which then hit Hyperliquid's own rate
+  # limit partway through a ~234-instrument x 3.7-year fetch (HTTP 429,
+  # exhausting the harness's built-in retry budget). Both are recorded as
+  # findings in docs/ACCEPTANCE_M2.md. The data layer was then fixed
+  # (`fetch_universe(on_missing=...)`, `qlab.data.snapshot.build_snapshot`
+  # now passes `on_missing="skip"` for a discovered universe): a discovered
+  # instrument with no data in a requested window is now honest
+  # point-in-time truth ("not listed yet"/"already delisted"), not a fatal
+  # error, so a normal 1-1.5 year window works again.
+  start: 2025-01-01
+  end: 2026-09-20
+  # instruments intentionally omitted -> discovered universe (survivors +
+  # delisted), universe_complete=True, honest_universe can pass.
+
+costs:
+  # Every leg here is a directional HL perp (no spot leg) -- the exact shape
+  # SCREENING.md's own quoted cost figure was computed for (a perps-only
+  # cross-sectional book): "реальные косты HL: ~4.4 б.п. на ногу (taker 3.5 +
+  # проскальзывание)" (funding-rate-arbitrage/research/SCREENING.md line 32),
+  # taker itself pinned to `frab/constants.py`'s `PERP_TAKER = 0.00035`.
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+# HL's own minimum order size (`frab/strategy/trend/params.py:62`:
+# `min_order_usd: float = 10.0`) -- the same number `venues/hyperliquid.yaml`
+# records independently as the exchange's own floor.
+min_leg_notional: 10.0
+
+# Directional long/short per instrument, one leg per coin -- no partner leg
+# a failure could ever strand (frab.py's own single-leg strategies default
+# here too, but stated explicitly per the spec format's own rule for
+# multi-leg strategies not applying: this is genuinely a 1-leg-per-entry
+# strategy).
+simultaneous_legs: 1
