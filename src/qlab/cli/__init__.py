@@ -13,6 +13,20 @@ import typer
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 
+from qlab.calibration.report import (
+    render_report,
+    summarize_by_generator,
+    summarize_real,
+    summarize_series,
+    write_report,
+)
+from qlab.calibration.run import (
+    REAL_SPEC_PATHS,
+    SERIES,
+    load_reference_spec,
+    run_noise_series,
+    run_real_strategies,
+)
 from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
 from qlab.pipeline.evaluate import evaluate_spec
 from qlab.pipeline.spec import load_spec
@@ -413,6 +427,88 @@ def evaluate_cmd(
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
+
+
+# --------------------------------------------------------------------------
+# calibrate
+# --------------------------------------------------------------------------
+
+
+@app.command("calibrate")
+def calibrate_cmd(
+    rules_version: str | None = typer.Option(
+        None, "--rules", help="Rules version to calibrate (default: latest)"
+    ),
+    n_trials: int = typer.Option(
+        200,
+        "--n-trials",
+        help="Noise trials per series (docs/TASKS.md T16 requires at least 200)",
+    ),
+    capital: float = typer.Option(
+        1000.0, "--capital", help="Capital currently deployable now (USD)"
+    ),
+) -> None:
+    """Calibrate a ruleset against noise (docs/TASKS.md T16): how often does
+    the ruleset admit a strategy known to have no edge, and what is the best
+    `sharpe_net` noise reaches?
+
+    Runs `n_trials` structurally-matched noise strategies per series
+    (dollar-neutral and unconstrained, `qlab.calibration.noise`) through the
+    real `evaluate_spec` -- same rules, costs, accrual, universe as any real
+    candidate -- plus the three real strategies for comparison, then writes
+    `docs/CALIBRATION_<rules-version>.md` in Russian
+    (`qlab.calibration.report`). Every run is a recorded `trial`.
+    """
+    if n_trials < 200:
+        typer.echo(
+            f"warning: docs/TASKS.md T16 requires at least 200 noise trials per series; "
+            f"running {n_trials}",
+            err=True,
+        )
+
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+    reference = load_reference_spec()
+
+    series_summaries = {}
+    generator_breakdowns = {}
+    with session_scope() as session:
+        for series in SERIES:
+            trials = run_noise_series(
+                series=series,
+                n_trials=n_trials,
+                session=session,
+                ruleset=ruleset,
+                deployable_capital_usd=capital,
+                reference=reference,
+            )
+            series_summaries[series] = summarize_series(trials)
+            generator_breakdowns[series] = summarize_by_generator(trials)
+
+        real_evaluations = run_real_strategies(
+            session=session, ruleset=ruleset, deployable_capital_usd=capital
+        )
+
+    titles = {idea_id: load_spec(path).title for idea_id, path in REAL_SPEC_PATHS.items()}
+    real_results = summarize_real(real_evaluations, titles)
+
+    content = render_report(
+        ruleset=ruleset,
+        series_summaries=series_summaries,
+        real_results=real_results,
+        reference_idea_id=reference.idea_id,
+        generated_on=date.today(),
+        generator_breakdowns=generator_breakdowns,
+    )
+    report_path = write_report(content, ruleset.version)
+
+    typer.echo(f"rules:  {ruleset.version}")
+    typer.echo(f"report: {report_path}")
+    typer.echo("")
+    for series, summary in series_summaries.items():
+        typer.echo(
+            f"  {series:<16} n={summary.n_trials:<5} admitted={summary.n_admitted:<5} "
+            f"rate={summary.admission_rate:.1%}  best_sharpe_net={summary.best_sharpe_net}"
+        )
 
 
 # --------------------------------------------------------------------------
