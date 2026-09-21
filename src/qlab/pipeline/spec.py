@@ -39,6 +39,14 @@ class SpecData(BaseModel):
 
     source: str
     interval: str
+    include_spot: bool = False
+    """Fetch the venue's spot markets alongside its perpetuals.
+
+    A strategy that holds spot against a perp short — FRAB, Bv2 — needs two
+    columns per coin (`BTC` and `BTC-SPOT`) and cannot run without this. It
+    defaults to off because spot doubles the fetch and most strategies never
+    touch it, and because a panel should carry only what the spec asked for.
+    """
     start: date
     end: date
     instruments: list[str] | None = None

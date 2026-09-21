@@ -1,0 +1,128 @@
+# FRAB funding harvest -- qlab.strategies.frab.FrabFundingHarvest.
+#
+# Every rank/slot/threshold param below is transcribed verbatim from the live
+# engine's `TwoPhaseParams` (`frab/strategy/two_phase/params.py`) -- see
+# `src/qlab/strategies/frab.py`'s class docstring for the exact line-by-line
+# citation of each one. Nothing here is tuned or invented.
+#
+# KNOWN BLOCKER (reported in docs/ACCEPTANCE_M2.md, not worked around here):
+# FRAB needs a spot leg AND a perp leg per coin (`spot_columns`/
+# `perp_columns` name two DIFFERENT panel columns for the same coin). q-lab's
+# data layer fetches Hyperliquid PERPETUAL data only
+# (`qlab.data.sources.hyperliquid`: `metaAndAssetCtxs` / `candleSnapshot` /
+# `fundingHistory`, all perp endpoints) -- there is no HL spot-market fetcher
+# in this codebase, and `qlab.pipeline.spec.SpecData` has only one `source`
+# field, i.e. no way to pull two different markets (spot + perp) for the
+# same coin into one MarketPanel even if a spot fetcher existed. HL DOES
+# expose spot data on its free API (`spotMeta`, confirmed against
+# `funding-rate-arbitrage/research/venue_refresh_2026_06/probe_spot_availability.py`)
+# -- this is a genuine, fixable gap in q-lab's data layer, not a fact about
+# the venue. `spot_columns` below therefore names a column
+# (f"{coin}-SPOT") that will NOT exist in any real snapshot this pipeline can
+# build; running this spec is expected to fail at `validate_weights` with a
+# column-mismatch error, which is exactly the honest failure this file exists
+# to surface (see the acceptance report's "routing decision" for FRAB).
+#
+# Coin universe: FRAB is coin-agnostic by construction (it ranks whichever
+# candidates it is given), so this is a genuine run choice, not a strategy
+# parameter -- frab.py's own docstring says so explicitly. The live coin
+# list itself is read at runtime from a DB-backed `coin_registry`
+# (`funding-rate-arbitrage/src/frab/coin_registry.py`), not a fixed constant
+# in code, so there is no single "documented FRAB universe" to transcribe.
+# The 9-coin list below is the one DOCUMENTED, dated snapshot of "FRAB coins"
+# in the source repo:
+# `funding-rate-arbitrage/research/venue_refresh_2026_06/probe_spot_availability.py`
+# line 2: `FRAB = ["BTC","ETH","SOL","HYPE","AVAX","LINK","DOGE","ZEC","XPL"]`.
+# Chosen over "all 234 discovered instruments" because FRAB never actually
+# ranks illiquid/delisted names with no real spot market -- doing so would
+# misrepresent the live strategy's actual candidate pool, not make the run
+# more honest. `data.instruments` is still left unset below (discovered
+# universe) so the SNAPSHOT itself stays universe_complete=True; this
+# instrument list only restricts which of the panel's columns the STRATEGY
+# actually trades, exactly as `qlab.strategies.frab`'s own params docstring
+# describes `spot_columns`/`perp_columns` ("run input... same role as
+# choosing a universe for any strategy").
+
+idea_id: frab
+title: "FRAB — funding harvest, spot-long/perp-short, ranked slots (9-coin snapshot universe)"
+code_ref: "qlab.strategies.frab:FrabFundingHarvest"
+
+params:
+  spot_columns:
+    BTC: "BTC-SPOT"
+    ETH: "ETH-SPOT"
+    SOL: "SOL-SPOT"
+    HYPE: "HYPE-SPOT"
+    AVAX: "AVAX-SPOT"
+    LINK: "LINK-SPOT"
+    DOGE: "DOGE-SPOT"
+    ZEC: "ZEC-SPOT"
+    XPL: "XPL-SPOT"
+  perp_columns:
+    BTC: "BTC"
+    ETH: "ETH"
+    SOL: "SOL"
+    HYPE: "HYPE"
+    AVAX: "AVAX"
+    LINK: "LINK"
+    DOGE: "DOGE"
+    ZEC: "ZEC"
+    XPL: "XPL"
+  # TwoPhaseParams.concurrency_cap = 3  # K: max simultaneous open positions
+  max_slots: 3
+  # TwoPhaseParams.entry_threshold_apr = 0.10
+  entry_threshold_apr: 0.10
+  # TwoPhaseParams.phase2_exit_threshold = -0.10
+  exit_threshold_apr: -0.10
+  # TwoPhaseParams.signal_window_hours = 12
+  signal_window_hours: 12
+  # xsmom/params.py `_MIN_LEG = 12.0  # HL ~$10 min order + slippage buffer`
+  min_leg_notional_usd: 12.0
+  # Run choice (not a strategy parameter, see frab.py docstring): book
+  # capital this run assumes, matching `qlab evaluate --capital 1000` -- the
+  # owner's own stated confidence level ("уверенности нет на размещение
+  # более 1к", rules/2026-09-20.2.yaml).
+  book_capital_usd: 1000.0
+
+data:
+  source: hyperliquid
+  # Hourly bars are required, not a choice: `signal_window_hours: 12` (a
+  # 12-hour rolling mean of funding) does not exist on a daily panel, and HL
+  # funding itself settles hourly -- a daily bar would either discard that
+  # resolution or force a different signal than the one being transcribed.
+  interval: "1h"
+  include_spot: true
+  # 2025-01-01..2026-09-20 (~1.7 years): a first attempt at the venue's
+  # entire history (2023-01-01..2026-09-20, needed under the data layer's
+  # ORIGINAL "discovered universe still raises on any coin missing data in
+  # range" behaviour) hit Hyperliquid's own rate limit partway through --
+  # see docs/ACCEPTANCE_M2.md. The data layer was then fixed
+  # (`fetch_universe(on_missing=...)`): a discovered instrument with no data
+  # in a requested window is now honest point-in-time truth, not a fatal
+  # error, so a normal 1-1.5+ year window works again.
+  start: 2025-01-01
+  end: 2026-09-20
+  # instruments intentionally omitted -> discovered universe, universe_complete=True.
+
+costs:
+  # Blended average of HL's own spot and perp taker fees
+  # (`frab/constants.py`: `SPOT_TAKER = 0.00070`, `PERP_TAKER = 0.00035`).
+  # This is exact, not approximate, for this strategy's mechanics: every
+  # FRAB entry/exit moves the spot leg and the perp leg by the identical
+  # magnitude (`share`, see frab.py), so a single per-turnover rate applied
+  # to the summed |Δweight| across both legs is mathematically equivalent to
+  # charging each leg its own real rate -- (7.0 + 3.5) / 2 = 5.25bp.
+  taker_fee_bps: 5.25
+  # SCREENING.md's own quoted slippage component of "~4.4 б.п. на ногу
+  # (taker 3.5 + проскальзывание)" -> 4.4 - 3.5 = 0.9bp. No FRAB-specific
+  # slippage figure is documented separately, so this is the same
+  # placeholder both other specs use, disclosed here rather than invented
+  # fresh.
+  slippage_bps: 0.9
+
+min_leg_notional: 12.0
+
+# Spot-long + perp-short must be open TOGETHER for one entry to make
+# economic sense -- a lone leg is not FRAB (see qlab.pipeline.spec's own
+# worked example, which names exactly this strategy).
+simultaneous_legs: 2

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pandas as pd
 import pytest
@@ -160,3 +162,180 @@ def test_fetch_instrument_history_raises_on_no_candles():
 
     with httpx.Client() as client, pytest.raises(ValueError, match="no candle data"):
         hl.fetch_instrument_history(client, "NOPE", "1h", start, end, meta={})
+
+
+# --------------------------------------------------------------------------
+# Spot markets (docs/TASKS.md, T17)
+# --------------------------------------------------------------------------
+
+_SPOT_META_PAYLOAD = {
+    "tokens": [
+        {"name": "USDC", "index": 0},
+        {"name": "UBTC", "index": 197},
+        {"name": "UETH", "index": 198},
+        {"name": "HYPE", "index": 150},
+        # A community coin with no perp counterpart -- must never surface
+        # in `fetch_spot_meta`'s result.
+        {"name": "HFUN", "index": 2},
+    ],
+    "universe": [
+        {"tokens": [197, 0], "name": "@142", "index": 142},
+        {"tokens": [198, 0], "name": "@151", "index": 151},
+        {"tokens": [150, 0], "name": "HYPE/USDC", "index": 107},
+        {"tokens": [2, 0], "name": "@1", "index": 1},
+    ],
+}
+
+_PERP_META_PAYLOAD = [
+    {
+        "universe": [
+            {"name": "BTC", "isDelisted": False, "maxLeverage": 50},
+            {"name": "ETH", "isDelisted": False, "maxLeverage": 50},
+            {"name": "HYPE", "isDelisted": False, "maxLeverage": 10},
+        ]
+    },
+    [{}, {}, {}],
+]
+
+
+def _dispatch_by_type(responses: dict):
+    """Build a respx side_effect that routes on the request body's "type"
+    field -- needed once a test exercises more than one `/info` call shape
+    (perp meta, spot meta, candles, ...) in sequence."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        key = body.get("type")
+        if key not in responses:
+            raise AssertionError(f"unexpected request type {key!r}: {body}")
+        value = responses[key]
+        return value(body) if callable(value) else httpx.Response(200, json=value)
+
+    return _handler
+
+
+@respx.mock
+def test_fetch_spot_meta_maps_bridge_and_native_tokens():
+    respx.post(hl.BASE_URL).mock(return_value=httpx.Response(200, json=_SPOT_META_PAYLOAD))
+
+    with httpx.Client() as client:
+        result = hl.fetch_spot_meta(client, ["BTC", "ETH", "HYPE", "SOL"])
+
+    assert result == {"BTC": "@142", "ETH": "@151", "HYPE": "HYPE/USDC"}
+    assert "SOL" not in result  # no matching token in the payload
+
+
+@respx.mock
+def test_describe_spot_universe_excludes_coins_without_perp_counterpart():
+    respx.post(hl.BASE_URL).mock(
+        side_effect=_dispatch_by_type(
+            {"metaAndAssetCtxs": _PERP_META_PAYLOAD, "spotMeta": _SPOT_META_PAYLOAD}
+        )
+    )
+
+    described = hl.describe_spot_universe()
+
+    assert described == [("BTC-SPOT", False), ("ETH-SPOT", False), ("HYPE-SPOT", False)]
+
+
+@respx.mock
+def test_discover_spot_universe_returns_column_names():
+    respx.post(hl.BASE_URL).mock(
+        side_effect=_dispatch_by_type(
+            {"metaAndAssetCtxs": _PERP_META_PAYLOAD, "spotMeta": _SPOT_META_PAYLOAD}
+        )
+    )
+
+    assert hl.discover_spot_universe() == ["BTC-SPOT", "ETH-SPOT", "HYPE-SPOT"]
+
+
+@respx.mock
+def test_fetch_spot_instrument_history_has_no_funding():
+    start = pd.Timestamp("2024-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2024-01-01T01:00:00", tz="UTC")
+    candles = [_candle(start, 100.0), _candle(end, 101.0)]
+    respx.post(hl.BASE_URL).mock(return_value=httpx.Response(200, json=candles))
+
+    with httpx.Client() as client:
+        hist = hl.fetch_spot_instrument_history(client, "BTC", "@142", "1h", start, end)
+
+    assert hist.instrument == "BTC-SPOT"
+    assert hist.has_funding is False
+    assert hist.funding.empty
+    assert hist.is_delisted is False
+    assert len(hist.prices) == 2
+
+
+@respx.mock
+def test_fetch_spot_instrument_history_raises_on_no_candles():
+    respx.post(hl.BASE_URL).mock(return_value=httpx.Response(200, json=[]))
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    end = pd.Timestamp("2024-01-02", tz="UTC")
+
+    with httpx.Client() as client, pytest.raises(ValueError, match="no spot candle data"):
+        hl.fetch_spot_instrument_history(client, "NOPE", "@999", "1d", start, end)
+
+
+@respx.mock
+def test_fetch_spot_universe_returns_columns_keyed_by_coin_dash_spot():
+    start = pd.Timestamp("2024-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2024-01-01T01:00:00", tz="UTC")
+
+    def _candles_for(body: dict) -> httpx.Response:
+        coin = body["req"]["coin"]
+        price = 1.0 if coin == "@142" else 2.0
+        return httpx.Response(200, json=[_candle(start, price), _candle(end, price + 1)])
+
+    respx.post(hl.BASE_URL).mock(
+        side_effect=_dispatch_by_type(
+            {
+                "metaAndAssetCtxs": _PERP_META_PAYLOAD,
+                "spotMeta": _SPOT_META_PAYLOAD,
+                "candleSnapshot": _candles_for,
+            }
+        )
+    )
+
+    result = hl.fetch_spot_universe(["BTC", "ETH"], start, end, "1h")
+
+    assert set(result) == {"BTC-SPOT", "ETH-SPOT"}
+    assert result["BTC-SPOT"].prices.iloc[0] == 1.0
+    assert result["ETH-SPOT"].prices.iloc[0] == 2.0
+    assert all(not h.has_funding for h in result.values())
+
+
+@respx.mock
+def test_fetch_spot_universe_raises_on_coin_with_no_spot_market():
+    start = pd.Timestamp("2024-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2024-01-01T01:00:00", tz="UTC")
+    respx.post(hl.BASE_URL).mock(
+        side_effect=_dispatch_by_type(
+            {"metaAndAssetCtxs": _PERP_META_PAYLOAD, "spotMeta": _SPOT_META_PAYLOAD}
+        )
+    )
+
+    with pytest.raises(ValueError, match="no USDC-quoted spot market"):
+        hl.fetch_spot_universe(["DOGE"], start, end, "1h", on_missing="raise")
+
+
+@respx.mock
+def test_fetch_spot_universe_skips_missing_when_on_missing_skip():
+    start = pd.Timestamp("2024-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2024-01-01T01:00:00", tz="UTC")
+
+    def _candles_for(body: dict) -> httpx.Response:
+        return httpx.Response(200, json=[_candle(start, 1.0), _candle(end, 1.1)])
+
+    respx.post(hl.BASE_URL).mock(
+        side_effect=_dispatch_by_type(
+            {
+                "metaAndAssetCtxs": _PERP_META_PAYLOAD,
+                "spotMeta": _SPOT_META_PAYLOAD,
+                "candleSnapshot": _candles_for,
+            }
+        )
+    )
+
+    result = hl.fetch_spot_universe(["BTC", "DOGE"], start, end, "1h", on_missing="skip")
+
+    assert set(result) == {"BTC-SPOT"}

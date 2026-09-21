@@ -1,12 +1,20 @@
 """Tests for align_funding_to_index: the core "NaN means unknown, never
-silently zero" logic shared by every source fetcher."""
+silently zero" logic shared by every source fetcher. Also covers the
+per-instrument cache's `has_funding` persistence (docs/TASKS.md, T17)."""
 
 from __future__ import annotations
+
+import json
 
 import numpy as np
 import pandas as pd
 
-from qlab.data.sources.base import align_funding_to_index
+from qlab.data.sources.base import (
+    InstrumentHistory,
+    align_funding_to_index,
+    load_cached_history,
+    store_cached_history,
+)
 
 
 def test_exact_frequency_match_passes_through():
@@ -79,3 +87,61 @@ def test_empty_raw_series_is_all_nan():
     index = pd.date_range("2024-01-01", periods=3, freq="1h", tz="UTC")
     out = align_funding_to_index(pd.Series(dtype=float), index, pd.Timedelta(hours=1))
     assert out.isna().all()
+
+
+# --------------------------------------------------------------------------
+# Per-instrument cache: has_funding round trip (docs/TASKS.md, T17)
+# --------------------------------------------------------------------------
+
+
+def _history(instrument: str, index: pd.DatetimeIndex, *, has_funding: bool) -> InstrumentHistory:
+    funding = pd.Series(0.0001, index=index) if has_funding else pd.Series(dtype=float)
+    return InstrumentHistory(
+        instrument=instrument,
+        prices=pd.Series([1.0, 2.0], index=index),
+        funding=funding,
+        first_seen=index[0],
+        last_seen=index[-1],
+        is_delisted=False,
+        has_funding=has_funding,
+    )
+
+
+def test_cache_round_trip_persists_has_funding_false(tmp_path):
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    hist = _history("BTC-SPOT", index, has_funding=False)
+
+    store_cached_history(tmp_path, "hyperliquid", "1h", index[0], index[-1], hist)
+    loaded = load_cached_history(tmp_path, "hyperliquid", "BTC-SPOT", "1h", index[0], index[-1])
+
+    assert loaded is not None
+    assert loaded.has_funding is False
+
+
+def test_cache_round_trip_persists_has_funding_true(tmp_path):
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    hist = _history("BTC", index, has_funding=True)
+
+    store_cached_history(tmp_path, "hyperliquid", "1h", index[0], index[-1], hist)
+    loaded = load_cached_history(tmp_path, "hyperliquid", "BTC", "1h", index[0], index[-1])
+
+    assert loaded is not None
+    assert loaded.has_funding is True
+
+
+def test_cache_backfills_has_funding_true_for_legacy_entries_without_the_key(tmp_path):
+    """A cache entry written before spot support existed has no
+    "has_funding" key at all -- it is necessarily a perp fetch, so True is
+    the correct backfill, not a guess."""
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    hist = _history("BTC", index, has_funding=True)
+    store_cached_history(tmp_path, "hyperliquid", "1h", index[0], index[-1], hist)
+
+    meta_path = tmp_path / "hyperliquid" / "1h" / f"BTC__{index[0].date()}__{index[-1].date()}.json"
+    meta = json.loads(meta_path.read_text())
+    del meta["has_funding"]
+    meta_path.write_text(json.dumps(meta))
+
+    loaded = load_cached_history(tmp_path, "hyperliquid", "BTC", "1h", index[0], index[-1])
+    assert loaded is not None
+    assert loaded.has_funding is True

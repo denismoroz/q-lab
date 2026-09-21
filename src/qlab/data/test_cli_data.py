@@ -95,7 +95,9 @@ def test_data_fetch_propagates_no_discovery_error_cleanly(monkeypatch):
 
 def test_data_universe_prints_delisted_flag(monkeypatch):
     monkeypatch.setattr(
-        cli_module, "describe_universe", lambda source: [("BTC", False), ("LUNA", True)]
+        cli_module,
+        "describe_universe",
+        lambda source, **kwargs: [("BTC", False), ("LUNA", True)],
     )
     result = runner.invoke(cli_module.app, ["data", "universe", "--source", "hyperliquid"])
     assert result.exit_code == 0, result.output
@@ -105,7 +107,42 @@ def test_data_universe_prints_delisted_flag(monkeypatch):
 
 
 def test_data_universe_none_exits_nonzero_with_explanation(monkeypatch):
-    monkeypatch.setattr(cli_module, "describe_universe", lambda source: None)
+    monkeypatch.setattr(cli_module, "describe_universe", lambda source, **kwargs: None)
     result = runner.invoke(cli_module.app, ["data", "universe", "--source", "binance"])
     assert result.exit_code != 0
     assert "no survivorship-free universe" in result.output
+
+
+def test_data_universe_calls_describe_universe_with_include_spot(monkeypatch):
+    captured = {}
+
+    def fake_describe_universe(source, **kwargs):
+        captured.update(kwargs)
+        return [("BTC", False), ("BTC-SPOT", False)]
+
+    monkeypatch.setattr(cli_module, "describe_universe", fake_describe_universe)
+    result = runner.invoke(cli_module.app, ["data", "universe", "--source", "hyperliquid"])
+    assert result.exit_code == 0, result.output
+    assert captured.get("include_spot") is True
+    assert "BTC-SPOT" in result.output
+
+
+def test_data_fetch_include_spot_flag_reaches_build_snapshot(monkeypatch):
+    captured = {}
+
+    def fake_build_snapshot(source, instruments, start, end, interval, **kwargs):
+        captured.update(kwargs)
+        return _fake_panel(["BTC", "BTC-SPOT"], universe_complete=True)
+
+    monkeypatch.setattr(cli_module, "build_snapshot", fake_build_snapshot)
+
+    result = runner.invoke(
+        cli_module.app,
+        [
+            "data", "fetch", "--source", "hyperliquid",
+            "--start", "2024-01-01", "--end", "2024-01-02", "--include-spot",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured.get("include_spot") is True

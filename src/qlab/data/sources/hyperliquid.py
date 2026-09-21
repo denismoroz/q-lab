@@ -26,6 +26,7 @@ import structlog
 
 from qlab.data.sources.base import (
     INTERVAL_TO_TIMEDELTA,
+    SPOT_COLUMN_SUFFIX,
     InstrumentHistory,
     fetch_universe_resumable,
     http_retry,
@@ -249,6 +250,181 @@ def fetch_universe(
         )
 
 
+# --------------------------------------------------------------------------
+# Spot markets (docs/TASKS.md, T17). Hyperliquid quotes spot pairs against
+# USDC and names most of them with an anonymous "@<index>" symbol rather
+# than a human ticker (`spotMeta`'s `universe[i].name`) -- only a handful of
+# canonical pairs (PURR/USDC, HYPE/USDC, ...) get a real "BASE/QUOTE" name.
+# The base TOKEN name, however, is human-readable (`spotMeta`'s
+# `tokens[i].name`) and for every major coin is that coin's ticker with a
+# leading "U" ("Unit" bridge token: UBTC, UETH, USOL, ...) -- confirmed
+# against funding-rate-arbitrage's own
+# `src/frab/exchanges/hyperliquid/tokens.py` and
+# `research/venue_refresh_2026_06/probe_spot_availability.py`, and against
+# HL's live `spotMeta` response. `fetch_spot_meta` reverses that mapping:
+# coin ticker -> the "@N" (or named) pair symbol `candleSnapshot` accepts as
+# `coin` for the spot market.
+#
+# Hyperliquid's free API has no `fundingHistory`-equivalent for spot (a spot
+# `fundingHistory` request returns `null`, not an error) and no historical
+# delisting flag either (`spotMeta`'s universe entries carry no `isDelisted`
+# field, unlike `metaAndAssetCtxs`'s perp `universe`) -- both are genuine,
+# permanent limitations of the free API, not bugs here.
+
+
+def fetch_spot_meta(client: httpx.Client, perp_instruments: Sequence[str]) -> dict[str, str]:
+    """Return ``{coin: hl_pair_symbol}`` for every ``coin`` in
+    `perp_instruments` that also has a USDC-quoted spot market on
+    Hyperliquid, e.g. ``{"BTC": "@142"}``.
+
+    Most of Hyperliquid's ~500 spot tokens (HFUN, LICK, MANLET, ...) are
+    unrelated community/meme coins with no perp counterpart at all, and are
+    silently excluded here -- this is exactly the boundary the
+    ``<COIN>-SPOT`` column-naming convention (``SPOT_COLUMN_SUFFIX``) needs
+    to stay unambiguous, since it only ever names a coin that ALSO has a
+    perp column in the same panel. A coin's spot pair is looked up by an
+    exact token-name match first (native tokens like HYPE, PURR), then by
+    stripping a leading ``U``/``u`` (bridge tokens like UBTC, UETH, USOL).
+    """
+    meta = _post(client, {"type": "spotMeta"})
+    token_name_by_index: dict[int, str] = {
+        t["index"]: t["name"] for t in meta.get("tokens", []) if isinstance(t.get("index"), int)
+    }
+    usdc_indices = {idx for idx, name in token_name_by_index.items() if name == "USDC"}
+
+    base_token_to_pair: dict[str, str] = {}
+    for pair in meta.get("universe", []):
+        toks = pair.get("tokens") or []
+        if len(toks) != 2 or toks[1] not in usdc_indices:
+            continue
+        base_name = token_name_by_index.get(toks[0])
+        if base_name:
+            base_token_to_pair[base_name] = pair["name"]
+
+    result: dict[str, str] = {}
+    for coin in perp_instruments:
+        for candidate in (coin, f"U{coin}", f"u{coin}"):
+            if candidate in base_token_to_pair:
+                result[coin] = base_token_to_pair[candidate]
+                break
+    return result
+
+
+def describe_spot_universe(
+    as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> list[tuple[str, bool]]:
+    """Return ``[(spot_column_name, is_delisted), ...]`` for every
+    Hyperliquid spot market resolvable to a coin that also has a perp
+    market, e.g. ``[("BTC-SPOT", False), ...]`` -- the spot analogue of
+    `describe_universe`. ``as_of_range`` is accepted for interface symmetry
+    only, same reasoning as `describe_universe`.
+
+    ``is_delisted`` is always ``False``: Hyperliquid's ``spotMeta`` exposes
+    no historical-delisting flag for spot pairs (unlike
+    ``metaAndAssetCtxs`` for perps) -- a genuine, permanent gap in the free
+    API. A spot market the venue quietly stopped listing therefore reads as
+    "listed through the end of the panel" rather than "delisted", same
+    fallback semantics as a perp whose candle feed simply ends within a
+    requested window (see `InstrumentHistory`).
+    """
+    with httpx.Client() as client:
+        meta = fetch_meta(client)
+        pair_by_coin = fetch_spot_meta(client, list(meta))
+    return sorted((f"{coin}{SPOT_COLUMN_SUFFIX}", False) for coin in pair_by_coin)
+
+
+def discover_spot_universe(
+    as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+) -> list[str]:
+    """Return just the ``<COIN>-SPOT`` column names from
+    `describe_spot_universe` -- the spot analogue of `discover_universe`."""
+    return [name for name, _is_delisted in describe_spot_universe(as_of_range)]
+
+
+def fetch_spot_instrument_history(
+    client: httpx.Client,
+    coin: str,
+    pair_symbol: str,
+    interval: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> InstrumentHistory:
+    """Fetch one coin's spot candle history and return it as an
+    ``InstrumentHistory`` named ``<coin>-SPOT`` with ``has_funding=False``.
+
+    No funding fetch is attempted: a spot market never pays or charges
+    funding by construction (Hyperliquid's `fundingHistory` answers `null`
+    for a spot `coin`, not an error), so `funding` is an empty series and
+    `has_funding=False` tells `snapshot.py` that is the CORRECT shape, not a
+    gap to flag untradeable -- see `InstrumentHistory.has_funding` and
+    docs/TASKS.md T17.
+    """
+    prices = fetch_candles(client, pair_symbol, interval, start, end)
+    if prices.empty:
+        raise ValueError(
+            f"hyperliquid: no spot candle data for {coin!r} ({pair_symbol}) "
+            f"in [{start}, {end}]"
+        )
+    return InstrumentHistory(
+        instrument=f"{coin}{SPOT_COLUMN_SUFFIX}",
+        prices=prices,
+        funding=pd.Series(dtype=float),
+        first_seen=prices.index.min(),
+        last_seen=prices.index.max(),
+        # See describe_spot_universe: HL's free API exposes no historical
+        # delisting flag for spot pairs, so "still listed" is the honest
+        # fallback, same as a perp whose feed just ends mid-window.
+        is_delisted=False,
+        has_funding=False,
+    )
+
+
+def fetch_spot_universe(
+    coins: Sequence[str],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    interval: str,
+    *,
+    on_missing: str = "raise",
+) -> dict[str, InstrumentHistory]:
+    """Fetch spot candle history for each requested coin, keyed by its
+    ``<coin>-SPOT`` column name. The spot analogue of `fetch_universe`,
+    reusing the exact same pacing/retry (`http_retry`/`polite_sleep`, via
+    `_post`/`fetch_candles`) and the same resumable per-instrument cache
+    (`fetch_universe_resumable`) -- no second fetch path with its own rules.
+
+    `on_missing` has the same meaning as `fetch_universe`'s: `"raise"` for a
+    hand-written coin list (a typo, or a coin with genuinely no spot market,
+    must fail loudly), `"skip"` for a venue-discovered list (already
+    filtered to coins `fetch_spot_meta` resolved, so this should rarely
+    trigger in practice).
+    """
+    with httpx.Client() as client:
+        meta = fetch_meta(client)
+        pair_by_coin = fetch_spot_meta(client, list(meta))
+
+        def _fetch_one(column: str) -> InstrumentHistory:
+            coin = column[: -len(SPOT_COLUMN_SUFFIX)]
+            pair_symbol = pair_by_coin.get(coin)
+            if pair_symbol is None:
+                raise ValueError(
+                    f"hyperliquid: {coin!r} has no USDC-quoted spot market on "
+                    "Hyperliquid (no matching base token in spotMeta)"
+                )
+            return fetch_spot_instrument_history(client, coin, pair_symbol, interval, start, end)
+
+        columns = [f"{coin}{SPOT_COLUMN_SUFFIX}" for coin in coins]
+        return fetch_universe_resumable(
+            columns,
+            start,
+            end,
+            interval,
+            source=VENUE,
+            fetch_one=_fetch_one,
+            on_missing=on_missing,
+        )
+
+
 __all__ = [
     "VENUE",
     "FUNDING_NATIVE_INTERVAL",
@@ -259,4 +435,9 @@ __all__ = [
     "fetch_universe",
     "describe_universe",
     "discover_universe",
+    "fetch_spot_meta",
+    "fetch_spot_instrument_history",
+    "fetch_spot_universe",
+    "describe_spot_universe",
+    "discover_spot_universe",
 ]

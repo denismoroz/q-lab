@@ -25,6 +25,19 @@ that way; this module only enforces the shape once it exists.
 zero. A harness must never treat missing funding as free-to-hold; it should
 refuse to run over any window where a tradeable instrument has NaN funding
 rather than silently substituting zero.
+
+Column-naming convention (docs/TASKS.md, T17): a perpetual keeps its bare
+ticker (``BTC``); the SAME coin's spot market, when the panel includes one,
+is named ``f"{coin}-SPOT"`` (``BTC-SPOT`` — see
+`qlab.data.sources.base.SPOT_COLUMN_SUFFIX`, the one place this suffix is
+defined). This is what lets a strategy hold spot against a perp short as
+two ordinary, unambiguous columns of the same panel rather than needing a
+second data structure. A spot column's ``funding`` is NaN for its entire
+life by construction (spot never pays or charges funding) — this is NOT the
+same fact as a perp's NaN meaning "unknown settlement, might be a gap", and
+``meta["no_funding_instruments"]`` (see below) is what lets a reader (in
+particular `qlab.harness.accrual`) tell the two apart without guessing from
+the column name.
 """
 
 from __future__ import annotations
@@ -92,6 +105,25 @@ class MarketPanel:
         (e.g. Binance) so a complete universe was never possible. The
         registry rule ``honest_universe`` (metric ``point_in_time_universe``)
         reads this flag to fail-closed on hand-picked panels.
+
+        When a panel includes spot markets (``include_spot=True`` on
+        `qlab.data.snapshot.build_snapshot`), ``universe_complete`` is the
+        AND of the perp and the spot discovery both being complete — a
+        fully discovered perp universe says nothing about whether the spot
+        side was ALSO fully discovered (independent venue endpoint,
+        independently weaker delisting visibility, see
+        `qlab.data.sources.hyperliquid.describe_spot_universe`), so
+        reporting completeness from the perp half alone would be an
+        unearned pass on exactly the survivorship question this flag exists
+        to answer.
+
+        ``no_funding_instruments`` (``list[str]``, docs/TASKS.md T17): the
+        columns whose all-NaN ``funding`` is structural rather than a
+        settlement gap — currently exactly the spot columns (see this
+        class's docstring above). Absent or empty means every column here
+        is a perpetual (or the panel predates spot support); a column
+        appearing here does NOT mean it has no data, only that "no funding"
+        is its permanent, correct shape.
     """
 
     snapshot_id: str

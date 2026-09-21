@@ -40,6 +40,15 @@ INTERVAL_TO_TIMEDELTA: dict[str, pd.Timedelta] = {
     "1d": pd.Timedelta(days=1),
 }
 
+# Column-naming convention for a coin's spot market, shared by every source
+# fetcher and by `qlab.data.snapshot`/`qlab.data.panel`: a perpetual keeps
+# its bare ticker (``BTC``), the SAME coin's spot market is that ticker plus
+# this suffix (``BTC-SPOT``). One convention, one place, so a panel can hold
+# both instruments for the same coin as two unambiguous columns (exactly
+# what a spot-vs-perp pair trade needs) without any module inventing its
+# own spelling.
+SPOT_COLUMN_SUFFIX = "-SPOT"
+
 
 @dataclass(frozen=True)
 class InstrumentHistory:
@@ -56,6 +65,19 @@ class InstrumentHistory:
     ``tradeable`` should read False after ``last_seen``) as opposed to the
     requested window simply ending while it was still listed (so
     ``tradeable`` stays True through the end of the panel).
+
+    ``has_funding`` distinguishes two reasons ``funding`` can be NaN, which
+    ``snapshot.py``'s tradeability rule must not treat the same way:
+
+    - ``True`` (the default — every perpetual): a NaN bar is a genuine gap
+      in the venue's settlement feed. Holding through it is not honestly
+      simulable, so ``snapshot.py`` marks that bar untradeable.
+    - ``False`` (a spot market, which never pays or charges funding by
+      construction): ``funding`` is empty/all-NaN for the instrument's
+      entire life, and that is the correct, expected shape of the data —
+      not a gap. Applying the same "unknown funding -> untradeable" rule
+      here would make every spot bar untradeable, which is exactly the trap
+      this field exists to avoid (see docs/TASKS.md, T17).
     """
 
     instrument: str
@@ -64,6 +86,7 @@ class InstrumentHistory:
     first_seen: pd.Timestamp
     last_seen: pd.Timestamp
     is_delisted: bool
+    has_funding: bool = True
 
 
 # Where per-instrument raw history is cached between attempts. Collecting a
@@ -102,6 +125,10 @@ def load_cached_history(
             first_seen=pd.Timestamp(meta["first_seen"]),
             last_seen=pd.Timestamp(meta["last_seen"]),
             is_delisted=bool(meta["is_delisted"]),
+            # Older cache entries (written before spot support existed)
+            # have no "has_funding" key at all -- they are all perp
+            # fetches, so True is the correct backfill, not a guess.
+            has_funding=bool(meta.get("has_funding", True)),
         )
     except Exception:
         return None
@@ -125,6 +152,7 @@ def store_cached_history(
                 "first_seen": history.first_seen.isoformat(),
                 "last_seen": history.last_seen.isoformat(),
                 "is_delisted": history.is_delisted,
+                "has_funding": history.has_funding,
             }
         )
     )
@@ -259,7 +287,11 @@ def align_funding_to_index(
 __all__ = [
     "InstrumentHistory",
     "INTERVAL_TO_TIMEDELTA",
+    "SPOT_COLUMN_SUFFIX",
     "align_funding_to_index",
+    "fetch_universe_resumable",
+    "load_cached_history",
+    "store_cached_history",
     "http_retry",
     "polite_sleep",
     "REQUEST_DELAY_SECONDS",

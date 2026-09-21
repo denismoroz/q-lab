@@ -47,9 +47,17 @@ def session():
 # --------------------------------------------------------------------------
 
 
-def _hist(name: str, index: pd.DatetimeIndex, is_delisted: bool) -> InstrumentHistory:
+def _hist(
+    name: str,
+    index: pd.DatetimeIndex,
+    is_delisted: bool,
+    *,
+    funding: pd.Series | None = None,
+    has_funding: bool = True,
+) -> InstrumentHistory:
     prices = pd.Series(100.0, index=index)
-    funding = pd.Series(0.0001, index=index)
+    if funding is None:
+        funding = pd.Series(0.0001, index=index)
     return InstrumentHistory(
         instrument=name,
         prices=prices,
@@ -57,6 +65,7 @@ def _hist(name: str, index: pd.DatetimeIndex, is_delisted: bool) -> InstrumentHi
         first_seen=index[0],
         last_seen=index[-1],
         is_delisted=is_delisted,
+        has_funding=has_funding,
     )
 
 
@@ -97,6 +106,54 @@ class TestPointInTimeTradeable:
         )
         assert prices["NEWCOIN"].iloc[:2].isna().all()
         assert prices["NEWCOIN"].iloc[2:].notna().all()
+
+
+class TestFundingGapTradeable:
+    """The 6th defect in docs/ACCEPTANCE_M2.md: a bar with unknown funding
+    is marked untradeable -- but only for an instrument where "unknown" is
+    an actual gap (a perp). T17's trap is applying that same rule to a spot
+    market, whose funding is ALWAYS NaN by construction -- see
+    `InstrumentHistory.has_funding`."""
+
+    def test_perp_missing_funding_bar_is_not_tradeable(self):
+        full_index = pd.date_range("2024-01-01", periods=4, freq="1D", tz="UTC")
+        # A genuine settlement drop is an ABSENT raw entry, not an explicit
+        # NaN -- align_funding_to_index (and therefore this test) must model
+        # it that way: `pd.Series.sum(skipna=True)` would otherwise turn a
+        # single explicit-NaN "complete" bucket into a silent 0.0, not NaN.
+        funding = pd.Series(
+            0.0001, index=full_index.delete(1)  # settlement at full_index[1] is missing
+        )
+        histories = {"BTC": _hist("BTC", full_index, is_delisted=False, funding=funding)}
+
+        _prices, _funding, tradeable = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1)
+        )
+
+        assert not tradeable["BTC"].iloc[1]
+        assert tradeable["BTC"].iloc[[0, 2, 3]].all()
+
+    def test_spot_all_nan_funding_stays_tradeable(self):
+        """A spot column's funding is NaN for its entire life by
+        construction -- that must NOT trip the "unknown funding ->
+        untradeable" rule, or every spot bar would be unholdable."""
+        full_index = pd.date_range("2024-01-01", periods=4, freq="1D", tz="UTC")
+        all_nan_funding = pd.Series(float("nan"), index=full_index)
+        histories = {
+            "BTC-SPOT": _hist(
+                "BTC-SPOT",
+                full_index,
+                is_delisted=False,
+                funding=all_nan_funding,
+                has_funding=False,
+            )
+        }
+
+        _prices, _funding, tradeable = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1)
+        )
+
+        assert tradeable["BTC-SPOT"].all()
 
 
 # --------------------------------------------------------------------------
@@ -340,3 +397,158 @@ class TestMissingInstrumentProvenance:
             session=session,
         )
         assert seen["on_missing"] == "raise"
+
+
+# --------------------------------------------------------------------------
+# Spot markets (docs/TASKS.md, T17): column naming, universe_complete
+# composition, and the structural-vs-gap funding distinction end to end
+# through build_snapshot. No network -- the spot fetch/discovery functions
+# are monkeypatched exactly like the perp ones above.
+# --------------------------------------------------------------------------
+
+
+def _fake_fetch_spot_universe(coins, start, end, interval, *, on_missing="raise"):
+    full_index = pd.date_range(start, end, freq="1h", tz="UTC")
+    out = {}
+    for i, coin in enumerate(coins):
+        idx = full_index[i:]  # stagger listing, same trick as _fake_fetch_universe
+        column = f"{coin}-SPOT"
+        out[column] = InstrumentHistory(
+            instrument=column,
+            prices=pd.Series(100.0, index=idx),
+            funding=pd.Series(dtype=float),
+            first_seen=idx[0],
+            last_seen=idx[-1],
+            is_delisted=False,
+            has_funding=False,
+        )
+    return out
+
+
+def _fake_discover_spot_universe(as_of_range):
+    return ["BTC-SPOT", "ETH-SPOT"]
+
+
+def _fake_describe_spot_universe(as_of_range=None):
+    return [("BTC-SPOT", False), ("ETH-SPOT", False)]
+
+
+@pytest.fixture()
+def patched_source_with_spot(monkeypatch, patched_source):
+    monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch_spot", _fake_fetch_spot_universe)
+    monkeypatch.setitem(
+        snap._SOURCES["hyperliquid"], "discover_spot_universe", _fake_discover_spot_universe
+    )
+    monkeypatch.setitem(
+        snap._SOURCES["hyperliquid"], "describe_spot_universe", _fake_describe_spot_universe
+    )
+    return patched_source
+
+
+class TestSpotMarkets:
+    def test_discovered_universe_with_include_spot_has_both_column_kinds(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        assert "BTC" in panel.instruments
+        assert "BTC-SPOT" in panel.instruments
+        assert panel.meta["universe_complete"] is True
+
+    def test_no_include_spot_never_adds_spot_columns(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        """Baseline regression: a perp-only request must behave exactly as
+        before even though `_SOURCES["hyperliquid"]` now also knows how to
+        fetch spot -- `include_spot` defaults to False."""
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert set(panel.instruments) == {"BTC", "DEADCOIN", "ETH"}
+        assert panel.meta["no_funding_instruments"] == []
+
+    def test_no_funding_instruments_lists_only_spot_columns(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        assert set(panel.meta["no_funding_instruments"]) == {"BTC-SPOT", "ETH-SPOT"}
+        assert "BTC" not in panel.meta["no_funding_instruments"]
+
+    def test_spot_all_nan_funding_bars_are_tradeable_once_listed(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        first_valid = panel.prices["BTC-SPOT"].first_valid_index()
+        assert panel.tradeable.loc[first_valid:, "BTC-SPOT"].all()
+
+    def test_snapshot_id_deterministic_with_spot_included(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel1 = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        panel2 = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        assert panel1.snapshot_id == panel2.snapshot_id
+
+    def test_snapshot_round_trip_preserves_no_funding_instruments(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session,
+        )
+        loaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert sorted(loaded.meta["no_funding_instruments"]) == ["BTC-SPOT", "ETH-SPOT"]
+
+    def test_include_spot_requires_discovered_universe(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        with pytest.raises(ValueError, match="only valid when instruments is omitted"):
+            snap.build_snapshot(
+                "hyperliquid", ["BTC"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+                include_spot=True, snapshots_dir=tmp_path, session=session,
+            )
+
+    def test_include_spot_unsupported_source_raises(self, session, tmp_path, monkeypatch):
+        monkeypatch.setitem(
+            snap._SOURCES,
+            "fakevenue",
+            {
+                "fetch": _fake_fetch_universe,
+                "funding_native_interval": pd.Timedelta(hours=1),
+                "discover_universe": lambda as_of_range: ["BTC"],
+                "describe_universe": lambda: [("BTC", False)],
+            },
+        )
+        with pytest.raises(ValueError, match="does not support spot markets"):
+            snap.build_snapshot(
+                "fakevenue", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+                include_spot=True, snapshots_dir=tmp_path, session=session,
+            )
+
+    def test_manual_instruments_with_spot_column_dispatch_to_spot_fetch(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        """A hand-typed instrument list naming a `-SPOT` column routes to
+        the spot fetcher even without `include_spot` -- that flag only
+        controls AUTO-discovery, not routing of an explicit column name."""
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC", "BTC-SPOT"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert set(panel.instruments) == {"BTC", "BTC-SPOT"}
+        assert panel.meta["universe_complete"] is False
+        assert panel.meta["no_funding_instruments"] == ["BTC-SPOT"]

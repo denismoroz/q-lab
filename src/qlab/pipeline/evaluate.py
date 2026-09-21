@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import build_snapshot, load_snapshot
+from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
 from qlab.harness.metrics import compute_metrics, min_capital_usd
 from qlab.harness.run import run_backtest
@@ -145,6 +146,7 @@ def _find_matching_snapshot(
     end: pd.Timestamp,
     interval: str,
     instruments: list[str] | None,
+    include_spot: bool,
 ) -> str | None:
     """Find a `data_snapshot` already on disk that answers this exact data
     request, without ever hitting the network.
@@ -189,6 +191,16 @@ def _find_matching_snapshot(
             continue
         if manifest.get("interval") != interval:
             continue
+        # A perp-only snapshot is not a substitute for a spot-inclusive one,
+        # and vice versa: a spec that asks for spot must not be silently
+        # handed a panel without it (the run would die on a missing column),
+        # and one that does not must not inherit columns it never requested.
+        # The manifest records the instrument list, so the presence of any
+        # "-SPOT" name answers this without a separate field.
+        names = manifest.get("instruments", [])
+        has_spot = any(str(name).endswith(SPOT_COLUMN_SUFFIX) for name in names)
+        if has_spot != include_spot:
+            continue
         if wanted_instruments is None:
             if not manifest.get("universe_complete"):
                 continue
@@ -214,6 +226,7 @@ def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         end=end_ts,
         interval=data_block.interval,
         instruments=data_block.instruments,
+        include_spot=data_block.include_spot,
     )
     if existing_id is not None:
         return load_snapshot(existing_id, session=session)
@@ -224,6 +237,7 @@ def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         data_block.start,
         data_block.end,
         data_block.interval,
+        include_spot=data_block.include_spot,
         session=session,
     )
 

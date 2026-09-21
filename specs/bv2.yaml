@@ -1,0 +1,95 @@
+# Strategy B v2 -- qlab.strategies.bv2.BStrategyV2 (spot + conditional
+# trend-timed perp hedge + ratchet).
+#
+# Every param below is `B2Params`'s own default, which its docstring calls
+# "the validated configuration; change them only with a new forward test"
+# (`funding-rate-arbitrage/src/frab/strategy/b2/params.py`) -- see
+# `src/qlab/strategies/bv2.py`'s class docstring for the exact citation of
+# each one. Nothing here is tuned or invented.
+#
+# KNOWN BLOCKER (reported in docs/ACCEPTANCE_M2.md, not worked around here):
+# same as frab.yaml -- B v2 needs a spot leg AND a perp hedge leg per coin,
+# and q-lab's data layer has no Hyperliquid spot-market fetcher (nor any way
+# to combine two markets for the same coin into one MarketPanel even if it
+# did). `spot_columns` below names a column (f"{coin}-SPOT") that will not
+# exist in any real snapshot this pipeline can build; running this spec is
+# expected to fail at `validate_weights` with a column-mismatch error.
+#
+# Coin universe: `B2Params.coins` default = ("BTC", "ETH", "SOL", "AVAX") --
+# transcribed exactly, not chosen freely (unlike FRAB, this strategy DOES
+# name its own validated coin list). `data.instruments` is still left unset
+# (discovered universe) so the snapshot itself stays universe_complete=True;
+# this list only restricts which panel columns the strategy trades.
+
+idea_id: strategy-b-v2
+title: "Strategy B v2 — спот + трендовый хедж + храповик (BTC/ETH/SOL/AVAX)"
+code_ref: "qlab.strategies.bv2:BStrategyV2"
+
+params:
+  spot_columns:
+    BTC: "BTC-SPOT"
+    ETH: "ETH-SPOT"
+    SOL: "SOL-SPOT"
+    AVAX: "AVAX-SPOT"
+  hedge_columns:
+    BTC: "BTC"
+    ETH: "ETH"
+    SOL: "SOL"
+    AVAX: "AVAX"
+  # B2Params.spot_share = 0.5  # share of each coin book held as spot
+  spot_share: 0.5
+  # B2Params.hedge_threshold = 0.0
+  hedge_threshold: 0.0
+  # book.py: H14, H30 = 14 * 24, 30 * 24 (hours) -> 14 and 30 DAYS
+  mom_short_days: 14
+  mom_long_days: 30
+  # B2Params.sticky_exit_hours = 12
+  sticky_exit_hours: 12
+  # B2Params.ratchet_threshold = 0.50
+  ratchet_threshold: 0.50
+
+data:
+  source: hyperliquid
+  # Daily bars: every B v2 timing param is in DAYS (14/30-day momentum) or
+  # rounds to whole days on a daily panel (`sticky_exit_hours: 12` ->
+  # `periods_for` floors at 1 daily bar -- "stays off for at least a full
+  # day" -- see the params block above; not zero, and disclosed here rather
+  # than silently reinterpreted). Hourly bars would add row volume without
+  # adding signal this strategy uses. `align_funding_to_index` still sums
+  # the underlying hourly HL funding settlements correctly into each daily
+  # bucket.
+  interval: "1d"
+  include_spot: true
+  # 2025-01-01..2026-09-20 (~1.7 years): a first attempt at the venue's
+  # entire history (2023-01-01..2026-09-20, needed under the data layer's
+  # ORIGINAL "discovered universe still raises on any coin missing data in
+  # range" behaviour) hit Hyperliquid's own rate limit partway through --
+  # see docs/ACCEPTANCE_M2.md. The data layer was then fixed
+  # (`fetch_universe(on_missing=...)`): a discovered instrument with no data
+  # in a requested window is now honest point-in-time truth, not a fatal
+  # error, so a normal 1-1.5+ year window works again.
+  start: 2025-01-01
+  end: 2026-09-20
+  # instruments intentionally omitted -> discovered universe, universe_complete=True.
+
+costs:
+  # Same blended-average reasoning as frab.yaml: B v2's hedge leg opens at
+  # exactly the spot leg's own weight magnitude whenever it is on
+  # (bv2.py: "hedge weight at any bar equals the spot weight at that SAME
+  # bar, sign-flipped"), so a single per-turnover rate blending HL's spot
+  # taker (7.0bp) and perp taker (3.5bp) is exact for THOSE turnover events.
+  # It understates cost for the spot-only turnover the ratchet and initial
+  # entry produce (real spot taker is 7.0bp there, not the 5.25bp blend) --
+  # flagged as a limitation in the acceptance report, not silently fixed by
+  # guessing a split the harness has no field for.
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+# B2Params.min_order_usd = 10.0 (HL's own floor, same number
+# venues/hyperliquid.yaml records independently).
+min_leg_notional: 10.0
+
+# Spot holding + a conditionally-applied hedge leg on the SAME coin: when
+# the hedge is on, both legs must be open together for the position to be
+# delta-neutral (an uncovered hedge-only leg is not this strategy's edge).
+simultaneous_legs: 2

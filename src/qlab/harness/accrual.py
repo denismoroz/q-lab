@@ -16,9 +16,24 @@ an instrument the book actually holds, that raises too. An unknown funding
 rate is not a zero funding rate — silently `fillna(0.0)`-ing it is exactly
 how a carry strategy gets a free ride in a backtest (it would hold straight
 through the periods funding is missing, at zero simulated cost).
+
+That guard has one deliberate exception (docs/TASKS.md, T17): an instrument
+that structurally never pays funding at all — a spot market, held against a
+perp short — is NaN in `funding` for its entire life, and that is the
+CORRECT shape of the data, not a gap. Raising on it would make holding spot
+impossible outright, which is not what the guard is for; the guard exists
+to catch a venue silently dropping a settlement it should have reported,
+not to forbid an instrument that was never going to report one. Callers
+name these columns explicitly via `no_funding_instruments` — nothing here
+infers "no funding" from a column's name or shape, since doing so from
+inside the accrual check would be exactly the kind of filename heuristic
+this task was warned against. Every other column keeps the original,
+unweakened guard.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -45,6 +60,8 @@ class AccrualError(ValueError):
 def compute_accrual(
     held_weights: pd.DataFrame,
     accrual: pd.DataFrame | _NoAccrual,
+    *,
+    no_funding_instruments: Iterable[str] = (),
 ) -> pd.Series:
     """Per-period accrual contribution to net return.
 
@@ -59,10 +76,22 @@ def compute_accrual(
             realised over the SAME period each weight in `held_weights` is
             held. There is no default — omitting this argument entirely
             (passing `None`) is a `TypeError`, matching `xsec.NO_ACCRUAL`.
+        no_funding_instruments: columns of `held_weights`/`accrual` whose
+            missing funding is STRUCTURAL, not a gap — e.g. a spot market,
+            which never pays funding by construction (see
+            `qlab.data.sources.base.InstrumentHistory.has_funding` and
+            `qlab.data.panel.MarketPanel.meta["no_funding_instruments"]`).
+            Holding one of these through a `NaN` bar contributes zero
+            accrual for that bar rather than raising. Every column NOT
+            listed here keeps the unweakened `AccrualError` guard below —
+            this parameter narrows WHERE the guard applies, it does not
+            loosen what the guard does.
 
     Returns:
         A `pd.Series`, one accrual contribution per period, equal to
-        `(held_weights * accrual).sum(axis=1)` (all-zero if `NO_ACCRUAL`).
+        `(held_weights * accrual).sum(axis=1)` (all-zero if `NO_ACCRUAL`;
+        NaN treated as zero contribution only for a column named in
+        `no_funding_instruments`, see above).
         Sign follows the position: a long (`weight > 0`) with positive
         accrual earns; a short (`weight < 0`) with negative accrual ALSO
         earns (`weight * accrual > 0`) — correct by construction for a
@@ -71,8 +100,9 @@ def compute_accrual(
     Raises:
         TypeError: `accrual` is `None` (i.e. omitted / forgotten).
         AccrualError: `accrual` is not `NO_ACCRUAL` and is `NaN` at a
-            `(period, instrument)` cell where `held_weights` is non-zero.
-            An unknown funding rate is not a zero funding rate.
+            `(period, instrument)` cell where `held_weights` is non-zero
+            and the column is NOT listed in `no_funding_instruments`. An
+            unknown funding rate is not a zero funding rate.
     """
     if accrual is None:
         raise TypeError(
@@ -87,6 +117,15 @@ def compute_accrual(
     aligned = accrual.reindex_like(held_weights)
     held_mask = held_weights.abs() > ZERO_WEIGHT_TOL
     missing = aligned.isna() & held_mask
+
+    # A structurally fundingless instrument's NaN is expected, not a gap --
+    # exclude exactly those columns from the "is this a gap" check. Every
+    # other column's NaN-while-held is still a gap, unconditionally.
+    structural_cols = [c for c in no_funding_instruments if c in missing.columns]
+    if structural_cols:
+        missing = missing.copy()
+        missing.loc[:, structural_cols] = False
+
     if missing.any().any():
         first_row = missing.any(axis=1).idxmax()
         first_cols = list(missing.columns[missing.loc[first_row]])

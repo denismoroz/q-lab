@@ -235,6 +235,15 @@ def data_fetch_cmd(
     start: str = typer.Option(..., "--start", help="YYYY-MM-DD (UTC)"),
     end: str = typer.Option(..., "--end", help="YYYY-MM-DD (UTC)"),
     interval: str = typer.Option("1h", "--interval", help="1m/5m/15m/1h/4h/1d"),
+    include_spot: bool = typer.Option(
+        False,
+        "--include-spot",
+        help=(
+            "Also discover and fetch the source's spot markets, named <COIN>-SPOT "
+            "(required by any strategy holding spot against a perp leg -- docs/TASKS.md, "
+            "T17). Hyperliquid only; only valid without --instruments."
+        ),
+    ),
 ) -> None:
     """Fetch a point-in-time MarketPanel snapshot and register it in data_snapshot.
 
@@ -255,16 +264,20 @@ def data_fetch_cmd(
         )
 
     try:
-        panel = build_snapshot(source, instrument_list, start, end, interval)
+        panel = build_snapshot(
+            source, instrument_list, start, end, interval, include_spot=include_spot
+        )
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
+    no_funding = panel.meta.get("no_funding_instruments") or []
     typer.echo(f"snapshot_id:       {panel.snapshot_id}")
     typer.echo(f"source:            {source}")
     typer.echo(f"interval:          {interval}")
     typer.echo(f"universe_complete: {panel.meta['universe_complete']}")
     typer.echo(f"instruments:       {', '.join(panel.instruments)}")
+    typer.echo(f"no_funding (spot): {', '.join(no_funding) if no_funding else '(none)'}")
     typer.echo(f"rows:              {len(panel.prices.index)}")
     typer.echo(f"range:             {panel.prices.index.min()} -> {panel.prices.index.max()}")
     typer.echo(f"path:              {DEFAULT_SNAPSHOTS_DIR / panel.snapshot_id}")
@@ -275,9 +288,15 @@ def data_universe_cmd(
     source: str = typer.Option(..., "--source", help="hyperliquid or binance"),
 ) -> None:
     """Print a source's full point-in-time universe (survivors + delisted),
-    if its free API exposes one -- the list `data fetch` uses by default."""
+    if its free API exposes one -- the list `data fetch` uses by default.
+
+    Also lists the source's spot markets (<COIN>-SPOT), if it has any --
+    `include_spot=True` is always passed here so this command answers "what
+    could a snapshot for this source contain" fully, unlike `data fetch`
+    where including spot is an opt-in (`--include-spot`) because it changes
+    what gets fetched, not just what gets displayed."""
     try:
-        described = describe_universe(source)
+        described = describe_universe(source, include_spot=True)
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc

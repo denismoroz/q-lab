@@ -70,6 +70,10 @@ def run_backtest(
             `MarketPanel.funding`). This function does the forward-shift
             internally before handing it to `compute_accrual` — pass the
             RAW, `panel.funding`-shaped frame, not a pre-shifted one.
+            `panel.meta["no_funding_instruments"]`, if present, is read and
+            forwarded to `compute_accrual` so a column with structurally
+            absent funding (a spot market) contributes zero accrual on a
+            `NaN` bar instead of raising — see `qlab.harness.accrual`.
 
     Returns:
         A `RunResult` covering `panel.prices.index[:-1]`.
@@ -116,7 +120,17 @@ def run_backtest(
         accrual_series = compute_accrual(weights_kept, NO_ACCRUAL)
     else:
         funding_fwd = accrual.reindex_like(panel.funding).shift(-1).loc[keep]
-        accrual_series = compute_accrual(weights_kept, funding_fwd)
+        # `no_funding_instruments` (docs/TASKS.md, T17): columns (e.g. spot
+        # markets) whose NaN funding is structural, not a settlement gap —
+        # see `qlab.data.panel.MarketPanel.meta` and
+        # `qlab.harness.accrual.compute_accrual`. `panel.meta` is free-form
+        # (see `qlab.harness.panel.MarketPanel`'s own docstring), so an
+        # older/synthetic panel that never set this key simply contributes
+        # no exceptions, exactly like today.
+        no_funding_instruments = panel.meta.get("no_funding_instruments", ())
+        accrual_series = compute_accrual(
+            weights_kept, funding_fwd, no_funding_instruments=no_funding_instruments
+        )
 
     net_return = gross_return + accrual_series - cost
 

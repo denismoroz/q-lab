@@ -28,6 +28,16 @@ hand — must NOT collide on the same snapshot id. They are different claims
 about the data's provenance, and `honest_universe` needs to be able to tell
 them apart even when, by coincidence, they cover exactly the same coins.
 
+``no_funding_instruments`` (docs/TASKS.md, T17) is also part of the
+manifest: it lists the columns (spot markets) whose all-NaN ``funding`` is
+structural, not a settlement gap — see `qlab.data.sources.base
+.InstrumentHistory.has_funding`. Unlike ``universe_complete`` this DOES
+follow mechanically from the fetched data (it doesn't need a separate
+provenance claim), but it must still be persisted in the manifest, not just
+computed at build time: `load_snapshot` reconstructs ``meta`` from
+``manifest.json`` alone, with no network access, so anything the harness
+needs from ``meta`` after a save/load round trip has to live there.
+
 Survivorship bias has two independent entry points, and this module closes
 both. `qlab.data.panel.MarketPanel.tradeable` handles the first: an
 instrument that IS in the panel must read False before it listed and after
@@ -57,7 +67,7 @@ from sqlalchemy.orm import Session
 from qlab.data.panel import MarketPanel
 from qlab.data.sources import binance as binance_source
 from qlab.data.sources import hyperliquid as hyperliquid_source
-from qlab.data.sources.base import InstrumentHistory, align_funding_to_index
+from qlab.data.sources.base import SPOT_COLUMN_SUFFIX, InstrumentHistory, align_funding_to_index
 from qlab.registry import repo
 from qlab.registry.db import session_scope
 from qlab.registry.models import DataSnapshot
@@ -79,6 +89,13 @@ _SOURCES = {
         "funding_native_interval": hyperliquid_source.FUNDING_NATIVE_INTERVAL,
         "discover_universe": hyperliquid_source.discover_universe,
         "describe_universe": hyperliquid_source.describe_universe,
+        # Spot support (docs/TASKS.md, T17) is Hyperliquid-only for now --
+        # these three keys are absent from binance's spec below, and every
+        # call site treats their absence as "this source has no spot
+        # markets" via `.get(...)`, never as an error.
+        "fetch_spot": hyperliquid_source.fetch_spot_universe,
+        "discover_spot_universe": hyperliquid_source.discover_spot_universe,
+        "describe_spot_universe": hyperliquid_source.describe_spot_universe,
     },
     binance_source.VENUE: {
         "fetch": binance_source.fetch_universe,
@@ -101,6 +118,7 @@ def _canonical_manifest(
     end: pd.Timestamp,
     interval: str,
     universe_complete: bool,
+    no_funding_instruments: list[str],
 ) -> dict:
     return {
         "source": source,
@@ -109,6 +127,12 @@ def _canonical_manifest(
         "end": end.isoformat(),
         "interval": interval,
         "universe_complete": universe_complete,
+        # Which columns structurally never carry funding (spot markets) --
+        # part of the manifest (and therefore the snapshot id) for the same
+        # reason `universe_complete` is: `load_snapshot` reconstructs
+        # `meta` from this file alone, with no network access, so the fact
+        # must be persisted here to survive a save/load round trip.
+        "no_funding_instruments": no_funding_instruments,
     }
 
 
@@ -163,7 +187,14 @@ def _build_frames_from_histories(
         # settlement interval, where NaN means "incomplete". On a finer panel
         # (hourly bars over 8h funding) most bars are NaN by construction and
         # this test would make everything untradeable.
-        if bar_interval >= funding_native_interval:
+        #
+        # AND only when `hist.has_funding` is True. An instrument that
+        # structurally never pays funding (a spot market, see
+        # `InstrumentHistory.has_funding`) is all-NaN here by construction,
+        # not because a settlement was dropped -- applying this rule to it
+        # would mark every spot bar untradeable, which is the exact trap
+        # docs/TASKS.md T17 warns about, not an honest data gap.
+        if bar_interval >= funding_native_interval and hist.has_funding:
             tradeable &= funding_cols[coin].notna()
 
         tradeable_cols[coin] = tradeable
@@ -177,17 +208,34 @@ def _build_frames_from_histories(
     return prices, funding, tradeable
 
 
-def describe_universe(source: str) -> list[tuple[str, bool]] | None:
+def describe_universe(source: str, *, include_spot: bool = False) -> list[tuple[str, bool]] | None:
     """Return ``[(instrument, is_delisted), ...]`` for `source`'s full
     point-in-time universe, or ``None`` if the source's free API cannot
     expose delisted names at all (see that source's `discover_universe`
     docstring — this is a real, permanent limitation for Binance, not a
     bug). Used by both `build_snapshot`'s ``instruments=None`` default and
     the ``qlab data universe`` CLI command.
+
+    ``include_spot=True`` additionally merges in the source's spot markets
+    (``<COIN>-SPOT`` names, see `qlab.data.sources.base.SPOT_COLUMN_SUFFIX``)
+    when the source supports them (Hyperliquid; absent from ``_SOURCES`` for
+    a source that doesn't, e.g. Binance — silently a no-op there, not an
+    error, since "no spot support" is a fact about the venue, same as "no
+    survivorship-free perp universe"). Defaults to ``False`` so a plain
+    `describe_universe(source)` call — in particular `build_snapshot`'s own
+    internal use for the PERP-only discovery step — never triggers an extra
+    network round trip it didn't ask for.
     """
     if source not in _SOURCES:
         raise ValueError(f"unknown source {source!r}; expected one of {sorted(_SOURCES)}")
-    return _SOURCES[source]["describe_universe"]()
+    spec = _SOURCES[source]
+    perp = spec["describe_universe"]()
+    if perp is None or not include_spot:
+        return perp
+    describe_spot = spec.get("describe_spot_universe")
+    if describe_spot is None:
+        return perp
+    return sorted(perp + describe_spot())
 
 
 def _resolve_casing(source_spec, instruments, start_ts, end_ts) -> list[str]:
@@ -212,6 +260,7 @@ def build_snapshot(
     end: object,
     interval: str,
     *,
+    include_spot: bool = False,
     snapshots_dir: Path | str = DEFAULT_SNAPSHOTS_DIR,
     session: Session | None = None,
 ) -> MarketPanel:
@@ -229,6 +278,29 @@ def build_snapshot(
     there is no honest way to fetch "everything" there, so the caller must
     pass an explicit list and accept ``universe_complete=False``.
 
+    ``include_spot=True`` additionally discovers and fetches the source's
+    spot markets (``<COIN>-SPOT`` columns, see
+    `qlab.data.sources.base.SPOT_COLUMN_SUFFIX`) alongside the perp universe
+    — required by any strategy holding spot against a perp leg (docs/TASKS.md,
+    T17). Only valid together with ``instruments=None``: naming an explicit
+    instrument list is already a full, literal statement of what to fetch,
+    including any ``-SPOT`` columns the caller wants (typed exactly, e.g.
+    ``"BTC-SPOT"``) — ``include_spot`` would either be redundant or silently
+    add columns nobody asked for, so it raises instead of guessing. Raises if
+    the source has no spot fetcher registered (only Hyperliquid does today).
+
+    ``universe_complete`` composes across both halves rather than reporting
+    on the perp side alone: it is ``True`` only when the perp universe AND
+    (if ``include_spot``) the spot universe were BOTH fully discovered. A
+    complete perp universe says nothing about the spot side — they are
+    fetched from different venue endpoints with independent (and, for spot,
+    permanently weaker — see `describe_spot_universe`) delisting visibility
+    — so claiming completeness from the perp half alone would be exactly the
+    kind of unearned "honest_universe" pass this flag exists to prevent.
+    When ``include_spot=False`` the spot half was never requested at all and
+    doesn't factor in, so behaviour for existing (perp-only) callers is
+    unchanged.
+
     Idempotent: because the id is a pure function of the request (see module
     docstring), re-running with identical inputs recomputes the same id and
     then skips re-writing files / re-inserting the registry row if they
@@ -242,6 +314,12 @@ def build_snapshot(
     if interval not in _INTERVAL_TO_PANDAS_FREQ:
         raise ValueError(
             f"unsupported interval {interval!r}; expected one of {sorted(_INTERVAL_TO_PANDAS_FREQ)}"
+        )
+    if include_spot and instruments is not None:
+        raise ValueError(
+            "include_spot is only valid when instruments is omitted (discovered universe); "
+            "for a hand-picked list, name the '-SPOT' columns you want directly in "
+            "`instruments` instead (e.g. ['BTC', 'BTC-SPOT'])"
         )
 
     start_ts = _to_utc_timestamp(start)
@@ -266,7 +344,22 @@ def build_snapshot(
         # a not-found. Upper-casing a discovered name therefore does not
         # normalise it, it invents an instrument that does not exist.
         instruments_sorted = sorted(set(discovered))
-        universe_complete = True
+        perp_complete = True
+
+        spot_complete = True
+        if include_spot:
+            discover_spot = source_spec.get("discover_spot_universe")
+            if discover_spot is None:
+                raise ValueError(f"{source!r} does not support spot markets")
+            discovered_spot = discover_spot((start_ts, end_ts))
+            if discovered_spot is None:
+                spot_complete = False
+            else:
+                instruments_sorted = sorted(set(instruments_sorted) | set(discovered_spot))
+
+        # See this function's docstring: completeness is the AND of both
+        # halves, not the perp half alone.
+        universe_complete = perp_complete and spot_complete
     else:
         # A hand-written list may be typed in any case, so resolve it against
         # the venue's spelling where discovery is available; anything that
@@ -281,13 +374,30 @@ def build_snapshot(
     # An instrument with no data means different things depending on where the
     # list came from: a typo in a hand-written one, ordinary point-in-time
     # truth in a discovered one. See each source's fetch_universe docstring.
-    histories = source_spec["fetch"](
-        instruments_sorted,
-        start_ts,
-        end_ts,
-        interval,
-        on_missing="skip" if universe_complete else "raise",
-    )
+    #
+    # Perp and spot columns are dispatched to different fetchers (see
+    # SPOT_COLUMN_SUFFIX) regardless of which branch above produced the
+    # list -- so `instruments=["BTC", "BTC-SPOT"]` routes correctly even
+    # without `include_spot` (which only controls AUTO-discovery).
+    on_missing = "skip" if universe_complete else "raise"
+    perp_instruments = [i for i in instruments_sorted if not i.endswith(SPOT_COLUMN_SUFFIX)]
+    spot_coins = [
+        i[: -len(SPOT_COLUMN_SUFFIX)] for i in instruments_sorted if i.endswith(SPOT_COLUMN_SUFFIX)
+    ]
+
+    histories: dict[str, InstrumentHistory] = {}
+    if perp_instruments:
+        histories.update(
+            source_spec["fetch"](
+                perp_instruments, start_ts, end_ts, interval, on_missing=on_missing
+            )
+        )
+    if spot_coins:
+        fetch_spot = source_spec.get("fetch_spot")
+        if fetch_spot is None:
+            raise ValueError(f"{source!r} does not support spot markets (requested {spot_coins})")
+        histories.update(fetch_spot(spot_coins, start_ts, end_ts, interval, on_missing=on_missing))
+
     if not histories:
         raise ValueError(
             f"no instrument had data in [{start_ts}, {end_ts}] at interval {interval!r}"
@@ -302,8 +412,18 @@ def build_snapshot(
         histories, full_index, source_spec["funding_native_interval"]
     )
 
+    no_funding_instruments = sorted(
+        name for name, hist in histories.items() if not hist.has_funding
+    )
+
     manifest = _canonical_manifest(
-        source, instruments_sorted, start_ts, end_ts, interval, universe_complete
+        source,
+        instruments_sorted,
+        start_ts,
+        end_ts,
+        interval,
+        universe_complete,
+        no_funding_instruments,
     )
     manifest_bytes = _manifest_bytes(manifest)
     prices_bytes = _dataframe_bytes(prices)
@@ -356,6 +476,7 @@ def build_snapshot(
         "range_end": end_ts.isoformat(),
         "instruments": instruments_sorted,
         "universe_complete": universe_complete,
+        "no_funding_instruments": no_funding_instruments,
     }
     return MarketPanel(
         snapshot_id=snapshot_id, prices=prices, funding=funding, tradeable=tradeable, meta=meta
@@ -391,6 +512,11 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             "range_end": row.range_end.isoformat(),
             "instruments": manifest["instruments"],
             "universe_complete": manifest["universe_complete"],
+            # `.get(..., [])`: a snapshot built before spot support existed
+            # has no such key in its manifest.json -- absence there means
+            # "no instrument was flagged", which is the correct read for an
+            # all-perp snapshot, not a data-loss error.
+            "no_funding_instruments": manifest.get("no_funding_instruments", []),
         }
         return MarketPanel(
             snapshot_id=snapshot_id, prices=prices, funding=funding, tradeable=tradeable, meta=meta
