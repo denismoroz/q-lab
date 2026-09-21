@@ -37,6 +37,7 @@ import structlog
 from qlab.data.sources.base import (
     INTERVAL_TO_TIMEDELTA,
     InstrumentHistory,
+    fetch_universe_resumable,
     http_retry,
     polite_sleep,
 )
@@ -225,20 +226,19 @@ def fetch_universe(
     `"skip"` for a venue-discovered list, where it just means the
     instrument did not exist during the window.
     """
-    if on_missing not in {"raise", "skip"}:
-        raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
-    histories: dict[str, InstrumentHistory] = {}
     with httpx.Client() as client:
         exchange_info = fetch_exchange_info(client)
-        for instrument in instruments:
-            try:
-                histories[instrument] = fetch_instrument_history(
-                    client, instrument, interval, start, end, exchange_info
-                )
-            except ValueError:
-                if on_missing == "raise":
-                    raise
-    return histories
+        return fetch_universe_resumable(
+            instruments,
+            start,
+            end,
+            interval,
+            source=VENUE,
+            fetch_one=lambda symbol: fetch_instrument_history(
+                client, symbol, interval, start, end, exchange_info
+            ),
+            on_missing=on_missing,
+        )
 
 
 __all__ = [

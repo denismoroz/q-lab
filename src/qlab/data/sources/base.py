@@ -8,8 +8,11 @@ from.
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import pandas as pd
@@ -61,6 +64,109 @@ class InstrumentHistory:
     first_seen: pd.Timestamp
     last_seen: pd.Timestamp
     is_delisted: bool
+
+
+# Where per-instrument raw history is cached between attempts. Collecting a
+# whole universe is thousands of requests over roughly an hour; without this,
+# a single 500 on the last one throws the hour away. It is not an
+# optimisation — at that request count a clean run is the unlikely outcome,
+# so an unresumable fetch never finishes at all.
+DEFAULT_RAW_CACHE_DIR = Path("data/raw")
+
+
+def _cache_paths(
+    cache_dir: Path, source: str, instrument: str, interval: str, start, end
+) -> tuple[Path, Path]:
+    stem = f"{instrument}__{pd.Timestamp(start).date()}__{pd.Timestamp(end).date()}"
+    folder = cache_dir / source / interval
+    return folder / f"{stem}.parquet", folder / f"{stem}.json"
+
+
+def load_cached_history(
+    cache_dir: Path, source: str, instrument: str, interval: str, start, end
+) -> InstrumentHistory | None:
+    """Return a previously fetched history, or None. Never raises: a corrupt
+    or half-written cache entry is treated as absent and refetched."""
+    frame_path, meta_path = _cache_paths(cache_dir, source, instrument, interval, start, end)
+    if not frame_path.exists() or not meta_path.exists():
+        return None
+    try:
+        frame = pd.read_parquet(frame_path)
+        meta = json.loads(meta_path.read_text())
+        prices = frame["price"].dropna()
+        funding = frame["funding"].dropna()
+        return InstrumentHistory(
+            instrument=instrument,
+            prices=prices,
+            funding=funding,
+            first_seen=pd.Timestamp(meta["first_seen"]),
+            last_seen=pd.Timestamp(meta["last_seen"]),
+            is_delisted=bool(meta["is_delisted"]),
+        )
+    except Exception:
+        return None
+
+
+def store_cached_history(
+    cache_dir: Path, source: str, interval: str, start, end, history: InstrumentHistory
+) -> None:
+    """Persist one instrument's history. Written frame-first, metadata last,
+    so an interrupted write leaves an entry that load_cached_history rejects
+    rather than one it trusts."""
+    frame_path, meta_path = _cache_paths(
+        cache_dir, source, history.instrument, interval, start, end
+    )
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
+    frame = pd.DataFrame({"price": history.prices, "funding": history.funding})
+    frame.to_parquet(frame_path)
+    meta_path.write_text(
+        json.dumps(
+            {
+                "first_seen": history.first_seen.isoformat(),
+                "last_seen": history.last_seen.isoformat(),
+                "is_delisted": history.is_delisted,
+            }
+        )
+    )
+
+
+def fetch_universe_resumable(
+    instruments,
+    start,
+    end,
+    interval: str,
+    *,
+    source: str,
+    fetch_one: Callable[[str], InstrumentHistory],
+    on_missing: str = "raise",
+    cache_dir: Path | str = DEFAULT_RAW_CACHE_DIR,
+) -> dict[str, InstrumentHistory]:
+    """Fetch each instrument, reusing anything already cached from an earlier
+    attempt and persisting each success as it lands.
+
+    `on_missing` decides what an instrument with no data in range means, and
+    that depends on where the list came from: `"raise"` for a hand-written
+    list, where it is a typo; `"skip"` for a venue-discovered one, where it
+    just means the instrument did not exist during the window.
+    """
+    if on_missing not in {"raise", "skip"}:
+        raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
+    cache_dir = Path(cache_dir)
+    histories: dict[str, InstrumentHistory] = {}
+    for instrument in instruments:
+        cached = load_cached_history(cache_dir, source, instrument, interval, start, end)
+        if cached is not None:
+            histories[instrument] = cached
+            continue
+        try:
+            history = fetch_one(instrument)
+        except ValueError:
+            if on_missing == "raise":
+                raise
+            continue
+        store_cached_history(cache_dir, source, interval, start, end, history)
+        histories[instrument] = history
+    return histories
 
 
 def polite_sleep() -> None:

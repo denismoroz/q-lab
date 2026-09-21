@@ -27,6 +27,7 @@ import structlog
 from qlab.data.sources.base import (
     INTERVAL_TO_TIMEDELTA,
     InstrumentHistory,
+    fetch_universe_resumable,
     http_retry,
     polite_sleep,
 )
@@ -233,20 +234,19 @@ def fetch_universe(
       forces the caller to widen the range to the venue's entire history
       just to ask about one year.
     """
-    if on_missing not in {"raise", "skip"}:
-        raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
-    histories: dict[str, InstrumentHistory] = {}
     with httpx.Client() as client:
         meta = fetch_meta(client)
-        for coin in instruments:
-            try:
-                histories[coin] = fetch_instrument_history(
-                    client, coin, interval, start, end, meta
-                )
-            except ValueError:
-                if on_missing == "raise":
-                    raise
-    return histories
+        return fetch_universe_resumable(
+            instruments,
+            start,
+            end,
+            interval,
+            source=VENUE,
+            fetch_one=lambda coin: fetch_instrument_history(
+                client, coin, interval, start, end, meta
+            ),
+            on_missing=on_missing,
+        )
 
 
 __all__ = [

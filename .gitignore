@@ -23,3 +23,6 @@ web/dist/
 
 .DS_Store
 .env
+
+# raw per-instrument fetch cache (resumable universe collection)
+data/raw/
