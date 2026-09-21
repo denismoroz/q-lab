@@ -187,7 +187,18 @@ def fetch_instrument_history(
     prices = fetch_candles(client, coin, interval, start, end)
     if prices.empty:
         raise ValueError(f"hyperliquid: no candle data for {coin!r} in [{start}, {end}]")
-    funding = fetch_funding(client, coin, start, end)
+    # Funding is fetched wider than the price range on purpose. A bar labelled
+    # `t` carries the funding for the half-open period `(t - bar, t]`, so the
+    # first bar's bucket needs settlements from before `start`, and the last
+    # bar's needs the settlement landing exactly on `end` — which a
+    # `[start, end)` fetch leaves out. Without the padding both edge buckets
+    # come back short, `align_funding_to_index` correctly refuses to pass off a
+    # partial sum as the period's funding, and the harness then refuses to run
+    # on a NaN rate. The data is there; only the window was too narrow.
+    bar = pd.Timedelta(interval)
+    funding = fetch_funding(
+        client, coin, start - bar, end + FUNDING_NATIVE_INTERVAL
+    )
 
     is_delisted = bool(meta.get(coin, {}).get("is_delisted", False))
     return InstrumentHistory(
