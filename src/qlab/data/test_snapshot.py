@@ -104,7 +104,7 @@ class TestPointInTimeTradeable:
 # --------------------------------------------------------------------------
 
 
-def _fake_fetch_universe(instruments, start, end, interval):
+def _fake_fetch_universe(instruments, start, end, interval, *, on_missing="raise"):
     full_index = pd.date_range(start, end, freq="1h", tz="UTC")
     out = {}
     for i, coin in enumerate(instruments):
@@ -294,3 +294,49 @@ class TestUniverseComplete:
     def test_describe_universe_unknown_source_raises(self):
         with pytest.raises(ValueError, match="unknown source"):
             snap.describe_universe("coinbase")
+
+
+class TestMissingInstrumentProvenance:
+    """An instrument with no data in range means different things depending on
+    where the list came from: a typo in a hand-written one, ordinary
+    point-in-time truth in a venue-discovered one."""
+
+    @staticmethod
+    def _recording_fetch(seen: dict):
+        def fetch(instruments, start, end, interval, *, on_missing="raise"):
+            seen["on_missing"] = on_missing
+            return _fake_fetch_universe(instruments, start, end, interval)
+
+        return fetch
+
+    def test_discovered_universe_skips_missing_instruments(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        seen: dict = {}
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._recording_fetch(seen))
+        snap.build_snapshot(
+            "hyperliquid",
+            None,
+            "2026-01-01",
+            "2026-01-03",
+            "1h",
+            snapshots_dir=tmp_path,
+            session=session,
+        )
+        assert seen["on_missing"] == "skip"
+
+    def test_manual_list_still_raises_on_missing_instrument(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        seen: dict = {}
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._recording_fetch(seen))
+        snap.build_snapshot(
+            "hyperliquid",
+            ["BTC", "ETH"],
+            "2026-01-01",
+            "2026-01-03",
+            "1h",
+            snapshots_dir=tmp_path,
+            session=session,
+        )
+        assert seen["on_missing"] == "raise"

@@ -211,22 +211,34 @@ def fetch_instrument_history(
 
 
 def fetch_universe(
-    instruments: Sequence[str], start: pd.Timestamp, end: pd.Timestamp, interval: str
+    instruments: Sequence[str],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    interval: str,
+    *,
+    on_missing: str = "raise",
 ) -> dict[str, InstrumentHistory]:
     """Fetch price + funding history for each requested instrument.
 
-    Raises if a requested instrument has no kline data at all in range: a
-    typo'd or never-listed instrument must fail loudly rather than silently
-    produce an all-NaN column.
+    `on_missing` behaves as in the hyperliquid source: `"raise"` for a
+    hand-written list, where an instrument with no data means a typo;
+    `"skip"` for a venue-discovered list, where it just means the
+    instrument did not exist during the window.
     """
+    if on_missing not in {"raise", "skip"}:
+        raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
+    histories: dict[str, InstrumentHistory] = {}
     with httpx.Client() as client:
         exchange_info = fetch_exchange_info(client)
-        return {
-            instrument: fetch_instrument_history(
-                client, instrument, interval, start, end, exchange_info
-            )
-            for instrument in instruments
-        }
+        for instrument in instruments:
+            try:
+                histories[instrument] = fetch_instrument_history(
+                    client, instrument, interval, start, end, exchange_info
+                )
+            except ValueError:
+                if on_missing == "raise":
+                    raise
+    return histories
 
 
 __all__ = [

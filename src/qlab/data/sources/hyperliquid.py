@@ -201,20 +201,41 @@ def fetch_instrument_history(
 
 
 def fetch_universe(
-    instruments: Sequence[str], start: pd.Timestamp, end: pd.Timestamp, interval: str
+    instruments: Sequence[str],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    interval: str,
+    *,
+    on_missing: str = "raise",
 ) -> dict[str, InstrumentHistory]:
     """Fetch price + funding history for each requested instrument.
 
-    Raises if a requested instrument has no candle data at all in range: a
-    typo'd or never-listed instrument must fail loudly rather than silently
-    produce an all-NaN column that looks like "listed but never traded".
+    `on_missing` decides what an instrument with no candle data in range
+    means, and that depends entirely on where the list came from:
+
+    - `"raise"` (default) for a hand-written list. A typo'd or never-listed
+      ticker must fail loudly rather than silently become an all-NaN column
+      that looks like "listed but never traded".
+    - `"skip"` for a list discovered from the venue itself. There are no
+      typos there, and a coin whose whole tradeable life falls outside the
+      window is ordinary point-in-time truth, not an error. Raising on it
+      forces the caller to widen the range to the venue's entire history
+      just to ask about one year.
     """
+    if on_missing not in {"raise", "skip"}:
+        raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
+    histories: dict[str, InstrumentHistory] = {}
     with httpx.Client() as client:
         meta = fetch_meta(client)
-        return {
-            coin: fetch_instrument_history(client, coin, interval, start, end, meta)
-            for coin in instruments
-        }
+        for coin in instruments:
+            try:
+                histories[coin] = fetch_instrument_history(
+                    client, coin, interval, start, end, meta
+                )
+            except ValueError:
+                if on_missing == "raise":
+                    raise
+    return histories
 
 
 __all__ = [

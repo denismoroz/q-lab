@@ -232,7 +232,21 @@ def build_snapshot(
     if not instruments_sorted:
         raise ValueError("instruments must not be empty")
 
-    histories = source_spec["fetch"](instruments_sorted, start_ts, end_ts, interval)
+    # An instrument with no data means different things depending on where the
+    # list came from: a typo in a hand-written one, ordinary point-in-time
+    # truth in a discovered one. See each source's fetch_universe docstring.
+    histories = source_spec["fetch"](
+        instruments_sorted,
+        start_ts,
+        end_ts,
+        interval,
+        on_missing="skip" if universe_complete else "raise",
+    )
+    if not histories:
+        raise ValueError(
+            f"no instrument had data in [{start_ts}, {end_ts}] at interval {interval!r}"
+        )
+    instruments_sorted = sorted(histories)
 
     full_index = pd.date_range(start_ts, end_ts, freq=_INTERVAL_TO_PANDAS_FREQ[interval], tz="UTC")
     if len(full_index) == 0:
