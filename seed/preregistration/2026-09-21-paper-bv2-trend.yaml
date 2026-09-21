@@ -1,0 +1,189 @@
+# PRE-REGISTRATION -- written before anyone in q-lab read a single row of the
+# paper results. Its whole value is the timestamp: the git commit that first
+# contains this file is the proof that these expectations were fixed BEFORE
+# the outcome was known. Editing a prediction after the fact destroys it, so
+# this file is append-only in spirit -- a wrong prediction is recorded as
+# wrong, never corrected.
+#
+# What made this necessary: XSMOM was assessed as profitable, funded with real
+# money, and lost 11.19% in 13 weeks. Nothing was written down beforehand, so
+# there was no moment at which the assessment could be shown to have failed.
+#
+# Owner's grading scale (2026-09-20, his own words, the same one rules/
+# 2026-09-21.1.yaml gates on):
+#   «15%+ - отлично. 7-10 - хорошо. выше 4% - приемлимо.»
+# Bands used below: excellent >= 0.15, good 0.07..0.10, acceptable >= 0.04,
+# below = not profitable (worse than staked stablecoins).
+
+registered_at: 2026-09-21
+registered_by: opus
+rules_version: "2026-09-21.1"
+paper_started: 2026-09-14          # per owner, 2026-09-21
+results_location: "frab.db on 10.8.0.5"
+results_read_before_registration: false
+
+# ---------------------------------------------------------------------------
+# PREDICTION 0 -- the one that governs every other
+# ---------------------------------------------------------------------------
+# A paper run cannot decide whether either strategy is profitable, and will
+# not be able to for years. This is arithmetic, not pessimism: distinguishing
+# a Sharpe S from zero at 95% confidence and 80% power needs about
+# (1.645+0.842)^2 / S^2 = 6.18/S^2 years of data.
+#
+#   bench Sharpe        years needed        horizon -> Sharpe it CAN resolve
+#   trend  0.305           66.5             1 mo  ->  8.61
+#   Bv2    0.121          422.3             3 mo  ->  4.97
+#   noise-best 0.929        7.2             6 mo  ->  3.52
+#   (a Sharpe of 1.0)       6.2            12 mo  ->  2.49
+#                                          24 mo  ->  1.76
+#
+# So: any paper return read off weeks or months is noise about profitability.
+# A month of paper trend (14%/yr book vol target) has a 46% chance of being
+# negative even if the strategy is exactly as good as the bench says.
+# Over a full year at a true +4.75%: 80% of outcomes fall in -13.2%..+22.7%,
+# and there is a 37% chance of a losing year and a 23% chance of showing
+# "excellent" (>15%) purely by luck.
+#
+# THE REGISTERED COMMITMENT: no paper return over any horizon shorter than
+# the table above may be read as evidence of profitability, in either
+# direction, by q-lab or by me. Large negative outcomes are the exception --
+# see stop_conditions.
+horizon:
+  formula: "years = (1.645 + 0.842)^2 / sharpe^2"
+  trend_years_to_decide: 66.5
+  bv2_years_to_decide: 422.3
+  min_sharpe_resolvable_in_1_month: 8.61
+  min_sharpe_resolvable_in_12_months: 2.49
+
+# ---------------------------------------------------------------------------
+# What the paper run CAN settle in weeks: tracking, not profit
+# ---------------------------------------------------------------------------
+# The bench is a model of the live engine. Whether the model matches the
+# engine is a question with a high signal-to-noise ratio and a short horizon,
+# unlike profitability. It is also the question that caught the funding sign
+# error: FRAB's live profit contradicted the bench's -7.24%.
+#
+# Calibration for the correlation bar: the XSMOM audit measured live-vs-model
+# daily return correlation at +0.86 with clean execution
+# (funding-rate-arbitrage/research/xsmom_live_recon/AUDIT_2026_09.md).
+
+strategies:
+
+  - id: strategy-b-v2
+    paper_config:
+      # src/frab/server.py:54 and src/frab/strategy/b2/params.py
+      capital_usd: 257.0
+      coins: [BTC, ETH, SOL, AVAX]
+      carry_enabled: false        # removed 2026-09-13: carry belongs to FRAB
+      margin_enabled: true
+      second_book: "b2_cold (hedge_margin_headroom 1.5)"
+    bench:
+      ann_return_net: 0.0074
+      sharpe_net: 0.121
+      verdict: reject
+      caveat: "intended 4-coin book complete only 21% of window (AVAX-SPOT)"
+    predicted_band: not_profitable   # < 0.04
+    confidence: low
+    # WHY low: the bench number is the one q-lab itself flags as unsound --
+    # it measured Bv2 on whatever subset of the book happened to exist. The
+    # prediction is registered anyway, because "I am not confident" is not a
+    # reason to skip registering; it is a reason to record the confidence.
+    known_bench_mismatches:
+      - "margin model: paper enforces per-book cross margin, bench expresses none"
+      - "ratchet is path-dependent state; the stateless bench interface approximates it"
+      - "paper runs two books (b2, b2_cold); bench runs one"
+
+  - id: trend-tsmom-crypto
+    paper_config:
+      # src/frab/strategy/trend/params.py (TrendParams defaults, used as-is)
+      capital_usd: 3000.0
+      coins_count: 25              # DEFAULT_COINS, a named liquid list
+      risk_scale: 0.2
+      book_vol_target_ann: 0.14
+      min_order_usd: 10.0
+    bench:
+      ann_return_net: 0.0475
+      sharpe_net: 0.305
+      min_capital_usd: 37829.0
+      verdict: "shelf"
+    predicted_band: acceptable       # >= 0.04, the lowest band, as a CEILING
+    confidence: low
+    # WHY a ceiling and not an estimate: noise calibration on this same panel
+    # (docs/CALIBRATION_2026-09-21.1.md) found that the best of 200 structurally
+    # matched random books reached +4.60% and Sharpe 0.929. Trend's +4.75% /
+    # 0.305 sits inside what pure chance produced. The registered expectation
+    # is therefore NOT "trend earns 4.75%" but "trend is not separable from
+    # zero, and any paper result consistent with zero confirms rather than
+    # refutes this".
+    known_bench_mismatches:
+      # These are large enough that paper trend and bench trend are arguably
+      # different strategies. Registering them now prevents explaining away a
+      # divergence later by discovering them after the fact.
+      - "universe: paper trades 25 named coins, bench trades the full discovered
+         universe (222 with data). docs/TASKS.md T18 is exactly this axis, and
+         it changed min_capital by more than an order of magnitude."
+      - "book-level vol targeting (book_vol_target_ann 0.14) is ON in paper and
+         ABSENT from the bench spec -- it is path-dependent state the stateless
+         interface cannot express (same class as FRAB's breakeven machine)."
+      - "capital: paper $3000 vs bench-required $37829. At $3000 the small legs
+         fall under HL's $10 minimum and book.py:159 skips them, so the paper
+         book is more concentrated and rebalances more coarsely than the bench."
+
+# ---------------------------------------------------------------------------
+# Falsifiable, short-horizon predictions (checkable within ~4-8 weeks)
+# ---------------------------------------------------------------------------
+# Each is a number written before the data was seen. A miss is a finding about
+# the framework, recorded as such, not a reason to adjust the prediction.
+tracking_predictions:
+  - metric: daily_return_correlation_paper_vs_bench_replay
+    applies_to: [trend-tsmom-crypto, strategy-b-v2]
+    predicted: ">= 0.80"
+    rationale: "XSMOM's clean-execution live-vs-model correlation was +0.86"
+    if_missed: "the transcription is not the live strategy; every bench verdict
+                on it is a verdict on something else"
+
+  - metric: realised_cost_per_unit_turnover_bps
+    applies_to: [trend-tsmom-crypto]
+    predicted: "4.4 +/- 1.5"
+    rationale: "modelled taker 3.5 + slippage 0.9 (specs/trend.yaml)"
+    if_missed: "the cost model is wrong, and costs are what killed bench FRAB"
+
+  - metric: funding_accrual_sign
+    applies_to: [trend-tsmom-crypto]
+    predicted: "negative (the momentum book PAYS funding, net)"
+    rationale: "post-sign-fix bench decomposition: carry -3.7%/yr, not +3.7%"
+    if_missed: "the sign fix of 2026-09-21 is wrong in the other direction;
+                this is the single highest-value check in this file"
+
+  - metric: instruments_held_median
+    applies_to: [trend-tsmom-crypto]
+    predicted: "< 25, and materially below the bench book's breadth"
+    rationale: "$3000 capital against a $10 minimum order truncates small legs"
+    if_missed: "the min-order truncation model is wrong"
+
+  - metric: turnover_annualised
+    applies_to: [trend-tsmom-crypto]
+    predicted: "< 35.96 (the bench figure)"
+    rationale: "skipped sub-minimum rebalances cannot raise turnover"
+    if_missed: "paper is trading more than the model thinks it should"
+
+# ---------------------------------------------------------------------------
+# Stop conditions -- the one asymmetry
+# ---------------------------------------------------------------------------
+# Profitability needs years; RUIN does not. A loss far outside the modelled
+# distribution is evidence of a broken model on a short horizon, because the
+# model assigns it almost no probability. These are not profitability
+# judgements and do not contradict PREDICTION 0.
+stop_conditions:
+  - "trend: cumulative paper drawdown worse than -20% (bench max_dd -19.5%,
+     at a matched 14% vol target) -> stop and diagnose before anything else"
+  - "either: a single day worse than the bench's worst day by more than 2x"
+  - "either: live-vs-model daily correlation below 0.3 over any 20-day window"
+
+# ---------------------------------------------------------------------------
+# What this file is NOT
+# ---------------------------------------------------------------------------
+# It is not an allocation decision. Nothing here routes capital; q-lab cannot
+# reach `live` by construction. It is a record of what was believed on
+# 2026-09-21, so that on the day the results are read, the question "did we
+# know this beforehand?" has an answer that is not a memory.
