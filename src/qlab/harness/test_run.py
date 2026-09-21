@@ -81,13 +81,14 @@ def test_constant_weight_flat_price_accrual_matches_hand_computation() -> None:
 
     # accrual is EXACTLY `rate` every output period: weight is constant 1.0
     # and funding is constant `rate`, so held * funding_fwd == rate always.
-    assert list(result.accrual.round(10)) == [rate, rate, rate]
+    # A long pays positive funding, so the accrual is -rate, not +rate.
+    assert list(result.accrual.round(10)) == [-rate, -rate, -rate]
     # turnover: only period 0 opens the position from flat (turnover=1);
     # cost0 = 1 * 5/1e4 = 0.0005, cost1 = cost2 = 0 (unchanged weight).
     assert list(result.turnover.round(10)) == [1.0, 0.0, 0.0]
     assert list(result.cost.round(10)) == [0.0005, 0.0, 0.0]
     # gross is 0 (flat prices); net = gross + accrual - cost.
-    expected_net = [rate - 0.0005, rate, rate]
+    expected_net = [-rate - 0.0005, -rate, -rate]
     assert list(result.net_return.round(10)) == [round(v, 10) for v in expected_net]
 
 

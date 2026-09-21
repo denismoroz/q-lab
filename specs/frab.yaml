@@ -1,3 +1,7 @@
+# ОГРАНИЧЕНИЕ ПЛОЩАДКИ (2026-09-21): LINK и DOGE убраны из списка — на
+# Hyperliquid у них нет спотового рынка, проверено по живому spotMeta. Держать
+# спот против перп-шорта там, где спота не существует, нельзя; это ограничение
+# биржи, а не выбор универса. Живой FRAB упирается в то же самое.
 # FRAB funding harvest -- qlab.strategies.frab.FrabFundingHarvest.
 #
 # Every rank/slot/threshold param below is transcribed verbatim from the live
@@ -54,8 +58,6 @@ params:
     SOL: "SOL-SPOT"
     HYPE: "HYPE-SPOT"
     AVAX: "AVAX-SPOT"
-    LINK: "LINK-SPOT"
-    DOGE: "DOGE-SPOT"
     ZEC: "ZEC-SPOT"
     XPL: "XPL-SPOT"
   perp_columns:
@@ -64,8 +66,6 @@ params:
     SOL: "SOL"
     HYPE: "HYPE"
     AVAX: "AVAX"
-    LINK: "LINK"
-    DOGE: "DOGE"
     ZEC: "ZEC"
     XPL: "XPL"
   # TwoPhaseParams.concurrency_cap = 3  # K: max simultaneous open positions

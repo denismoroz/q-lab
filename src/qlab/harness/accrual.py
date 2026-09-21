@@ -134,5 +134,17 @@ def compute_accrual(
             f"in {first_cols}; an unknown funding rate is not a zero funding "
             "rate -- fix the data or exclude the instrument from the book"
         )
-    contribution = (held_weights * aligned.fillna(0.0)).sum(axis=1)
+    # SIGN CONVENTION, and it is not a detail: a venue's funding rate is the
+    # rate LONGS PAY SHORTS, so a positive rate is a cost to a long position
+    # and income to a short one. The accrual is therefore MINUS weight times
+    # rate, not weight times rate.
+    #
+    # Getting this backwards does not produce an obviously broken number, it
+    # produces a plausible one with the wrong sign, and it inverts the verdict
+    # of every strategy whose edge is carry. It was caught only because FRAB —
+    # which is spot-long against a perp-short, entering when funding is
+    # positive, and which earns real money in production — came out at
+    # -7.2%/yr here. Its own entry rule settles the convention: it goes SHORT
+    # the perp when funding is HIGH, so a positive rate must pay the short.
+    contribution = -(held_weights * aligned.fillna(0.0)).sum(axis=1)
     return contribution.rename("accrual")
