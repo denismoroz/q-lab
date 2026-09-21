@@ -168,6 +168,21 @@ def describe_universe(source: str) -> list[tuple[str, bool]] | None:
     return _SOURCES[source]["describe_universe"]()
 
 
+def _resolve_casing(source_spec, instruments, start_ts, end_ts) -> list[str]:
+    """Map hand-typed tickers onto the venue's own spelling, case-insensitively.
+
+    Venue casing is not cosmetic: Hyperliquid's thousand-multiple contracts
+    are kBONK, kPEPE, kSHIB, and the uppercase spelling is not an alias for
+    them — it is an unknown instrument the API answers with a 500.
+    """
+    try:
+        discovered = source_spec["discover_universe"]((start_ts, end_ts)) or []
+    except Exception:
+        discovered = []
+    by_lower = {name.lower(): name for name in discovered}
+    return sorted({by_lower.get(i.lower(), i) for i in instruments})
+
+
 def build_snapshot(
     source: str,
     instruments: Sequence[str] | None,
@@ -223,10 +238,19 @@ def build_snapshot(
                 "instruments list; the resulting snapshot will be marked "
                 "universe_complete=False and will fail the honest_universe rule"
             )
-        instruments_sorted = sorted({i.upper() for i in discovered})
+        # The venue's own spelling is authoritative and must survive intact.
+        # Hyperliquid's thousand-multiple contracts are named with a lowercase
+        # k — kBONK, kPEPE, kSHIB — and asking for "KBONK" returns a 500, not
+        # a not-found. Upper-casing a discovered name therefore does not
+        # normalise it, it invents an instrument that does not exist.
+        instruments_sorted = sorted(set(discovered))
         universe_complete = True
     else:
-        instruments_sorted = sorted({i.upper() for i in instruments})
+        # A hand-written list may be typed in any case, so resolve it against
+        # the venue's spelling where discovery is available; anything that
+        # does not resolve is passed through as typed, so a genuine typo still
+        # fails loudly rather than being silently rewritten.
+        instruments_sorted = _resolve_casing(source_spec, instruments, start_ts, end_ts)
         universe_complete = False
 
     if not instruments_sorted:
