@@ -284,11 +284,82 @@ def align_funding_to_index(
     return pd.Series(values, index=index, dtype=float)
 
 
+# A single-bar move this large is not observed on any real, actively-traded
+# instrument at this granularity: Bitcoin's worst CLOSE-to-close daily move
+# on record is roughly -37% (2020-03-12, the COVID crash), and that is the
+# most liquid crypto asset there is -- a thinner instrument can be more
+# volatile still, but not by an order of magnitude on genuine trading. 0.80
+# (80%) sits well above that with a wide safety margin for illiquid alts,
+# while remaining far below the moves this check exists to catch: live
+# Hyperliquid spot data (docs/TASKS.md, T17) showed BTC-SPOT (@142, UBTC/
+# USDC) jumping -98.8% in one bar, and other thin pairs (BERA-SPOT,
+# MON-SPOT, TRUMP-SPOT) jumping 1000%+, all at the exact boundary where a
+# repeating placeholder price gives way to real trading (see
+# `detect_bad_price_bars`). A real move that large would itself be
+# economically implausible to simulate holding through, so treating it as
+# corrupted rather than as a genuine return is the conservative, honest
+# choice either way.
+MAX_PLAUSIBLE_BAR_MOVE = 0.80
+
+
+def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
+    """Flag bars whose price looks like a corrupted print rather than real
+    price discovery (docs/TASKS.md, T17) -- a data-quality gate applied
+    during collection, not a strategy-time filter, so a bad bar never
+    reaches a panel (or a signal computed over it) silently.
+
+    Observed live on Hyperliquid's free spot API: a newly created spot pair
+    with no real liquidity yet returns a repeating, non-zero PLACEHOLDER
+    "close" (Hyperliquid's UBTC/USDC pair printed a constant 6969696 then
+    7979573 for 11 daily bars in Feb 2025 -- about 82x BTC's real price and
+    completely flat -- before jumping to a real ~$97.6k print the moment
+    actual trading began). Perp candles are fetched from the same endpoint
+    shape and could in principle show the same artifact for a newly listed
+    contract, so this check is applied to every instrument, not just spot.
+
+    Two independent signals, either one flags a bar; a bar with no
+    predecessor or successor to compare against is never flagged (nothing
+    to detect an anomaly against):
+
+    - constancy: identical to the bar immediately BEFORE or AFTER it. No
+      magnitude to calibrate -- a real market, quoted at full float
+      precision (not rounded to cents), essentially never prints the exact
+      same close on two consecutive bars. Checking both directions catches
+      the FIRST bar of a repeated run too, not just the second bar onward
+      (the run 6969696, 6969696, 6969696 needs to flag all three, not just
+      the last two). A genuinely pegged asset can trip this on an ordinary
+      day; marking one flat bar untradeable there is the same conservative
+      trade-off `snapshot.py` already makes for a funding gap -- excluding
+      the affected bar, not guessing, and not dropping the whole
+      instrument.
+    - implausible jump: see `MAX_PLAUSIBLE_BAR_MOVE` for the threshold and
+      its justification.
+
+    Returns a boolean Series aligned to `prices.index` (True = suspect).
+    Does not itself decide what to do with a flagged bar -- see
+    `qlab.data.snapshot._build_frames_from_histories`, which NaNs the price
+    and clears `tradeable` there.
+    """
+    if prices.empty:
+        return pd.Series(False, index=prices.index, dtype=bool)
+
+    prev = prices.shift(1)
+    nxt = prices.shift(-1)
+    constant = (prices == prev) | (prices == nxt)
+
+    pct_change = (prices - prev).abs() / prev.abs()
+    big_jump = pct_change > MAX_PLAUSIBLE_BAR_MOVE
+
+    return (constant | big_jump).fillna(False)
+
+
 __all__ = [
     "InstrumentHistory",
     "INTERVAL_TO_TIMEDELTA",
     "SPOT_COLUMN_SUFFIX",
+    "MAX_PLAUSIBLE_BAR_MOVE",
     "align_funding_to_index",
+    "detect_bad_price_bars",
     "fetch_universe_resumable",
     "load_cached_history",
     "store_cached_history",

@@ -128,6 +128,54 @@ def test_holding_through_nan_funding_raises() -> None:
         run_backtest(panel, weights, costs, funding)
 
 
+def test_holding_spot_through_structural_nan_funding_does_not_raise() -> None:
+    """A column the panel flags via `meta["no_funding_instruments"]` (a
+    spot market, docs/TASKS.md T17) is all-NaN funding by construction --
+    holding it throughout must run cleanly and contribute zero accrual,
+    never raise AccrualError."""
+    idx = pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC")
+    prices = pd.DataFrame(100.0, index=idx, columns=["BTC-SPOT"])
+    weights = pd.DataFrame(1.0, index=idx, columns=["BTC-SPOT"])  # held throughout
+    funding = pd.DataFrame(float("nan"), index=idx, columns=["BTC-SPOT"])
+    panel = MarketPanel(
+        snapshot_id="snap-run-spot",
+        prices=prices,
+        funding=funding,
+        tradeable=pd.DataFrame(True, index=idx, columns=["BTC-SPOT"]),
+        meta={"no_funding_instruments": ["BTC-SPOT"]},
+    )
+    costs = CostModel(taker_fee_bps=1.0, slippage_bps=1.0)
+
+    result = run_backtest(panel, weights, costs, funding)
+
+    assert (result.accrual == 0.0).all()
+
+
+def test_holding_perp_with_unknown_funding_still_raises_alongside_spot() -> None:
+    """A perp column NOT listed in `no_funding_instruments` keeps the
+    unweakened guard even when the panel also carries a structurally
+    fundingless spot column -- the exemption must not leak across columns."""
+    idx = pd.date_range("2026-01-01", periods=2, freq="D", tz="UTC")
+    prices = pd.DataFrame({"BTC-SPOT": [100.0, 100.0], "ETH": [100.0, 100.0]}, index=idx)
+    weights = pd.DataFrame({"BTC-SPOT": [1.0, 1.0], "ETH": [1.0, 1.0]}, index=idx)
+    # run_backtest pairs weights.loc[idx[0]] with funding realised over
+    # (idx[0], idx[1]] via `funding.shift(-1)`, i.e. with funding.loc[idx[1]]
+    # -- ETH's gap has to live there for the kept (decision-time) row to see it.
+    funding = pd.DataFrame(
+        {"BTC-SPOT": [float("nan"), float("nan")], "ETH": [0.001, float("nan")]}, index=idx
+    )
+    panel = MarketPanel(
+        snapshot_id="snap-run-mixed",
+        prices=prices,
+        funding=funding,
+        tradeable=pd.DataFrame(True, index=idx, columns=prices.columns),
+        meta={"no_funding_instruments": ["BTC-SPOT"]},
+    )
+    costs = CostModel(taker_fee_bps=1.0, slippage_bps=1.0)
+    with pytest.raises(AccrualError, match="NaN"):
+        run_backtest(panel, weights, costs, funding)
+
+
 # --- look-ahead: structurally uncatchable, but visible as an absurd Sharpe -
 
 

@@ -62,15 +62,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import structlog
 from sqlalchemy.orm import Session
 
 from qlab.data.panel import MarketPanel
 from qlab.data.sources import binance as binance_source
 from qlab.data.sources import hyperliquid as hyperliquid_source
-from qlab.data.sources.base import SPOT_COLUMN_SUFFIX, InstrumentHistory, align_funding_to_index
+from qlab.data.sources.base import (
+    SPOT_COLUMN_SUFFIX,
+    InstrumentHistory,
+    align_funding_to_index,
+    detect_bad_price_bars,
+)
 from qlab.registry import repo
 from qlab.registry.db import session_scope
 from qlab.registry.models import DataSnapshot
+
+logger = structlog.get_logger()
 
 DEFAULT_SNAPSHOTS_DIR = Path("data/snapshots")
 
@@ -196,6 +204,31 @@ def _build_frames_from_histories(
         # docs/TASKS.md T17 warns about, not an honest data gap.
         if bar_interval >= funding_native_interval and hist.has_funding:
             tradeable &= funding_cols[coin].notna()
+
+        # Quote sanity (docs/TASKS.md, T17): a corrupted print -- a
+        # repeating placeholder price, or an implausible one-bar jump --
+        # must never enter the panel as if it were a real observation. See
+        # `detect_bad_price_bars` for what triggered this and why: live
+        # Hyperliquid spot data for a newly created pair returns a constant
+        # non-zero "close" with no real trading behind it until the pair
+        # actually starts trading, at which point the price jumps to a
+        # realistic level -- which without this check reads as a huge, and
+        # entirely fictitious, one-bar return. The bad bar is BOTH NaN'd out
+        # (so no signal computed over `prices` can see it either) and
+        # cleared from `tradeable` (so a strategy cannot hold through it) --
+        # the same "exclude just the affected bars" policy as the funding
+        # gap above, not a guess and not a whole-instrument drop.
+        bad_price = detect_bad_price_bars(price_cols[coin])
+        if bad_price.any():
+            logger.warning(
+                "bad_price_bars_excluded",
+                instrument=coin,
+                n_bars=int(bad_price.sum()),
+                first=str(price_cols[coin].index[bad_price][0]),
+                last=str(price_cols[coin].index[bad_price][-1]),
+            )
+            price_cols[coin] = price_cols[coin].where(~bad_price)
+            tradeable &= ~bad_price
 
         tradeable_cols[coin] = tradeable
 

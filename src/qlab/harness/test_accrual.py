@@ -44,6 +44,37 @@ def test_nan_funding_while_flat_does_not_raise() -> None:
     assert result.iloc[2] == 0.0
 
 
+def test_structural_nan_funding_while_held_contributes_zero_not_raise() -> None:
+    """Holding a spot column (no_funding_instruments) through all-NaN
+    funding must not raise -- NaN there is expected, not a gap."""
+    idx = _index(3)
+    held = pd.DataFrame({"BTC-SPOT": [1.0, 1.0, 0.0]}, index=idx)
+    funding = pd.DataFrame({"BTC-SPOT": [np.nan, np.nan, np.nan]}, index=idx)
+    result = compute_accrual(held, funding, no_funding_instruments=["BTC-SPOT"])
+    assert (result == 0.0).all()
+
+
+def test_structural_flag_does_not_suppress_other_columns_gap() -> None:
+    """`no_funding_instruments` narrows the exemption to named columns only
+    -- a genuine perp gap on an UNLISTED column must still raise."""
+    idx = _index(2)
+    held = pd.DataFrame({"BTC-SPOT": [1.0, 1.0], "ETH": [1.0, 1.0]}, index=idx)
+    funding = pd.DataFrame({"BTC-SPOT": [np.nan, np.nan], "ETH": [np.nan, 0.001]}, index=idx)
+    with pytest.raises(AccrualError, match="NaN"):
+        compute_accrual(held, funding, no_funding_instruments=["BTC-SPOT"])
+
+
+def test_unnamed_column_with_nan_funding_still_raises_by_default() -> None:
+    """Omitting `no_funding_instruments` (the default) must reproduce the
+    original, unweakened behaviour exactly -- this is the regression this
+    parameter must never introduce for an ordinary perp."""
+    idx = _index(2)
+    held = pd.DataFrame({"X": [1.0, 1.0]}, index=idx)
+    funding = pd.DataFrame({"X": [np.nan, 0.001]}, index=idx)
+    with pytest.raises(AccrualError, match="NaN"):
+        compute_accrual(held, funding)
+
+
 def test_known_accrual_matches_hand_computation() -> None:
     idx = _index(4)
     # Long 2 units of X, short 3 units of Y, constant funding rates.

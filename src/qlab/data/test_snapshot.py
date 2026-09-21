@@ -5,6 +5,7 @@ monkeypatched with synthetic InstrumentHistory fixtures.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, event
@@ -47,15 +48,28 @@ def session():
 # --------------------------------------------------------------------------
 
 
+def _ramp_prices(index: pd.DatetimeIndex, base: float = 100.0) -> pd.Series:
+    """A tiny, strictly-increasing synthetic price series -- NOT a flat
+    constant. `detect_bad_price_bars` (docs/TASKS.md, T17) flags a bar equal
+    to its neighbour as a corrupted print, so a genuinely constant test
+    fixture (the old default here) would now trip that check and pollute
+    every test in this file that isn't actually about quote sanity. The
+    ramp is tiny (1 cent/bar on a ~100 base) so it can never itself trigger
+    the "implausible jump" half of the check either."""
+    return pd.Series(base + 0.01 * np.arange(len(index)), index=index)
+
+
 def _hist(
     name: str,
     index: pd.DatetimeIndex,
     is_delisted: bool,
     *,
+    prices: pd.Series | None = None,
     funding: pd.Series | None = None,
     has_funding: bool = True,
 ) -> InstrumentHistory:
-    prices = pd.Series(100.0, index=index)
+    if prices is None:
+        prices = _ramp_prices(index)
     if funding is None:
         funding = pd.Series(0.0001, index=index)
     return InstrumentHistory(
@@ -154,6 +168,54 @@ class TestFundingGapTradeable:
         )
 
         assert tradeable["BTC-SPOT"].all()
+
+
+class TestBadPriceBarsExcludedFromTradeable:
+    """Regression for the live defect a coordinator review caught: HL's
+    UBTC/USDC spot pair (@142) returned a constant, non-zero placeholder
+    price (6969696, then 7979573 -- about 82x BTC's real price) for 11
+    daily bars before real trading began and the price jumped to a genuine
+    ~$97.6k print. Fed through the ORIGINAL `_build_frames_from_histories`
+    (pre quote-sanity-check), those bars were tradeable and the placeholder
+    -> real transition read as a fictitious ~-98.8% one-day return. This
+    must never happen again for ANY instrument, perp or spot."""
+
+    def test_constant_then_jump_bars_are_excluded_from_tradeable(self):
+        full_index = pd.date_range("2025-02-03", periods=13, freq="1D", tz="UTC")
+        # Exact values observed live against Hyperliquid's free /info API.
+        garbage = [6969696.0] * 5 + [7979573.0] * 6
+        real = [97578.0, 97597.0]
+        prices = pd.Series(garbage + real, index=full_index)
+        histories = {"BTC-SPOT": _hist("BTC-SPOT", full_index, is_delisted=False, prices=prices)}
+
+        out_prices, _funding, tradeable = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1)
+        )
+
+        # Every placeholder bar, and the implausible transition bar itself,
+        # must read untradeable -- not just "some of them".
+        assert not tradeable["BTC-SPOT"].iloc[:12].any()
+        # The two genuinely ordinary bars after the transition are fine.
+        assert tradeable["BTC-SPOT"].iloc[12]
+        # The corrupted print must not linger in `prices` either -- a
+        # momentum/signal computation reading `panel.prices` directly (not
+        # just position sizing) must not see it.
+        assert out_prices["BTC-SPOT"].iloc[:12].isna().all()
+        assert out_prices["BTC-SPOT"].iloc[12] == 97597.0
+
+    def test_ordinary_instrument_unaffected(self):
+        """A normal, non-corrupted price series must not lose any
+        tradeable bars to this check -- it is a targeted defect filter, not
+        a general-purpose volatility cap."""
+        full_index = pd.date_range("2025-01-01", periods=6, freq="1D", tz="UTC")
+        prices = pd.Series([100.0, 101.5, 99.0, 103.0, 102.0, 104.5], index=full_index)
+        histories = {"ETH": _hist("ETH", full_index, is_delisted=False, prices=prices)}
+
+        _prices, _funding, tradeable = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1)
+        )
+
+        assert tradeable["ETH"].all()
 
 
 # --------------------------------------------------------------------------
@@ -415,7 +477,7 @@ def _fake_fetch_spot_universe(coins, start, end, interval, *, on_missing="raise"
         column = f"{coin}-SPOT"
         out[column] = InstrumentHistory(
             instrument=column,
-            prices=pd.Series(100.0, index=idx),
+            prices=_ramp_prices(idx),
             funding=pd.Series(dtype=float),
             first_seen=idx[0],
             last_seen=idx[-1],
