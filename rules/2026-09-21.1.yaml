@@ -1,0 +1,55 @@
+# The bar stops being zero.
+#
+# Until now `net_edge_positive` asked only that a strategy not lose money.
+# That is the wrong question: capital sitting in staked stablecoins already
+# earns a few percent for no work and no risk of a strategy breaking, so a
+# strategy returning 2%/yr is not profitable — it is worse than doing nothing.
+#
+# Owner's decision, 2026-09-20, in their own words:
+#   «есть едж который можно поднять до 15 % годовых - но если есть стабильные
+#   7-10 - тоже считать прибыльным. все что дает больше стейкинга стабильных
+#   монет - рассматриваем. 15%+ - отлично. 7-10 - хорошо. выше 4% -
+#   приемлимо.»
+#
+# So the admission bar is 4% net annual — the "acceptable" band, chosen as the
+# level above which a strategy beats the stablecoin alternative. The bands
+# above it (7-10% good, 15%+ excellent) grade a candidate rather than gate it:
+# grading belongs to allocation, not screening, and a rule that rejected a
+# perfectly good 8% strategy for not being 15% would be throwing away money.
+#
+# The stablecoin yield moves. When it does, this threshold is wrong and a new
+# ruleset version supersedes this one — that is what versioning is for, and it
+# is why the number lives here rather than in code.
+#
+# The rule keeps its id. A stricter threshold on the same rule is an evolution,
+# not a retirement: nothing rejected under the old zero bar deserves review
+# because of this change — every one of them would fail the higher bar too.
+# Retiring the id would flood the "killed by rules that no longer exist" query
+# with candidates that are still just as dead.
+#
+# Side effect worth noting: with a non-zero threshold, relative nearness means
+# something again. Under the old zero bar, "25% away from zero" was undefined
+# and every near-miss query returned nothing usable for this rule. Now a
+# candidate at 3% net is 25% short of the bar, which is exactly the kind of
+# near miss worth a second look.
+
+version: "2026-09-21.1"
+based_on: "2026-09-20.2"
+
+rules:
+  - id: net_edge_positive
+    stage: edge
+    metric: ann_return_net
+    comparator: ">="
+    threshold: 0.04
+    fatal: true
+    near_margin: 0.25
+    rationale: >
+      Owner's bar, 2026-09-20: «выше 4% - приемлимо», with the baseline being
+      «все что дает больше стейкинга стабильных монет - рассматриваем».
+      Staked stablecoins earn a few percent for no work, so beating zero is
+      not the test — beating the alternative is. ann_return_net already
+      includes real costs and full funding accrual, so this is the number the
+      owner would actually receive.
+
+retired: []
