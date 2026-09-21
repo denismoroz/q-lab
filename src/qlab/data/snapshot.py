@@ -130,6 +130,9 @@ def _build_frames_from_histories(
     full_index: pd.DatetimeIndex,
     funding_native_interval: pd.Timedelta,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    bar_interval = (
+        full_index[1] - full_index[0] if len(full_index) > 1 else funding_native_interval
+    )
     instruments = sorted(histories)
     price_cols: dict[str, pd.Series] = {}
     funding_cols: dict[str, pd.Series] = {}
@@ -144,7 +147,26 @@ def _build_frames_from_histories(
 
         listed = full_index >= hist.first_seen
         still_listed = (not hist.is_delisted) | (full_index <= hist.last_seen)
-        tradeable_cols[coin] = pd.Series(listed & still_listed, index=full_index)
+        tradeable = pd.Series(listed & still_listed, index=full_index)
+
+        # A bar whose funding rate is unknown is a bar we cannot honestly
+        # simulate holding through, so it is not tradeable. Venues do drop
+        # settlements — Hyperliquid has gaps of a few hours on some coins —
+        # and the alternatives are both wrong: treating the gap as zero
+        # funding hands a carry strategy a free ride, and dropping the
+        # instrument entirely re-introduces the survivorship this module
+        # exists to prevent. Excluding just the affected bars keeps the coin
+        # in the universe and leaves the strategy unable to hold it exactly
+        # where the data cannot support the claim.
+        #
+        # Only when the panel's bar is coarser than or equal to the venue's
+        # settlement interval, where NaN means "incomplete". On a finer panel
+        # (hourly bars over 8h funding) most bars are NaN by construction and
+        # this test would make everything untradeable.
+        if bar_interval >= funding_native_interval:
+            tradeable &= funding_cols[coin].notna()
+
+        tradeable_cols[coin] = tradeable
 
     prices = pd.DataFrame(price_cols, index=full_index)[instruments]
     prices.index.name = "timestamp"
