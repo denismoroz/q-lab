@@ -513,6 +513,11 @@ def calibrate_cmd(
         reference_idea_id=reference_spec.idea_id,
         generated_on=date.today(),
         generator_breakdowns=generator_breakdowns,
+        reference_spec_name=(Path(reference).name if reference else None),
+        # The revision note is a correction to the TREND calibration and
+        # quotes trend's own numbers; printing it under another book's
+        # results would present one book's history as another's.
+        include_revision_note=reference is None,
     )
     report_path = write_report(
         content,

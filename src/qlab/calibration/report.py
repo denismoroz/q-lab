@@ -298,8 +298,20 @@ def render_report(
     generated_on: date,
     generator_breakdowns: dict[str, dict[str, SeriesSummary]] | None = None,
     include_revision_note: bool = True,
+    reference_spec_name: str | None = None,
 ) -> str:
-    """Render the full Russian-language calibration report as Markdown."""
+    """Render the full Russian-language calibration report as Markdown.
+
+    `reference_spec_name` is the file the reference book came from. It must
+    be passed whenever the reference is not the default, because the header
+    line otherwise names `specs/trend.yaml` next to a different book's id --
+    a report that misstates which book it measured is worse than no report.
+
+    `include_revision_note` must be False for any non-default reference:
+    `_REVISION_NOTE` is a specific historical correction to the TREND
+    calibration, citing trend's own turnover, and reprinting it under
+    another book's numbers presents one book's history as another's.
+    """
     lines: list[str] = []
     a = lines.append
 
@@ -307,7 +319,8 @@ def render_report(
     a("")
     a(
         f"Дата: {generated_on.isoformat()}. Эталонная стратегия для структурного "
-        f"соответствия шума — `{reference_idea_id}` (`{REFERENCE_SPEC_PATH.name}`). "
+        f"соответствия шума — `{reference_idea_id}` "
+        f"(`{reference_spec_name or REFERENCE_SPEC_PATH.name}`). "
         "Каждый прогон ниже — настоящий вызов `evaluate_spec`: те же правила, косты, "
         "accrual и универс, что и для любой реальной стратегии; каждый прогон записан "
         "в журнал испытаний (`trial`)."
