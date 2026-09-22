@@ -587,16 +587,44 @@ def render_report(
     return "\n".join(lines) + "\n"
 
 
-def calibration_report_path(rules_version: str, *, docs_dir: Path = DOCS_DIR) -> Path:
-    return docs_dir / f"CALIBRATION_{rules_version}.md"
+def calibration_report_path(
+    rules_version: str, *, docs_dir: Path = DOCS_DIR, reference_idea_id: str | None = None
+) -> Path:
+    """Where one calibration lives.
+
+    The file is keyed by the ruleset version AND by the book it was measured
+    against, because an admission rate belongs to the pair and not to the
+    ruleset alone (T27 item 3). Measured on `2026-09-21.1`: noise matched to
+    trend's ~150-leg book is admitted 1.0% of the time, and noise matched to
+    a 20-leg book on the same panel 26.0% of the time -- the same rules, the
+    same window, a factor of 26 apart. A single file per ruleset version
+    would have one of those overwrite the other and leave whichever ran last
+    looking like a property of the rules.
+
+    `reference_idea_id=None` keeps the historical, unsuffixed name so
+    `docs/CALIBRATION_2026-09-21.1.md` stays where every other document
+    already cites it.
+    """
+    if reference_idea_id is None:
+        return docs_dir / f"CALIBRATION_{rules_version}.md"
+    return docs_dir / f"CALIBRATION_{rules_version}__{reference_idea_id}.md"
 
 
-def write_report(content: str, rules_version: str, *, docs_dir: Path = DOCS_DIR) -> Path:
+def write_report(
+    content: str,
+    rules_version: str,
+    *,
+    docs_dir: Path = DOCS_DIR,
+    reference_idea_id: str | None = None,
+) -> Path:
     """Persist the calibration alongside the ruleset version (docs/TASKS.md
-    T16: "результат сохраняется вместе с версией правил"). One file per
-    rules version -- re-running calibration for the same version overwrites
-    its own file, never a different version's."""
-    path = calibration_report_path(rules_version, docs_dir=docs_dir)
+    T16: "результат сохраняется вместе с версией правил") AND the book shape
+    it was measured against (T27 item 3) -- see `calibration_report_path`.
+    Re-running the same (version, reference) pair overwrites its own file,
+    never another pair's."""
+    path = calibration_report_path(
+        rules_version, docs_dir=docs_dir, reference_idea_id=reference_idea_id
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path

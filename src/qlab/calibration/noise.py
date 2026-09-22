@@ -180,6 +180,61 @@ def _tradeable_mask(panel: MarketPanel) -> np.ndarray:
     return panel.tradeable.to_numpy(dtype=bool)
 
 
+def decision_rows(reference: pd.DataFrame, panel: MarketPanel) -> np.ndarray:
+    """Rows on which the reference book actually made a fresh decision.
+
+    Noise has to be structurally matched to the strategy it stands in for
+    (docs/TASKS.md T16), and the rebalance CADENCE is part of that structure.
+    A book that redraws itself every bar trades roughly `bars_per_rebalance`
+    times as much as one that holds flat between weekly rebalances, pays that
+    much more in costs, and is therefore a different book -- which is not a
+    harsher test, it is a different test. Left uncorrected it does not even
+    produce a harsher result: on the XSMOM calibration
+    (`docs/XSMOM_T21.md`) the turnover ratio came out at 8.69 against a
+    structural-match band ending at 8.0, so **150 of 200 noise trials were
+    rejected before they ran** and the calibration silently collapsed onto
+    the one generator that happens to inherit the schedule
+    (`shuffled_instruments`). T27 item 5.
+
+    A row counts as a decision when some instrument's weight changes WHILE
+    that instrument is tradeable on both the current and the previous bar.
+    The tradeable condition is what separates a decision from a forced exit:
+    a strategy holding through a delisting has its weight zeroed by the
+    harness's own safety gate, and that is not the strategy choosing to
+    trade. Row 0 is always a decision -- opening from flat is one.
+
+    For a reference that rebalances every bar (trend, whose every row differs
+    from the last) this returns all-True and every generator below behaves
+    exactly as it did before this function existed, which is what keeps
+    `docs/CALIBRATION_2026-09-21.1.md`'s numbers reproducible.
+    """
+    changed = reference.diff().abs() > ZERO_WEIGHT_TOL
+    tradeable = panel.tradeable.reindex(index=reference.index, columns=reference.columns)
+    tradeable = tradeable.fillna(False).astype(bool)
+    held_through = tradeable & tradeable.shift(1, fill_value=True)
+    decisions = np.array((changed & held_through).any(axis=1).to_numpy(dtype=bool), copy=True)
+    if decisions.size:
+        decisions[0] = True
+    return decisions
+
+
+def _hold_between_decisions(values: np.ndarray, decisions: np.ndarray) -> np.ndarray:
+    """Carry each decision row forward until the next one.
+
+    The counterpart to `decision_rows`: a generator draws only on decision
+    rows, and the rows in between repeat the last drawn book unchanged, the
+    same way the reference strategy holds its own book between rebalances.
+    """
+    result = values.copy()
+    last = 0
+    for t in range(values.shape[0]):
+        if decisions[t]:
+            last = t
+        else:
+            result[t] = result[last]
+    return result
+
+
 def random_weights(reference: pd.DataFrame, panel: MarketPanel, *, seed: int) -> pd.DataFrame:
     """Fresh random weights at every rebalance.
 
@@ -201,14 +256,26 @@ def random_weights(reference: pd.DataFrame, panel: MarketPanel, *, seed: int) ->
     """
     rng = np.random.default_rng(seed)
     values = reference.to_numpy(dtype=float)
+    decisions = decision_rows(reference, panel)
     result = np.zeros_like(values)
     for t in range(values.shape[0]):
         row = values[t]
         support = np.flatnonzero(np.abs(row) > ZERO_WEIGHT_TOL)
         if support.size == 0:
             continue
-        shuffled_positions = rng.permutation(support)
-        result[t, shuffled_positions] = row[support]
+        if decisions[t]:
+            shuffled_positions = rng.permutation(support)
+            result[t, shuffled_positions] = row[support]
+        else:
+            result[t] = result[t - 1] if t else 0.0
+    # The tradeable mask is re-applied for the same reason as in
+    # `shuffled_instruments`: once a book is HELD across bars rather than
+    # redrawn on each one (T27 item 5), a carried weight can land on an
+    # instrument that has since stopped being tradeable. Without this, 50 of
+    # 200 XSMOM-matched trials died on `validate_weights` with "non-zero
+    # weight on non-tradeable instrument" -- a real defect introduced by
+    # cadence inheritance, not a pre-existing one.
+    result = np.where(_tradeable_mask(panel), result, 0.0)
     return pd.DataFrame(result, index=reference.index, columns=reference.columns)
 
 
@@ -255,6 +322,12 @@ def random_signs(reference: pd.DataFrame, panel: MarketPanel, *, seed: int) -> p
     rng = np.random.default_rng(seed)
     magnitude = np.abs(reference.to_numpy(dtype=float))
     signs = rng.choice(np.array([-1.0, 1.0]), size=magnitude.shape)
+    # Signs are a DECISION; magnitudes are the reference's own and keep moving
+    # between rebalances if the reference's do. Holding the sign vector flat
+    # between decision rows is what matches the reference's trading cadence
+    # (T27 item 5) -- for an every-bar reference `decisions` is all-True and
+    # this is exactly the previous behaviour.
+    signs = _hold_between_decisions(signs, decision_rows(reference, panel))
     values = magnitude * signs
     return pd.DataFrame(values, index=reference.index, columns=reference.columns)
 
@@ -299,10 +372,17 @@ def bootstrap_time(reference: pd.DataFrame, panel: MarketPanel, *, seed: int) ->
     rng = np.random.default_rng(seed)
     n_rows = reference.shape[0]
     values = reference.to_numpy(dtype=float)
+    decisions = decision_rows(reference, panel)
     result = np.empty_like(values)
     for t in range(n_rows):
-        j = int(rng.integers(0, t + 1))  # only the past-or-present: j in [0, t]
-        result[t] = values[j]
+        if decisions[t] or t == 0:
+            j = int(rng.integers(0, t + 1))  # only the past-or-present: j in [0, t]
+            result[t] = values[j]
+        else:
+            # Hold the resampled book between the reference's own decisions
+            # (T27 item 5): drawing a fresh past row every bar would trade
+            # every bar, whatever the reference does.
+            result[t] = result[t - 1]
     result = np.where(_tradeable_mask(panel), result, 0.0)
     return pd.DataFrame(result, index=reference.index, columns=reference.columns)
 

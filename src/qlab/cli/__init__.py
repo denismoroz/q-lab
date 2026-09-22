@@ -447,10 +447,25 @@ def calibrate_cmd(
     capital: float = typer.Option(
         1000.0, "--capital", help="Capital currently deployable now (USD)"
     ),
+    reference: str | None = typer.Option(
+        None,
+        "--reference",
+        help=(
+            "Spec whose BOOK SHAPE the noise is matched to (default: specs/trend.yaml). "
+            "The admission rate belongs to the (ruleset, book shape) pair, not to the "
+            "ruleset -- see docs/TASKS.md T27 item 3"
+        ),
+    ),
 ) -> None:
     """Calibrate a ruleset against noise (docs/TASKS.md T16): how often does
     the ruleset admit a strategy known to have no edge, and what is the best
     `sharpe_net` noise reaches?
+
+    The answer is NOT a property of the ruleset on its own. Measured on
+    `2026-09-21.1`: noise matched to trend's ~150-leg book is admitted 1.0%
+    of the time; noise matched to a 20-leg book on the same panel, 26.0%.
+    Same rules, same window, a factor of 26. So `--reference` picks the book
+    shape, and the report is written per (version, reference) pair.
 
     Runs `n_trials` structurally-matched noise strategies per series
     (dollar-neutral and unconstrained, `qlab.calibration.noise`) through the
@@ -467,7 +482,7 @@ def calibrate_cmd(
         )
 
     ruleset = load(rules_version) if rules_version is not None else load_latest()
-    reference = load_reference_spec()
+    reference_spec = load_reference_spec(reference) if reference else load_reference_spec()
 
     series_summaries = {}
     generator_breakdowns = {}
@@ -479,7 +494,7 @@ def calibrate_cmd(
                 session=session,
                 ruleset=ruleset,
                 deployable_capital_usd=capital,
-                reference=reference,
+                reference=reference_spec,
             )
             series_summaries[series] = summarize_series(trials)
             generator_breakdowns[series] = summarize_by_generator(trials)
@@ -495,13 +510,21 @@ def calibrate_cmd(
         ruleset=ruleset,
         series_summaries=series_summaries,
         real_results=real_results,
-        reference_idea_id=reference.idea_id,
+        reference_idea_id=reference_spec.idea_id,
         generated_on=date.today(),
         generator_breakdowns=generator_breakdowns,
     )
-    report_path = write_report(content, ruleset.version)
+    report_path = write_report(
+        content,
+        ruleset.version,
+        # Keep the historical unsuffixed name for the default reference so
+        # every document already citing docs/CALIBRATION_<version>.md keeps
+        # resolving; any other book shape gets its own file.
+        reference_idea_id=None if reference is None else reference_spec.idea_id,
+    )
 
     typer.echo(f"rules:  {ruleset.version}")
+    typer.echo(f"book shape (reference): {reference_spec.idea_id}")
     typer.echo(f"report: {report_path}")
     typer.echo("")
     for series, summary in series_summaries.items():

@@ -21,6 +21,7 @@ from qlab.calibration.noise import (
     StructuralMismatchError,
     check_structural_match,
     compute_shape,
+    decision_rows,
     neutralize,
     reference_min_position,
 )
@@ -349,3 +350,119 @@ def test_reference_min_position_raises_on_all_flat_book():
 
     with pytest.raises(ValueError, match="never take a non-zero position"):
         reference_min_position(flat)
+
+
+# --- rebalance cadence is part of the structure (T27 item 5) ---------------
+
+
+def _weekly_reference(panel: MarketPanel, *, every: int = 7) -> pd.DataFrame:
+    """A reference that decides once every `every` bars and holds flat in
+    between -- the XSMOM shape, which is what broke the calibration."""
+    daily = _reference_weights(panel)
+    decided = daily.where(
+        pd.Series(np.arange(len(daily.index)) % every == 0, index=daily.index), np.nan
+    )
+    return decided.ffill().fillna(0.0).where(panel.tradeable, 0.0)
+
+
+def test_decision_rows_is_all_true_for_an_every_bar_reference() -> None:
+    """The no-op guarantee: a reference that rebalances every bar must see
+    every generator behave exactly as it did before cadence inheritance
+    existed, so docs/CALIBRATION_2026-09-21.1.md stays reproducible."""
+    panel = _panel()
+    assert decision_rows(_reference_weights(panel), panel).all()
+
+
+def test_decision_rows_follows_a_weekly_reference() -> None:
+    panel = _panel()
+    decisions = decision_rows(_weekly_reference(panel, every=7), panel)
+    assert decisions[0]
+    # Every decision after the first lands on a multiple of 7.
+    assert all(i % 7 == 0 for i in np.flatnonzero(decisions))
+    assert decisions.sum() == pytest.approx(len(panel.prices.index) / 7, abs=1)
+
+
+def test_decision_rows_does_not_count_a_forced_delisting_exit() -> None:
+    """A weight zeroed because the harness's safety gate dropped a delisted
+    instrument is not the strategy choosing to trade. Counting it would let
+    a delisting-heavy universe inflate the inferred cadence back towards
+    every-bar, which is the failure this whole function exists to prevent."""
+    index = pd.date_range("2025-01-01", periods=4, freq="1D", tz="UTC")
+    cols = ["A", "B"]
+    tradeable = pd.DataFrame(True, index=index, columns=cols)
+    tradeable.iloc[2:, 0] = False  # A delists at bar 2 and stays gone
+    panel = MarketPanel(
+        snapshot_id="t",
+        prices=pd.DataFrame(100.0, index=index, columns=cols),
+        funding=pd.DataFrame(0.0, index=index, columns=cols),
+        tradeable=tradeable,
+        meta={"universe_complete": True},
+    )
+    # Constant book; the ONLY change is A being zeroed by the delisting.
+    reference = pd.DataFrame({"A": [0.5, 0.5, 0.0, 0.0], "B": [-0.5] * 4}, index=index)
+    decisions = decision_rows(reference, panel)
+    assert decisions[0]
+    assert not decisions[1:].any()
+
+
+@pytest.mark.parametrize("generator_name", ["random_weights", "random_signs", "bootstrap_time"])
+def test_generators_inherit_a_weekly_reference_cadence(generator_name) -> None:
+    """Before this, the three redrawing generators traded every bar whatever
+    the reference did: on the real XSMOM book that came out at 8.69x the
+    reference's turnover, past the structural-match band's 8.0 ceiling, and
+    150 of 200 trials were rejected before they ran (docs/XSMOM_T21.md)."""
+    panel = _panel()
+    reference = _weekly_reference(panel, every=7)
+    noise = GENERATORS[generator_name](reference, panel, seed=11)
+
+    ref_turnover = reference.diff().abs().sum(axis=1).sum()
+    noise_turnover = noise.diff().abs().sum(axis=1).sum()
+    assert ref_turnover > 0
+    ratio = noise_turnover / ref_turnover
+    assert 0.2 < ratio < 8.0, f"{generator_name} turnover ratio {ratio:.2f} outside the band"
+
+
+@pytest.mark.parametrize("generator_name", ["random_weights", "random_signs", "bootstrap_time"])
+def test_generators_hold_flat_between_a_weekly_reference_decisions(generator_name) -> None:
+    """Sharper than the turnover band: the noise book must be UNCHANGED on
+    every bar the reference held flat, not merely close on aggregate."""
+    panel = _panel()
+    reference = _weekly_reference(panel, every=7)
+    noise = GENERATORS[generator_name](reference, panel, seed=5)
+    decisions = decision_rows(reference, panel)
+    changes = noise.diff().abs().sum(axis=1).to_numpy()
+    held_rows = ~decisions
+    held_rows[0] = False
+    assert np.allclose(changes[held_rows], 0.0)
+
+
+@pytest.mark.parametrize("generator_name", sorted(GENERATORS))
+def test_generators_never_hold_a_non_tradeable_instrument(generator_name) -> None:
+    """Holding a book across bars (T27 item 5) can carry a weight onto an
+    instrument that has since delisted, which `validate_weights` rejects.
+    This killed 50 of 200 XSMOM-matched trials before the mask was applied
+    in `random_weights` too."""
+    panel = _panel(delist_first_half=True)
+    reference = _weekly_reference(panel, every=7)
+    noise = GENERATORS[generator_name](reference, panel, seed=3)
+    assert not (noise.abs().gt(0.0) & ~panel.tradeable).to_numpy().any()
+
+
+@pytest.mark.parametrize("generator_name", sorted(GENERATORS))
+def test_warmup_rows_stay_flat_and_cadence_inheritance_is_a_no_op_there(generator_name) -> None:
+    """The regression that protects docs/CALIBRATION_2026-09-21.1.md.
+
+    trend's reference book is all-zero for its first 150 bars (its
+    `min_history_days` warm-up) and changes on every one of the 478 bars
+    after that -- measured, not assumed. So its only non-decision rows are
+    rows where the book holds NOTHING, and "hold the previous book" and
+    "draw a fresh one from an empty support" both produce zeros. Cadence
+    inheritance therefore cannot move trend's calibration, and this pins the
+    property that makes that true.
+    """
+    panel = _panel()
+    reference = _reference_weights(panel)
+    warmup = 5
+    reference.iloc[:warmup] = 0.0
+    noise = GENERATORS[generator_name](reference, panel, seed=17)
+    assert (noise.iloc[:warmup].abs().to_numpy() == 0.0).all()
