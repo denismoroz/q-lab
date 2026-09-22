@@ -1,0 +1,118 @@
+# TSMOM ensemble on crypto perps -- qlab.strategies.live.trend.LiveTrendTSMOMEnsemble.
+#
+# This spec does NOT transcribe the live engine's configuration -- it runs
+# the live engine's own code (`frab.strategy.trend.signals.target_weights`
+# and `.book_vol_scale`, called bar by bar through
+# `qlab.strategies.live._loader`) and hands it the LIVE defaults, because
+# the whole point of `qlab.strategies.live.trend` (docs/TASKS.md T29,
+# "Дополнение 2026-09-22") is to measure what actually runs, not an
+# interpretation of it. Every value under `params:` below is
+# `frab.strategy.trend.params.TrendParams()`'s own default -- read directly
+# off that dataclass, not retyped from memory -- including the 25-name
+# `DEFAULT_COINS` universe and `book_vol_target_ann=0.14`, the whole-book
+# volatility target `specs/trend.yaml`'s transcription cannot express.
+#
+# `idea_id` is deliberately distinct from `trend-tsmom-crypto`
+# (`specs/trend.yaml`'s idea): this is a methodological fork existing to
+# measure the transcription/live gap side by side with the transcription,
+# not a replacement for it -- see `trend-live` in the registry (`idea`
+# table) for the fork's own rationale, mirroring how `xsmom-frozen-universe`
+# / `xsmom-honest-20legs` fork `xsmom` for the same reason (T21).
+#
+# Data window, interval, costs, min_leg_notional and simultaneous_legs are
+# copied from `specs/trend.yaml` UNCHANGED (same comments, same
+# justification) -- the point of this spec is to isolate the STRATEGY CODE
+# gap (transcription vs. live call) from a data/venue gap, not to introduce
+# a second axis of difference at the same time.
+
+idea_id: trend-live
+title: "TSMOM-ансамбль на крипто-перпах HL -- живой код (25 монет, book-vol targeting)"
+code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
+
+# `frab.strategy.trend.params.TrendParams()` defaults, verbatim -- see
+# `qlab.strategies.live.trend.LiveTrendTSMOMEnsemble`'s docstring:
+# `TrendParams.from_dict` validates this mapping itself (positive
+# lookbacks, `mode == "paper"`, etc), so nothing here is re-validated by a
+# second, possibly drifted copy of frab's own rules.
+params:
+  # `DEFAULT_COINS` (`frab/strategy/trend/params.py`): "Liquid HL perps with
+  # enough history for a 120-day lookback." The engine drops any coin HL
+  # does not serve enough candles for -- this list is a wish, not a
+  # promise, exactly as that module's own comment says.
+  coins:
+    [
+      "BTC", "ETH", "SOL", "AVAX", "BNB", "XRP", "DOGE", "LINK", "LTC", "ADA",
+      "ARB", "OP", "SUI", "APT", "NEAR", "TIA", "INJ", "AAVE", "UNI", "ATOM",
+      "FIL", "BCH", "TRX", "SEI", "WLD",
+    ]
+  lookbacks: [30, 60, 90, 120]
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  min_history_days: 151
+  # The layer `specs/trend.yaml`'s transcription cannot express: scales the
+  # WHOLE book by its own trailing realised volatility -- "the only knob of
+  # seven that helped on BOTH the fitted and the never-seen window"
+  # (`TrendParams`'s own docstring). This is the reason this spec exists.
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.30
+  capital_usd: 3000.0
+  min_order_usd: 10.0
+
+data:
+  source: hyperliquid
+  # Daily bars: every trend param is in DAYS (lookbacks 30/60/90/120, vol
+  # window 30, book-vol window 60) -- hourly bars would add row volume
+  # without adding information the strategy actually uses. Copied unchanged
+  # from `specs/trend.yaml`.
+  interval: "1d"
+  # Same window as `specs/trend.yaml`, for the same reason: the venue's full
+  # history was needed there to avoid `fetch_universe` raising on a
+  # currently-listed coin with zero candles inside a narrower window (see
+  # that spec's comment and docs/ACCEPTANCE_M2.md). Kept identical here so
+  # the two specs answer the same question over the same data, differing
+  # only in strategy code and universe.
+  start: 2025-01-01
+  end: 2026-09-20
+  # Explicit 25-coin universe (unlike `specs/trend.yaml`'s discovered
+  # universe) -- this is the live engine's OWN universe
+  # (`TrendParams.coins`), named here so `data.instruments` matches
+  # `params.coins` exactly and the panel carries only what the live
+  # strategy can ever trade. `universe_complete=False` for this spec is
+  # therefore not survivorship bias being smuggled in -- it is the honest
+  # shape of the live book, which never intended to trade a discovered
+  # universe in the first place (see docs/T29_LIVE_TREND.md's universe/
+  # book-vol decomposition for the isolated measurement this spec is one
+  # half of).
+  instruments:
+    [
+      "BTC", "ETH", "SOL", "AVAX", "BNB", "XRP", "DOGE", "LINK", "LTC", "ADA",
+      "ARB", "OP", "SUI", "APT", "NEAR", "TIA", "INJ", "AAVE", "UNI", "ATOM",
+      "FIL", "BCH", "TRX", "SEI", "WLD",
+    ]
+
+costs:
+  # Every leg here is a directional HL perp (no spot leg), same cost figure
+  # `specs/trend.yaml` uses -- copied unchanged: "реальные косты HL: ~4.4
+  # б.п. на ногу (taker 3.5 + проскальзывание)"
+  # (funding-rate-arbitrage/research/SCREENING.md line 32), taker itself
+  # pinned to `frab/constants.py`'s `PERP_TAKER = 0.00035`.
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+# HL's own minimum order size -- `frab/strategy/trend/params.py`'s
+# `min_order_usd: float = 10.0` (also set under `params:` above for the
+# live function's own use), same number `venues/hyperliquid.yaml` records
+# independently as the exchange's own floor. Copied unchanged from
+# `specs/trend.yaml`.
+min_leg_notional: 10.0
+
+# Directional long/short per instrument, one leg per coin -- copied
+# unchanged from `specs/trend.yaml`; this spec changes the strategy code
+# and the universe, not the leg shape.
+simultaneous_legs: 1
