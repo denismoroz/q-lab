@@ -1,0 +1,203 @@
+# Карточка кандидата M2.5. Схема: cards/SCHEMA.md.
+# Цитаты из англоязычных источников приведены дословно и не переводятся.
+
+idea_id: perp-mm-funding-aware
+title: "Спред, который платит неинформированный тейкер: маркет-мейкинг на перпах HL с funding как переменной состояния"
+found_at: 2026-09-22
+
+sources:
+  - url: https://arxiv.org/html/2605.06405
+    title: "Funding-Aware Optimal Market Making for Perpetual DEXs (Nam Anh Le)"
+    published: 2026-05
+  - url: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+    title: "Fees — Hyperliquid Docs"
+    published: null
+
+driver:
+  who_pays: >-
+    Тейкер, переходящий спред. Экономически — та часть тейкерского потока,
+    которая неинформирована: ей нужна немедленность, а не правота. Вторая,
+    меньшая часть выплаты идёт из комиссионного потока площадки: на верхних
+    ступенях maker-ставка HL становится отрицательной (ребейт).
+  why: >-
+    Маркет-мейкер продаёт немедленность и берёт за неё половину спреда, а взамен
+    несёт два риска: инвентарь по цене и — на перпе, в отличие от спота —
+    денежный поток funding по этому инвентарю. Статья строит правило котировки
+    именно вокруг второго: инвентарь на перпе имеет два экономических канала,
+    а не один.
+  kill_condition: >-
+    Схлопывание спреда до уровня, при котором половина спреда перестаёт покрывать
+    adverse selection плюс комиссию: приход более быстрых мейкеров, либо рост
+    доли информированного потока (тогда filled quotes систематически stale),
+    либо отмена/ужесточение ребейт-ступеней на площадке.
+  observable: >-
+    Реализованный спред на верхнем уровне книги HL (bbo-подписка) против
+    эффективного спреда после фактических филлов; собственная ступень по
+    14-дневному maker-объёму относительно порогов ребейта (>0.5% / >1.5% / >3.0%
+    от maker-объёма площадки); доля филлов, после которых цена ушла против
+    инвентаря за N секунд.
+  quote:
+    text: >-
+      "In a perpetual contract, inventory also creates a funding cash flow. A
+      long inventory can either pay or receive funding depending on the sign of
+      the funding rate; a short inventory has the opposite exposure. Thus the
+      inventory variable has two economic channels: mark-to-market risk and
+      funding carry."
+    source: https://arxiv.org/html/2605.06405
+  quote_venue:
+    text: >-
+      Perps base tier: taker 0.045%, maker 0.015%. Maker rebate tiers: Tier 1
+      (>0.5% maker volume) -0.001%, Tier 2 (>1.5%) -0.002%, Tier 3 (>3.0%)
+      -0.003%. "On Hyperliquid, fees are entirely directed to the community
+      (HLP, the assistance fund, and deployers)."
+    source: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+  note: >-
+    Числа тарифной сетки воспроизведены через WebFetch со страницы документации
+    HL; дословна только последняя фраза в кавычках, ставки и пороги — таблица
+    с той же страницы, не закавыченная фраза.
+
+signal:
+  entry: >-
+    Котировки с двух сторон с оптимальными отступами от мида. Отступы
+    восстанавливаются из таблицы функции ценности HJB: ask-отступ
+    delta*_a = 1/k - A(t,q,f), bid-отступ delta*_b = 1/k - B(t,q,f), где A и B —
+    разности ценности от продажи/покупки одного контракта, q — инвентарь,
+    f — состояние funding. Отступы снизу ограничены delta_min и блокируются
+    на границах сетки инвентаря.
+  exit: >-
+    Выхода как отдельного события нет: позиция — это инвентарь, который сводится
+    к нулю несимметричной котировкой. Если покупка ещё одной единицы имеет низкую
+    ценность продолжения, bid расширяется; если продажа единицы снижает дорогой
+    длинный инвентарь, ask поджимается.
+  data_needed:
+    - "L2-снимки книги HL (у автора — минутная частота реплея)"
+    - "часовой funding HL"
+    - "фактические перекрестные филлы для калибровки интенсивности исполнения lambda(delta) = Lambda * exp(-k*delta)"
+  timeframe: >-
+    Калибровка funding — OU с полураспадом 5.56 ч (ETH), 4.07 ч (BTC), 2.31 ч
+    (SOL); холдаут 26 ноября — 31 декабря 2025 (36 дней), реплей с минутным шагом.
+  quote:
+    text: >-
+      "Adverse selection can make filled quotes stale. If buying one more unit
+      has low continuation value, then bid quote widens. If selling one unit
+      reduces a costly long inventory, then ask quote tightens."
+    source: https://arxiv.org/html/2605.06405
+
+sizing:
+  rule: >-
+    Инвентарь ограничен конечной сеткой [q_min, q_max]; заявки, которые вывели бы
+    инвентарь за эти границы, не выставляются. Внутри границ размер не
+    фиксирован — управляется отступом котировки: чем дороже инвентарь, тем
+    дальше котировка с соответствующей стороны.
+  binding_constraint: >-
+    Допустимый инвентарь (q_max) и требование маржи под него; на живой площадке
+    дополнительно — 14-дневный maker-объём, определяющий, платите вы 0.015% или
+    получаете ребейт.
+  quote:
+    text: >-
+      "The inventory is constrained to a finite grid: [q_min, q_max]. Orders that
+      would breach these limits are blocked from posting."
+    source: https://arxiv.org/html/2605.06405
+  note: >-
+    Конкретные численные значения q_min/q_max в тексте, полученном через
+    WebFetch, не приведены — есть только утверждение, что сетка конечна.
+    Инвентарный RMS в результатах: ETH 5.74 (AS) против 3.65 (HJB), BTC 0.30
+    против 0.18, SOL 20.02 против 51.84 — то есть на SOL функция-победитель
+    выиграла деньги, УВЕЛИЧИВ инвентарный риск в 2.6 раза.
+
+protection:
+  crash: >-
+    Частично, и структурно: жёсткая граница инвентаря [q_min, q_max] — это
+    конструкция, а не фильтр-предсказатель. Она не требует прогноза и
+    ограничивает максимальную направленную экспозицию в любой момент, включая
+    момент краха. Но это ограничение РАЗМЕРА хвоста, а не его закрытие: внутри
+    границы позиция остаётся ненахеджированной и полностью принимает движение
+    цены.
+  pump: >-
+    Тот же механизм и та же оговорка, симметрично: короткий инвентарь ограничен
+    q_min, но не захеджирован.
+  costs: null
+  structural: true
+  note: >-
+    Против костов защиты нет, и это главная находка карточки: статья ЯВНО
+    исключает комиссии и ребейты из модели, а также adverse selection
+    условно на филле, очередь в книге и задержку. То есть ровно те три вещи,
+    которые на живой книге решают, положителен ли результат, в модели
+    отсутствуют. При этом базовая maker-ставка HL положительна (0.015%) — мейкер
+    ПЛАТИТ, пока не выйдет на ступень выше 0.5% всего maker-объёма площадки.
+    Модельный выигрыш HJB над Avellaneda-Stoikov составил +1312 (ETH) и +809
+    (BTC) на конечном капитале 74-76 тыс. и 46-48 тыс., то есть порядка 1.7%
+    от капитала за 36 дней — величина того же порядка, что и исключённые из
+    модели комиссии.
+  quote:
+    text: >-
+      Excluded from the model: "Queue-position dynamics or maker priority",
+      "Latency or operational execution delays", "Adverse selection conditional
+      on fill", "Transaction fees or exchange rebates", "Price predictability or
+      drift". The fill simulator is "a controlled comparison under common
+      execution assumptions", not a claim of realistic queue modeling or
+      production-ready execution.
+    source: https://arxiv.org/html/2605.06405
+
+execution:
+  legs: 1
+  atomic_required: false
+  venue: "Hyperliquid (калибровка и холдаут статьи — ETH, BTC, SOL перпы HL)"
+  min_leg_notional_usd: 10.0
+  quote:
+    text: >-
+      "Empirical calibration used Hyperliquid ETH, BTC, and SOL perpetual
+      contract data."
+    source: https://arxiv.org/html/2605.06405
+  note: >-
+    Одна нога по инструменту, но непрерывно переставляемые двусторонние
+    котировки: атомарность не нужна, нужна низкая задержка постановки/снятия.
+    min_leg_notional_usd — из venues/hyperliquid.yaml, не из статьи.
+
+death:
+  how: >-
+    Эффективный спред после филлов сжимается ниже суммы (adverse selection +
+    комиссия). Механизм переполнения прямой: маркет-мейкинг — игра за долю
+    maker-объёма, и каждый новый участник одновременно сужает спред и отодвигает
+    вас от ребейт-ступени. Вторая, более быстрая смерть — смена тарифной сетки
+    площадки: ребейт-ступени назначены площадкой и ею же могут быть изменены.
+  visible_in_advance: true
+  observable: >-
+    Реализованный спред (котируемый минус движение цены после филла) в разрезе
+    инструмента — падает раньше, чем PnL становится отрицательным; собственная
+    доля в maker-объёме HL против порогов 0.5/1.5/3.0%; публикуемая тарифная
+    сетка HL. Все три — прямые наблюдаемые, две из них публикуются площадкой.
+  quote:
+    text: >-
+      "Fees decrease as users advance through tiers. At tier 4 and above, maker
+      rates reach 0%."
+    source: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+
+feasibility:
+  data_free: true
+  data_source: >-
+    Hyperliquid /info и websocket (l2Book, bbo, trades, userFills) — бесплатно,
+    без ключа. Но: для калибровки нужны L2-снимки ИСТОРИЧЕСКИ, а бесплатный
+    /info даёт книгу только форвардно. Статья использует "Hyperliquid L2
+    snapshots" — исторический ряд книги, которого у q-lab сейчас нет.
+  venue_supported: true
+  min_capital_order_of_magnitude_usd: 100000
+  blockers:
+    - "Исторических L2-снимков книги HL у q-lab нет; бесплатно они собираются только форвардно. Без них стенд не воспроизведёт ни калибровку интенсивности филлов, ни результат статьи."
+    - "Нужен режим работы с задержкой в доли секунды и постоянно живым процессом — инфраструктура, отличная от ночного конвейера q-lab."
+    - "Ребейт-ступень (>0.5% всего maker-объёма HL) при капитале порядка $120k недостижима: на базовой ступени мейкер платит 0.015%, а не получает. Кандидат должен окупаться на положительной maker-ставке."
+  note: >-
+    min_capital_order_of_magnitude_usd — оценка q-lab по порядку конечного
+    капитала в симуляциях статьи (46 808 - 104 860), не цитата и не требование
+    площадки.
+
+prior:
+  graveyard_matches:
+    - perp-funding-premium
+  note: >-
+    Совпадение частичное и по роли, а не по драйверу. В кладбище funding — это
+    ИСТОЧНИК дохода (лонги с плечом платят, стратегия становится на другую
+    сторону). Здесь funding — переменная СОСТОЯНИЯ, определяющая перекос
+    котировок, а доход идёт из спреда, который платит тейкер. Прошлый вердикт
+    отвечал на «зарабатывает ли сбор funding»; новый вопрос — «покрывает ли
+    половина спреда adverse selection и комиссию при положительной maker-ставке».

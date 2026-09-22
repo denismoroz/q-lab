@@ -1,0 +1,172 @@
+# Карточка кандидата M2.5. Схема: cards/SCHEMA.md.
+# Цитаты из англоязычных источников приведены дословно и не переводятся.
+
+idea_id: vrp-crypto-delta-hedged
+title: "Премия за страховку, которую платит покупатель выпуклости: дельта-хеджированная продажа вариансы в крипте"
+found_at: 2026-09-22
+
+sources:
+  - url: https://arxiv.org/abs/2410.15195
+    title: "Risk Premia in the Bitcoin Market (Almeida, Grith, Miftachov)"
+    published: 2024-10
+  - url: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7046559
+    title: "The Variance Risk Premium Across Markets and Regimes: A Downside, Crash-Conditional Risk Premium, Not Harvestable Carry (Shehzad Ahmed)"
+    published: 2026-06
+
+driver:
+  who_pays: >-
+    Покупатель опциона, то есть тот, кто платит за выпуклость и за защиту от
+    хвоста. В крипте это преимущественно покупатель пута: по второму источнику
+    пут-сторона модельно-свободной вариансы переоценена, колл-сторона недооценена.
+  why: >-
+    Подразумеваемая волатильность систематически превышает последующую
+    реализованную — разница и есть плата за перенос риска второго момента.
+    Первый источник измеряет её на биткойне и сравнивает с S&P 500: биткойн
+    заметно волатильнее и несёт БОЛЬШУЮ премию за вариансу, чем индекс акций.
+  kill_condition: >-
+    Схождение подразумеваемой и реализованной волатильности: приход достаточного
+    капитала, продающего опционы, либо структурный рост реализованной
+    волатильности до уровня подразумеваемой. Отдельно — режимная смерть: по
+    первому источнику премия за вариансу НИЖЕ в состояниях высокой волатильности,
+    то есть она сжимается ровно тогда, когда риск реализуется.
+  observable: >-
+    Спред «DVOL (или подразумеваемая волатильность по поверхности) минус
+    последующая реализованная волатильность того же горизонта» — прямо
+    наблюдаемая величина, считается ежедневно и не требует PnL стратегии.
+  quote:
+    text: >-
+      "We analyze the first and second moment risk premia in the Bitcoin market
+      based on options and realized returns and contrast them to the premia
+      embedded in the main US stock index market. First, Bitcoin is much more
+      volatile and has a higher variance risk premium than the S&P 500. ...
+      Further, applying a novel clustering algorithm to a collection of estimated
+      Bitcoin option-implied risk-neutral densities, we find that risk premia
+      vary over time as a function of two distinct market volatility regimes.
+      The low-volatility regime implies a relatively high share of BP
+      attributable to positive returns and a high Bitcoin Variance Risk Premium
+      (BVRP). In high-volatility states, the BP attributable to positive and
+      negative returns is more balanced, and the BVRP is lower. These results
+      suggest Bitcoin investors are more concerned about variance and upside risk
+      in a low-volatility regime."
+    source: https://arxiv.org/abs/2410.15195
+
+signal:
+  entry: null
+  exit: null
+  data_needed:
+    - "поверхность подразумеваемой волатильности по опционам BTC/ETH (Deribit)"
+    - "индекс DVOL Deribit для BTC и ETH"
+    - "высокочастотная цена базового актива для расчёта реализованной вариансы"
+    - "цена перпа как хеджирующего инструмента"
+  timeframe: null
+  quote:
+    text: >-
+      "The Variance Risk Premium Across Markets and Regimes: A Downside,
+      Crash-Conditional Risk Premium, Not Harvestable Carry"
+    source: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7046559
+  note: >-
+    ПРАВИЛ ВХОДА И ВЫХОДА В НАЙДЕННЫХ ИСТОЧНИКАХ НЕТ. Оба источника измеряют
+    премию как величину, а не описывают торгуемую реализацию: нет ни страйка,
+    ни срока, ни частоты переката, ни правила дельта-хеджирования. Цитата в
+    поле quote — это ДОСЛОВНОЕ НАЗВАНИЕ второй работы; страница аннотации SSRN
+    вернула HTTP 403, полный текст аннотации получить не удалось, поэтому
+    ничего сверх названия из неё здесь не утверждается.
+
+sizing:
+  rule: null
+  binding_constraint: "маржа под короткую опционную позицию; минимальный размер контракта площадки"
+  quote: null
+  note: >-
+    Правила размера в источниках нет. Ни минимальный размер контракта Deribit,
+    ни требования маржи под короткую вегу в найденных источниках не приведены.
+
+protection:
+  crash: null
+  pump: null
+  costs: null
+  structural: false
+  note: >-
+    ХВОСТЫ НЕ ЗАКРЫТЫ, и здесь это не молчание источника, а прямое утверждение
+    второго источника: премия за вариансу описана как «downside,
+    crash-conditional risk premium» и как компенсация за систематический хвост,
+    а НЕ как собираемый carry. То есть доход этой конструкции по построению
+    равен плате за принятый хвост — закрыть хвост, сохранив доход, нельзя, это
+    один и тот же объект. Дельта-хеджирование перпом закрывает ПЕРВЫЙ момент
+    (направление), но не второй: короткая гамма остаётся, и убыток растёт с
+    квадратом движения. Первый источник добавляет второй слой: премия НИЖЕ в
+    состояниях высокой волатильности, то есть страховой взнос падает именно
+    тогда, когда вероятность выплаты растёт. Это прямая противоположность
+    конструкции FRAB, где оба хвоста закрыты ногами и доход от хвостов не зависит.
+  quote:
+    text: >-
+      "A Downside, Crash-Conditional Risk Premium, Not Harvestable Carry"
+      (название работы) ... "In high-volatility states, the BP attributable to
+      positive and negative returns is more balanced, and the BVRP is lower."
+    source: https://arxiv.org/abs/2410.15195
+
+execution:
+  legs: 2
+  atomic_required: false
+  venue: >-
+    Опционная нога — Deribit (обе работы используют данные Deribit: DVOL для
+    BTC/ETH и поверхность подразумеваемой волатильности). Хеджирующая нога —
+    перп; на Hyperliquid она исполнима, опционная нога — нет.
+  min_leg_notional_usd: null
+  quote: null
+  note: >-
+    Минимальный размер опционного контракта Deribit в найденных источниках
+    отсутствует, поэтому поле null. Опционов на Hyperliquid в документации
+    площадки не описано: перечислены перпы, спот, HIP-3 (перпы деплойеров) и
+    HIP-4 (prediction markets). Это вывод из ОТСУТСТВИЯ упоминания, а не
+    процитированное утверждение — требует отдельной проверки, если карточку
+    будут двигать дальше.
+
+death:
+  how: >-
+    Схождение подразумеваемой волатильности к реализованной. В отличие от многих
+    кандидатов, смерть здесь имеет вторую форму, которая не выглядит смертью:
+    премия может оставаться положительной в среднем, но её распределение таково,
+    что редкий крах забирает накопленное за годы. Именно это утверждает второй
+    источник, называя её crash-conditional и не harvestable carry.
+  visible_in_advance: true
+  observable: >-
+    Скользящий спред «подразумеваемая минус реализованная волатильность» по
+    DVOL — публикуемый ряд. Он показывает затухание САМОГО ДРАЙВЕРА заранее.
+    Но он НЕ показывает заранее момент реализации хвоста: второй режим смерти
+    (крах) по обоим источникам не предсказуем из этой же величины, а связан с
+    ней обратно — премия ниже как раз в высоковолатильных состояниях.
+  quote:
+    text: >-
+      "The premium is large and positive but is a downside premium: put-side
+      model-free variance is overpriced, call-side underpriced."
+    source: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7046559
+  note: >-
+    Эта цитата получена из поисковой выдачи по работе, а не со страницы
+    первоисточника (SSRN вернул 403). Помечена как непроверенная по
+    первоисточнику.
+
+feasibility:
+  data_free: false
+  data_source: >-
+    Deribit: публичный API по опционам и индекс DVOL. Бесплатность исторической
+    поверхности подразумеваемой волатильности в нужной глубине в источниках не
+    подтверждена; в q-lab источника опционных данных нет вообще
+    (src/qlab/data/sources/ содержит hyperliquid и binance).
+  venue_supported: false
+  min_capital_order_of_magnitude_usd: 10000
+  blockers:
+    - "Опционов на Hyperliquid нет — вся опционная нога вне периметра проекта. Нужен Deribit: новая площадка, новый адаптер данных, новый счёт."
+    - "Ни один из найденных источников не задаёт торгуемого правила: страйк, срок, частота переката и правило дельта-хеджирования отсутствуют. Реализовать кандидата означает придумать их — то есть внести в спек содержание, которого в источнике нет."
+    - "Аннотация ключевой работы (SSRN 7046559) недоступна (HTTP 403); утверждения по ней стоят на названии и поисковой выдаче."
+    - "Короткая гамма без ограничителя: это единственный кандидат из пяти, у которого убыток по построению не ограничен размером позиции."
+  note: >-
+    min_capital_order_of_magnitude_usd — оценка q-lab, не цитата: минимальный
+    размер контракта Deribit в источниках не найден.
+
+prior:
+  graveyard_matches: []
+  note: >-
+    Совпадений по драйверу с кладбищем нет: ни одна из одиннадцати похороненных
+    конструкций не работает с премией за второй момент. Ближайшая по духу —
+    crypto-spot-risk-premium (плата за принятие риска держания спота), но это
+    премия за первый момент и другой плательщик.

@@ -1,0 +1,191 @@
+# Карточка кандидата M2.5. Схема: cards/SCHEMA.md.
+# Цитаты из англоязычных источников приведены дословно и не переводятся
+# (CLAUDE.md: перевод цитаты делает её недостоверной).
+
+idea_id: liq-cascade-fade-hl
+title: "Премия за немедленность, которую платит принудительно ликвидируемый (fade каскада ликвидаций на HL)"
+found_at: 2026-09-22
+
+sources:
+  - url: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations
+    title: "Liquidations — Hyperliquid Docs"
+    published: null
+  - url: https://arxiv.org/html/2607.27070
+    title: "Where does the criticality live? Early-warning signals are event-heterogeneous across seven crypto-perpetual liquidation cascades"
+    published: 2026-07
+  - url: https://curupira.dev/blog/cascade-fade-scalper-fading-liquidation-overshoots/
+    title: "Fading Liquidation Cascades: A Crypto Scalper That Survived Walk-Forward"
+    published: null
+  - url: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
+    title: "Subscriptions — Hyperliquid Docs (websocket)"
+    published: null
+
+driver:
+  who_pays: >-
+    Трейдер с плечом, чью позицию закрывает не он сам, а движок ликвидации
+    площадки; и, во вторую очередь, сама конструкция ликвидации — на HL при
+    backstop-ликвидации maintenance margin не возвращается пользователю.
+  why: >-
+    Движок ликвидации обязан закрыть позицию, и он не торгуется о цене: он шлёт
+    рыночные заявки, нечувствительные к цене. Тот, кто стоит лимитом с другой
+    стороны, продаёт немедленность и получает за неё отклонение цены от того
+    уровня, к которому она частично возвращается за минуты. Платит не «рынок
+    вообще», а конкретный счёт под маржин-коллом.
+  kill_condition: >-
+    Исчезновение вынужденного потока или его увод с книги: рост доли позиций,
+    закрываемых до порога (снижение среднего плеча), либо перевод ликвидаций
+    целиком во внутренний механизм площадки (backstop-волт, ADL), минуя
+    публичную книгу. На HL книга — первая ступень, backstop включается только
+    ниже 2/3 maintenance margin; расширение backstop-ступени убивает кандидата.
+  observable: >-
+    Объём ликвидаций на HL (поле is_liquidation в потоке филлов / событие
+    liquidation в подписке userEvents), открытый интерес и его провалы,
+    односторонность агрессивного потока (taker buy/sell ratio).
+  quote:
+    text: >-
+      "the exchange's liquidation engine emits forced, price-insensitive sell
+      orders; their market impact pushes the price further in the same
+      direction, into the next thresholds"
+    source: https://arxiv.org/html/2607.27070
+  quote_venue:
+    text: >-
+      "the account equity drops below 2/3 of the maintenance margin without
+      successful liquidation through the book" ... "During backstop liquidation,
+      the maintenance margin is not returned to the user"
+    source: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations
+  note: >-
+    Первая цитата воспроизведена по тексту статьи через WebFetch; сверена только
+    с одной выдачей, не с PDF постранично.
+
+signal:
+  entry: >-
+    Одновременное срабатывание двух условий на минутных барах: накопленное
+    смещение цены за 5 баров (velocity) и объём выше 3x недавнего среднего;
+    позиция открывается ПРОТИВ движения.
+  exit: >-
+    Выход чисто по времени — удержание меньше 5 минут, затем закрытие. Автор
+    прямо пишет, что перебирал take-profit/stop-loss и таймерный выход оказался
+    лучше.
+  data_needed:
+    - "минутные бары цены (HL /info candleSnapshot)"
+    - "минутный объём"
+    - "поток филлов с флагом ликвидации (websocket userEvents / trades) — для варианта на ликвидациях, а не на прокси velocity+volume"
+  timeframe: "1-минутные бары, удержание < 5 минут"
+  quote:
+    text: >-
+      "Velocity. Cumulative displacement over 5 bars" ... "Volume. 3x above
+      recent average" ... "Exit is purely time-based. Sub-5-minute hold, then close."
+    source: https://curupira.dev/blog/cascade-fade-scalper-fading-liquidation-overshoots/
+  note: >-
+    Источник задаёт правило через прокси (скорость + объём), а не через сам поток
+    ликвидаций: прямого правила «вход по объёму ликвидаций больше X» ни в одном
+    из найденных источников нет. Amberdata описывает кластеры ликвидаций
+    качественно и явно не даёт ни порогов, ни правил входа/выхода.
+
+sizing:
+  rule: null
+  binding_constraint: "оборот и косты: эдж измеряется базисными пунктами, а стратегия платит taker на входе"
+  quote:
+    text: >-
+      "Validation, not profit" ... "$298 capital" ... "Daily loss limit" ...
+      "Edge measured in basis points. If execution eats 5-10 bps through
+      slippage, spread, and fees, it goes marginal."
+    source: https://curupira.dev/blog/cascade-fade-scalper-fading-liquidation-overshoots/
+  note: >-
+    Формулы размера в источнике НЕТ. Названы только живой капитал валидации
+    ($298), дневной лимит убытка как kill switch и утверждение, что эдж в
+    единицах б.п. Поле rule оставлено null намеренно.
+
+protection:
+  crash: null
+  pump: null
+  costs: null
+  structural: false
+  note: >-
+    ХВОСТЫ НЕ ЗАКРЫТЫ НИЧЕМ — это находка, а не пробел в разборе. Стратегия
+    одноногая и направленная, стоп-лосса нет по конструкции («exit is purely
+    time-based»), то есть позиция входит НАВСТРЕЧУ каскаду и держится
+    фиксированное время независимо от того, что происходит с ценой. Единственное,
+    что ограничивает потери, — длина удержания и внешний дневной kill switch, то
+    есть операционный лимит, а не механизм в конструкции позиции. Отбраковка BTC
+    в самом источнике сделана по просадке, а не по средней доходности, что прямо
+    указывает на то, где эта конструкция теряет. Против костов защиты тоже нет:
+    вход тейкером, taker fee на HL 0.045% базовой ступени.
+  quote:
+    text: >-
+      "No explicit stop-loss during cascades" ... BTC drawdown was "8x worse than
+      ETH or SOL"
+    source: https://curupira.dev/blog/cascade-fade-scalper-fading-liquidation-overshoots/
+
+execution:
+  legs: 1
+  atomic_required: false
+  venue: "Hyperliquid (источник деплоил на SOL и ETH перпах HL)"
+  min_leg_notional_usd: 10.0
+  quote:
+    text: >-
+      "Live deployment uses SOL and ETH on Hyperliquid (crypto perpetuals). BTC
+      was excluded after backtest failure."
+    source: https://curupira.dev/blog/cascade-fade-scalper-fading-liquidation-overshoots/
+  note: >-
+    min_leg_notional_usd = 10.0 — не из этого источника, а из venues/hyperliquid.yaml
+    (собственный факт площадки в репозитории q-lab).
+
+death:
+  how: >-
+    Исчезает вынужденный поток либо его перехватывают быстрее. Два разных пути:
+    (1) снижение среднего плеча на площадке — ликвидаций меньше, овершут меньше;
+    (2) переполненность самой сделки: чем больше лимитного капитала стоит
+    навстречу каскаду, тем меньше овершут, и эдж в б.п. уходит под косты.
+    Оба пути видны в наблюдаемых величинах ДО того, как PnL станет отрицательным.
+  visible_in_advance: true
+  observable: >-
+    Объём ликвидаций на HL и его распределение по размеру; средний овершут
+    (отклонение цены на минуте каскада от цены через 5 минут) как прямая метрика
+    величины эджа; глубина книги в момент каскада. Величина овершута —
+    наблюдаемая величина, которую можно мерить каждую неделю независимо от PnL.
+  quote:
+    text: >-
+      "single-venue, single-variable early-warning claims in crypto perpetual
+      markets are fragile by construction"
+    source: https://arxiv.org/html/2607.27070
+  note: >-
+    Цитата относится к ПРЕДСКАЗАНИЮ каскада заранее, а не к затуханию эджа.
+    Она важна именно как ограничение: статья на семи каскадах BTC 2022-2025
+    показывает, что ни одна переменная не даёт устойчивого раннего сигнала
+    («no event-invariant variable»), поэтому любая версия этого кандидата,
+    построенная на предсказании каскада, а не на реакции на уже идущий, —
+    условная, а не структурная.
+
+feasibility:
+  data_free: true
+  data_source: >-
+    Hyperliquid /info (бесплатный, без ключа — src/qlab/data/sources/hyperliquid.py)
+    для минутных свечей; websocket-подписка userEvents несёт событие liquidation,
+    выделенной liquidation-подписки в документации HL нет. Исторический ряд
+    ликвидаций форвардно собирается самим, ретроспективно — только у третьих
+    сторон (0xArchive заявляет ликвидации с декабря 2025).
+  venue_supported: true
+  min_capital_order_of_magnitude_usd: 1000
+  blockers:
+    - "Исторических ликвидаций HL в бесплатном API нет — только форвардный сбор с момента запуска; бэктест на самих ликвидациях без платного источника невозможен, на прокси velocity+volume возможен."
+    - "Эдж порядка единиц б.п. при taker fee 0.045% базовой ступени: кандидат живёт или умирает на исполнении, а не на сигнале. Стенд, не учитывающий проскальзывание в момент каскада, систематически его переоценит."
+    - "Минутный горизонт и удержание < 5 минут — это режим работы, которого у q-lab/frab сегодня нет (FRAB и XSMOM работают на часах-днях)."
+  note: >-
+    min_capital_order_of_magnitude_usd — оценка q-lab (минимальная нога HL $10,
+    источник вёл живую валидацию на $298), а не цитата.
+
+prior:
+  graveyard_matches:
+    - short-term-overreaction
+    - price-mean-reversion-daily
+  note: >-
+    Совпадение по внешнему виду (покупаем то, что упало), но не по драйверу.
+    В кладбище драйвер сформулирован поведенчески — «разворот после
+    краткосрочного overreaction», плательщик не назван, и обе гипотезы помечены
+    как эмпирически не подтвердившиеся. Здесь плательщик назван механически:
+    счёт под маржин-коллом, чью позицию закрывает движок площадки, не
+    торгующийся о цене; и на HL он вдобавок теряет maintenance margin при
+    backstop-ликвидации. Прошлый вердикт отвечал на вопрос «зарабатывает ли
+    разворот на дневных данных»; новый вопрос — «есть ли премия за немедленность
+    в минуты вынужденного потока и съедают ли её косты».

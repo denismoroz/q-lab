@@ -1,0 +1,203 @@
+# Карточка кандидата M2.5. Схема: cards/SCHEMA.md.
+# Цитаты из англоязычных источников приведены дословно и не переводятся.
+
+idea_id: hip3-offhours-basis
+title: "Плата за круглосуточный доступ к активу, чей кассовый рынок закрыт: базис и funding на HIP-3 перпах на акции и товары"
+found_at: 2026-09-22
+
+sources:
+  - url: https://hyperliquid.gitbook.io/hyperliquid-docs/hyperliquid-improvement-proposals-hips/hip-3-builder-deployed-perpetuals
+    title: "HIP-3: Builder-deployed perpetuals — Hyperliquid Docs"
+    published: null
+  - url: https://crypto.com/en/research/equity-commodity-perps-jan-2026
+    title: "Equity and Commodity Perpetuals — Crypto.com Research"
+    published: 2026-01
+  - url: https://hyperliquidguide.com/guides/trading/equity-perps-guide
+    title: "Equity Perps on Hyperliquid — Trade 40+ Stocks 24/7 via trade.xyz"
+    published: null
+
+driver:
+  who_pays: >-
+    Трейдер, которому нужна экспозиция к акции, индексу или товару в те часы,
+    когда его кассовый рынок закрыт: выходные, ночь, праздники. Он не может
+    пойти на биржу, где этот актив торгуется, потому что она не работает, и
+    платит тому, кто согласен держать противоположную сторону через разрыв до
+    открытия.
+  why: >-
+    Перп идёт 24/7, базовый актив — нет. Пока кассовый рынок закрыт, у цены нет
+    жёсткого якоря: оракул подвисает, а перп продолжает двигаться на настроении
+    и новостях. Функцию возврата берёт на себя funding, и он компенсирует ту
+    сторону, которая приняла «неправильную» цену, до открытия традиционного
+    рынка. Маркет-мейкер, которому нужно нести gap-риск через закрытие, требует
+    за это премию и расширяет спред — это и есть источник выплаты.
+  kill_condition: >-
+    Исчезновение асимметрии часов: переход кассового рынка базового актива на
+    круглосуточную торговлю, либо появление достаточного капитала, готового
+    складировать gap-риск дёшево (премия за выходные сжимается до стоимости
+    финансирования хеджа). Для отдельного инструмента — ещё и haltTrading
+    деплойера, который отменяет все заявки и рассчитывает позиции по текущей
+    марк-цене.
+  observable: >-
+    Funding HIP-3 инструмента в часы закрытого кассового рынка отдельно от часов
+    открытого; базис «марк-цена перпа минус последняя цена закрытия кассового
+    рынка» и его величина в момент открытия; ширина спреда в книге в выходные
+    против будних часов.
+  quote:
+    text: >-
+      "Over weekends, the perp can trade at a premium/discount, with funding
+      compensating the side taking the 'wrong' price until traditional markets
+      reopen." ... "This asymmetry increases gap risk for market makers and can
+      force wider spreads or lower leverage during off-hours."
+    source: https://crypto.com/en/research/equity-commodity-perps-jan-2026
+  quote_venue:
+    text: >-
+      "When the oracle is stale, the exchange often continues to let the perp
+      price move, but uses the last oracle mark (or a synthetic fair value) for
+      risk calculations."
+    source: https://crypto.com/en/research/equity-commodity-perps-jan-2026
+
+signal:
+  entry: null
+  exit: null
+  data_needed:
+    - "funding и марк-цена HIP-3 инструментов (HL /info, подписки allDexsAssetCtxs / allDexsClearinghouseState)"
+    - "календарь торговых сессий базового рынка"
+    - "цена закрытия и открытия базового актива на его собственной бирже"
+  timeframe: >-
+    Горизонт задан календарём базового рынка: удержание от закрытия до открытия
+    (ночь, выходные). Часовой funding HL накапливается внутри этого интервала.
+  quote:
+    text: >-
+      "because the oracle keeps marking through the weekend while the cash market
+      is shut, the margin math is worth understanding before you size a position"
+    source: https://hyperliquidguide.com/guides/trading/equity-perps-guide
+  note: >-
+    ПРАВИЛА ВХОДА И ВЫХОДА В ИСТОЧНИКАХ НЕТ. Все три источника описывают
+    механизм (оракул подвисает, funding компенсирует, спреды шире) и ни один не
+    задаёт порога, при котором открывается позиция, ни правила её закрытия.
+    Поля entry/exit оставлены null намеренно; направление, знак и порог пришлось
+    бы придумать.
+
+sizing:
+  rule: null
+  binding_constraint: >-
+    Gap-риск через закрытие рынка: размер ограничен тем, сколько разрыва на
+    открытии выдерживает счёт, если хеджа нет. При наличии хеджа — размером
+    ноги у брокера базового рынка.
+  quote:
+    text: >-
+      "Equity prices can gap significantly on earnings releases and major news"
+      ... "Size your positions accordingly."
+    source: https://hyperliquidguide.com/guides/trading/equity-perps-guide
+  note: >-
+    Это единственное, что источники говорят о размере: предупреждение, а не
+    правило. Формулы нет.
+
+protection:
+  crash: >-
+    Структурно возможна и это ключевая черта кандидата: базовый актив
+    СУЩЕСТВУЕТ и торгуется — значит, вторая нога (кассовая позиция, фьючерс или
+    опцион на том же активе у брокера) закрывает движение цены полностью, ровно
+    как спот закрывает перп-шорт в FRAB. Захеджированная версия несёт уже не
+    цену, а только базис и funding.
+  pump: >-
+    Симметрично тем же механизмом: захеджированная конструкция безразлична к
+    направлению разрыва.
+  costs: null
+  structural: true
+  note: >-
+    ВАЖНАЯ ОГОВОРКА: ни один из найденных источников НЕ описывает такой
+    захеджированной конструкции. Источники описывают только сам перп и
+    констатируют, что gap-риск ложится на маркет-мейкера и заставляет его
+    расширять спред. Возможность второй ноги следует из того, что базовый актив
+    имеет собственный торгуемый рынок (это факт конструкции HIP-3: деплойер
+    обязан выбрать «a well-defined underlying asset or data feed»), а не из
+    описания чьей-либо стратегии. Отмечено как structural: true именно потому,
+    что механизм — конструкция, а не фильтр; но сам механизм в источнике не
+    подтверждён как применяемый. Против костов защиты нет: базовые ставки HIP-3
+    втрое выше обычных перпов HL (0.03% maker / 0.09% taker), хотя growth mode
+    деплойера может срезать их на 90% и более.
+  quote:
+    text: >-
+      "HIP-3 base fees are 0.03% maker and 0.09% taker. trade.xyz's Growth Mode
+      may reduce these fees by 90% or more."
+    source: https://hyperliquidguide.com/guides/trading/equity-perps-guide
+
+execution:
+  legs: 2
+  atomic_required: false
+  venue: >-
+    Hyperliquid HIP-3 dex (trade.xyz назван источником как площадка перпов на
+    акции; Ventuals — как ещё один HIP-3 деплойер) для первой ноги; биржа
+    базового актива (брокер акций/фьючерсов) для второй.
+  min_leg_notional_usd: null
+  quote:
+    text: >-
+      "trade.xyz (a HIP-3 builder-deployed DEX)" ... "up to 50x leverage" ...
+      "Hyperliquid's HIP-3 based exchanges have reached a cumulative trading
+      volume of $40.6 billion on traditional asset perps as of 2 February 2026."
+    source: https://hyperliquidguide.com/guides/trading/equity-perps-guide
+  note: >-
+    Минимального размера заявки для HIP-3 рынков в источниках НЕТ; $10 из
+    venues/hyperliquid.yaml относится к обычным перпам HL и переносить его на
+    HIP-3 dex без подтверждения нельзя. Атомарность не требуется в том смысле,
+    что ноги на разных площадках и синхронного примитива не существует в
+    принципе; именно поэтому вторая нога открывается тогда, когда её рынок
+    работает, то есть НЕ одновременно с первой — это отдельная сложность,
+    которой у FRAB нет.
+
+death:
+  how: >-
+    Два независимых пути. (1) Структурный: кассовый рынок базового актива
+    переходит к круглосуточной торговле — асимметрия часов, и с ней вся плата,
+    исчезает. (2) Конкурентный: приход капитала, готового складировать gap-риск;
+    премия за выходные сжимается до стоимости финансирования хеджа. Есть и
+    третий, не про эдж, а про площадку: деплойер HIP-3 действием haltTrading
+    отменяет все заявки и рассчитывает позиции по текущей марк-цене — это
+    принудительное закрытие вне вашего контроля.
+  visible_in_advance: true
+  observable: >-
+    Средний funding в закрытые часы против funding в открытые часы по тому же
+    инструменту — прямая метрика величины премии, наблюдаемая еженедельно
+    независимо от PnL; открытый интерес HIP-3 рынков; объявления бирж базовых
+    активов о расширении часов. Первая величина — та самая «наблюдаемая, по
+    которой видно затухание»: она измеряется до того, как PnL станет
+    отрицательным.
+  quote:
+    text: >-
+      haltTrading "cancels all orders and settles positions to the current mark
+      price" ... "Users still take greater risk when using cross margin across
+      DEXs with different deployers."
+    source: https://hyperliquid.gitbook.io/hyperliquid-improvement-proposals-hips/hip-3-builder-deployed-perpetuals
+
+feasibility:
+  data_free: true
+  data_source: >-
+    Данные HIP-3 рынков доступны через тот же бесплатный /info и websocket HL
+    (подписки allDexsAssetCtxs, allDexsClearinghouseState). Данные базового
+    рынка (цены закрытия/открытия акций) — вне периметра q-lab, бесплатного
+    источника с историей в проекте сейчас нет.
+  venue_supported: false
+  min_capital_order_of_magnitude_usd: 10000
+  blockers:
+    - "Хеджирующая нога требует брокерского счёта на традиционном рынке — инфраструктуры, которой у владельца в этом проекте нет. Без неё кандидат вырождается в направленную ставку без защиты."
+    - "Ноги нельзя открыть одновременно по определению: вторая нога доступна только когда её рынок работает, то есть в момент, когда премия за закрытые часы уже исчезла. Это не проблема исполнения, а вопрос к самой конструкции, и в источниках он не разобран."
+    - "Контрагентский риск деплойера HIP-3: оракул выбирает деплойер, он же может вызвать haltTrading. Это не биржевой риск HL, а риск конкретного третьего лица."
+    - "Минимальный размер заявки на HIP-3 рынках в источниках не найден — порядок капитала оценить точно нельзя."
+  note: >-
+    venue_supported: false — не потому, что HL не поддерживается, а потому что
+    вторая нога кандидата находится вне поддерживаемых площадок.
+    min_capital_order_of_magnitude_usd — оценка q-lab, не цитата.
+
+prior:
+  graveyard_matches:
+    - perp-funding-premium
+  note: >-
+    Выплата идёт через тот же механизм (funding), но платит другой и за другое.
+    В кладбище драйвер — «премия funding, которую платят лонги СО ПЛЕЧОМ»:
+    плата за леверидж, и kill_condition сформулирован как схлопывание перекоса
+    funding в ноль из-за дешёвого институционального арбитража. Здесь платят за
+    ДОСТУП ВО ВРЕМЕНИ к активу, чей рынок закрыт, и kill_condition совсем
+    другой: переход базовой биржи на круглосуточную торговлю. Инструментов этого
+    класса на момент прошлого разбора не существовало — HIP-3 запущен на
+    мейннете в октябре 2025.
