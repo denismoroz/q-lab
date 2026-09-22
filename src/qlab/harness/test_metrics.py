@@ -14,10 +14,10 @@ import pandas as pd
 import pytest
 
 from qlab.harness.metrics import (
-    effective_profitable_days,
-    effective_profitable_days_share,
     ann_return_net_ex_best_1pct,
     compute_metrics,
+    effective_profitable_days,
+    effective_profitable_days_share,
     fragility_days,
     fragility_share,
     min_capital_usd,

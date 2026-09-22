@@ -10,9 +10,9 @@ should satisfy the same shape contract and can be used as a drop-in
 replacement anywhere this stand-in is used.
 
 Shape contract:
-  - `prices`, `funding`, `tradeable` share one UTC `DatetimeIndex` (rows) and
-    one instrument column index (columns) — exactly the same index and
-    columns on all three.
+  - `prices`, `funding`, `tradeable`, `volume` share one UTC `DatetimeIndex`
+    (rows) and one instrument column index (columns) — exactly the same
+    index and columns on all four.
   - `prices`: instrument price, one column per instrument.
   - `funding`: a fraction; the funding rate for the period ENDING at that
     row's timestamp. `NaN` means "unknown". It must never be zero-filled by
@@ -21,6 +21,13 @@ Shape contract:
   - `tradeable`: bool; point-in-time listing status. `False` means "no
     exposure permitted in this instrument at this timestamp" (delisted, not
     yet listed, halted, etc).
+  - `volume` (docs/TASKS.md, T27): base-asset traded volume, same "NaN
+    means unknown, never zero" contract as `funding` — see
+    `qlab.data.panel.MarketPanel`'s own docstring for the full rationale
+    (in particular why USD volume is never stored, only ever recomputed as
+    `volume * prices`). Optional here and defaults to an all-NaN frame so
+    every caller/test built before T27 keeps working unchanged; a real
+    `qlab.data.panel.MarketPanel` always supplies a real one.
   - `meta`: free-form metadata about the snapshot (source, fetch time, ...).
     The harness does not read specific keys out of it.
 """
@@ -46,9 +53,22 @@ class MarketPanel:
     funding: pd.DataFrame
     tradeable: pd.DataFrame
     meta: Mapping[str, object]
+    volume: pd.DataFrame | None = None
 
     def __post_init__(self) -> None:
-        for name, frame in (("funding", self.funding), ("tradeable", self.tradeable)):
+        if self.volume is None:
+            object.__setattr__(
+                self,
+                "volume",
+                pd.DataFrame(
+                    float("nan"), index=self.prices.index, columns=self.prices.columns
+                ),
+            )
+        for name, frame in (
+            ("funding", self.funding),
+            ("tradeable", self.tradeable),
+            ("volume", self.volume),
+        ):
             if not frame.index.equals(self.prices.index):
                 raise ValueError(f"{name} index must match prices index exactly")
             if not frame.columns.equals(self.prices.columns):

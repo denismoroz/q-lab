@@ -59,6 +59,9 @@ def _ramp_prices(index: pd.DatetimeIndex, base: float = 100.0) -> pd.Series:
     return pd.Series(base + 0.01 * np.arange(len(index)), index=index)
 
 
+_DEFAULT_VOLUME = 1_000_000.0  # generously liquid -- irrelevant unless a test opts into filtering
+
+
 def _hist(
     name: str,
     index: pd.DatetimeIndex,
@@ -67,15 +70,20 @@ def _hist(
     prices: pd.Series | None = None,
     funding: pd.Series | None = None,
     has_funding: bool = True,
+    volume: pd.Series | None = None,
 ) -> InstrumentHistory:
     if prices is None:
         prices = _ramp_prices(index)
     if funding is None:
         funding = pd.Series(0.0001, index=index)
+    if volume is None:
+        volume = pd.Series(_DEFAULT_VOLUME, index=index)
     return InstrumentHistory(
         instrument=name,
         prices=prices,
         funding=funding,
+        volume=volume,
+        trade_count=pd.Series(1, index=index, dtype="int64"),
         first_seen=index[0],
         last_seen=index[-1],
         is_delisted=is_delisted,
@@ -95,7 +103,7 @@ class TestPointInTimeTradeable:
             "DEADCOIN": _hist("DEADCOIN", full_index[:4], is_delisted=True),
         }
 
-        _prices, _funding, tradeable = snap._build_frames_from_histories(
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(hours=1)
         )
 
@@ -115,7 +123,7 @@ class TestPointInTimeTradeable:
     def test_prices_may_be_nan_where_not_listed(self):
         full_index = pd.date_range("2024-01-01", periods=5, freq="1h", tz="UTC")
         histories = {"NEWCOIN": _hist("NEWCOIN", full_index[2:], is_delisted=False)}
-        prices, _funding, _tradeable = snap._build_frames_from_histories(
+        prices, _funding, _tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(hours=1)
         )
         assert prices["NEWCOIN"].iloc[:2].isna().all()
@@ -140,7 +148,7 @@ class TestFundingGapTradeable:
         )
         histories = {"BTC": _hist("BTC", full_index, is_delisted=False, funding=funding)}
 
-        _prices, _funding, tradeable = snap._build_frames_from_histories(
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(days=1)
         )
 
@@ -163,7 +171,7 @@ class TestFundingGapTradeable:
             )
         }
 
-        _prices, _funding, tradeable = snap._build_frames_from_histories(
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(days=1)
         )
 
@@ -188,7 +196,7 @@ class TestBadPriceBarsExcludedFromTradeable:
         prices = pd.Series(garbage + real, index=full_index)
         histories = {"BTC-SPOT": _hist("BTC-SPOT", full_index, is_delisted=False, prices=prices)}
 
-        out_prices, _funding, tradeable = snap._build_frames_from_histories(
+        out_prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(days=1)
         )
 
@@ -211,11 +219,148 @@ class TestBadPriceBarsExcludedFromTradeable:
         prices = pd.Series([100.0, 101.5, 99.0, 103.0, 102.0, 104.5], index=full_index)
         histories = {"ETH": _hist("ETH", full_index, is_delisted=False, prices=prices)}
 
-        _prices, _funding, tradeable = snap._build_frames_from_histories(
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(days=1)
         )
 
         assert tradeable["ETH"].all()
+
+
+class TestLiquidityFilter:
+    """docs/TASKS.md, T27, gap 2: `min_daily_volume_usd` must be strictly
+    point-in-time -- eligibility at bar `t` depends only on volume observed
+    BEFORE `t`, never at or after it. This is the exact same shape of bug
+    as the frozen 32-coin XSMOM universe (docs/XSMOM_T21.md): curating a
+    universe with LATER information and applying it backward."""
+
+    def test_thin_early_liquid_late_is_excluded_before_and_on_the_transition_day(self):
+        """Adversarial case: an instrument that is thin for the first half
+        of the window and liquid for the second half. A look-ahead filter
+        would mark it eligible starting the exact day its OWN volume
+        crosses the threshold; a correct point-in-time filter can only
+        "know" that from the NEXT bar onward, because it may only consult
+        volume observed strictly before the bar being judged."""
+        full_index = pd.date_range("2025-01-01", periods=6, freq="1D", tz="UTC")
+        # price ~100 (tiny ramp, see _ramp_prices) -- volume chosen with a
+        # wide margin either side of the $1,000,000 threshold so the ramp's
+        # own tiny price drift never matters to which side of it a bar
+        # lands on.
+        volume = pd.Series(
+            [1_000.0, 1_000.0, 1_000.0, 20_000.0, 20_000.0, 20_000.0], index=full_index
+        )
+        histories = {
+            "THIN2LIQUID": _hist("THIN2LIQUID", full_index, is_delisted=False, volume=volume)
+        }
+
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1), min_daily_volume_usd=1_000_000.0
+        )
+
+        col = tradeable["THIN2LIQUID"]
+        # Day 0: no prior bar exists to judge eligibility from -- unknown
+        # is not eligible, same "fail closed" convention as an unfetched
+        # funding rate.
+        assert not col.iloc[0]
+        # Days 1-2: yesterday was thin -> still ineligible.
+        assert not col.iloc[1]
+        assert not col.iloc[2]
+        # Day 3: THIS is the adversarial assertion. Day 3's OWN volume
+        # (20_000, volume_usd ~ $2M) already clears the threshold -- a
+        # filter that consulted "today's" volume would read this bar
+        # eligible. It must not: yesterday (day 2) was still thin
+        # ($1,000 volume, ~$100k), so day 3 stays ineligible.
+        assert not col.iloc[3]
+        # Days 4-5: yesterday was already liquid -> eligible from here on.
+        assert col.iloc[4]
+        assert col.iloc[5]
+
+    def test_no_filter_when_threshold_omitted(self):
+        """Baseline: an instrument thin its entire life is untouched when
+        `min_daily_volume_usd` is not given -- the filter is strictly
+        opt-in."""
+        full_index = pd.date_range("2025-01-01", periods=3, freq="1D", tz="UTC")
+        thin_volume = pd.Series(0.0001, index=full_index)
+        histories = {"THIN": _hist("THIN", full_index, is_delisted=False, volume=thin_volume)}
+
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1)
+        )
+
+        assert tradeable["THIN"].all()
+
+    def test_comfortably_liquid_instrument_loses_only_its_first_bar(self):
+        """A liquid instrument only ever loses eligibility on the very
+        first bar of the whole panel (no prior bar exists yet to prove
+        liquidity from) -- the filter doesn't punish an otherwise-liquid
+        name for anything beyond that unavoidable warm-up bar."""
+        full_index = pd.date_range("2025-01-01", periods=4, freq="1D", tz="UTC")
+        volume = pd.Series(1_000_000.0, index=full_index)  # price ~100 -> volume_usd ~$1e8
+        histories = {"BTC": _hist("BTC", full_index, is_delisted=False, volume=volume)}
+
+        _prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
+            histories, full_index, pd.Timedelta(days=1), min_daily_volume_usd=1_000_000.0
+        )
+
+        assert not tradeable["BTC"].iloc[0]
+        assert tradeable["BTC"].iloc[1:].all()
+
+    def test_filter_never_touches_universe_complete_or_instrument_list(
+        self, session, patched_source, tmp_path
+    ):
+        """An instrument excluded for being thin is not the same claim as
+        one that was never requested -- see build_snapshot's own
+        docstring. universe_complete and the instrument list must be
+        completely unaffected by this filter."""
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            min_daily_volume_usd=1.0,
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert panel.meta["universe_complete"] is True
+        assert set(panel.instruments) == {"BTC", "DEADCOIN", "ETH"}
+        assert panel.meta["min_daily_volume_usd"] == 1.0
+
+    def test_filter_threshold_survives_round_trip(self, session, patched_source, tmp_path):
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+            min_daily_volume_usd=5.0,
+            snapshots_dir=tmp_path, session=session,
+        )
+        loaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert loaded.meta["min_daily_volume_usd"] == 5.0
+
+    def test_omitted_threshold_round_trips_as_none(self, session, patched_source, tmp_path):
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert panel.meta["min_daily_volume_usd"] is None
+        loaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert loaded.meta["min_daily_volume_usd"] is None
+
+    def test_negative_threshold_rejected(self, session, tmp_path):
+        with pytest.raises(ValueError, match="min_daily_volume_usd"):
+            snap.build_snapshot(
+                "hyperliquid", ["BTC"], "2024-01-01", "2024-01-02", "1h",
+                min_daily_volume_usd=-1.0,
+                snapshots_dir=tmp_path, session=session,
+            )
+
+    def test_different_threshold_changes_snapshot_id(self, session, patched_source, tmp_path):
+        """Two otherwise-identical requests with different liquidity floors
+        must not collide on snapshot id, mirroring the same reasoning
+        `universe_complete` already gets in this module's docstring."""
+        panel1 = snap.build_snapshot(
+            "hyperliquid", ["BTC"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+            min_daily_volume_usd=1.0,
+            snapshots_dir=tmp_path, session=session,
+        )
+        panel2 = snap.build_snapshot(
+            "hyperliquid", ["BTC"], "2024-01-01", "2024-01-01T05:00:00", "1h",
+            min_daily_volume_usd=2.0,
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert panel1.snapshot_id != panel2.snapshot_id
 
 
 # --------------------------------------------------------------------------
@@ -479,6 +624,8 @@ def _fake_fetch_spot_universe(coins, start, end, interval, *, on_missing="raise"
             instrument=column,
             prices=_ramp_prices(idx),
             funding=pd.Series(dtype=float),
+            volume=pd.Series(_DEFAULT_VOLUME, index=idx),
+            trade_count=pd.Series(1, index=idx, dtype="int64"),
             first_seen=idx[0],
             last_seen=idx[-1],
             is_delisted=False,

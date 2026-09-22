@@ -102,6 +102,8 @@ def _history(instrument: str, index: pd.DatetimeIndex, *, has_funding: bool) -> 
         instrument=instrument,
         prices=pd.Series([1.0, 2.0], index=index),
         funding=funding,
+        volume=pd.Series([10.0, 20.0], index=index),
+        trade_count=pd.Series([1, 2], index=index, dtype="int64"),
         first_seen=index[0],
         last_seen=index[-1],
         is_delisted=False,
@@ -129,6 +131,93 @@ def test_cache_round_trip_persists_has_funding_true(tmp_path):
 
     assert loaded is not None
     assert loaded.has_funding is True
+
+
+def test_cache_round_trip_persists_volume_and_trade_count(tmp_path):
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    hist = _history("BTC", index, has_funding=True)
+
+    store_cached_history(tmp_path, "hyperliquid", "1h", index[0], index[-1], hist)
+    loaded = load_cached_history(tmp_path, "hyperliquid", "BTC", "1h", index[0], index[-1])
+
+    assert loaded is not None
+    pd.testing.assert_series_equal(loaded.volume, hist.volume, check_names=False, check_freq=False)
+    pd.testing.assert_series_equal(
+        loaded.trade_count, hist.trade_count, check_names=False, check_freq=False
+    )
+
+
+def test_cache_without_volume_column_is_treated_as_a_miss_not_zero_filled(tmp_path):
+    """docs/TASKS.md, T27: a raw cache entry written before volume support
+    existed has `price`/`funding` columns only. Loading it must come back
+    None (a cache MISS, forcing a re-fetch) -- never a frame with volume
+    silently defaulted to 0.0, which would misreport "the venue reported no
+    trading" when the true fact is "we never asked"."""
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    legacy_frame = pd.DataFrame(
+        {"price": [1.0, 2.0], "funding": [0.0001, 0.0002]}, index=index
+    )
+    folder = tmp_path / "hyperliquid" / "1h"
+    folder.mkdir(parents=True)
+    stem = f"BTC__{index[0].date()}__{index[-1].date()}"
+    legacy_frame.to_parquet(folder / f"{stem}.parquet")
+    (folder / f"{stem}.json").write_text(
+        json.dumps(
+            {
+                "first_seen": index[0].isoformat(),
+                "last_seen": index[-1].isoformat(),
+                "is_delisted": False,
+            }
+        )
+    )
+
+    loaded = load_cached_history(tmp_path, "hyperliquid", "BTC", "1h", index[0], index[-1])
+
+    assert loaded is None
+
+
+def test_resumable_fetch_refetches_when_cache_predates_volume(tmp_path):
+    """End to end through `fetch_universe_resumable`: a legacy cache entry
+    on disk must not be silently reused -- `fetch_one` has to actually run
+    again, and the resulting cache entry then carries volume."""
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    index = pd.date_range("2024-01-01", periods=2, freq="1h", tz="UTC")
+    legacy_frame = pd.DataFrame(
+        {"price": [1.0, 2.0], "funding": [0.0001, 0.0002]}, index=index
+    )
+    folder = tmp_path / "hyperliquid" / "1h"
+    folder.mkdir(parents=True)
+    stem = f"BTC__{index[0].date()}__{index[-1].date()}"
+    legacy_frame.to_parquet(folder / f"{stem}.parquet")
+    (folder / f"{stem}.json").write_text(
+        json.dumps(
+            {
+                "first_seen": index[0].isoformat(),
+                "last_seen": index[-1].isoformat(),
+                "is_delisted": False,
+            }
+        )
+    )
+
+    calls: list[str] = []
+
+    def fetch_one(instrument: str) -> InstrumentHistory:
+        calls.append(instrument)
+        return _history(instrument, index, has_funding=True)
+
+    result = fetch_universe_resumable(
+        ["BTC"],
+        index[0],
+        index[-1],
+        "1h",
+        source="hyperliquid",
+        fetch_one=fetch_one,
+        cache_dir=tmp_path,
+    )
+
+    assert calls == ["BTC"]  # re-fetched, not skipped as "already cached"
+    assert not result["BTC"].volume.isna().any()
 
 
 def test_cache_backfills_has_funding_true_for_legacy_entries_without_the_key(tmp_path):

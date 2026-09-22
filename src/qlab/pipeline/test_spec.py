@@ -50,6 +50,25 @@ def test_explicit_instruments_accepted() -> None:
     assert spec.data.instruments == ["BTC", "ETH"]
 
 
+def test_min_daily_volume_usd_defaults_to_none() -> None:
+    spec = StrategySpec.model_validate(_spec_dict())
+    assert spec.data.min_daily_volume_usd is None
+
+
+def test_min_daily_volume_usd_accepted_when_positive() -> None:
+    data = dict(_BASE["data"])  # type: ignore[arg-type]
+    data["min_daily_volume_usd"] = 1_000_000.0
+    spec = StrategySpec.model_validate(_spec_dict(data=data))
+    assert spec.data.min_daily_volume_usd == 1_000_000.0
+
+
+def test_min_daily_volume_usd_rejects_non_positive() -> None:
+    data = dict(_BASE["data"])  # type: ignore[arg-type]
+    data["min_daily_volume_usd"] = 0.0
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(_spec_dict(data=data))
+
+
 def test_missing_costs_fails_validation() -> None:
     raw = _spec_dict()
     del raw["costs"]

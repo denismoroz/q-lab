@@ -104,14 +104,37 @@ def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = No
     return [name for name, _is_delisted in describe_universe(as_of_range)]
 
 
+_CANDLE_FRAME_COLUMNS = ("price", "volume", "trade_count")
+
+
+def _empty_candle_frame() -> pd.DataFrame:
+    frame = pd.DataFrame(columns=list(_CANDLE_FRAME_COLUMNS))
+    frame.index = pd.DatetimeIndex([], tz="UTC")
+    return frame.astype({"price": float, "volume": float, "trade_count": "int64"})
+
+
 def fetch_candles(
     client: httpx.Client, coin: str, interval: str, start: pd.Timestamp, end: pd.Timestamp
-) -> pd.Series:
-    """Page through ``candleSnapshot`` and return a close-price Series
-    indexed by the UTC candle-open timestamp."""
+) -> pd.DataFrame:
+    """Page through ``candleSnapshot`` and return a DataFrame indexed by the
+    UTC candle-open timestamp, with columns:
+
+    - ``price``: the candle close (``"c"``) -- the only field the pre-T27
+      version of this function returned.
+    - ``volume`` (docs/TASKS.md, T27): the candle's base-asset volume
+      (``"v"``), e.g. BTC for the BTC perp -- NOT USD. See
+      `qlab.data.sources.base.InstrumentHistory`'s docstring for why USD
+      volume is deliberately computed downstream (``volume * price``) and
+      never stored as its own column.
+    - ``trade_count``: the candle's fill count (``"n"``) -- kept for raw
+      fidelity, not consumed by anything yet.
+
+    All three come off the exact same candle row already being paged
+    through for price, so parsing them adds no extra request.
+    """
     step = INTERVAL_TO_TIMEDELTA[interval]
     cursor = start
-    rows: dict[pd.Timestamp, float] = {}
+    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
 
     while cursor <= end:
         payload = {
@@ -132,7 +155,7 @@ def fetch_candles(
             ts = pd.Timestamp(int(c["t"]), unit="ms", tz="UTC")
             if ts > end:
                 continue
-            rows[ts] = float(c["c"])
+            rows[ts] = (float(c["c"]), float(c["v"]), int(c["n"]))
             if ts > max_ts:
                 max_ts = ts
 
@@ -140,7 +163,15 @@ def fetch_candles(
             break
         cursor = max_ts + step
 
-    return pd.Series(rows, dtype=float).sort_index()
+    if not rows:
+        return _empty_candle_frame()
+
+    index = pd.DatetimeIndex(sorted(rows), name="timestamp")
+    frame = pd.DataFrame(
+        [rows[ts] for ts in index], index=index, columns=list(_CANDLE_FRAME_COLUMNS)
+    )
+    frame["trade_count"] = frame["trade_count"].astype("int64")
+    return frame
 
 
 def fetch_funding(
@@ -186,9 +217,12 @@ def fetch_instrument_history(
     end: pd.Timestamp,
     meta: dict[str, dict],
 ) -> InstrumentHistory:
-    prices = fetch_candles(client, coin, interval, start, end)
-    if prices.empty:
+    candles = fetch_candles(client, coin, interval, start, end)
+    if candles.empty:
         raise ValueError(f"hyperliquid: no candle data for {coin!r} in [{start}, {end}]")
+    prices = candles["price"]
+    volume = candles["volume"]
+    trade_count = candles["trade_count"]
     # Funding is fetched wider than the price range on purpose. A bar labelled
     # `t` carries the funding for the half-open period `(t - bar, t]`, so the
     # first bar's bucket needs settlements from before `start`, and the last
@@ -207,6 +241,8 @@ def fetch_instrument_history(
         instrument=coin,
         prices=prices,
         funding=funding,
+        volume=volume,
+        trade_count=trade_count,
         first_seen=prices.index.min(),
         last_seen=prices.index.max(),
         is_delisted=is_delisted,
@@ -359,16 +395,19 @@ def fetch_spot_instrument_history(
     gap to flag untradeable -- see `InstrumentHistory.has_funding` and
     docs/TASKS.md T17.
     """
-    prices = fetch_candles(client, pair_symbol, interval, start, end)
-    if prices.empty:
+    candles = fetch_candles(client, pair_symbol, interval, start, end)
+    if candles.empty:
         raise ValueError(
             f"hyperliquid: no spot candle data for {coin!r} ({pair_symbol}) "
             f"in [{start}, {end}]"
         )
+    prices = candles["price"]
     return InstrumentHistory(
         instrument=f"{coin}{SPOT_COLUMN_SUFFIX}",
         prices=prices,
         funding=pd.Series(dtype=float),
+        volume=candles["volume"],
+        trade_count=candles["trade_count"],
         first_seen=prices.index.min(),
         last_seen=prices.index.max(),
         # See describe_spot_universe: HL's free API exposes no historical

@@ -105,15 +105,33 @@ def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = No
     return None
 
 
+_KLINE_FRAME_COLUMNS = ("price", "volume", "trade_count")
+
+
+def _empty_kline_frame() -> pd.DataFrame:
+    frame = pd.DataFrame(columns=list(_KLINE_FRAME_COLUMNS))
+    frame.index = pd.DatetimeIndex([], tz="UTC")
+    return frame.astype({"price": float, "volume": float, "trade_count": "int64"})
+
+
 def fetch_candles(
     client: httpx.Client, instrument: str, interval: str, start: pd.Timestamp, end: pd.Timestamp
-) -> pd.Series:
-    """Page through ``/fapi/v1/klines`` and return a close-price Series
-    indexed by the UTC candle-open timestamp."""
+) -> pd.DataFrame:
+    """Page through ``/fapi/v1/klines`` and return a DataFrame indexed by the
+    UTC candle-open timestamp, with columns ``price`` (close, ``k[4]``),
+    ``volume`` (base-asset volume, ``k[5]`` -- NOT USD, see
+    `qlab.data.sources.base.InstrumentHistory`) and ``trade_count``
+    (``k[8]``, ``numberOfTrades``). Standard Binance futures kline array
+    shape: ``[openTime, open, high, low, close, volume, closeTime,
+    quoteAssetVolume, numberOfTrades, takerBuyBaseVolume,
+    takerBuyQuoteVolume, ignore]``. All three parsed columns come off the
+    exact same row already being paged through for price -- no extra
+    request.
+    """
     symbol = _symbol(instrument)
     step = INTERVAL_TO_TIMEDELTA[interval]
     cursor = start
-    rows: dict[pd.Timestamp, float] = {}
+    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
 
     while cursor <= end:
         params = {
@@ -132,7 +150,7 @@ def fetch_candles(
             ts = pd.Timestamp(int(k[0]), unit="ms", tz="UTC")
             if ts > end:
                 continue
-            rows[ts] = float(k[4])  # close
+            rows[ts] = (float(k[4]), float(k[5]), int(k[8]))
             if ts > max_ts:
                 max_ts = ts
 
@@ -140,7 +158,15 @@ def fetch_candles(
             break
         cursor = max_ts + step
 
-    return pd.Series(rows, dtype=float).sort_index()
+    if not rows:
+        return _empty_kline_frame()
+
+    index = pd.DatetimeIndex(sorted(rows), name="timestamp")
+    frame = pd.DataFrame(
+        [rows[ts] for ts in index], index=index, columns=list(_KLINE_FRAME_COLUMNS)
+    )
+    frame["trade_count"] = frame["trade_count"].astype("int64")
+    return frame
 
 
 def fetch_funding(
@@ -187,9 +213,10 @@ def fetch_instrument_history(
     end: pd.Timestamp,
     exchange_info: dict[str, dict],
 ) -> InstrumentHistory:
-    prices = fetch_candles(client, instrument, interval, start, end)
-    if prices.empty:
+    candles = fetch_candles(client, instrument, interval, start, end)
+    if candles.empty:
         raise ValueError(f"binance: no kline data for {instrument!r} in [{start}, {end}]")
+    prices = candles["price"]
     funding = fetch_funding(client, instrument, start, end)
 
     symbol = _symbol(instrument)
@@ -205,6 +232,8 @@ def fetch_instrument_history(
         instrument=instrument,
         prices=prices,
         funding=funding,
+        volume=candles["volume"],
+        trade_count=candles["trade_count"],
         first_seen=first_seen,
         last_seen=prices.index.max(),
         is_delisted=is_delisted,

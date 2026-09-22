@@ -50,12 +50,37 @@ class SpecData(BaseModel):
     start: date
     end: date
     instruments: list[str] | None = None
+    min_daily_volume_usd: float | None = None
+    """Point-in-time liquidity floor (docs/TASKS.md, T27, gap 2), one to one
+    with `qlab.data.snapshot.build_snapshot`'s own argument of the same
+    name — see that function's docstring for the exact trailing-window
+    arithmetic and why it cannot look ahead. `None` (the default) means no
+    liquidity filter at all, unchanged behaviour from before this field
+    existed.
+
+    This is a MEASUREMENT input, not a verdict: it narrows
+    `panel.tradeable` (an instrument reads untradeable wherever its own
+    trailing volume was too thin), the same mechanism already used for
+    delisting/funding-gap/bad-price exclusions — it never removes an
+    instrument from the panel and never touches `universe_complete`. It
+    exists because `qlab.harness.metrics.min_capital_usd` only checks a
+    venue's minimum ORDER size, which a thin memecoin clears as easily as
+    BTC — exactly the gap that let a 20-leg XSMOM book of illiquid names
+    read as "affordable" up to $120k (docs/XSMOM_T21.md, "Ревизия").
+    """
 
     @field_validator("source", "interval")
     @classmethod
     def _not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("must not be blank")
+        return value
+
+    @field_validator("min_daily_volume_usd")
+    @classmethod
+    def _positive_if_given(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError(f"min_daily_volume_usd must be > 0 when given, got {value}")
         return value
 
 

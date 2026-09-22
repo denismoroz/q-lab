@@ -43,11 +43,13 @@ def test_fetch_candles_single_page():
     respx.get(f"{bn.BASE_URL}/fapi/v1/klines").mock(return_value=httpx.Response(200, json=klines))
 
     with httpx.Client() as client:
-        series = bn.fetch_candles(client, "BTC", "1h", start, end)
+        frame = bn.fetch_candles(client, "BTC", "1h", start, end)
 
-    assert len(series) == 3
-    assert series.loc[start] == 100.0
-    assert series.loc[end] == 102.0
+    assert len(frame) == 3
+    assert frame["price"].loc[start] == 100.0
+    assert frame["price"].loc[end] == 102.0
+    assert frame["volume"].loc[start] == 10.0
+    assert frame["trade_count"].loc[start] == 1
 
 
 @respx.mock
@@ -61,9 +63,9 @@ def test_fetch_candles_pages_until_short_page(monkeypatch):
     route.side_effect = [httpx.Response(200, json=page1), httpx.Response(200, json=page2)]
 
     with httpx.Client() as client:
-        series = bn.fetch_candles(client, "BTC", "1h", start, end)
+        frame = bn.fetch_candles(client, "BTC", "1h", start, end)
 
-    assert len(series) == 4
+    assert len(frame) == 4
     assert route.call_count == 2
 
 

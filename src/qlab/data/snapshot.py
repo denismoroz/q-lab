@@ -1,8 +1,9 @@
 """Build and load ``MarketPanel`` snapshots (docs/PLAN.md, M2 "слой данных";
 docs/REGISTRY.md, the ``data_snapshot`` table).
 
-``build_snapshot`` fetches from a source, assembles the three aligned
-frames, writes them under ``data/snapshots/<sha256>/`` as parquet, and
+``build_snapshot`` fetches from a source, assembles the four aligned
+frames (``prices``, ``funding``, ``tradeable``, ``volume`` — docs/TASKS.md,
+T27), writes them under ``data/snapshots/<sha256>/`` as parquet, and
 inserts the matching ``data_snapshot`` registry row. ``load_snapshot`` reads
 a snapshot back from disk (using the registry row for provenance) with no
 network access — this is the path a harness run always takes, so a trial's
@@ -10,7 +11,8 @@ inputs never depend on a source's uptime.
 
 Determinism: the snapshot id is::
 
-    sha256(canonical_manifest_json + prices_parquet + funding_parquet + tradeable_parquet)
+    sha256(canonical_manifest_json + prices_parquet + funding_parquet
+           + tradeable_parquet + volume_parquet)
 
 The manifest freezes every parameter that can change the *result*: source,
 instruments (deduplicated and sorted), start, end, interval, and
@@ -127,6 +129,7 @@ def _canonical_manifest(
     interval: str,
     universe_complete: bool,
     no_funding_instruments: list[str],
+    min_daily_volume_usd: float | None,
 ) -> dict:
     return {
         "source": source,
@@ -141,6 +144,15 @@ def _canonical_manifest(
         # `meta` from this file alone, with no network access, so the fact
         # must be persisted here to survive a save/load round trip.
         "no_funding_instruments": no_funding_instruments,
+        # The point-in-time liquidity filter applied while building
+        # `tradeable` (docs/TASKS.md, T27, gap 2), or None if none was
+        # requested. Already baked into `tradeable_bytes` below (a
+        # different threshold produces different tradeable bytes and
+        # therefore a different id on its own), but it is recorded
+        # explicitly here too so `load_snapshot` can hand it back in
+        # `meta` without a network call, the same reasoning as
+        # `no_funding_instruments`.
+        "min_daily_volume_usd": min_daily_volume_usd,
     }
 
 
@@ -161,18 +173,31 @@ def _build_frames_from_histories(
     histories: dict[str, InstrumentHistory],
     full_index: pd.DatetimeIndex,
     funding_native_interval: pd.Timedelta,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    *,
+    min_daily_volume_usd: float | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Assemble and return ``(prices, funding, tradeable, volume)`` from raw
+    per-instrument histories.
+
+    ``min_daily_volume_usd`` (docs/TASKS.md, T27, gap 2), when given, adds a
+    POINT-IN-TIME liquidity exclusion on top of the existing listing/
+    funding-gap/bad-price exclusions already applied to ``tradeable`` below
+    — see `_liquidity_eligible_mask` for the exact trailing-window
+    arithmetic and why it cannot look ahead.
+    """
     bar_interval = (
         full_index[1] - full_index[0] if len(full_index) > 1 else funding_native_interval
     )
     instruments = sorted(histories)
     price_cols: dict[str, pd.Series] = {}
     funding_cols: dict[str, pd.Series] = {}
+    volume_cols: dict[str, pd.Series] = {}
     tradeable_cols: dict[str, pd.Series] = {}
 
     for coin in instruments:
         hist = histories[coin]
         price_cols[coin] = hist.prices.reindex(full_index)
+        volume_cols[coin] = hist.volume.reindex(full_index)
         funding_cols[coin] = align_funding_to_index(
             hist.funding, full_index, funding_native_interval
         )
@@ -228,6 +253,7 @@ def _build_frames_from_histories(
                 last=str(price_cols[coin].index[bad_price][-1]),
             )
             price_cols[coin] = price_cols[coin].where(~bad_price)
+            volume_cols[coin] = volume_cols[coin].where(~bad_price)
             tradeable &= ~bad_price
 
         tradeable_cols[coin] = tradeable
@@ -236,9 +262,76 @@ def _build_frames_from_histories(
     prices.index.name = "timestamp"
     funding = pd.DataFrame(funding_cols, index=full_index)[instruments]
     funding.index.name = "timestamp"
+    volume = pd.DataFrame(volume_cols, index=full_index)[instruments]
+    volume.index.name = "timestamp"
     tradeable = pd.DataFrame(tradeable_cols, index=full_index)[instruments].astype(bool)
     tradeable.index.name = "timestamp"
-    return prices, funding, tradeable
+
+    if min_daily_volume_usd is not None:
+        tradeable &= _liquidity_eligible_mask(prices, volume, bar_interval, min_daily_volume_usd)
+
+    return prices, funding, tradeable, volume
+
+
+# HL's own live curation (`funding-rate-arbitrage/research/cross_sectional/
+# crypto/cryptodata.py`, `MIN_VOL_USD = 1_000_000  # >= $1M 24h notional
+# volume on HL`) filters on the venue's own rolling **24-HOUR** notional
+# volume figure (`dayNtlVlm` from `metaAndAssetCtxs`) -- not a multi-day
+# average, and not a number invented here. `_LIQUIDITY_WINDOW` translates
+# that same 24h span onto whatever bar interval the panel actually uses: at
+# a daily bar it is exactly 1 trailing bar (the previous day), at an hourly
+# bar it is the trailing 24 bars summed. This is a straight unit conversion
+# of the live engine's own metric, not a new threshold.
+_LIQUIDITY_WINDOW = pd.Timedelta(days=1)
+
+
+def _liquidity_eligible_mask(
+    prices: pd.DataFrame,
+    volume: pd.DataFrame,
+    bar_interval: pd.Timedelta,
+    min_daily_volume_usd: float,
+) -> pd.DataFrame:
+    """Point-in-time liquidity eligibility (docs/TASKS.md, T27, gap 2):
+    ``True`` at ``(t, instrument)`` iff the TRAILING 24h of USD volume
+    ending strictly BEFORE ``t`` (never including ``t`` itself) was at
+    least ``min_daily_volume_usd``.
+
+    This is what makes the filter honest and non-look-ahead: an
+    instrument's eligibility at bar ``t`` depends only on volume observed
+    at bars before ``t``, exactly the same "decide using only information
+    available up to and including the PREVIOUS decision point" discipline
+    `qlab.harness.strategy`'s alignment rule already requires of a
+    strategy's own weights. Filtering on volume measured at or after ``t``
+    -- in particular on the window's OWN endpoint or on "today's" volume --
+    would be look-ahead of the exact shape T21 already found for XSMOM's
+    survivorship (a fixed universe curated with 2026-06 information and
+    applied backward to 2025-01): a coin that is thin now and liquid later
+    must read ineligible NOW regardless of what it becomes.
+
+    Arithmetic: ``bars = round(_LIQUIDITY_WINDOW / bar_interval)`` trailing
+    bars of ``volume * prices`` are summed with `pandas.DataFrame.rolling`
+    (``min_periods=bars``, so an incomplete window -- not enough history
+    yet -- is NaN, never a partial sum passed off as a full day's volume,
+    same "never silently pass off a short bucket" rule
+    `qlab.data.sources.base.align_funding_to_index` already applies to
+    funding), then shifted forward by one bar so the sum ending at ``t-1``
+    is compared at row ``t`` -- never the sum ending at ``t`` itself. NaN
+    (unknown -- either not enough history yet, or volume itself unknown)
+    is treated as INELIGIBLE, not as a free pass: an unproven instrument
+    does not default to tradeable.
+
+    Returns a boolean DataFrame the same shape as ``prices``, intended to
+    be AND-ed into ``tradeable`` — this narrows an already-listed
+    instrument's tradeable span, it never widens it and never touches
+    which instruments are IN the panel at all (see `build_snapshot`'s
+    ``min_daily_volume_usd`` docstring for why that distinction matters for
+    `universe_complete`/`point_in_time_universe`).
+    """
+    bars = round(_LIQUIDITY_WINDOW / bar_interval)
+    bars = max(bars, 1)
+    volume_usd = volume * prices
+    trailing = volume_usd.rolling(window=bars, min_periods=bars).sum().shift(1)
+    return (trailing >= min_daily_volume_usd).fillna(False)
 
 
 def describe_universe(source: str, *, include_spot: bool = False) -> list[tuple[str, bool]] | None:
@@ -294,10 +387,31 @@ def build_snapshot(
     interval: str,
     *,
     include_spot: bool = False,
+    min_daily_volume_usd: float | None = None,
     snapshots_dir: Path | str = DEFAULT_SNAPSHOTS_DIR,
     session: Session | None = None,
 ) -> MarketPanel:
     """Fetch, assemble, persist and register a ``MarketPanel`` snapshot.
+
+    ``min_daily_volume_usd`` (docs/TASKS.md, T27, gap 2) is an optional
+    POINT-IN-TIME liquidity floor: an instrument reads ``tradeable=False``
+    at any bar where its trailing 24h of USD volume (observed strictly
+    BEFORE that bar — see `_liquidity_eligible_mask`) fell short of this
+    threshold. It exists because `qlab.harness.metrics.min_capital_usd`
+    only ever checks a venue's minimum ORDER size, which a thin memecoin
+    clears just as easily as BTC — the exact gap that let a 20-leg XSMOM
+    book of GRIFFAIN/FARTCOIN/MERL/VVV/ZORA/PURR-type names read as
+    "affordable" up to $120k, a size at which each leg is fully
+    unexecutable (docs/XSMOM_T21.md, "Ревизия").
+
+    This does NOT touch which instruments are IN the panel, and does NOT
+    affect ``universe_complete``/``instruments`` — an instrument excluded
+    here for being thin during some span is not the same claim as one that
+    was never requested at all (that is what ``universe_complete`` is
+    about), so a liquidity-filtered snapshot with a discovered instrument
+    list still reads ``universe_complete=True``, exactly like an unfiltered
+    one. The filter only ever narrows ``tradeable``, the same mechanism
+    already used for delisting, funding gaps and bad-price bars above.
 
     ``instruments=None`` (the recommended default) fetches the source's full
     discovered universe — survivors and delisted names alike — via
@@ -354,6 +468,8 @@ def build_snapshot(
             "for a hand-picked list, name the '-SPOT' columns you want directly in "
             "`instruments` instead (e.g. ['BTC', 'BTC-SPOT'])"
         )
+    if min_daily_volume_usd is not None and min_daily_volume_usd <= 0:
+        raise ValueError(f"min_daily_volume_usd must be > 0, got {min_daily_volume_usd}")
 
     start_ts = _to_utc_timestamp(start)
     end_ts = _to_utc_timestamp(end)
@@ -441,8 +557,11 @@ def build_snapshot(
     if len(full_index) == 0:
         raise ValueError(f"empty index for range [{start_ts}, {end_ts}] at interval {interval!r}")
 
-    prices, funding, tradeable = _build_frames_from_histories(
-        histories, full_index, source_spec["funding_native_interval"]
+    prices, funding, tradeable, volume = _build_frames_from_histories(
+        histories,
+        full_index,
+        source_spec["funding_native_interval"],
+        min_daily_volume_usd=min_daily_volume_usd,
     )
 
     no_funding_instruments = sorted(
@@ -457,14 +576,24 @@ def build_snapshot(
         interval,
         universe_complete,
         no_funding_instruments,
+        min_daily_volume_usd,
     )
     manifest_bytes = _manifest_bytes(manifest)
     prices_bytes = _dataframe_bytes(prices)
     funding_bytes = _dataframe_bytes(funding)
     tradeable_bytes = _dataframe_bytes(tradeable)
+    volume_bytes = _dataframe_bytes(volume)
 
     snapshot_id = hashlib.sha256(
-        manifest_bytes + b"\0" + prices_bytes + b"\0" + funding_bytes + b"\0" + tradeable_bytes
+        manifest_bytes
+        + b"\0"
+        + prices_bytes
+        + b"\0"
+        + funding_bytes
+        + b"\0"
+        + tradeable_bytes
+        + b"\0"
+        + volume_bytes
     ).hexdigest()
 
     snapshot_dir = Path(snapshots_dir) / snapshot_id
@@ -473,6 +602,7 @@ def build_snapshot(
     _write_if_absent(snapshot_dir / "prices.parquet", prices_bytes)
     _write_if_absent(snapshot_dir / "funding.parquet", funding_bytes)
     _write_if_absent(snapshot_dir / "tradeable.parquet", tradeable_bytes)
+    _write_if_absent(snapshot_dir / "volume.parquet", volume_bytes)
     _write_if_absent(snapshot_dir / "manifest.json", manifest_bytes)
 
     fetched_at = datetime.now(UTC)
@@ -510,9 +640,15 @@ def build_snapshot(
         "instruments": instruments_sorted,
         "universe_complete": universe_complete,
         "no_funding_instruments": no_funding_instruments,
+        "min_daily_volume_usd": min_daily_volume_usd,
     }
     return MarketPanel(
-        snapshot_id=snapshot_id, prices=prices, funding=funding, tradeable=tradeable, meta=meta
+        snapshot_id=snapshot_id,
+        prices=prices,
+        funding=funding,
+        tradeable=tradeable,
+        volume=volume,
+        meta=meta,
     )
 
 
@@ -537,6 +673,19 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
         funding = pd.read_parquet(snapshot_dir / "funding.parquet")
         tradeable = pd.read_parquet(snapshot_dir / "tradeable.parquet").astype(bool)
 
+        volume_path = snapshot_dir / "volume.parquet"
+        if volume_path.exists():
+            volume = pd.read_parquet(volume_path)
+        else:
+            # A snapshot built before volume support existed (docs/TASKS.md,
+            # T27) has no volume.parquet on disk at all. NaN ("unknown"),
+            # not 0.0 ("no trading") -- see `InstrumentHistory`'s docstring
+            # for why those are different facts. `MarketPanel`'s own
+            # `volume=None` default does exactly this backfill, but it is
+            # done explicitly here (not just left to the default) so this
+            # branch documents WHY a legacy snapshot ends up that way.
+            volume = pd.DataFrame(float("nan"), index=prices.index, columns=prices.columns)
+
         meta = {
             "venue": row.source,
             "interval": manifest["interval"],
@@ -550,9 +699,18 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             # "no instrument was flagged", which is the correct read for an
             # all-perp snapshot, not a data-loss error.
             "no_funding_instruments": manifest.get("no_funding_instruments", []),
+            # `.get(..., None)`: a snapshot built before T27 has no such key
+            # -- None correctly reads as "no liquidity filter was ever
+            # applied", not a data-loss error.
+            "min_daily_volume_usd": manifest.get("min_daily_volume_usd"),
         }
         return MarketPanel(
-            snapshot_id=snapshot_id, prices=prices, funding=funding, tradeable=tradeable, meta=meta
+            snapshot_id=snapshot_id,
+            prices=prices,
+            funding=funding,
+            tradeable=tradeable,
+            volume=volume,
+            meta=meta,
         )
 
     if session is not None:

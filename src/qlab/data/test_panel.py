@@ -17,6 +17,7 @@ def _panel(
     columns: list[str] | None = None,
     snapshot_id: str = "deadbeef",
     universe_complete: bool | None = None,
+    volume: pd.DataFrame | None = None,
 ) -> MarketPanel:
     index = index if index is not None else _utc_index(5)
     columns = columns if columns is not None else ["BTC", "ETH"]
@@ -32,6 +33,7 @@ def _panel(
         funding=funding,
         tradeable=tradeable,
         meta=meta,
+        volume=volume,
     )
 
 
@@ -121,6 +123,55 @@ class TestValidation:
             )
 
 
+class TestVolume:
+    """docs/TASKS.md, T27: the fourth aligned frame."""
+
+    def test_default_volume_is_all_nan_unknown_not_zero(self):
+        panel = _panel()
+        assert panel.volume.shape == panel.prices.shape
+        assert panel.volume.isna().all().all()
+
+    def test_explicit_volume_is_kept(self):
+        index = _utc_index(5)
+        columns = ["BTC", "ETH"]
+        volume = pd.DataFrame(123.0, index=index, columns=columns)
+        panel = _panel(index=index, columns=columns, volume=volume)
+        pd.testing.assert_frame_equal(panel.volume, volume)
+
+    def test_mismatched_volume_index_rejected(self):
+        index = _utc_index(5)
+        other_index = _utc_index(5, start="2024-02-01")
+        prices = pd.DataFrame(1.0, index=index, columns=["BTC"])
+        funding = pd.DataFrame(0.0, index=index, columns=["BTC"])
+        tradeable = pd.DataFrame(True, index=index, columns=["BTC"])
+        volume = pd.DataFrame(1.0, index=other_index, columns=["BTC"])
+        with pytest.raises(ValueError, match="volume.index"):
+            MarketPanel(
+                snapshot_id="x",
+                prices=prices,
+                funding=funding,
+                tradeable=tradeable,
+                meta={},
+                volume=volume,
+            )
+
+    def test_mismatched_volume_columns_rejected(self):
+        index = _utc_index(5)
+        prices = pd.DataFrame(1.0, index=index, columns=["BTC", "ETH"])
+        funding = pd.DataFrame(0.0, index=index, columns=["BTC", "ETH"])
+        tradeable = pd.DataFrame(True, index=index, columns=["BTC", "ETH"])
+        volume = pd.DataFrame(1.0, index=index, columns=["BTC", "SOL"])
+        with pytest.raises(ValueError, match="volume.columns"):
+            MarketPanel(
+                snapshot_id="x",
+                prices=prices,
+                funding=funding,
+                tradeable=tradeable,
+                meta={},
+                volume=volume,
+            )
+
+
 class TestSlice:
     def test_slice_restricts_index_inclusive(self):
         panel = _panel(index=_utc_index(10))
@@ -128,6 +179,7 @@ class TestSlice:
         assert len(sliced.prices) == 4
         assert sliced.prices.index[0] == panel.prices.index[2]
         assert sliced.prices.index[-1] == panel.prices.index[5]
+        assert sliced.volume.index.equals(sliced.prices.index)
 
     def test_slice_keeps_snapshot_id_and_meta(self):
         panel = _panel(index=_utc_index(10), snapshot_id="abc123")
@@ -156,6 +208,7 @@ class TestRestrict:
         assert list(restricted.prices.columns) == ["SOL", "BTC"]
         assert list(restricted.funding.columns) == ["SOL", "BTC"]
         assert list(restricted.tradeable.columns) == ["SOL", "BTC"]
+        assert list(restricted.volume.columns) == ["SOL", "BTC"]
 
     def test_restrict_resets_universe_complete_to_false(self):
         panel = _panel(columns=["BTC", "ETH", "SOL"], universe_complete=True)
@@ -196,6 +249,8 @@ class TestAlign:
         assert aligned_b.prices.index.equals(expected_index)
         assert aligned_a.instruments == ["ETH"]
         assert aligned_b.instruments == ["ETH"]
+        assert aligned_a.volume.index.equals(expected_index)
+        assert list(aligned_a.volume.columns) == ["ETH"]
         # provenance is preserved per-panel, not merged
         assert aligned_a.snapshot_id == "a"
         assert aligned_b.snapshot_id == "b"

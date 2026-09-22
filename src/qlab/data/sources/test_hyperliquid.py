@@ -45,12 +45,14 @@ def test_fetch_candles_single_page():
     respx.post(hl.BASE_URL).mock(return_value=httpx.Response(200, json=candles))
 
     with httpx.Client() as client:
-        series = hl.fetch_candles(client, "BTC", "1h", start, end)
+        frame = hl.fetch_candles(client, "BTC", "1h", start, end)
 
-    assert len(series) == 3
-    assert series.loc[start] == 100.0
-    assert series.loc[end] == 102.0
-    assert series.index.tz is not None
+    assert len(frame) == 3
+    assert frame["price"].loc[start] == 100.0
+    assert frame["price"].loc[end] == 102.0
+    assert frame.index.tz is not None
+    assert frame["volume"].loc[start] == 1.0
+    assert frame["trade_count"].loc[start] == 1
 
 
 @respx.mock
@@ -64,11 +66,11 @@ def test_fetch_candles_pages_until_short_page(monkeypatch):
     route.side_effect = [httpx.Response(200, json=page1), httpx.Response(200, json=page2)]
 
     with httpx.Client() as client:
-        series = hl.fetch_candles(client, "BTC", "1h", start, end)
+        frame = hl.fetch_candles(client, "BTC", "1h", start, end)
 
-    assert len(series) == 4
+    assert len(frame) == 4
     assert route.call_count == 2
-    assert list(series.values) == [1.0, 2.0, 3.0, 4.0]
+    assert list(frame["price"].values) == [1.0, 2.0, 3.0, 4.0]
 
 
 @respx.mock

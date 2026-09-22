@@ -59,6 +59,36 @@ class InstrumentHistory:
     frequency, not yet resampled onto the panel's chosen interval (that is
     ``snapshot.py``'s job, via ``align_funding_to_index``).
 
+    ``volume`` (docs/TASKS.md, T27): the candle's own traded-volume field,
+    in BASE-ASSET units (e.g. BTC, not USD), same index as ``prices`` —
+    every source fetcher parses it from the exact same candle response it
+    already parses price from, so there is no separate network cost. USD
+    volume is deliberately NOT stored here or anywhere downstream
+    (``qlab.data.panel.MarketPanel`` included): it is always recomputed as
+    ``volume * price`` at the point of use (see
+    `qlab.harness.capacity.book_daily_volume_usd`), because ``prices`` gets
+    cleaned after this point (``snapshot.py`` NaNs out corrupted prints via
+    `detect_bad_price_bars`) — storing a USD figure here would freeze it
+    against a price that a later step might still correct, and the two
+    would silently drift out of sync.
+
+    ``trade_count``: the candle's fill count (``"n"`` on Hyperliquid,
+    ``numberOfTrades`` on Binance), same index as ``prices``. Kept for raw
+    fidelity — it costs nothing to retain since it comes from the same
+    candle row as price/volume — but nothing downstream consumes it yet;
+    it exists so a future sanity check (e.g. "large volume, implausibly few
+    fills") has the data available without a second fetch.
+
+    Genuine zero volume (a bar with no trades) and UNKNOWN volume are
+    different facts and must stay distinguishable end to end — this is the
+    same class of error `qlab.harness.accrual` already guards for funding
+    (an unknown rate is not a zero rate). A raw fetch never produces an
+    unknown-volume bar for a timestamp it actually returns (the venue
+    always includes ``v``/``n`` on every candle row); "unknown" only
+    happens where a raw cache entry predates volume support at all — see
+    `load_cached_history`, which detects that case explicitly and forces a
+    re-fetch rather than returning a frame with a fabricated zero.
+
     ``first_seen``/``last_seen`` bound the instrument's tradeable life
     within the requested window. ``is_delisted`` says whether that life
     ended because the instrument was actually delisted (so
@@ -83,6 +113,8 @@ class InstrumentHistory:
     instrument: str
     prices: pd.Series
     funding: pd.Series
+    volume: pd.Series
+    trade_count: pd.Series
     first_seen: pd.Timestamp
     last_seen: pd.Timestamp
     is_delisted: bool
@@ -109,19 +141,40 @@ def load_cached_history(
     cache_dir: Path, source: str, instrument: str, interval: str, start, end
 ) -> InstrumentHistory | None:
     """Return a previously fetched history, or None. Never raises: a corrupt
-    or half-written cache entry is treated as absent and refetched."""
+    or half-written cache entry is treated as absent and refetched.
+
+    A cache entry written before volume support existed (docs/TASKS.md,
+    T27) has ``price``/``funding`` columns only. That is detected here
+    EXPLICITLY (``"volume" not in frame.columns``) and treated exactly like
+    a missing file -- return None so `fetch_universe_resumable` re-fetches
+    from the venue. The alternative -- backfilling a missing ``volume``
+    column with 0.0 -- would silently turn "we never asked the venue" into
+    "the venue reported no trading", which is a different, false claim
+    (see `InstrumentHistory`'s docstring: unknown volume is not zero
+    volume, the same class of bug `qlab.harness.accrual` guards against for
+    funding). This check must be an explicit column test, not incidental
+    reliance on `frame["volume"]` raising inside the broad `except`
+    below -- that would happen to work today but silently stop working the
+    moment this function's error handling changes shape.
+    """
     frame_path, meta_path = _cache_paths(cache_dir, source, instrument, interval, start, end)
     if not frame_path.exists() or not meta_path.exists():
         return None
     try:
         frame = pd.read_parquet(frame_path)
+        if "volume" not in frame.columns or "trade_count" not in frame.columns:
+            return None
         meta = json.loads(meta_path.read_text())
         prices = frame["price"].dropna()
         funding = frame["funding"].dropna()
+        volume = frame["volume"].dropna()
+        trade_count = frame["trade_count"].dropna().astype("int64")
         return InstrumentHistory(
             instrument=instrument,
             prices=prices,
             funding=funding,
+            volume=volume,
+            trade_count=trade_count,
             first_seen=pd.Timestamp(meta["first_seen"]),
             last_seen=pd.Timestamp(meta["last_seen"]),
             is_delisted=bool(meta["is_delisted"]),
@@ -144,7 +197,14 @@ def store_cached_history(
         cache_dir, source, history.instrument, interval, start, end
     )
     frame_path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame({"price": history.prices, "funding": history.funding})
+    frame = pd.DataFrame(
+        {
+            "price": history.prices,
+            "funding": history.funding,
+            "volume": history.volume,
+            "trade_count": history.trade_count,
+        }
+    )
     frame.to_parquet(frame_path)
     meta_path.write_text(
         json.dumps(

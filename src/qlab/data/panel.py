@@ -47,7 +47,7 @@ from dataclasses import dataclass, replace
 
 import pandas as pd
 
-_FRAME_NAMES = ("prices", "funding", "tradeable")
+_FRAME_NAMES = ("prices", "funding", "tradeable", "volume")
 
 
 def _require_utc_datetime_index(index: pd.Index, label: str) -> None:
@@ -131,8 +131,39 @@ class MarketPanel:
     funding: pd.DataFrame
     tradeable: pd.DataFrame
     meta: Mapping[str, object]
+    volume: pd.DataFrame | None = None
+    """Base-asset traded volume (docs/TASKS.md, T27), same shape as
+    ``prices``. NaN means UNKNOWN volume (never fetched, or a bar the
+    instrument wasn't listed for) -- never zero; a bar with genuinely no
+    trades is a real ``0.0``, not NaN. USD volume is deliberately not a
+    separate frame here: compute it as ``volume * prices`` at the point of
+    use (see `qlab.harness.capacity`), since `prices` may have been NaN'd
+    for quality reasons (`qlab.data.sources.base.detect_bad_price_bars`)
+    after this point, and a stored USD figure would silently drift out of
+    sync with it.
+
+    Defaults to ``None``, which backfills to an all-NaN frame ("volume
+    entirely unknown") in `__post_init__` -- the honest state for any
+    panel built before volume support existed, or by a caller (a test, a
+    hand-built fixture) that has no volume data at all. This is the same
+    "omission means literally unknown, not a guessed zero" contract
+    `qlab.harness.accrual.NO_ACCRUAL` enforces for funding, applied here as
+    a default rather than a required sentinel because, unlike accrual,
+    nothing today computes P&L off `volume` -- an all-NaN frame simply
+    means every liquidity/capacity measurement over it comes back "cannot
+    tell", which is the correct answer, not a silently wrong number.
+    """
 
     def __post_init__(self) -> None:
+        if self.volume is None:
+            object.__setattr__(
+                self,
+                "volume",
+                pd.DataFrame(
+                    float("nan"), index=self.prices.index, columns=self.prices.columns
+                ),
+            )
+
         for name in _FRAME_NAMES:
             frame = getattr(self, name)
             if not isinstance(frame, pd.DataFrame):
@@ -145,12 +176,16 @@ class MarketPanel:
             raise ValueError("prices.index and funding.index must be identical")
         if not self.prices.index.equals(self.tradeable.index):
             raise ValueError("prices.index and tradeable.index must be identical")
+        if not self.prices.index.equals(self.volume.index):
+            raise ValueError("prices.index and volume.index must be identical")
 
         price_cols = list(self.prices.columns)
         if list(self.funding.columns) != price_cols:
             raise ValueError("prices.columns and funding.columns must be identical (same order)")
         if list(self.tradeable.columns) != price_cols:
             raise ValueError("prices.columns and tradeable.columns must be identical (same order)")
+        if list(self.volume.columns) != price_cols:
+            raise ValueError("prices.columns and volume.columns must be identical (same order)")
 
         non_bool = [
             c for c, dt in self.tradeable.dtypes.items() if not pd.api.types.is_bool_dtype(dt)
@@ -185,6 +220,7 @@ class MarketPanel:
             prices=self.prices.loc[start_ts:end_ts],
             funding=self.funding.loc[start_ts:end_ts],
             tradeable=self.tradeable.loc[start_ts:end_ts],
+            volume=self.volume.loc[start_ts:end_ts],
         )
 
     def restrict(self, instruments: Sequence[str]) -> MarketPanel:
@@ -209,6 +245,7 @@ class MarketPanel:
             prices=self.prices[requested],
             funding=self.funding[requested],
             tradeable=self.tradeable[requested],
+            volume=self.volume[requested],
             meta=self._meta_with(universe_complete=False),
         )
 
@@ -245,6 +282,7 @@ class MarketPanel:
             prices=self.prices.loc[index, columns],
             funding=self.funding.loc[index, columns],
             tradeable=self.tradeable.loc[index, columns],
+            volume=self.volume.loc[index, columns],
             meta=self._meta_with(universe_complete=False),
         )
 
