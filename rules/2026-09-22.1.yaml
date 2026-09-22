@@ -1,0 +1,80 @@
+# T27/T28: the return bar stops being shape-blind.
+#
+# `2026-09-21.1`'s `net_edge_positive` is a fixed number on an absolute
+# return axis: `ann_return_net >= 0.04`. That is the right test of the
+# owner's economic floor (beat stablecoin staking) and the wrong test of
+# whether a result is distinguishable from noise, because what 4% net
+# annual return MEANS depends entirely on the shape of the book it was
+# earned on:
+#
+#   noise matched to trend's ~150-leg book clears 4% net     1.0% of the time
+#     (docs/CALIBRATION_2026-09-21.1.md, dollar-neutral series, 200 trials)
+#   noise matched to a 20-leg book, same panel, same rules   23.5% of the time
+#     (docs/CALIBRATION_2026-09-21.1__xsmom-honest-20legs.md, same series,
+#      same trial count), best noise sharpe_net 2.198
+#
+# Nothing about the RULES differs between those two numbers. Only the book.
+# The same fixed 4% bar lets roughly one concentrated random book in four
+# through -- which is exactly how a variant of XSMOM was routed to `paper`
+# at sharpe_net 1.042 (docs/XSMOM_T21.md, "Ревизия").
+#
+# `net_edge_positive` is UNCHANGED below and stays fatal: it is not what is
+# broken. A strategy earning 3% net is still not worth holding, whatever its
+# percentile against noise -- beating a concentrated noise distribution 99
+# times out of 100 is not the same claim as beating the stablecoin
+# alternative, and this ruleset requires both, independently.
+
+version: "2026-09-22.1"
+based_on: "2026-09-21.1"
+
+rules:
+  - id: shape_aware_edge
+    stage: edge
+    # `qlab.calibration.percentile.compute_shape_aware_percentiles`, folded
+    # into the candidate's own metrics by
+    # `qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar` --
+    # the share of a matched noise sample (same rules/costs/accrual as the
+    # candidate, structurally matched to the CANDIDATE's own book via
+    # `qlab.calibration.run.run_noise_series`, dollar-neutral series, 200
+    # trials) that the candidate beats on `ann_return_net`. Absent from a
+    # trial's metrics whenever that trial was not evaluated through
+    # `evaluate_spec_with_shape_aware_bar` (e.g. a plain `qlab evaluate`
+    # run, or a matched calibration that has not been run yet) -- see this
+    # rule's `fatal`/threshold note below for what that absence means.
+    metric: noise_return_percentile
+    comparator: ">="
+    threshold: 0.99
+    fatal: true
+    near_margin: 0.1
+    rationale: >
+      Same idea `net_edge_positive` already applies to trend's book, made
+      explicit and extended to every book shape. `2026-09-21.1`, applied to
+      the ONE book shape it happens to have been calibrated against
+      (trend, ~150 legs), lets 1.0% of pure dollar-neutral noise through
+      (docs/CALIBRATION_2026-09-21.1.md). This rule holds that SAME
+      false-admission rate -- 1%, i.e. the candidate must sit at or above
+      the 99th percentile of noise matched to its OWN book -- constant
+      across every book shape, instead of leaving it to float with each
+      book's own noise spread the way a fixed return threshold does.
+
+      1.0% (hence threshold 0.99) is not a number invented for this rule:
+      it is `2026-09-21.1`'s own measured behaviour on the one book shape
+      it was actually calibrated against, taken as given rather than
+      re-derived. It is NOT necessarily the false-admission rate the owner
+      would choose if asked directly -- nobody has asked, and the owner may
+      want a different rate once shown this table (docs/T28_SHAPE_AWARE_BAR.md
+      flags this explicitly). Changing it later is a new ruleset version,
+      same as any other threshold change in this file.
+
+      `fatal: true`, matching `net_edge_positive`'s own fatal status in the
+      same stage: this is a second, independent edge-stage floor, not a
+      tail/profile-stage refinement of the first one. A missing
+      `noise_return_percentile` (calibration not run for this candidate)
+      reads as `qlab.rules.engine.evaluate`'s ordinary "unknown" verdict --
+      neither a pass nor a fatal failure -- which routes the candidate to
+      `needs-more-data`, never to `paper`/`shelf`; see
+      `qlab.pipeline.evaluate.decide_route`. A verdict without its own
+      calibration is not interpretable (CLAUDE.md), so it must never read
+      as an admission by omission.
+
+retired: []

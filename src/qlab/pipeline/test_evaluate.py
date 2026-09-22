@@ -372,6 +372,105 @@ def test_route_paper_when_passed_and_affordable(session, tmp_path) -> None:
         assert v.passed is True
 
 
+def test_extra_metrics_mapping_is_merged_and_persisted(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+
+    result = evaluate_spec(
+        spec,
+        session=session,
+        ruleset=ruleset,
+        deployable_capital_usd=1000.0,
+        extra_metrics={"noise_return_percentile": 0.995},
+    )
+
+    assert result.error is None
+    assert result.metrics["noise_return_percentile"] == pytest.approx(0.995)
+    trial = session.get(Trial, result.trial_id)
+    assert trial.metrics["noise_return_percentile"] == pytest.approx(0.995)
+
+
+def test_extra_metrics_callable_sees_the_computed_base_metrics(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+    seen: dict[str, float] = {}
+
+    def _extra(base_metrics: dict[str, float]) -> dict[str, float]:
+        seen.update(base_metrics)
+        return {"double_ann_return_net": base_metrics["ann_return_net"] * 2}
+
+    result = evaluate_spec(
+        spec,
+        session=session,
+        ruleset=ruleset,
+        deployable_capital_usd=1000.0,
+        extra_metrics=_extra,
+    )
+
+    assert result.error is None
+    assert "ann_return_net" in seen  # the callable saw the real backtest metrics
+    assert result.metrics["double_ann_return_net"] == pytest.approx(
+        result.metrics["ann_return_net"] * 2
+    )
+
+
+def test_extra_metrics_omitted_key_reads_as_unknown_not_a_pass(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    percentile_rule = Rule(
+        id="shape_aware_edge",
+        stage=Stage.EDGE,
+        metric="noise_return_percentile",
+        comparator=Comparator.GE,
+        threshold=0.99,
+        fatal=True,
+    )
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, percentile_rule])
+
+    # extra_metrics deliberately returns no key for a metric it could not
+    # compute (e.g. no usable matched-noise sample) -- must not read as a
+    # pass just because nothing failed.
+    result = evaluate_spec(
+        spec,
+        session=session,
+        ruleset=ruleset,
+        deployable_capital_usd=1000.0,
+        extra_metrics=lambda _base: {},
+    )
+
+    assert result.error is None
+    assert "noise_return_percentile" not in result.metrics
+    assert result.rules_result.decisive is False
+    assert "noise_return_percentile" in result.rules_result.unknown_metrics
+    assert result.routing.route == "needs-more-data"
+
+
+def test_extra_metrics_raising_is_recorded_as_an_error_trial(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+
+    def _boom(_base: dict[str, float]) -> dict[str, float]:
+        raise ValueError("no usable noise sample")
+
+    result = evaluate_spec(
+        spec,
+        session=session,
+        ruleset=ruleset,
+        deployable_capital_usd=1000.0,
+        extra_metrics=_boom,
+    )
+
+    assert result.error is not None
+    assert "no usable noise sample" in result.error
+    assert result.routing.route == "error"
+    trial = session.get(Trial, result.trial_id)
+    assert trial.status == TrialStatus.ERROR
+    assert trial.metrics is None
+
+
 def test_route_shelf_when_min_capital_exceeds_deployable(session, tmp_path) -> None:
     _register_discovered(session, tmp_path)
     spec = _make_spec(params={"weight": 0.001})  # min_capital_usd = 12000

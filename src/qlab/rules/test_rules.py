@@ -585,3 +585,100 @@ def test_first_ruleset_evaluates_without_crashing() -> None:
     result = evaluate(metrics, ruleset)
     assert result.overall_passed is True
     assert result.unknown_metrics == ()
+
+
+# --------------------------------------------------------------------------
+# rules/2026-09-22.1.yaml -- the shape-aware admission bar (docs/TASKS.md T28)
+# --------------------------------------------------------------------------
+
+
+def test_shape_aware_ruleset_file_exists() -> None:
+    assert (DEFAULT_RULES_DIR / "2026-09-22.1.yaml").is_file()
+
+
+def test_shape_aware_ruleset_inherits_net_edge_positive_unchanged() -> None:
+    base = load("2026-09-21.1")
+    shape_aware = load("2026-09-22.1")
+
+    base_edge = next(r for r in base.rules if r.id == "net_edge_positive")
+    inherited_edge = next(r for r in shape_aware.rules if r.id == "net_edge_positive")
+
+    # `based_on` inheritance carries this rule over byte-for-byte -- T28's
+    # whole point is that the ECONOMIC floor is untouched, only a second,
+    # independent floor is added alongside it.
+    assert inherited_edge == base_edge
+
+    rule_ids = {r.id for r in shape_aware.rules}
+    assert "shape_aware_edge" in rule_ids
+
+
+def test_shape_aware_rule_is_fatal_edge_stage_with_threshold_at_99th_percentile() -> None:
+    ruleset = load("2026-09-22.1")
+    rule = next(r for r in ruleset.rules if r.id == "shape_aware_edge")
+
+    assert rule.stage is Stage.EDGE
+    assert rule.metric == "noise_return_percentile"
+    assert rule.comparator is Comparator.GE
+    assert rule.threshold == pytest.approx(0.99)
+    assert rule.fatal is True
+
+
+def test_shape_aware_rule_missing_percentile_is_unknown_not_a_pass() -> None:
+    """The whole discipline point of T28: a candidate evaluated without its
+    own matched calibration must never read as admitted just because the
+    percentile rule saw nothing to fail."""
+    ruleset = load("2026-09-22.1")
+    metrics = {
+        "venue_supported": 1.0,
+        "data_forward_available": 1.0,
+        "atomic_execution": 1.0,
+        "min_capital_usd": 100.0,
+        "point_in_time_universe": 1.0,
+        "accrual_applied": 1.0,
+        "ann_return_net": 0.32,  # comfortably clears net_edge_positive alone
+        # noise_return_percentile deliberately absent: calibration not run.
+    }
+    result = evaluate(metrics, ruleset)
+
+    assert result.overall_passed is False
+    assert result.decisive is False
+    assert "noise_return_percentile" in result.unknown_metrics
+    # missing is unknown, never a fatal failure in its own right
+    assert result.failed_fatal_rule_id is None
+
+
+def test_shape_aware_rule_rejects_candidate_below_99th_percentile() -> None:
+    ruleset = load("2026-09-22.1")
+    metrics = {
+        "venue_supported": 1.0,
+        "data_forward_available": 1.0,
+        "atomic_execution": 1.0,
+        "min_capital_usd": 100.0,
+        "point_in_time_universe": 1.0,
+        "accrual_applied": 1.0,
+        "ann_return_net": 0.32,
+        "noise_return_percentile": 0.84,  # e.g. XSMOM-20's own measured spot
+    }
+    result = evaluate(metrics, ruleset)
+
+    assert result.overall_passed is False
+    assert result.decisive is True
+    assert "shape_aware_edge" in result.failed_rule_ids
+
+
+def test_shape_aware_rule_admits_candidate_at_or_above_99th_percentile() -> None:
+    ruleset = load("2026-09-22.1")
+    metrics = {
+        "venue_supported": 1.0,
+        "data_forward_available": 1.0,
+        "atomic_execution": 1.0,
+        "min_capital_usd": 100.0,
+        "point_in_time_universe": 1.0,
+        "accrual_applied": 1.0,
+        "ann_return_net": 0.05,
+        "noise_return_percentile": 0.99,
+    }
+    result = evaluate(metrics, ruleset)
+
+    assert result.overall_passed is True
+    assert result.decisive is True

@@ -21,6 +21,7 @@ import hashlib
 import importlib
 import json
 import subprocess
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -380,8 +381,43 @@ def evaluate_spec(
     session: Session,
     ruleset: RuleSet,
     deployable_capital_usd: float,
+    extra_metrics: (
+        Mapping[str, float] | Callable[[dict[str, float]], Mapping[str, float]] | None
+    ) = None,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
+
+    `extra_metrics` (docs/TASKS.md T28, the shape-aware admission bar) lets a
+    caller fold metrics this pipeline cannot compute on its own into the
+    SAME metrics mapping the rules engine sees and the SAME trial row that
+    gets persisted -- rather than evaluating rules a second time out of
+    band, which would produce a second, competing verdict for one trial.
+    The motivating case: a percentile against matched noise
+    (`qlab.calibration.percentile.compute_shape_aware_percentiles`) needs
+    this run's OWN `ann_return_net`/`sharpe_net` to be computed first, so it
+    cannot be supplied as a plain dict up front -- pass a callable, invoked
+    with the metrics dict exactly as computed below (already including
+    `min_capital_usd`, `point_in_time_universe`, `accrual_applied`, and the
+    venue facts) and expected to return the extra keys to merge in. A plain
+    `Mapping` is accepted too, for metrics that do not depend on this run's
+    own numbers.
+
+    Invoked, and merged via `dict.update`, INSIDE the same try/except this
+    function already uses to isolate strategy/backtest failures: if
+    computing the extra metrics raises, this run is recorded as an `error`
+    trial exactly like a strategy that raises or a backtest that fails --
+    it is one more way "the metrics needed for a verdict were unobtainable
+    this run", not a different failure class needing its own handling.
+
+    A key `extra_metrics` chooses not to return for some run (e.g. no
+    usable matched-noise sample, `ShapeAwarePercentiles.return_percentile is
+    None`) must simply be ABSENT from the returned mapping, never present
+    with a `None`/`NaN` value -- `qlab.rules.engine.evaluate` treats a
+    missing key exactly like an explicit `None` (metric "unknown", never a
+    pass), but a `NaN` value would instead compare `False` against every
+    threshold and read as an ordinary rule failure, which is not the same
+    finding as "this could not be computed" (docs/REGISTRY.md's `unknown`
+    verdict kind exists precisely to keep those two apart).
 
     Pipeline order (a deliberate deviation from a strictly literal reading
     of this task's step list, forced by `docs/REGISTRY.md`'s own schema):
@@ -453,6 +489,9 @@ def evaluate_spec(
                 simultaneous_legs=spec.simultaneous_legs,
             )
         )
+        if extra_metrics is not None:
+            resolved_extra = extra_metrics(metrics) if callable(extra_metrics) else extra_metrics
+            metrics.update(resolved_extra)
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary; this
         # is the pipeline's error-isolation boundary. Anything from here on
         # (a missing code_ref, a strategy that raises, invalid weights, a
