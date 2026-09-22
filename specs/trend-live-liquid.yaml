@@ -1,0 +1,69 @@
+# Live trend code on a POINT-IN-TIME liquid universe.
+#
+# THE QUESTION THIS SPEC EXISTS TO ANSWER. `specs/trend-live.yaml` runs the
+# live engine's own 25-coin `DEFAULT_COINS` list and returns +12.14%/yr; the
+# same live code on the full discovered universe returns +4.46%. The list was
+# committed to funding-rate-arbitrage on 2026-09-14 (commit 5bb0d2f) and is
+# applied here to a window starting 2025-01-01 -- coins chosen in September
+# 2026 for being "liquid HL perps with enough history", applied backwards
+# across twenty months. That is the same construction as XSMOM's 32-coin
+# universe frozen 2026-06-12, whose survivorship cost the audit 1.21 -> 0.76
+# in Sharpe (docs/XSMOM_T21.md).
+#
+# Liquidity is a legitimate selection criterion. Hindsight is not. The two are
+# separable and this spec separates them: `coins: null` makes every discovered
+# instrument a candidate, and `min_daily_volume_usd` admits each one only on
+# the bars where its OWN trailing 24h of traded volume, observed strictly
+# before that bar, cleared the threshold (T27 item 2; the shift that enforces
+# strictness is regression-tested by deliberate removal).
+#
+#   result near +12% -> the 25-coin list was legitimate liquidity selection
+#   result near +4.5% -> it was hindsight, and paper is running a strategy
+#                        with the disease that cost real money on XSMOM
+#
+# THE THRESHOLD IS NOT INVENTED. $1M/day is the live engine's own stated
+# liquidity criterion, transcribed from `frab/strategy/xsmom/params.py:9`
+# ("vol>=$1M"), where it was applied to build exactly this kind of candidate
+# list. trend's own params name no number -- its comment says only "liquid HL
+# perps" -- so the venue-mate's explicit figure is used rather than a guess,
+# and the sensitivity to it is reported alongside the result rather than
+# hidden.
+
+idea_id: trend-live-liquid
+title: "Trend (живой код) на point-in-time ликвидном универсе — контроль на отбор задним числом"
+code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
+
+params:
+  # null -> every instrument the panel has is a candidate; the liquidity
+  # filter below, not a hand-written list, decides which are tradeable when.
+  coins: null
+  capital_usd: 3000.0
+  lookbacks: [30, 60, 90, 120]
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.30
+  min_history_days: 151
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+  # `frab/strategy/xsmom/params.py:9` -- the venue's own stated floor for a
+  # tradeable candidate. Applied per bar on trailing volume, never on the
+  # whole window's volume.
+  min_daily_volume_usd: 1000000.0
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 1

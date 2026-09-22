@@ -88,7 +88,9 @@ from collections.abc import Mapping
 
 import pandas as pd
 
+from qlab.data.snapshot import _top_k_by_volume_mask
 from qlab.harness.accrual import compute_accrual
+from qlab.harness.capacity import _bar_interval
 from qlab.harness.panel import MarketPanel
 from qlab.strategies.live._loader import import_frab
 
@@ -113,7 +115,22 @@ class LiveTrendTSMOMEnsemble:
     name = "trend-live"
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
-        trend_params = TrendParams.from_dict(dict(params))
+        raw_params = dict(params)
+        # `coins: null` means "every instrument this panel has", the same
+        # convention `specs/trend.yaml` and `specs/xsmom.yaml` already use
+        # for an unrestricted universe. The live `TrendParams` cannot hold
+        # it -- its own validator rejects an empty coin list, because in
+        # production the list is always a deliberate choice -- so the panel's
+        # columns are substituted here, before the live dataclass is built.
+        #
+        # This is what makes the point-in-time liquidity experiment possible:
+        # with `coins: null` the candidate set is the whole discovered
+        # universe and `data.min_daily_volume_usd` decides, per bar, which of
+        # them were liquid enough BEFORE that bar -- as opposed to a fixed
+        # list written on one date and applied backwards (docs/T29_LIVE_TREND.md).
+        if raw_params.get("coins") is None:
+            raw_params["coins"] = list(panel.prices.columns)
+        trend_params = TrendParams.from_dict(raw_params)
 
         prices = panel.prices
         index = prices.index
@@ -125,6 +142,33 @@ class LiveTrendTSMOMEnsemble:
         # docstring's "what this does not reproduce" for coins named but
         # absent from the panel.
         traded_coins = [c for c in trend_params.coins if c in columns]
+
+        # `top_k_by_volume` — the point-in-time counterpart of a hand-written
+        # coin list. The live engine's `coins` IS a strategy parameter, so its
+        # honest analogue belongs here rather than in the snapshot: at each
+        # bar the candidate set becomes the k most traded instruments by
+        # trailing 24h USD volume observed strictly BEFORE that bar.
+        #
+        # k is held FIXED on purpose. A plain volume threshold lets the
+        # surviving count drift with the market's overall liquidity, and book
+        # breadth is not a neutral detail — the same idea on 20 legs and on
+        # 148 behaved as two different strategies (docs/XSMOM_T21.md), and the
+        # $1M threshold run held a median of 53 legs against the live list's
+        # 25. Comparing a 25-leg book with a 53-leg one measures breadth and
+        # selection at once and therefore measures neither. With k fixed at
+        # the live list's own length, exactly one thing differs between the
+        # two runs: WHEN the coins were chosen.
+        top_k = raw_params.get("top_k_by_volume")
+        rank_mask: pd.DataFrame | None = None
+        if top_k is not None:
+            if panel.volume is None or bool(panel.volume.isna().all().all()):
+                raise ValueError(
+                    "top_k_by_volume needs a panel carrying volume; this snapshot has none "
+                    "(unknown volume is not zero volume — rebuild the snapshot)"
+                )
+            rank_mask = _top_k_by_volume_mask(
+                prices, panel.volume, _bar_interval(index), int(top_k)
+            )
 
         running_closes: dict[str, list[float]] = {c: [] for c in traded_coins}
         weight_rows: list[dict[str, float]] = []
@@ -156,8 +200,14 @@ class LiveTrendTSMOMEnsemble:
             raw_weights = _signals.target_weights(closes_by_coin, trend_params, size_scale=scale)
 
             tradeable_row = panel.tradeable.iloc[i]
+            rank_row = None if rank_mask is None else rank_mask.iloc[i]
             weights_i = {
-                coin: (raw_weights.get(coin, 0.0) if bool(tradeable_row.get(coin, False)) else 0.0)
+                coin: (
+                    raw_weights.get(coin, 0.0)
+                    if bool(tradeable_row.get(coin, False))
+                    and (rank_row is None or bool(rank_row.get(coin, False)))
+                    else 0.0
+                )
                 for coin in traded_coins
             }
             weight_rows.append(weights_i)

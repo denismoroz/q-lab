@@ -1,0 +1,65 @@
+# Live trend code on the 25 MOST TRADED coins as of each bar.
+#
+# THE CLEAN VERSION OF THE HINDSIGHT TEST. `specs/trend-live.yaml` runs the
+# live engine's hand-written 25-coin `DEFAULT_COINS`, committed to
+# funding-rate-arbitrage on 2026-09-14 (commit 5bb0d2f) and applied to a
+# window opening 2025-01-01. It returns +12.14%/yr against +4.46% for the
+# same code on the full discovered universe.
+#
+# The first attempt to separate legitimate liquidity selection from hindsight
+# (`specs/trend-live-liquid.yaml`, a $1M/day point-in-time THRESHOLD) returned
+# +1.08% -- but it is not a clean answer, because a threshold does not fix how
+# MANY coins survive: it held a median of 53 legs against the live list's 25.
+# Book breadth is not a neutral detail. The same idea on 20 legs and on 148
+# behaved as two different strategies (docs/XSMOM_T21.md), so a comparison
+# that changes the selection rule AND the leg count measures neither.
+#
+# This spec holds breadth at the live list's own length and changes exactly
+# one thing: WHEN the coins were chosen. `top_k_by_volume: 25` ranks every
+# discovered instrument at each bar by its trailing 24h of USD volume observed
+# strictly BEFORE that bar, and trades the top 25.
+#
+#   result near +12% -> the live list is what honest liquidity selection picks
+#                       anyway, and trend earns its number
+#   result near +4.5% -> the list is hindsight, and paper is running a strategy
+#                        with the disease that cost real money on XSMOM
+#
+# Nothing here is tuned: 25 is the live list's length, not a chosen number, and
+# the ranking criterion is the liquidity the live comment already names
+# ("Liquid HL perps with enough history for a 120-day lookback").
+
+idea_id: trend-live-top25
+title: "Trend (живой код) — 25 самых торгуемых монет на каждом баре (point-in-time аналог живого списка)"
+code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
+
+params:
+  # null -> every discovered instrument is a candidate; the per-bar ranking
+  # below, not a hand-written list, decides which 25 are traded when.
+  coins: null
+  top_k_by_volume: 25
+  capital_usd: 3000.0
+  lookbacks: [30, 60, 90, 120]
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.30
+  min_history_days: 151
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 1

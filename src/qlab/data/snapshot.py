@@ -334,6 +334,43 @@ def _liquidity_eligible_mask(
     return (trailing >= min_daily_volume_usd).fillna(False)
 
 
+def _top_k_by_volume_mask(
+    prices: pd.DataFrame,
+    volume: pd.DataFrame,
+    bar_interval: pd.Timedelta,
+    k: int,
+) -> pd.DataFrame:
+    """Point-in-time "the k most traded instruments", the ranked counterpart
+    of `_liquidity_eligible_mask`.
+
+    WHY A RANK AND NOT ONLY A THRESHOLD. A threshold changes how MANY
+    instruments survive as the market's overall liquidity moves, and book
+    breadth is not a neutral detail: the same idea on 20 legs and on 148
+    behaved like two different strategies in `docs/XSMOM_T21.md`, and a
+    comparison that varies the selection rule AND the leg count at once
+    measures neither. Holding `k` fixed is what makes "the live engine's
+    hand-written 25-coin list" and "the 25 most traded coins as of each
+    bar" answer the same question with one difference between them: WHEN
+    the choice was made.
+
+    Same causality as the threshold mask and for the same reason: the
+    ranking at bar ``t`` uses the trailing 24h of USD volume ending
+    strictly BEFORE ``t``. An instrument with unknown trailing volume (not
+    enough history, or volume itself unknown) cannot be ranked and is
+    excluded, never ranked last-but-included.
+
+    Ties are broken by `rank(method="first")`, i.e. by column order, so the
+    mask is deterministic. Exact ties in a 24h dollar volume are
+    vanishingly unlikely on real data; the determinism matters for
+    reproducibility, not for fairness between instruments.
+    """
+    bars = max(round(_LIQUIDITY_WINDOW / bar_interval), 1)
+    volume_usd = volume * prices
+    trailing = volume_usd.rolling(window=bars, min_periods=bars).sum().shift(1)
+    ranks = trailing.rank(axis=1, ascending=False, method="first")
+    return (ranks <= k).fillna(False)
+
+
 def describe_universe(source: str, *, include_spot: bool = False) -> list[tuple[str, bool]] | None:
     """Return ``[(instrument, is_delisted), ...]`` for `source`'s full
     point-in-time universe, or ``None`` if the source's free API cannot

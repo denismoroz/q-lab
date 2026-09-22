@@ -148,6 +148,7 @@ def _find_matching_snapshot(
     interval: str,
     instruments: list[str] | None,
     include_spot: bool,
+    min_daily_volume_usd: float | None,
 ) -> str | None:
     """Find a `data_snapshot` already on disk that answers this exact data
     request, without ever hitting the network.
@@ -182,6 +183,7 @@ def _find_matching_snapshot(
         )
         .all()
     )
+    matches: list[str] = []
     for row in candidates:
         manifest_path = Path(row.path) / "manifest.json"
         if not manifest_path.is_file():
@@ -202,6 +204,16 @@ def _find_matching_snapshot(
         has_spot = any(str(name).endswith(SPOT_COLUMN_SUFFIX) for name in names)
         if has_spot != include_spot:
             continue
+        # A liquidity-filtered snapshot and an unfiltered one answer
+        # different requests even when source/range/interval/instruments all
+        # agree: the filter lives in `tradeable`, so reusing an unfiltered
+        # snapshot for a filtered spec would silently apply NO filter and
+        # produce a result labelled as filtered. `manifest.get` returns None
+        # for snapshots built before the field existed, which compares equal
+        # to an unfiltered request and unequal to any filtered one -- the
+        # safe direction.
+        if manifest.get("min_daily_volume_usd") != min_daily_volume_usd:
+            continue
         if wanted_instruments is None:
             if not manifest.get("universe_complete"):
                 continue
@@ -210,8 +222,22 @@ def _find_matching_snapshot(
                 continue
             if sorted(manifest.get("instruments", [])) != wanted_instruments:
                 continue
-        return str(row.id)
-    return None
+        matches.append(str(row.id))
+
+    if not matches:
+        return None
+    # Prefer a snapshot that carries volume. One that does is a strict
+    # superset of one that does not -- same panel, same tradeable mask, plus a
+    # frame -- so preferring it is never wrong, and NOT preferring it silently
+    # shadows the newer snapshot with an older volume-less one for every spec
+    # whose strategy needs volume (`top_k_by_volume` raised rather than
+    # guessing, which is how this was found; "unknown volume is not zero
+    # volume" is the same rule `qlab.harness.accrual` applies to funding).
+    for snapshot_id in matches:
+        row = session.get(DataSnapshot, snapshot_id)
+        if row is not None and (Path(row.path) / "volume.parquet").is_file():
+            return snapshot_id
+    return matches[0]
 
 
 def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
@@ -228,6 +254,7 @@ def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         interval=data_block.interval,
         instruments=data_block.instruments,
         include_spot=data_block.include_spot,
+        min_daily_volume_usd=data_block.min_daily_volume_usd,
     )
     if existing_id is not None:
         return load_snapshot(existing_id, session=session)
@@ -239,6 +266,7 @@ def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         data_block.end,
         data_block.interval,
         include_spot=data_block.include_spot,
+        min_daily_volume_usd=data_block.min_daily_volume_usd,
         session=session,
     )
 
