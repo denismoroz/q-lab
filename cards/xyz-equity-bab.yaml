@@ -1,0 +1,285 @@
+# Карточка кандидата M2.5. Схема: cards/SCHEMA.md.
+# Прогон 2026-09-22.2 — ограничения владельца применены ПЕРВЫМ фильтром
+# (docs/SEARCH_CONSTRAINTS.md), а не после отбора.
+# Цитаты из англоязычных источников приведены дословно и не переводятся.
+
+idea_id: xyz-equity-bab
+title: "Премия, которую платит инвестор, ограниченный в плече: кросс-секционная книга low-beta против high-beta на HIP-3 перпах trade[XYZ]"
+found_at: 2026-09-22
+
+sources:
+  - url: https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25
+    title: "Betting against beta (Andrea Frazzini, Lasse Heje Pedersen), Journal of Financial Economics 111(1), 1-25"
+    published: 2014-01
+  - url: https://docs.trade.xyz/overview/relationship-to-hyperliquid
+    title: "Relationship to Hyperliquid — trade[XYZ] Docs"
+    published: null
+  - url: https://docs.trade.xyz/perpetuals/mechanics/fees
+    title: "Fees — trade[XYZ] Docs (HIP-3 fee tiers, growth mode)"
+    published: null
+  - url: https://docs.trade.xyz/perpetuals/mechanics/discovery-bounds
+    title: "Discovery Bounds — trade[XYZ] Docs"
+    published: null
+  - url: https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index
+    title: "Specification Index — trade[XYZ] Docs (плечо, сессии, множитель funding по инструментам)"
+    published: null
+  - url: "собственный запрос к https://api.hyperliquid.xyz/info (metaAndAssetCtxs по dex + candleSnapshot), 2026-09-22"
+    title: "Замер глубины истории и оборота по всем 289 инструментам девяти HIP-3 деплоев HL"
+    published: 2026-09
+
+driver:
+  who_pays: >-
+    Инвестор, которому запрещено или дорого брать плечо: частное лицо, пенсионный
+    или взаимный фонд, мандат которого ограничивает заимствование. Нуждаясь в
+    доходности выше рыночной и не имея права её занять, он покупает вместо этого
+    более рискованные бумаги — и переплачивает за них. Плата достаётся тому, кто
+    плечо взять может.
+  why: >-
+    Спрос ограниченных в плече инвесторов смещён в сторону высокобетовых активов,
+    поэтому высокая бета связана с низкой альфой. Книга, длинная в низкобетовых
+    активах с плечом и короткая в высокобетовых, собирает эту разницу. Источник
+    проверяет это на акциях США, 20 зарубежных рынках акций, гособлигациях,
+    корпоративных облигациях и фьючерсах — то есть эффект не привязан к одному
+    классу.
+  kill_condition: >-
+    Названа в самом источнике и в двух формах. (1) Ужесточение условий
+    фондирования: когда фондирование сжимается, доходность BAB-фактора низка.
+    (2) Схождение бет: рост риска ликвидности фондирования сжимает беты к
+    единице, и разделять активы становится нечем. Третья, не рыночная форма
+    касается именно этого способа исполнения: кандидат живёт ровно столько,
+    сколько живёт деплой `xyz` на Hyperliquid.
+  observable: >-
+    Разброс оценённых бет по универсу (сжимается к единице — драйвер гаснет);
+    альфа портфелей, отсортированных по бете, на скользящем окне; суточный
+    оборот по каждому инструменту `xyz` (жив ли деплой). Все три считаются из
+    бесплатного API HL, кроме фондовых условий, которые наблюдаются внешне.
+  quote:
+    text: >-
+      "We present a model with leverage and margin constraints that vary across
+      investors and time. We find evidence consistent with each of the model's
+      five central predictions: (1) Because constrained investors bid up
+      high-beta assets, high beta is associated with low alpha, as we find
+      empirically for US equities, 20 international equity markets, Treasury
+      bonds, corporate bonds, and futures. (2) A betting against beta (BAB)
+      factor, which is long leveraged low-beta assets and short high-beta
+      assets, produces significant positive risk-adjusted returns. (3) When
+      funding constraints tighten, the return of the BAB factor is low. (4)
+      Increased funding liquidity risk compresses betas toward one. (5) More
+      constrained investors hold riskier assets."
+    source: https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25
+
+signal:
+  entry: >-
+    Периодическая (у источника — месячная) пересборка: ранжирование инструментов
+    универса по оценённой бете к рыночному портфелю, длинная корзина из нижней
+    половины с плечом до беты 1, короткая корзина из верхней половины с
+    масштабированием до беты 1. Никакого прогноза направления рынка не требуется.
+  exit: >-
+    Только ребаланс. Правила выхода по цене у фактора нет: позиция закрывается
+    тогда, когда инструмент покидает свою половину ранжирования.
+  data_needed:
+    - "дневные свечи перпов деплоя `xyz` (coin вида `xyz:AAPL`) — цена для оценки беты"
+    - "дневные свечи рыночного прокси (`xyz:SP500` либо `xyz:XYZ100`)"
+    - "fundingHistory по тем же инструментам — обе ноги перповые и обе платят/получают funding"
+  timeframe: >-
+    Месячный ребаланс на дневных данных (горизонт источника). Более частый
+    ребаланс в источнике не рассматривается.
+  quote:
+    text: >-
+      "A betting against beta (BAB) factor, which is long leveraged low-beta
+      assets and short high-beta assets, produces significant positive
+      risk-adjusted returns."
+    source: https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25
+
+sizing:
+  rule: >-
+    Обе ноги масштабируются до беты 1 — это и есть определение фактора у
+    источника, а не отдельно выбранное правило. Длинная нога требует плеча,
+    короткая — сокращения; плечо на площадке есть: 20x на AAPL и NVDA, 50x на
+    SP500, 10x на большинстве одиночных бумаг (Specification Index).
+  binding_constraint: >-
+    Число инструментов с достаточной историей. Замер 2026-09-22: в деплое `xyz`
+    123 инструмента, оборот выше $1M/сутки у 64, а вот И оборот выше $1M/сутки,
+    И не меньше 250 дневных баров — только у 26. Кросс-секционная книга строится
+    на этих 26, и это верхняя граница ширины универса, а не выбор.
+  quote:
+    text: >-
+      "Fee tiers are based on rolling 14-day weighted volume and are assessed
+      daily in UTC. One tier applies across all perps, HIP-3 perps, and spot."
+    source: https://docs.trade.xyz/perpetuals/mechanics/fees
+  note: >-
+    Цитата приведена не про размер позиции, а про то, что ступень комиссии общая
+    для обычных перпов, HIP-3 и спота: оборот кросс-секционной книги работает на
+    удешевление остальных стратегий владельца, и наоборот. Правила размера
+    позиции в терминах капитала в источнике нет.
+
+protection:
+  crash: >-
+    Структурная, ВТОРОГО из четырёх сортов по docs/SEARCH_CONSTRAINTS.md:
+    кросс-секционная нейтральность. Книга бета-нейтральна по построению — обе
+    ноги приведены к бете 1 и вычитаются, рыночный риск гасится ВНУТРИ универса,
+    и внешнего инструмента для этого не требуется. Это конструкция, а не фильтр:
+    она не предсказывает крах, ей крах безразличен в той мере, в какой беты
+    оценены верно.
+  pump: >-
+    Тем же механизмом и симметрично: книга не имеет чистой рыночной экспозиции
+    ни в одну сторону.
+  costs: null
+  structural: true
+  note: >-
+    Границы защиты названы в самом источнике и их две. Первая: нейтральность
+    держится на ОЦЕНЁННОЙ бете, а оценка ломается ровно в стрессе — «Increased
+    funding liquidity risk compresses betas toward one», то есть в кризис
+    активы перестают различаться по бете и книга перестаёт быть тем, чем была.
+    Вторая: у фактора есть собственный режим потерь — «When funding constraints
+    tighten, the return of the BAB factor is low», и он не устраняется
+    нейтральностью. Против костов защиты нет вовсе, и здесь это дороже обычного:
+    базовые ставки HIP-3 ВДВОЕ выше обычных перпов HL — 0.090% тейкер и 0.030%
+    мейкер. Growth mode срезает их на 90% и более, но доступен не всем
+    инструментам, и какие именно из 26 в нём находятся, в документации по
+    инструментам не перечислено — проверяемо только фактическим ордером.
+  quote:
+    text: >-
+      "Standard fees for all HIP-3 assets are currently 2x the usual fees on
+      validator-operated perp markets" ... "With growth mode, all-in fees are
+      reduced by >=90% from the standard fee rate, and both rebates and
+      volume-contribution credits are also reduced by >=90%."
+    source: https://docs.trade.xyz/perpetuals/mechanics/fees
+
+execution:
+  legs: 20
+  atomic_required: false
+  venue: >-
+    Hyperliquid HyperCore, деплой HIP-3 `xyz` (trade[XYZ]). Это тот же счёт и
+    тот же движок, что и обычные перпы HL: «trade[XYZ] deploys Perpetuals under
+    the `xyz` HIP-3 deployment», а сайт trade.xyz — «not the exclusive interface
+    for either deployment».
+  min_leg_notional_usd: 10.0
+  quote:
+    text: >-
+      "Hyperliquid is a performant blockchain and financial application platform
+      offering access to hundreds of spot, perpetual, and outcome markets. Its
+      onchain trading engine, HyperCore, processes orders, matches trades,
+      maintains positions and balances, and applies settlement through
+      Hyperliquid's decentralized validator set." ... "Separately, the website
+      at trade.xyz a non-custodial interface through which users can interact
+      with these and other Hyperliquid markets. It does not replace HyperCore
+      and is not the exclusive interface for either deployment."
+    source: https://docs.trade.xyz/overview/relationship-to-hyperliquid
+  note: >-
+    legs: 20 — это ПАРАМЕТР книги (две корзины примерно по десять инструментов),
+    а не факт из источника; верхняя граница — 26 проверенных инструментов.
+    Атомарность не требуется: это портфель, а не связка, и частичное исполнение
+    портит нейтральность, но не оставляет непокрытой ноги. Отдельно: часть
+    инструментов деплоя работает в режиме Normal Isolated (MSTR, COIN, HOOD,
+    CRCL), часть — Cross Margin (AAPL, NVDA, SP500); маржа книги, собранной из
+    разных режимов, не общая.
+
+death:
+  how: >-
+    Три пути, из них два рыночные и один — площадочный, и именно последний здесь
+    самый быстрый. (1) Беты сжимаются к единице, разделять нечем. (2) Фактор
+    арбитражируется приходом капитала, способного брать плечо. (3) Деплой `xyz`
+    перестаёт торговаться. Третий путь — не гипотеза: по замеру 2026-09-22 из
+    девяти HIP-3 деплоев HL пять уже не торговали 22 сентября. Ventuals
+    остановился 2026-06-19, Felix 2026-06-20, Kinetiq 2026-06-17, dreamcash
+    2026-07-02 — у всех четырёх инструменты замолчали разом, в течение одного
+    месяца; HyENA молчит с 2026-09-02. Живым в полном смысле остался ОДИН
+    деплой из девяти — `xyz`; ещё три (`io`, `mkts`, `para`) живы, но малы.
+  visible_in_advance: true
+  observable: >-
+    Суточный оборот по каждому инструменту `xyz` из metaAndAssetCtxs — прямая и
+    ежедневная величина, по которой смерть деплоя видна за недели (у мёртвых
+    деплоев оборот обнулился и больше не возвращался). Для рыночных путей —
+    разброс бет и альфа отсортированных портфелей.
+  quote:
+    text: >-
+      "When funding constraints tighten, the return of the BAB factor is low;
+      increased funding liquidity risk compresses betas toward one"
+    source: https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25
+
+feasibility:
+  data_free: true
+  data_source: >-
+    Hyperliquid /info, бесплатно и без ключа. `metaAndAssetCtxs` с параметром
+    `dex: "xyz"` даёт универс и суточный оборот, `candleSnapshot` по коину
+    `xyz:<TICKER>` — дневные свечи. Проверено собственным запросом 2026-09-22 по
+    всем 289 инструментам девяти деплоев. Никаких фундаментальных данных
+    (прибыль, баланс, календарь отчётностей) кандидату НЕ требуется: бета
+    считается из цен.
+  venue_supported: true
+  min_capital_order_of_magnitude_usd: 1000
+  blockers:
+    - "Глубина истории. Максимум по деплою `xyz` — 345 дневных баров (xyz:XYZ100, с 2025-10-13), у типичной одиночной бумаги 250-315. При месячном ребалансе это 8-11 наблюдений фактора. Для дефляции по числу испытаний этого не хватает, и никакая аккуратность расчёта этого не чинит."
+    - "Нет point-in-time универса деплоя: HL не отдаёт дату делистинга инструмента, а `xyz` за год добавлял тикеры. Универс придётся приближать как в src/qlab/data/sources/hyperliquid.py — по фактическому покрытию свечей."
+    - "Косты вдвое выше обычных перпов HL (0.090%/0.030% базовой ступени), и принадлежность конкретного инструмента к growth mode из документации не читается."
+    - "Прокси рыночного портфеля выбирается нами: у деплоя нет своего 'рынка', и результат будет зависеть от выбора между xyz:SP500 и xyz:XYZ100 — это степень свободы, которую придётся зафиксировать до расчёта."
+  owner_can_open:
+    all_legs_reachable: true
+    unreachable_legs: []
+  legs:
+    - what: "рыночный прокси (индекс), он же кандидат в знаменатель беты"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:XYZ100"
+      last_traded: 2026-09-22
+      daily_volume_usd: 181182945
+      bars_available: 345
+    - what: "альтернативный рыночный прокси"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:SP500"
+      last_traded: 2026-09-22
+      daily_volume_usd: 216283285
+      bars_available: 189
+    - what: "одиночная бумага, высокобетовая сторона (пример)"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:NVDA"
+      last_traded: 2026-09-22
+      daily_volume_usd: 39827354
+      bars_available: 315
+    - what: "одиночная бумага, низкобетовая сторона (пример)"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:AAPL"
+      last_traded: 2026-09-22
+      daily_volume_usd: 22432319
+      bars_available: 306
+    - what: "одиночная бумага (пример, самый длинный ряд среди мегакапов)"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:META"
+      last_traded: 2026-09-22
+      daily_volume_usd: 51043131
+      bars_available: 307
+    - what: "товарная нога, самый ликвидный инструмент деплоя (расширение универса за пределы акций)"
+      venue: "Hyperliquid HIP-3, деплой `xyz`"
+      instrument: "xyz:CL"
+      last_traded: 2026-09-22
+      daily_volume_usd: 185743517
+      bars_available: 260
+  legs_note: >-
+    Полный замер 2026-09-22 по деплою `xyz`: 123 инструмента, торговались за
+    неделю 106, оборот выше $1M/сутки у 64, оборот выше $1M/сутки И не меньше
+    250 дневных баров — у 26. Именно эти 26 и есть исполнимый универс.
+    Проверены и остальные восемь деплоев HIP-3: живы, но малы `io` (8
+    торговавших инструментов, ~$27M/сутки, 5 выше $1M), `mkts` (4 инструмента,
+    ~$10M/сутки, 2 выше $1M) и `para` (16 инструментов, ~$2.7M/сутки, ни одного
+    выше $1M); мёртвы или замерли `vntl` (последняя сделка 2026-06-19), `flx`
+    (2026-06-20), `km` (2026-06-17), `cash` (2026-07-02), `hyna` (2026-09-02).
+    Значения daily_volume_usd — средний
+    оборот за последние семь суток, посчитанный из дневных свечей как сумма
+    объёма на цену закрытия.
+
+prior:
+  graveyard_matches: []
+  note: >-
+    По драйверу совпадений нет: среди одиннадцати драйверов кладбища нет ни
+    одного про ограничение на плечо. Ближайшие по ФОРМЕ, но не по драйверу, —
+    cross-sectional-momentum (та же конструкция dollar-neutral long/short, но
+    драйвер ценовой моментум) и indices-gold-trend (те же классы активов, но
+    драйвер тренд и направленная позиция). Существенно другое обстоятельство,
+    и формулировать его надо точно: indices-gold-trend похоронен НЕ за доступ,
+    а за затухание сигнала (Sharpe +0.07 во второй половине выборки) — но в той
+    же записи кладбища класс индексов и металлов назван «ближайший
+    недоступный-в-крипте макро-класс», и вот ЭТО перестало быть верным. Класс
+    активов оказался внутри доступного контура, не потому что мы что-то
+    обошли, а потому что площадка его завела. Это и есть новый вопрос: не
+    «зарабатывает ли BAB» (на это ответ известен и он старый), а «доживает ли
+    известный эффект до исполнения на годовалом деплое с удвоенными костами».
