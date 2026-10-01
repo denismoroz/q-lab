@@ -16,7 +16,7 @@ from datetime import date
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from qlab.registry.models import Idea, IdeaStatus, Verdict
+from qlab.registry.models import Idea, IdeaStatus, Spec, Trial, Verdict
 from qlab.rules import NearnessVerdict, RuleSet, classify_nearness, nearness
 
 
@@ -321,10 +321,17 @@ def ripe_for_revival(
 # --------------------------------------------------------------------------
 
 
+CALIBRATION_IDEA_PREFIX = "noise-"
+"""Id prefix of the calibration noise ideas (`qlab.calibration.run.
+noise_idea_id`). They are a measuring instrument, not candidates, so the
+idea counts below leave them out and report them separately."""
+
+
 @dataclass(slots=True)
 class FunnelStats:
     """Raw counts feeding the funnel screen (docs/PLAN.md M7)."""
 
+    # Real ideas only -- calibration noise is counted in `calibration_ideas`.
     ideas_by_status: dict[str, int]
     verdicts_by_stage: dict[str, int]
     # "passed" / "failed" (decisions) / "unknown" (rule exists, metric
@@ -339,6 +346,13 @@ class FunnelStats:
     # `ck_idea_decayed_requires_shutdown_cause`), so this dict's total
     # always equals `ideas_by_status["decayed"]`.
     decayed_by_shutdown_cause: dict[str, int]
+    # Real ideas by the route of their latest run that recorded one
+    # (docs/TASKS.md T31). Ideas never run by q-lab are absent. This is what
+    # q-lab itself concluded, as opposed to `ideas_by_status`, which also
+    # carries statuses imported from the previous framework and statuses set
+    # by people.
+    ideas_by_latest_route: dict[str, int]
+    calibration_ideas: int
 
 
 def funnel_stats(session: Session) -> FunnelStats:
@@ -357,8 +371,32 @@ def funnel_stats(session: Session) -> FunnelStats:
     measurement-only is itself a finding: it says how much of the old
     screening process never had a written-down criterion at all.
     """
-    ideas_rows = session.query(Idea.status, func.count(Idea.id)).group_by(Idea.status).all()
+    real_idea = ~Idea.id.startswith(CALIBRATION_IDEA_PREFIX)
+    ideas_rows = (
+        session.query(Idea.status, func.count(Idea.id))
+        .filter(real_idea)
+        .group_by(Idea.status)
+        .all()
+    )
     ideas_by_status = {_enum_value(status): count for status, count in ideas_rows}
+    calibration_ideas = (
+        session.query(func.count(Idea.id)).filter(~real_idea).scalar() or 0
+    )
+
+    latest_trial = (
+        session.query(Spec.idea_id.label("idea_id"), func.max(Trial.id).label("trial_id"))
+        .join(Trial, Trial.spec_id == Spec.id)
+        .filter(Trial.route.is_not(None), ~Spec.idea_id.startswith(CALIBRATION_IDEA_PREFIX))
+        .group_by(Spec.idea_id)
+        .subquery()
+    )
+    route_rows = (
+        session.query(Trial.route, func.count(Trial.id))
+        .join(latest_trial, latest_trial.c.trial_id == Trial.id)
+        .group_by(Trial.route)
+        .all()
+    )
+    ideas_by_latest_route = {_enum_value(route): count for route, count in route_rows}
 
     shutdown_cause_rows = (
         session.query(Idea.shutdown_cause, func.count(Idea.id))
@@ -402,10 +440,13 @@ def funnel_stats(session: Session) -> FunnelStats:
             "measurement": measurement,
         },
         decayed_by_shutdown_cause=decayed_by_shutdown_cause,
+        ideas_by_latest_route=ideas_by_latest_route,
+        calibration_ideas=calibration_ideas,
     )
 
 
 __all__ = [
+    "CALIBRATION_IDEA_PREFIX",
     "FunnelStats",
     "NearMiss",
     "NearThresholdReport",

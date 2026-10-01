@@ -162,6 +162,7 @@ def _spec() -> StrategySpec:
             "costs": {"taker_fee_bps": 3.5, "slippage_bps": 0.9},
             "min_leg_notional": 10.0,
             "simultaneous_legs": 1,
+            "unexpressed_mechanisms": [],
         }
     )
 
@@ -272,3 +273,26 @@ def test_percentile_metric_absent_without_shape_aware_evaluation(session):
     assert evaluation.rules_result.decisive is False
     assert "noise_return_percentile" in evaluation.rules_result.unknown_metrics
     assert evaluation.routing.route == "needs-more-data"
+
+
+def test_not_evaluable_spec_writes_one_trial_and_runs_no_noise(session):
+    """200 noise backtests against a strategy that cannot be tested are pure
+    waste: the wrapper must stop before them (docs/TASKS.md T24)."""
+    from qlab.registry.models import Trial, TrialStatus
+
+    spec = _spec().model_copy(update={"unexpressed_mechanisms": ["a missing state machine"]})
+
+    result = evaluate_spec_with_shape_aware_bar(
+        spec,
+        session=session,
+        ruleset=_shape_aware_ruleset(),
+        deployable_capital_usd=1_000_000.0,
+        n_trials=8,
+    )
+
+    assert result.candidate.routing.route == "not-evaluable"
+    assert result.noise_trials == ()
+    assert result.percentiles is None
+    trials = session.query(Trial).all()
+    assert len(trials) == 1
+    assert trials[0].status == TrialStatus.NOT_EVALUABLE

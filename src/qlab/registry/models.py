@@ -140,7 +140,39 @@ class ShutdownCause(enum.StrEnum):
 
 
 class TrialStatus(enum.StrEnum):
+    """What happened to one run.
+
+    `NOT_EVALUABLE` is not a failed run and not a result: the pipeline
+    established BEFORE computing anything that the run could not test the
+    strategy its idea names (docs/TASKS.md T24) -- e.g. the implementation
+    declares mechanisms of that strategy it does not express. No backtest
+    is run, so there is no Sharpe to count: deflation (`qlab.registry.
+    deflation.family_trials`) counts only `OK` trials as tested variants.
+    """
+
     OK = "ok"
+    ERROR = "error"
+    NOT_EVALUABLE = "not-evaluable"
+
+
+class TrialRoute(enum.StrEnum):
+    """Where one run sent its idea (`qlab.pipeline.evaluate.decide_route`).
+
+    Stored on the trial so the decision survives the process that made it:
+    before this existed the route lived only in `qlab evaluate`'s printout,
+    and no idea's status ever changed (docs/TASKS.md T31).
+
+    Three of these say "this run did not decide anything" and must never
+    move an idea to `rejected`: `NEEDS_MORE_DATA` (a metric a rule needs
+    could not be computed), `NOT_EVALUABLE` (the run could not test the
+    strategy its idea names, T24), and `ERROR` (the run crashed).
+    """
+
+    REJECT = "reject"
+    SHELF = "shelf"
+    PAPER = "paper"
+    NEEDS_MORE_DATA = "needs-more-data"
+    NOT_EVALUABLE = "not-evaluable"
     ERROR = "error"
 
 
@@ -292,6 +324,14 @@ class Trial(Base):
     source: Mapped[TrialSource] = mapped_column(
         _enum_column(TrialSource), nullable=False, default=TrialSource.QLAB
     )
+    # Null for imported trials and for every q-lab trial written before the
+    # route was persisted (docs/TASKS.md T31) -- those routes were printed
+    # and lost, and reconstructing them would mean guessing the deployable
+    # capital each run was given.
+    route: Mapped[TrialRoute | None] = mapped_column(
+        _enum_column(TrialRoute), nullable=True, index=True
+    )
+    route_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Verdict(Base):
@@ -412,6 +452,11 @@ class StageTransition(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
     rules_version: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # The run that caused this transition, when a run caused it. Null for
+    # transitions made by hand or by an import.
+    trial_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trial.id"), nullable=True, index=True
+    )
 
 
 class TokenSpend(Base):

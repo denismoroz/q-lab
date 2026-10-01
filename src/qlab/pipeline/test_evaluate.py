@@ -22,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 from qlab.data.panel import MarketPanel
 from qlab.pipeline.evaluate import (
     StrategyResolutionError,
+    complete_book_window,
     decide_route,
     evaluate_spec,
     resolve_strategy,
@@ -31,9 +32,13 @@ from qlab.registry import repo
 from qlab.registry.models import (
     AssetClass,
     Base,
+    Idea,
+    IdeaStatus,
     Profile,
     SourceType,
+    StageTransition,
     Trial,
+    TrialRoute,
     TrialSource,
     TrialStatus,
     Verdict,
@@ -164,11 +169,14 @@ def _register_snapshot(
     snapshot_id: str,
     instruments: list[str],
     universe_complete: bool,
+    tradeable: pd.DataFrame | None = None,
 ) -> None:
     """Write a snapshot's parquet + manifest to disk and register its
     `data_snapshot` row directly -- the same shape `build_snapshot` would
-    have produced, without touching the network."""
-    _, prices, funding, tradeable = _fixture_frames(instruments)
+    have produced, without touching the network. `tradeable` overrides the
+    default all-True listing mask."""
+    _, prices, funding, default_tradeable = _fixture_frames(instruments)
+    tradeable = default_tradeable if tradeable is None else tradeable
 
     snap_dir = tmp_path / snapshot_id
     snap_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +237,7 @@ def _make_spec(**overrides: object) -> StrategySpec:
         },
         "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0},
         "min_leg_notional": 12.0,
+        "unexpressed_mechanisms": [],
     }
     base.update(overrides)
     return StrategySpec.model_validate(base)
@@ -240,6 +249,15 @@ CAPITAL_FIT_GENEROUS = Rule(
     metric="min_capital_usd",
     comparator=Comparator.LE,
     threshold=1_000_000,
+    fatal=True,
+)
+CAPITAL_FIT_TIGHT = Rule(
+    # min_capital_usd is always >= the 12.0 min leg notional, so this always fails.
+    id="capital_fit",
+    stage=Stage.PREFLIGHT,
+    metric="min_capital_usd",
+    comparator=Comparator.LE,
+    threshold=1.0,
     fatal=True,
 )
 HONEST_UNIVERSE = Rule(
@@ -729,3 +747,252 @@ def test_repeated_evaluation_reuses_registry_spec_row(session, tmp_path) -> None
 
     spec_rows = session.query(SpecRow).filter(SpecRow.idea_id == IDEA_ID).all()
     assert len(spec_rows) == 1
+
+
+# --------------------------------------------------------------------------
+# T24: not-evaluable is an outcome, decided before anything is computed.
+# --------------------------------------------------------------------------
+
+
+def test_unexpressed_mechanism_routes_not_evaluable_without_running_the_strategy(
+    session, tmp_path
+) -> None:
+    """The strategy here raises if called. A not-evaluable route rather than
+    an error proves the pipeline stopped before running it -- no number about
+    a different strategy is computed, let alone judged."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(
+        code_ref="qlab.pipeline.test_evaluate:RaisingStrategy",
+        unexpressed_mechanisms=["per-position breakeven state machine"],
+    )
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "per-position breakeven state machine" in evaluation.routing.reason
+    assert evaluation.error is None
+    assert evaluation.metrics is None
+    trial = session.get(Trial, evaluation.trial_id)
+    assert trial.status == TrialStatus.NOT_EVALUABLE
+    assert trial.route == TrialRoute.NOT_EVALUABLE
+    assert session.query(Verdict).filter(Verdict.trial_id == trial.id).count() == 0
+
+
+def test_not_evaluable_never_moves_an_idea_to_rejected(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(unexpressed_mechanisms=["something the interface cannot carry"])
+
+    evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE
+    assert session.query(StageTransition).count() == 0
+
+
+def test_required_instrument_absent_from_data_is_not_evaluable(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(required_instruments=["BTC", "AVAX-SPOT"])
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "AVAX-SPOT" in evaluation.routing.reason
+
+
+def test_book_never_complete_is_not_evaluable(session, tmp_path) -> None:
+    index, *_ = _fixture_frames(INSTRUMENTS)
+    tradeable = pd.DataFrame(True, index=index, columns=INSTRUMENTS)
+    tradeable.iloc[: len(index) // 2, 0] = False  # BTC lists halfway through
+    tradeable.iloc[len(index) // 2 :, 1] = False  # ETH delists halfway through
+    _register_snapshot(
+        session,
+        tmp_path,
+        snapshot_id=DISCOVERED_ID,
+        instruments=INSTRUMENTS,
+        universe_complete=True,
+        tradeable=tradeable,
+    )
+    spec = _make_spec(required_instruments=["BTC", "ETH"])
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "never complete" in evaluation.routing.reason
+    assert session.get(Trial, evaluation.trial_id).metrics == {"book_coverage": 0.0}
+
+
+def test_partial_book_is_judged_only_where_it_was_complete(session, tmp_path) -> None:
+    """ETH lists late. The verdict's data range must start where the whole
+    book first existed, and coverage must be reported, not thresholded."""
+    index, *_ = _fixture_frames(INSTRUMENTS)
+    tradeable = pd.DataFrame(True, index=index, columns=INSTRUMENTS)
+    late = 10
+    tradeable.iloc[:late, 1] = False
+    _register_snapshot(
+        session,
+        tmp_path,
+        snapshot_id=DISCOVERED_ID,
+        instruments=INSTRUMENTS,
+        universe_complete=True,
+        tradeable=tradeable,
+    )
+    spec = _make_spec(required_instruments=["BTC", "ETH"])
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "paper"
+    assert evaluation.metrics["book_coverage"] == pytest.approx((len(index) - late) / len(index))
+    verdict = session.query(Verdict).filter(Verdict.trial_id == evaluation.trial_id).one()
+    assert verdict.data_range_start == index[late].date()
+    assert verdict.data_range_end == index[-1].date()
+
+
+def test_complete_book_window_picks_the_longest_unbroken_stretch() -> None:
+    index, prices, funding, _ = _fixture_frames(INSTRUMENTS)
+    tradeable = pd.DataFrame(True, index=index, columns=INSTRUMENTS)
+    tradeable.iloc[3, 0] = False  # stretches: 0..2 (3 bars) and 4..end
+    tradeable.iloc[-5, 1] = False  # ... which splits into 4..n-6 and n-4..n-1
+    panel = MarketPanel(
+        snapshot_id="x",
+        prices=prices,
+        funding=funding,
+        tradeable=tradeable,
+        meta={"universe_complete": True},
+    )
+
+    coverage = complete_book_window(panel, INSTRUMENTS)
+
+    assert coverage.window == (4, len(index) - 6)
+    assert coverage.coverage == pytest.approx((len(index) - 2) / len(index))
+    assert coverage.missing == ()
+
+
+def test_complete_book_window_full_coverage_is_the_whole_panel() -> None:
+    index, prices, funding, tradeable = _fixture_frames(INSTRUMENTS)
+    panel = MarketPanel(
+        snapshot_id="x",
+        prices=prices,
+        funding=funding,
+        tradeable=tradeable,
+        meta={"universe_complete": True},
+    )
+
+    coverage = complete_book_window(panel, INSTRUMENTS)
+
+    assert coverage.window == (0, len(index) - 1)
+    assert coverage.coverage == 1.0
+
+
+# --------------------------------------------------------------------------
+# T31: the route is stored on the trial and moves the idea's status.
+# --------------------------------------------------------------------------
+
+
+def test_reject_moves_candidate_to_rejected_and_names_the_trial(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec()
+
+    evaluation = evaluate_spec(
+        spec,
+        session=session,
+        ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
+        deployable_capital_usd=1e9,
+    )
+
+    assert evaluation.routing.route == "reject"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.REJECTED
+    transition = session.query(StageTransition).one()
+    assert transition.from_status == IdeaStatus.CANDIDATE
+    assert transition.to_status == IdeaStatus.REJECTED
+    assert transition.trial_id == evaluation.trial_id
+    assert transition.rules_version == "2026-01-01.1"
+    assert session.get(Trial, evaluation.trial_id).route == TrialRoute.REJECT
+
+
+def test_paper_route_stops_at_validated_because_paper_is_the_owners_gate(
+    session, tmp_path
+) -> None:
+    _register_discovered(session, tmp_path)
+
+    evaluation = evaluate_spec(
+        _make_spec(),
+        session=session,
+        ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+        deployable_capital_usd=1e9,
+    )
+
+    assert evaluation.routing.route == "paper"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.VALIDATED
+
+
+def test_shelf_route_moves_to_bench(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+
+    evaluation = evaluate_spec(
+        _make_spec(),
+        session=session,
+        ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+        deployable_capital_usd=0.01,
+    )
+
+    assert evaluation.routing.route == "shelf"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.BENCH
+
+
+def test_backtest_never_overrides_a_production_status(session, tmp_path) -> None:
+    """An idea running in paper got there by the owner's decision; a
+    rejecting backtest is recorded but does not move it."""
+    _register_discovered(session, tmp_path)
+    repo.set_status(session, idea_id=IDEA_ID, new_status=IdeaStatus.PAPER, reason="owner")
+
+    evaluation = evaluate_spec(
+        _make_spec(),
+        session=session,
+        ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
+        deployable_capital_usd=1e9,
+    )
+
+    assert evaluation.routing.route == "reject"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.PAPER
+    assert session.get(Trial, evaluation.trial_id).route == TrialRoute.REJECT
+
+
+def test_update_idea_status_false_leaves_status_alone(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+
+    evaluation = evaluate_spec(
+        _make_spec(),
+        session=session,
+        ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
+        deployable_capital_usd=1e9,
+        update_idea_status=False,
+    )
+
+    assert evaluation.routing.route == "reject"
+    assert evaluation.status_decision is None
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE
+    # The route is still recorded: skipping the status move is not skipping the record.
+    assert session.get(Trial, evaluation.trial_id).route == TrialRoute.REJECT
+
+
+def test_error_trial_records_its_route_and_moves_nothing(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:RaisingStrategy")
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    trial = session.get(Trial, evaluation.trial_id)
+    assert trial.route == TrialRoute.ERROR
+    assert "strategy blew up" in trial.route_reason
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE

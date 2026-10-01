@@ -145,6 +145,41 @@ class StrategySpec(BaseModel):
         ),
     )
 
+    unexpressed_mechanisms: list[str]
+    """Mechanisms of the strategy `idea_id` names that `code_ref` does NOT
+    express -- the "Left OUT" list a transcription already writes in its
+    docstring, made machine-readable (docs/TASKS.md T24).
+
+    Required, with no default, for the same reason `costs` has none: an
+    implementation that silently drops part of the strategy it is named
+    after produces a number about a DIFFERENT strategy, attributed to this
+    idea. A spec that expresses the whole strategy says so with an explicit
+    empty list; a spec that does not must name what it leaves out.
+
+    Non-empty means the run cannot test this idea's strategy, so the
+    pipeline routes it to `not-evaluable` before computing anything. That
+    is not a judgement on the simplified version: if the simplified version
+    is worth testing on its own, it is a different candidate and gets its
+    own `idea_id` with an empty list here (the same move T19 asks for with
+    "соседний кандидат").
+    """
+
+    required_instruments: list[str] | None = None
+    """Instruments (panel column names) the strategy needs ALL of at once to
+    be the strategy it describes (docs/TASKS.md T19/T24). `None` (the
+    default) means no single instrument is required: a cross-sectional book
+    over whatever universe exists, e.g. trend or XSMOM with a discovered
+    universe.
+
+    When set, the verdict is computed only on the longest unbroken stretch
+    of bars where every one of them was tradeable -- see
+    `qlab.pipeline.evaluate.complete_book_window`. There is deliberately no
+    coverage threshold: the owner declined to set one (2026-09-21, "я не хочу
+    поиметь систему которая будет резать валидные стратегии"), and a
+    window on which the specified book existed in full needs none -- it is
+    the strategy as specified, judged by the same rules as any other window.
+    """
+
     @field_validator("idea_id", "title", "code_ref")
     @classmethod
     def _not_blank(cls, value: str) -> str:
@@ -164,6 +199,23 @@ class StrategySpec(BaseModel):
     def _at_least_one(cls, value: int) -> int:
         if value < 1:
             raise ValueError(f"simultaneous_legs must be >= 1, got {value}")
+        return value
+
+    @field_validator("unexpressed_mechanisms")
+    @classmethod
+    def _named_mechanisms(cls, value: list[str]) -> list[str]:
+        if any(not item.strip() for item in value):
+            raise ValueError("each unexpressed mechanism must be named, not blank")
+        return value
+
+    @field_validator("required_instruments")
+    @classmethod
+    def _non_empty_if_given(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and not value:
+            raise ValueError(
+                "required_instruments must list at least one instrument when given; "
+                "omit it (None) when no single instrument is required"
+            )
         return value
 
 

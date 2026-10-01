@@ -23,6 +23,7 @@ from qlab.pipeline.evaluate import Evaluation, evaluate_spec
 from qlab.pipeline.spec import StrategySpec, load_spec
 from qlab.registry import repo
 from qlab.registry.models import AssetClass, Profile, SourceType
+from qlab.registry.queries import CALIBRATION_IDEA_PREFIX
 from qlab.rules.schema import RuleSet
 
 # src/qlab/calibration/run.py -> parents[3] is the project root (q-lab/).
@@ -83,7 +84,7 @@ def noise_idea_id(series: str, generator: str) -> str:
     uses for real strategies (`qlab.pipeline.evaluate._get_or_create_spec_row`),
     rather than one throwaway idea per seed.
     """
-    return f"noise-{series}-{generator}"
+    return f"{CALIBRATION_IDEA_PREFIX}{series}-{generator}"
 
 
 def ensure_noise_idea(session: Session, *, series: str, generator: str) -> None:
@@ -138,6 +139,12 @@ def build_noise_spec(
             "idea_id": noise_idea_id(series, generator),
             "title": f"noise calibration ({series}/{generator}, seed={seed})",
             "code_ref": NOISE_CODE_REF,
+            # The noise book is fully expressed by NoiseStrategy -- what the
+            # reference's implementation leaves out of ITS strategy says
+            # nothing about the noise. `required_instruments` IS inherited:
+            # noise must be judged on the same complete-book stretch as the
+            # reference, or the percentile compares two different windows.
+            "unexpressed_mechanisms": [],
             "params": {
                 "generator": generator,
                 "seed": seed,
@@ -183,7 +190,13 @@ def run_noise_series(
             series=series, generator=generator, seed=seed, reference=reference
         )
         evaluation = evaluate_spec(
-            spec, session=session, ruleset=ruleset, deployable_capital_usd=deployable_capital_usd
+            spec,
+            session=session,
+            ruleset=ruleset,
+            deployable_capital_usd=deployable_capital_usd,
+            # A noise idea is a measuring instrument, not a candidate: its
+            # status must never move (docs/TASKS.md T31).
+            update_idea_status=False,
         )
         trials.append(
             NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)

@@ -97,6 +97,8 @@ def create_app() -> FastAPI:
             "verdicts_by_stage": stats.verdicts_by_stage,
             "verdicts_by_outcome": stats.verdicts_by_outcome,
             "decayed_by_shutdown_cause": stats.decayed_by_shutdown_cause,
+            "ideas_by_latest_route": stats.ideas_by_latest_route,
+            "calibration_ideas": stats.calibration_ideas,
         }
 
     # ------------------------------------------------------------------

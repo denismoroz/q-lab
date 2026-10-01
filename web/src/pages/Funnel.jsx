@@ -15,6 +15,8 @@ import { VerdictLegend } from '../components/Verdict.jsx'
 import {
   IDEA_STATUS,
   SHUTDOWN_CAUSE,
+  TRIAL_ROUTE,
+  TRIAL_ROUTE_HINT,
   VERDICT_OUTCOME,
   VERDICT_STAGE,
   label,
@@ -48,6 +50,8 @@ const STATUS_FILL = {
   decayed: '#a8a29e',
   retired: '#a8a29e',
 }
+
+const ROUTE_ORDER = ['paper', 'shelf', 'reject', 'not-evaluable', 'needs-more-data', 'error']
 
 const OUTCOME_ORDER = ['passed', 'failed', 'unknown', 'measurement']
 const OUTCOME_STYLE = {
@@ -100,11 +104,39 @@ function FunnelBody({ stats }) {
     count,
   ])
 
+  const routes = stats.ideas_by_latest_route ?? {}
+  const routeEntries = ROUTE_ORDER.filter((route) => routes[route] != null)
+
   return (
     <div className="space-y-6">
       <Panel
+        title="Что решил q-lab"
+        subtitle="Идеи по исходу их последнего прогона. Только собственные прогоны q-lab: импорт старого фреймворка и решения владельца сюда не входят."
+      >
+        {routeEntries.length ? (
+          <dl className="divide-y divide-slate-100">
+            {routeEntries.map((route) => (
+              <div key={route} className="flex items-baseline justify-between gap-4 py-2">
+                <dt>
+                  <div className="text-sm font-medium text-slate-800">
+                    {label(TRIAL_ROUTE, route)}
+                  </div>
+                  <div className="text-xs text-slate-500">{TRIAL_ROUTE_HINT[route]}</div>
+                </dt>
+                <dd className="tabular-nums text-sm font-semibold text-slate-900">
+                  {routes[route]}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-sm text-slate-500">ни одна идея ещё не прогонялась с записью исхода</p>
+        )}
+      </Panel>
+
+      <Panel
         title="Идеи по статусам"
-        subtitle="Текущий срез реестра. Порядок — жизненный цикл из docs/REGISTRY.md."
+        subtitle={`Текущий срез реестра. Порядок — жизненный цикл из docs/REGISTRY.md. Калибровочные шумовые идеи (${stats.calibration_ideas ?? 0}) не показаны: это измерительный прибор, а не кандидаты.`}
       >
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -146,7 +178,7 @@ function FunnelBody({ stats }) {
 
       <Panel
         title="Вердикты по исходу"
-        subtitle="Четыре числа, а не два: «неизвестно» и «измерение» — не провал и не проход."
+        subtitle="Одно правило, применённое к одному прогону. Четыре числа, а не два: «неизвестно» и «измерение» — не провал и не проход. Включает прогоны калибровочного шума — их здесь подавляющее большинство."
       >
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {OUTCOME_ORDER.map((outcome) => (

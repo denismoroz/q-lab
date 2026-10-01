@@ -8,7 +8,7 @@ export const IDEA_STATUS = {
   candidate: 'кандидат',
   speccing: 'формализация',
   implemented: 'реализована',
-  validated: 'провалидирована',
+  validated: 'прошла, ждёт решения',
   bench: 'скамейка',
   paper: 'бумажная торговля',
   live: 'в бою',
@@ -125,3 +125,22 @@ export const CARD_FIELD = {
 
 export const label = (dictionary, value) =>
   value == null ? null : (dictionary[value] ?? value)
+
+// Where q-lab's own latest run sent an idea (docs/TASKS.md T24, T31).
+export const TRIAL_ROUTE = {
+  paper: 'прошла, по деньгам помещается',
+  shelf: 'прошла, не хватает капитала',
+  reject: 'отвергнута',
+  'not-evaluable': 'не оценима',
+  'needs-more-data': 'не хватило метрики',
+  error: 'прогон упал',
+}
+
+export const TRIAL_ROUTE_HINT = {
+  paper: 'все правила пройдены; в бумагу переводит только владелец',
+  shelf: 'все правила пройдены, но нужен капитал больше доступного',
+  reject: 'проверена честно и не прошла',
+  'not-evaluable': 'проверить было нечем: реализация не выражает стратегию или книги не было',
+  'needs-more-data': 'правило есть, а метрику посчитать не удалось',
+  error: 'код стратегии или стенда упал',
+}

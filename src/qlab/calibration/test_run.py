@@ -175,6 +175,7 @@ def _reference_spec() -> StrategySpec:
             "costs": {"taker_fee_bps": 3.5, "slippage_bps": 0.9},
             "min_leg_notional": 10.0,
             "simultaneous_legs": 1,
+            "unexpressed_mechanisms": [],
         }
     )
 
@@ -372,3 +373,54 @@ def test_run_real_strategies_runs_every_spec_path(session, tmp_path):
     assert evaluation.error is None
     assert evaluation.metrics is not None
     assert evaluation.routing.route in {"paper", "shelf"}
+
+
+def test_noise_runs_never_move_a_noise_idea_status(session):
+    """A noise idea is a measuring instrument (docs/TASKS.md T31). Even under
+    a ruleset that rejects every run, its status stays where it was created
+    and no transition is written."""
+    from qlab.registry.models import IdeaStatus, StageTransition, TrialRoute
+
+    rejecting = RuleSet(
+        version="2026-01-01.1",
+        rules=[
+            Rule(
+                id="capital_fit",
+                stage=Stage.PREFLIGHT,
+                metric="min_capital_usd",
+                comparator=Comparator.LE,
+                threshold=1.0,
+                fatal=True,
+            )
+        ],
+    )
+
+    trials = run_noise_series(
+        series="dollar_neutral",
+        n_trials=len(GENERATORS),
+        session=session,
+        ruleset=rejecting,
+        deployable_capital_usd=1_000_000.0,
+        reference=_reference_spec(),
+    )
+
+    assert {t.evaluation.routing.route for t in trials} == {"reject"}
+    for generator in GENERATORS:
+        idea = session.get(Idea, noise_idea_id("dollar_neutral", generator))
+        assert idea.status == IdeaStatus.CANDIDATE
+    assert session.query(StageTransition).count() == 0
+    # The route itself is still on every trial.
+    from qlab.registry.models import Trial
+
+    routes = {trial.route for trial in session.query(Trial).all()}
+    assert routes == {TrialRoute.REJECT}
+
+
+def test_noise_spec_does_not_inherit_the_reference_unexpressed_mechanisms():
+    reference = _reference_spec().model_copy(
+        update={"unexpressed_mechanisms": ["a state machine the reference leaves out"]}
+    )
+    spec = build_noise_spec(
+        series="dollar_neutral", generator=next(iter(GENERATORS)), seed=0, reference=reference
+    )
+    assert spec.unexpressed_mechanisms == []

@@ -27,6 +27,7 @@ from qlab.calibration.run import (
     run_noise_series,
     run_real_strategies,
 )
+from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
 from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
 from qlab.pipeline.evaluate import evaluate_spec
 from qlab.pipeline.spec import load_spec
@@ -371,13 +372,24 @@ def evaluate_cmd(
     rules_version: str | None = typer.Option(
         None, "--rules", help="Rules version to evaluate against (default: latest)"
     ),
+    noise_trials: int | None = typer.Option(
+        None,
+        "--noise-trials",
+        help=(
+            "Also run this many structurally matched noise trials and fold the "
+            "candidate's noise percentile into its verdict (the shape-aware bar, "
+            "docs/TASKS.md T28). Without it, a ruleset with `shape_aware_edge` "
+            "reads that rule as unknown and routes needs-more-data."
+        ),
+    ),
 ) -> None:
     """Run the full pipeline: spec -> data -> backtest -> metrics -> verdict.
 
     Prints the computed metrics, every verdict row with its rule and
-    numbers, and the routing decision (`reject` / `needs-more-data` /
-    `shelf` / `paper`) with its reason. `qlab evaluate` never returns
-    `live` — see `qlab.pipeline.evaluate.decide_route`.
+    numbers, the routing decision (`reject` / `needs-more-data` /
+    `not-evaluable` / `shelf` / `paper`) with its reason, and what the run did
+    to the idea's status. `qlab evaluate` never returns `live` — see
+    `qlab.pipeline.evaluate.decide_route`.
     """
     try:
         spec = load_spec(spec_path)
@@ -389,9 +401,18 @@ def evaluate_cmd(
 
     with session_scope() as session:
         try:
-            result = evaluate_spec(
-                spec, session=session, ruleset=ruleset, deployable_capital_usd=capital
-            )
+            if noise_trials is None:
+                result = evaluate_spec(
+                    spec, session=session, ruleset=ruleset, deployable_capital_usd=capital
+                )
+            else:
+                result = evaluate_spec_with_shape_aware_bar(
+                    spec,
+                    session=session,
+                    ruleset=ruleset,
+                    deployable_capital_usd=capital,
+                    n_trials=noise_trials,
+                ).candidate
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator, not swallowed
             typer.echo(
                 f"error: evaluation failed before a trial could be recorded: {exc}", err=True
@@ -403,11 +424,26 @@ def evaluate_cmd(
     typer.echo(f"trial_id:     {result.trial_id}")
     typer.echo("")
 
+    def _echo_status() -> None:
+        decision = result.status_decision
+        if decision is None:
+            return
+        moved = decision.new_status.value if decision.new_status is not None else "unchanged"
+        typer.echo(f"idea status:  {moved}  ({decision.reason})")
+
     if result.error is not None:
         typer.echo(f"run FAILED: {result.error}")
         typer.echo("")
         typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
+        _echo_status()
         raise typer.Exit(code=1)
+
+    if result.routing.route == "not-evaluable":
+        # Nothing was computed, on purpose (docs/TASKS.md T24): print the
+        # reason, not an empty metrics block that would read like a result.
+        typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
+        _echo_status()
+        return
 
     typer.echo("metrics:")
     for name, value in sorted(result.metrics.items()):
@@ -427,6 +463,7 @@ def evaluate_cmd(
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
+    _echo_status()
 
 
 # --------------------------------------------------------------------------
@@ -550,7 +587,15 @@ def funnel_cmd() -> None:
     with session_scope() as session:
         stats = funnel_stats(session)
 
-    typer.echo("ideas by status:")
+    typer.echo("ideas by the route of q-lab's own latest run:")
+    if stats.ideas_by_latest_route:
+        for route, count in sorted(stats.ideas_by_latest_route.items()):
+            typer.echo(f"  {route:<16}{count}")
+    else:
+        typer.echo("  (no routed runs yet)")
+
+    typer.echo("")
+    typer.echo(f"ideas by status (calibration noise set aside: {stats.calibration_ideas}):")
     for status, count in sorted(stats.ideas_by_status.items()):
         typer.echo(f"  {status:<16}{count}")
 
@@ -572,7 +617,7 @@ def funnel_cmd() -> None:
     else:
         typer.echo("  (none)")
 
-    total_ideas = sum(stats.ideas_by_status.values())
+    total_ideas = sum(stats.ideas_by_status.values()) + stats.calibration_ideas
     total_verdicts = sum(stats.verdicts_by_outcome.values())
     typer.echo("")
     typer.echo(f"total: {total_ideas} ideas, {total_verdicts} verdicts")

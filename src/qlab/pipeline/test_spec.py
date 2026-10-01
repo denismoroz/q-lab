@@ -26,6 +26,7 @@ _BASE: dict[str, object] = {
     },
     "costs": {"taker_fee_bps": 3.5, "slippage_bps": 1.0},
     "min_leg_notional": 12.0,
+    "unexpressed_mechanisms": [],
 }
 
 
@@ -146,3 +147,25 @@ def test_load_spec_missing_costs_raises(tmp_path: Path) -> None:
     spec_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ValidationError):
         load_spec(spec_path)
+
+
+def test_unexpressed_mechanisms_is_required() -> None:
+    """No default: a spec must say what it leaves out, or say it leaves out nothing."""
+    raw = _spec_dict()
+    del raw["unexpressed_mechanisms"]
+    with pytest.raises(ValidationError, match="unexpressed_mechanisms"):
+        StrategySpec.model_validate(raw)
+
+
+def test_blank_unexpressed_mechanism_rejected() -> None:
+    with pytest.raises(ValidationError, match="named"):
+        StrategySpec.model_validate(_spec_dict(unexpressed_mechanisms=["  "]))
+
+
+def test_required_instruments_defaults_to_none() -> None:
+    assert StrategySpec.model_validate(_spec_dict()).required_instruments is None
+
+
+def test_empty_required_instruments_rejected() -> None:
+    with pytest.raises(ValidationError, match="at least one"):
+        StrategySpec.model_validate(_spec_dict(required_instruments=[]))

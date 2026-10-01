@@ -67,3 +67,9 @@ costs:
 
 min_leg_notional: 10.0
 simultaneous_legs: 1
+
+# Calls frab's own trend code bar by bar, book volatility targeting
+# included (`qlab.strategies.live.trend`). Its one documented fidelity gap --
+# the equity fed to book_vol_scale excludes trading costs -- is a small
+# deterministic drag inside an expressed mechanism, not a missing mechanism.
+unexpressed_mechanisms: []

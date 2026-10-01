@@ -52,7 +52,7 @@ from qlab.calibration.percentile import (
     compute_shape_aware_percentiles,
 )
 from qlab.calibration.run import NoiseTrial, run_noise_series
-from qlab.pipeline.evaluate import Evaluation, evaluate_spec
+from qlab.pipeline.evaluate import Evaluation, evaluate_spec, not_evaluable_reasons
 from qlab.pipeline.spec import StrategySpec
 from qlab.rules.schema import RuleSet
 
@@ -67,10 +67,11 @@ class ShapeAwareResult:
     build a report, e.g. `docs/T28_SHAPE_AWARE_BAR.md`'s before/after
     table, without re-querying the registry).
 
-    `percentiles` is `None` only when `candidate.error is not None` -- the
-    candidate's own run failed before it ever produced an
-    `ann_return_net`/`sharpe_net` to rank, so there is nothing to compute a
-    percentile against. The noise trials themselves are still returned:
+    `percentiles` is `None` when the candidate produced no
+    `ann_return_net`/`sharpe_net` to rank: its run failed
+    (`candidate.error is not None`) or it was not evaluable (T24). In the
+    second case `noise_trials` is empty -- no noise is run for a strategy
+    that cannot be tested. The noise trials themselves are still returned:
     that calibration work happened and was recorded regardless of whether
     the candidate's own run succeeded.
     """
@@ -112,10 +113,24 @@ def evaluate_spec_with_shape_aware_bar(
     Every one of the `n_trials` noise trials, and the one candidate trial,
     is a real `evaluate_spec` call -- a real recorded `trial` row, per
     CLAUDE.md ("`trial` пишется всегда"). This function writes exactly
-    `n_trials + 1` trials, never fewer (a caller who wants to reuse an
+    `n_trials + 1` trials -- or exactly one, when the spec declares that it
+    cannot test its idea's strategy (see above) (a caller who wants to reuse an
     already-computed noise sample should call `compute_shape_aware_percentiles`
     directly against trials it already has, not this function).
     """
+    if not_evaluable_reasons(spec, None):
+        # Declared before any data is read: this run cannot test the
+        # strategy its idea names (T24), so there is nothing to rank against
+        # noise and 200 noise backtests would be wasted. `evaluate_spec`
+        # writes the one not-evaluable trial and says why.
+        candidate = evaluate_spec(
+            spec,
+            session=session,
+            ruleset=ruleset,
+            deployable_capital_usd=deployable_capital_usd,
+        )
+        return ShapeAwareResult(candidate=candidate, percentiles=None, noise_trials=())
+
     noise_trials = run_noise_series(
         series=series,
         n_trials=n_trials,

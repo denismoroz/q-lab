@@ -29,6 +29,7 @@ from qlab.registry.models import (
     Spec,
     StageTransition,
     Trial,
+    TrialRoute,
     TrialSource,
     TrialStatus,
     Verdict,
@@ -198,9 +199,15 @@ def add_trial(
     token_cost: int | None = None,
     cpu_seconds: float | None = None,
     source: TrialSource = TrialSource.QLAB,
+    route: TrialRoute | None = None,
+    route_reason: str | None = None,
 ) -> Trial:
     """Append a `trial` row. Trial is append-only — this never updates an
-    existing row; every run, including discarded ones, gets its own row."""
+    existing row; every run, including discarded ones, gets its own row.
+
+    `route`/`route_reason` are set at insert time, never afterwards: the
+    pipeline decides the route before it writes the trial, so the row is
+    complete the moment it exists."""
     trial = Trial(
         spec_id=spec_id,
         config_hash=config_hash,
@@ -215,6 +222,8 @@ def add_trial(
         token_cost=token_cost,
         cpu_seconds=cpu_seconds,
         source=source,
+        route=route,
+        route_reason=route_reason,
     )
     session.add(trial)
     session.flush()
@@ -245,8 +254,11 @@ def set_status(
     new_status: IdeaStatus,
     reason: str | None = None,
     rules_version: str | None = None,
+    trial_id: int | None = None,
 ) -> Idea:
     """Move an idea to `new_status`, atomically logging a `stage_transition`.
+
+    `trial_id` names the run that caused the move, when one did.
 
     Both writes happen against the same Session/transaction: if the caller
     rolls back (e.g. an exception before commit), neither the idea's status
@@ -270,6 +282,7 @@ def set_status(
         at=now,
         reason=reason,
         rules_version=rules_version,
+        trial_id=trial_id,
     )
     session.add(transition)
     session.flush()

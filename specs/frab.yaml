@@ -126,3 +126,11 @@ min_leg_notional: 12.0
 # economic sense -- a lone leg is not FRAB (see qlab.pipeline.spec's own
 # worked example, which names exactly this strategy).
 simultaneous_legs: 2
+
+# What `qlab.strategies.frab` leaves out of the live FRAB engine (its module
+# docstring, "Scope note"): per-position history that a stateless
+# `target_weights(panel, params)` cannot carry. The live engine's exits
+# depend on it, so the run is routed `not-evaluable` (docs/TASKS.md T24).
+unexpressed_mechanisms:
+  - "two-phase per-position breakeven/patience state machine (phase1_negative_patience, phase1_breakeven_cap_hours)"
+  - "per-position negative-funding stop (neg_stop_threshold_apr, neg_stop_patience_hours)"

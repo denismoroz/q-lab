@@ -1,0 +1,62 @@
+# Restored 2026-10-01 from the registry's own `spec` row (idea
+# trend-tsmom-crypto-25coin, version 1) so the run can be repeated from a file
+# (docs/TASKS.md T31). params/data/costs/code_ref are that row verbatim;
+# min_leg_notional and simultaneous_legs are not stored in `spec` and are taken
+# from specs/trend.yaml, which every trend spec shares.
+#
+# This is the transcription (`qlab.strategies.trend`), which leaves out the live
+# engine's book volatility targeting -- see specs/trend.yaml.
+
+idea_id: trend-tsmom-crypto-25coin
+title: Trend TSMOM ensemble, q-lab transcription, the live 25-coin list
+code_ref: qlab.strategies.trend:TrendTSMOMEnsemble
+params:
+  lookbacks_days:
+  - 30
+  - 60
+  - 90
+  - 120
+  vol_window_days: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  min_history_days: 151
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  start: '2025-01-01'
+  end: '2026-09-20'
+  instruments:
+  - BTC
+  - ETH
+  - SOL
+  - AVAX
+  - BNB
+  - XRP
+  - DOGE
+  - LINK
+  - LTC
+  - ADA
+  - ARB
+  - OP
+  - SUI
+  - APT
+  - NEAR
+  - TIA
+  - INJ
+  - AAVE
+  - UNI
+  - ATOM
+  - FIL
+  - BCH
+  - TRX
+  - SEI
+  - WLD
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms:
+- whole-book volatility targeting (TrendParams.book_vol_target_ann / book_vol_scale)

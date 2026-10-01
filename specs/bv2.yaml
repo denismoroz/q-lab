@@ -93,3 +93,26 @@ min_leg_notional: 10.0
 # the hedge is on, both legs must be open together for the position to be
 # delta-neutral (an uncovered hedge-only leg is not this strategy's edge).
 simultaneous_legs: 2
+
+# What `qlab.strategies.bv2` leaves out of the strategy the live engine runs
+# under this idea (its module docstring, "Left OUT"). Each changes the
+# returns, so a number from this transcription is a number about a
+# different strategy and the run is routed `not-evaluable` (docs/TASKS.md T24).
+unexpressed_mechanisms:
+  - "funding-carry sleeve on the idle cash reserve (carry_enabled, carry_fraction, carry_entry_apr, carry_exit_hours)"
+  - "margin, liquidation and top-up model (frab/strategy/b2/book.py)"
+  - "refill: rebuying spot back to target once the trend turns up after a hedge closes with spot below target (book.py step 3)"
+
+# The book is four spot coins and their four perp hedges, all at once. Spot
+# on Hyperliquid is bridged tokens listed late: UAVAX has 134 daily bars of
+# 628 (docs/TASKS.md T30), so the specified book existed in full on about a
+# fifth of the window. The verdict is rendered only where it did.
+required_instruments:
+  - BTC-SPOT
+  - ETH-SPOT
+  - SOL-SPOT
+  - AVAX-SPOT
+  - BTC
+  - ETH
+  - SOL
+  - AVAX

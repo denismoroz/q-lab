@@ -220,6 +220,8 @@ def test_funnel_returns_the_four_stored_breakdowns(client):
         "measurement": 1,
     }
     assert body["decayed_by_shutdown_cause"] == {"edge-decayed": 1}
+    assert body["ideas_by_latest_route"] == {}
+    assert body["calibration_ideas"] == 0
 
 
 # --------------------------------------------------------------------------

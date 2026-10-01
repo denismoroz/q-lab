@@ -40,7 +40,7 @@
 | `asset_class` | enum | `crypto-perp`/`crypto-spot`/`defi`/`fx` |
 | `driver_id` | FK? | |
 | `profile` | enum | `carry`/`momentum`/`mean-reversion`/`arb`/`other` |
-| `status` | enum | `candidate`→`speccing`→`implemented`→`validated`→`bench`→`live`; терминальные: `rejected`, `retired` |
+| `status` | enum | `candidate`→`speccing`→`implemented`→`validated`→`bench`→`paper`→`live`; терминальные: `rejected`, `decayed`, `retired`. Как его двигают прогоны — см. `stage_transition` |
 | `created_at`/`updated_at` | dt | |
 | `notes` | str? | |
 
@@ -64,7 +64,9 @@
 | `params` json | |
 | `started_at`/`finished_at` | |
 | `metrics` json | `sharpe_net`, `ann_return_net`, `max_dd`, `turnover`, ... |
-| `status` | `ok`/`error` |
+| `status` | `ok`/`error`/`not-evaluable` — последнее значит, что прогон установил **до расчёта**: проверить стратегию, названную идеей, нечем (T24). Бэктест не запускался, в дефляцию как испытание не идёт |
+| `route` | куда прогон направил идею: `paper`/`shelf`/`reject`/`not-evaluable`/`needs-more-data`/`error`. Пишется вместе с прогоном (T31). `null` у импортированных и у всех прогонов до 2026-10-01 — тогда маршрут печатался и терялся, восстанавливать его значило бы угадывать капитал |
+| `route_reason` | почему |
 | `kept` bool | вошёл ли в отчёт — **на подсчёт испытаний не влияет** |
 | `token_cost` int? / `cpu_seconds` float? | для метрики «цена выжившего» |
 | `source` | `qlab`/`imported` — импортированные из frab помечаются явно |
@@ -109,8 +111,29 @@
 (`revived`/`still-dead`/`pending`).
 
 ### `stage_transition` — воронка
-`idea_id`, `from_status`, `to_status`, `at`, `reason`, `rules_version`.
+`idea_id`, `from_status`, `to_status`, `at`, `reason`, `rules_version`,
+`trial_id` (прогон, вызвавший переход; `null` у ручных и импортированных).
 Воронка и выход по стадиям считаются отсюда, а не из текущего `status`.
+
+**Как прогон двигает статус** (`qlab.registry.lifecycle`, T31):
+
+| маршрут прогона | статус идеи |
+|---|---|
+| `reject` | `rejected` |
+| `shelf` (прошла, но капитала не хватает) | `bench` |
+| `paper` (прошла и помещается) | `validated` — **не `paper`**: перевод в бумагу делает только владелец |
+| `not-evaluable`, `needs-more-data`, `error` | не меняется — прогон ничего не решил |
+
+Решает последний прогон, а не лучший: выбор лучшего — это отбор по результату,
+ровно то, что исправляет дефляция. Поверх таблицы два ограничения:
+
+- статусы `paper`, `live`, `decayed`, `retired` бэктест не трогает никогда —
+  их ставит человек или реальная остановка; прогон и вердикты при этом пишутся;
+- `rejected` → `validated`/`bench` только если данные нового прогона кончаются
+  позже, чем данные любого прежнего проваленного вердикта этой идеи. Если у
+  отказа нет даты, новизну показать нельзя, и идея остаётся на кладбище.
+
+Калибровочный шум (`noise-*`) статус не меняет: это измерительный прибор.
 
 ### `token_spend` — бюджет
 `at`, `stage`, `idea_id?`, `agent`, `tokens_in`, `tokens_out`, `usd_est`.

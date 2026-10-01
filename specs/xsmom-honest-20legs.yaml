@@ -55,3 +55,9 @@ costs:
 
 min_leg_notional: 12.0
 simultaneous_legs: 1
+
+# `qlab.strategies.xsmom` leaves out only the live engine's capital and
+# margin envelope (budget_cap, margin_buffer_factor, exchange leverage
+# setting), which sizes the wallet, not the book's weights. Nothing that
+# shapes returns per unit of notional is missing.
+unexpressed_mechanisms: []

@@ -17,13 +17,14 @@ are read from `qlab.venues`, never synthesized here).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib
 import json
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -39,7 +40,8 @@ from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, validate_weights
 from qlab.pipeline.spec import StrategySpec
 from qlab.registry import repo
-from qlab.registry.models import DataSnapshot, TrialSource, TrialStatus
+from qlab.registry.lifecycle import StatusDecision, apply_route
+from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialStatus
 from qlab.registry.models import Spec as SpecRow
 from qlab.rules.engine import EvaluationResult
 from qlab.rules.engine import evaluate as evaluate_rules
@@ -47,7 +49,7 @@ from qlab.rules.schema import RuleSet
 from qlab.venues.config import load_venue
 from qlab.venues.derive import derive_venue_metrics
 
-Route = Literal["reject", "needs-more-data", "shelf", "paper", "error"]
+Route = Literal["reject", "needs-more-data", "not-evaluable", "shelf", "paper", "error"]
 
 
 class StrategyResolutionError(ImportError):
@@ -59,9 +61,12 @@ class RoutingDecision:
     """What `evaluate_spec` decided to do with a run, and why.
 
     `route` is never `"live"` — see `decide_route`'s docstring for why that
-    is a structural guarantee, not an oversight. `"error"` is not one of the
-    four routes the rules engine can produce; it means the run itself never
-    reached the rules engine (see `Evaluation.error`).
+    is a structural guarantee, not an oversight. `"error"` and
+    `"not-evaluable"` are not routes the rules engine can produce: `"error"`
+    means the run crashed before reaching it (see `Evaluation.error`),
+    `"not-evaluable"` means the pipeline established before computing
+    anything that this run could not test its idea's strategy
+    (docs/TASKS.md T24, see `not_evaluable_reasons`).
     """
 
     route: Route
@@ -84,6 +89,10 @@ class Evaluation:
     rules_result: EvaluationResult | None
     routing: RoutingDecision
     error: str | None = None
+    status_decision: StatusDecision | None = None
+    """What the run did to its idea's status (docs/TASKS.md T31), or None
+    when the caller asked `evaluate_spec` not to touch statuses at all
+    (calibration noise)."""
 
 
 def resolve_strategy(code_ref: str) -> Strategy:
@@ -338,6 +347,89 @@ def _config_hash(params: dict[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class BookCoverage:
+    """How much of the panel the specified book existed on in full.
+
+    `coverage` is the share of panel bars on which every required instrument
+    was tradeable -- a measurement, reported, never compared to a threshold
+    (see `StrategySpec.required_instruments`). `window` is the longest
+    unbroken run of such bars as inclusive `(first, last)` row positions,
+    or None if the book was never complete. `missing` lists required
+    instruments the panel has no column for at all.
+    """
+
+    coverage: float
+    window: tuple[int, int] | None
+    missing: tuple[str, ...]
+
+
+def complete_book_window(panel: MarketPanel, required: Sequence[str]) -> BookCoverage:
+    """Measure where the book `required` describes existed in full.
+
+    The verdict is rendered on the longest unbroken stretch, not on every
+    complete bar: returns are compounded bar to bar, and stitching separate
+    stretches together would invent price moves across the gaps between them.
+    """
+    missing = tuple(name for name in required if name not in panel.prices.columns)
+    if missing:
+        return BookCoverage(coverage=0.0, window=None, missing=missing)
+
+    complete = panel.tradeable[list(required)].all(axis=1).to_numpy(dtype=bool)
+    n_bars = len(complete)
+    coverage = float(complete.mean()) if n_bars else 0.0
+
+    best: tuple[int, int] | None = None
+    run_start: int | None = None
+    for i, is_complete in enumerate(complete):
+        if is_complete and run_start is None:
+            run_start = i
+        if run_start is not None and (not is_complete or i == n_bars - 1):
+            run_end = i if is_complete else i - 1
+            if best is None or (run_end - run_start) > (best[1] - best[0]):
+                best = (run_start, run_end)
+            run_start = None
+    return BookCoverage(coverage=coverage, window=best, missing=())
+
+
+def not_evaluable_reasons(spec: StrategySpec, coverage: BookCoverage | None) -> list[str]:
+    """Why this run cannot test the strategy `spec.idea_id` names (T24).
+
+    Empty means the run can go ahead. Each reason is checked BEFORE any
+    backtest: a number computed on a different strategy, or on a book that
+    never existed, would be recorded as if it were an answer -- which is how
+    FRAB came to be "rejected" for a state machine the interface never ran,
+    and Bv2 for a book complete on a fifth of its window (T26).
+    """
+    reasons: list[str] = []
+    if spec.unexpressed_mechanisms:
+        reasons.append(
+            "implementation does not express: " + "; ".join(spec.unexpressed_mechanisms)
+        )
+    if coverage is not None:
+        if coverage.missing:
+            reasons.append(
+                "required instrument(s) absent from the data: " + ", ".join(coverage.missing)
+            )
+        elif coverage.window is None:
+            reasons.append("the specified book was never complete in the data")
+    return reasons
+
+
+def _slice_rows(panel: MarketPanel, first: int, last: int) -> MarketPanel:
+    """`panel` restricted to rows `first..last` inclusive. Works for both the
+    real `qlab.data.panel.MarketPanel` and the harness stand-in: both are
+    frozen dataclasses over the same four aligned frames."""
+    rows = slice(first, last + 1)
+    return dataclasses.replace(
+        panel,
+        prices=panel.prices.iloc[rows],
+        funding=panel.funding.iloc[rows],
+        tradeable=panel.tradeable.iloc[rows],
+        volume=panel.volume.iloc[rows],
+    )
+
+
 def decide_route(
     result: EvaluationResult, metrics: dict[str, float], deployable_capital_usd: float
 ) -> RoutingDecision:
@@ -412,8 +504,26 @@ def evaluate_spec(
     extra_metrics: (
         Mapping[str, float] | Callable[[dict[str, float]], Mapping[str, float]] | None
     ) = None,
+    update_idea_status: bool = True,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
+
+    The run's route is stored on its trial and, unless `update_idea_status`
+    is False, applied to the idea's status in the same transaction
+    (`qlab.registry.lifecycle.apply_route`, docs/TASKS.md T31). Only
+    calibration noise passes False: a noise idea is a measuring instrument,
+    and a "rejected" noise idea would read in the funnel as a finding.
+
+    Before any computation, `not_evaluable_reasons` checks whether this run
+    can test the strategy its idea names at all (T24). If not, a trial with
+    status and route `not-evaluable` is written, no backtest is run and no
+    verdict rows are written -- there is no number to judge. When the spec
+    declares `required_instruments`, the book's coverage is measured and
+    stored as `book_coverage`, and the backtest is evaluated only on the
+    longest unbroken stretch where the whole book existed
+    (`complete_book_window`); the verdict's data range is that stretch.
+    Weights are still computed on the full panel, so lookback warm-up is
+    not lost at the stretch's start.
 
     `extra_metrics` (docs/TASKS.md T28, the shape-aware admission bar) lets a
     caller fold metrics this pipeline cannot compute on its own into the
@@ -480,18 +590,88 @@ def evaluate_spec(
     config_hash = _config_hash(spec.params)
     code_sha = _code_sha()
 
+    def _record(
+        *,
+        status: TrialStatus,
+        metrics: dict[str, float] | None,
+        routing: RoutingDecision,
+        data_end: date | None,
+    ) -> tuple[int, StatusDecision | None]:
+        trial = repo.add_trial(
+            session,
+            spec_id=spec_row.id,
+            config_hash=config_hash,
+            code_sha=code_sha,
+            params=spec.params,
+            status=status,
+            snapshot_id=panel.snapshot_id,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+            metrics=metrics,
+            source=TrialSource.QLAB,
+            route=TrialRoute(routing.route),
+            route_reason=routing.reason,
+        )
+        decision = None
+        if update_idea_status:
+            decision = apply_route(
+                session,
+                idea_id=spec.idea_id,
+                route=TrialRoute(routing.route),
+                route_reason=routing.reason,
+                trial_id=trial.id,
+                rules_version=ruleset.version,
+                run_data_end=data_end,
+            )
+        return trial.id, decision
+
+    coverage = (
+        complete_book_window(panel, spec.required_instruments)
+        if spec.required_instruments is not None
+        else None
+    )
+    reasons = not_evaluable_reasons(spec, coverage)
+    if reasons:
+        reason = "; ".join(reasons)
+        if coverage is not None and not coverage.missing:
+            reason += f" (complete book on {coverage.coverage:.1%} of bars)"
+        routing = RoutingDecision(route="not-evaluable", reason=reason)
+        measured = {"book_coverage": coverage.coverage} if coverage is not None else None
+        trial_id, decision = _record(
+            status=TrialStatus.NOT_EVALUABLE, metrics=measured, routing=routing, data_end=None
+        )
+        return Evaluation(
+            trial_id=trial_id,
+            metrics=None,
+            rules_result=None,
+            routing=routing,
+            error=None,
+            status_decision=decision,
+        )
+
     try:
         strategy = resolve_strategy(spec.code_ref)
         weights = strategy.target_weights(panel, spec.params)
         validate_weights(panel, weights)
 
+        eval_panel, eval_weights = panel, weights
+        if coverage is not None and coverage.coverage < 1.0:
+            # `not_evaluable_reasons` already guaranteed a window exists.
+            first, last = coverage.window
+            eval_panel = _slice_rows(panel, first, last)
+            eval_weights = weights.iloc[first : last + 1]
+            range_start = eval_panel.prices.index[0].date()
+            range_end = eval_panel.prices.index[-1].date()
+
         costs = CostModel(
             taker_fee_bps=spec.costs.taker_fee_bps, slippage_bps=spec.costs.slippage_bps
         )
-        result = run_backtest(panel, weights, costs, panel.funding)
+        result = run_backtest(eval_panel, eval_weights, costs, eval_panel.funding)
 
         metrics = compute_metrics(result)
-        metrics["min_capital_usd"] = min_capital_usd(weights, spec.min_leg_notional)
+        metrics["min_capital_usd"] = min_capital_usd(eval_weights, spec.min_leg_notional)
+        if coverage is not None:
+            metrics["book_coverage"] = coverage.coverage
         metrics["point_in_time_universe"] = (
             1.0 if bool(panel.meta.get("universe_complete")) else 0.0
         )
@@ -528,49 +708,35 @@ def evaluate_spec(
         # `docs/REGISTRY.md`'s "trial written for every run" promise
         # requires, not narrowed to the exception types this module happens
         # to know about today.
-        trial = repo.add_trial(
-            session,
-            spec_id=spec_row.id,
-            config_hash=config_hash,
-            code_sha=code_sha,
-            params=spec.params,
-            status=TrialStatus.ERROR,
-            snapshot_id=panel.snapshot_id,
-            started_at=started_at,
-            finished_at=datetime.now(UTC),
-            metrics=None,
-            source=TrialSource.QLAB,
+        routing = RoutingDecision(route="error", reason=str(exc))
+        trial_id, decision = _record(
+            status=TrialStatus.ERROR, metrics=None, routing=routing, data_end=None
         )
         return Evaluation(
-            trial_id=trial.id,
+            trial_id=trial_id,
             metrics=None,
             rules_result=None,
-            routing=RoutingDecision(route="error", reason=str(exc)),
+            routing=routing,
             error=str(exc),
+            status_decision=decision,
         )
 
-    trial = repo.add_trial(
-        session,
-        spec_id=spec_row.id,
-        config_hash=config_hash,
-        code_sha=code_sha,
-        params=spec.params,
-        status=TrialStatus.OK,
-        snapshot_id=panel.snapshot_id,
-        started_at=started_at,
-        finished_at=datetime.now(UTC),
-        metrics=metrics,
-        source=TrialSource.QLAB,
-    )
-
+    # Rules and route are pure functions of `metrics`, so both are decided
+    # before the trial is written: the row carries its route from the moment
+    # it exists, and the status change below sees a complete trial.
     rules_result = evaluate_rules(metrics, ruleset)
+    routing = decide_route(rules_result, metrics, deployable_capital_usd)
+
+    trial_id, decision = _record(
+        status=TrialStatus.OK, metrics=metrics, routing=routing, data_end=range_end
+    )
 
     decided_at = datetime.now(UTC)
     verdict_rows = [
         {
             "idea_id": spec.idea_id,
             "spec_id": spec_row.id,
-            "trial_id": trial.id,
+            "trial_id": trial_id,
             "stage": row.stage.value,
             "rule_id": row.rule_id,
             "rules_version": row.rules_version,
@@ -590,22 +756,24 @@ def evaluate_spec(
     if verdict_rows:
         repo.add_verdicts(session, verdict_rows)
 
-    routing = decide_route(rules_result, metrics, deployable_capital_usd)
-
     return Evaluation(
-        trial_id=trial.id,
+        trial_id=trial_id,
         metrics=metrics,
         rules_result=rules_result,
         routing=routing,
         error=None,
+        status_decision=decision,
     )
 
 
 __all__ = [
+    "BookCoverage",
     "Evaluation",
     "RoutingDecision",
     "StrategyResolutionError",
+    "complete_book_window",
     "decide_route",
     "evaluate_spec",
+    "not_evaluable_reasons",
     "resolve_strategy",
 ]

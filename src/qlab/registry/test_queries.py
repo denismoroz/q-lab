@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, func
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -22,6 +22,7 @@ from qlab.registry.models import (
     Profile,
     ShutdownCause,
     SourceType,
+    Spec,
     TrialSource,
     VerdictStage,
 )
@@ -488,3 +489,66 @@ def test_funnel_stats_decayed_by_shutdown_cause(session):
         "false-discovery": 1,
     }
     assert sum(stats.decayed_by_shutdown_cause.values()) == stats.ideas_by_status["decayed"]
+
+
+def test_funnel_counts_latest_route_per_real_idea_and_sets_noise_aside(session):
+    """`ideas_by_latest_route` reads each real idea's LATEST routed trial
+    (docs/TASKS.md T31); calibration noise is counted apart, not as
+    candidates."""
+    from qlab.registry.models import TrialRoute, TrialStatus
+
+    for idea_id in ("real-a", "real-b", "noise-dollar_neutral-random_weights"):
+        repo.upsert_idea(
+            session,
+            id=idea_id,
+            title=idea_id,
+            source_type=SourceType.INTERNAL,
+            asset_class=AssetClass.CRYPTO_PERP,
+            profile=Profile.OTHER,
+        )
+    repo.add_data_snapshot(
+        session,
+        id="snap",
+        source="hyperliquid",
+        instruments={"BTC": True},
+        range_start=date(2026, 1, 1),
+        range_end=date(2026, 1, 2),
+        path="/nonexistent",
+        rows=1,
+        fetched_at=datetime.now(UTC),
+    )
+
+    def _trial(idea_id: str, route: TrialRoute | None) -> None:
+        spec = repo.add_spec(
+            session,
+            idea_id=idea_id,
+            version=session.query(func.count()).select_from(Spec).scalar() + 1,
+            params={},
+            data_requirements={},
+            rebalance="1d",
+            costs_model={},
+            code_ref="x:y",
+        )
+        repo.add_trial(
+            session,
+            spec_id=spec.id,
+            config_hash="h",
+            code_sha="s",
+            params={},
+            status=TrialStatus.OK,
+            snapshot_id="snap",
+            route=route,
+        )
+
+    _trial("real-a", TrialRoute.REJECT)
+    _trial("real-a", TrialRoute.NOT_EVALUABLE)  # latest for real-a
+    _trial("real-b", TrialRoute.SHELF)
+    _trial("real-b", None)  # unrouted trial does not override the routed one
+    _trial("noise-dollar_neutral-random_weights", TrialRoute.REJECT)
+    session.commit()
+
+    stats = funnel_stats(session)
+
+    assert stats.ideas_by_latest_route == {"not-evaluable": 1, "shelf": 1}
+    assert stats.calibration_ideas == 1
+    assert stats.ideas_by_status == {"candidate": 2}

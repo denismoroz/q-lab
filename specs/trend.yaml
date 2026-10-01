@@ -76,3 +76,12 @@ min_leg_notional: 10.0
 # multi-leg strategies not applying: this is genuinely a 1-leg-per-entry
 # strategy).
 simultaneous_legs: 1
+
+# What `qlab.strategies.trend` leaves out of the live trend engine (its
+# module docstring, "Left OUT"). The live engine scales the whole book by its
+# own trailing realised volatility, which frab's TrendParams calls "the only
+# knob of seven that helped on BOTH the fitted and the never-seen window".
+# The live strategy is evaluated through `specs/trend-live*.yaml`, which call
+# frab's own code and express it.
+unexpressed_mechanisms:
+  - "whole-book volatility targeting (TrendParams.book_vol_target_ann / book_vol_scale)"
