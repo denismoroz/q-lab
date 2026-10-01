@@ -56,6 +56,7 @@ this defect at 0.45 Sharpe.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -106,6 +107,21 @@ _SOURCES = {
         "fetch_spot": hyperliquid_source.fetch_spot_universe,
         "discover_spot_universe": hyperliquid_source.discover_spot_universe,
         "describe_spot_universe": hyperliquid_source.describe_spot_universe,
+    },
+    # HIP-3 deployments: same endpoints, `dex` passed through. No spot keys --
+    # a deployment lists perps only.
+    **{
+        hyperliquid_source.hip3_venue(dex): {
+            "fetch": functools.partial(hyperliquid_source.fetch_universe, dex=dex),
+            "funding_native_interval": hyperliquid_source.FUNDING_NATIVE_INTERVAL,
+            "discover_universe": functools.partial(
+                hyperliquid_source.discover_universe, dex=dex
+            ),
+            "describe_universe": functools.partial(
+                hyperliquid_source.describe_universe, dex=dex
+            ),
+        }
+        for dex in hyperliquid_source.HIP3_DEXES
     },
     binance_source.VENUE: {
         "fetch": binance_source.fetch_universe,

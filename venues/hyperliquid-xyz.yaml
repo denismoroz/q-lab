@@ -1,0 +1,40 @@
+# Venue capability facts for the `xyz` HIP-3 deployment on Hyperliquid
+# (trade[XYZ]: perps on stocks, indices, commodities, FX). Same format and
+# same three preflight questions as venues/hyperliquid.yaml; read that file's
+# header for what each field means.
+#
+# Written 2026-10-01 for the first candidate taken end to end
+# (cards/xyz-equity-bab.yaml, docs/PLAN.md "Карта пути", stage 3).
+
+id: hyperliquid-xyz
+title: "Hyperliquid HIP-3 deployment xyz (trade[XYZ])"
+
+# execution_adapter — FALSE. The live engine cannot place an order on an
+# `xyz:` instrument today.
+#   - A search of funding-rate-arbitrage/src/frab for any handling of a HIP-3
+#     `dex` (the parameter every HIP-3 request needs) finds none, 2026-10-01.
+#   - The owner CAN trade these markets by hand on the same Hyperliquid
+#     account (cards/xyz-equity-bab.yaml, execution.venue, quoting
+#     docs.trade.xyz: the site is "not the exclusive interface"). That is a
+#     fact about access, not about our infrastructure, and this field asks
+#     about the infrastructure.
+execution_adapter: false
+
+# min_leg_notional_usd — Hyperliquid's own minimum order, the same exchange
+# engine (HyperCore) as the main market. cards/xyz-equity-bab.yaml quotes the
+# exchange endpoint docs: "Order must have minimum value of $10."
+min_leg_notional_usd: 10.0
+
+# free_public_data — the same free, no-key /info endpoint, with `dex: "xyz"`
+# (src/qlab/data/sources/hyperliquid.py, HIP3_DEXES). Checked 2026-10-01:
+# metaAndAssetCtxs returns 129 instruments (19 delisted), candleSnapshot and
+# fundingHistory return data for `xyz:` names.
+free_public_data: true
+
+# supports_atomic_multileg — same engine, same answer as the main market: no
+# all-or-nothing multi-market order (venues/hyperliquid.yaml).
+supports_atomic_multileg: false
+
+# uncovered_leg_recovery — none: with no execution adapter there is no live
+# engine to unwind a leg. Only matters for specs with simultaneous_legs > 1.
+uncovered_leg_recovery: null

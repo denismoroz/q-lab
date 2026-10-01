@@ -1,0 +1,67 @@
+# Betting against beta on the single stocks of the `xyz` HIP-3 deployment --
+# the idea exactly as cards/xyz-equity-bab.yaml states it. Written 2026-10-01,
+# committed before any run.
+#
+# Not evaluable today, and the reason is named below rather than worked around.
+# The paper ranks securities "in an asset class"; the card's driver is about
+# equity investors. The venue's API carries no asset class per instrument
+# (metaAndAssetCtxs fields: name, szDecimals, maxLeverage, marginTableId,
+# marginMode, onlyIsolated, growthMode, isDelisted, ...) and its documentation
+# lists all markets in one table without categories. Its 129 instruments mix
+# single stocks with ETFs (SMH, XLE), leveraged ETFs (SOXL, KORU), indices,
+# commodities, FX and contracts on companies not yet listed anywhere (SHEIN,
+# ZHIPU), and 7 of the 19 delisted ones are stocks (LRCX, GLW, UMC, ...). Any
+# "stocks only" list would be a classification made by us, including the dead
+# names, and it has to come from a source before it can be used.
+#
+# The same method on the whole deployment, with no classification, is the
+# neighbour idea specs/xyz-deployment-bab.yaml.
+
+idea_id: xyz-equity-bab
+title: "Betting against beta on xyz single stocks (the card as written)"
+code_ref: "qlab.strategies.bab:BettingAgainstBeta"
+
+# Every value is the source's, see qlab.strategies.bab's docstring for the
+# verbatim quotes and for why beta estimation follows the 2010 working paper
+# (NBER w16601) while portfolio construction follows the 2014 published one.
+params:
+  # The deployment's own index, and the only proxy with enough history: the
+  # alternative, xyz:SP500, had 189 daily bars on 2026-09-22, below the
+  # paper's 200-observation minimum (cards/xyz-equity-bab.yaml, legs).
+  market: "xyz:XYZ100"
+  window_bars: 365        # "1-year rolling windows" of daily data; xyz trades every day
+  min_observations: 200   # "require at least 200 observations"
+  dimson_lags: 5          # "lags up to K = 5 trading days"
+  shrink_weight: 0.5      # "we set w = 0.5 and beta_XS = 1"
+  shrink_target: 1.0
+
+data:
+  source: hyperliquid-xyz
+  interval: "1d"
+  # The deployment's first daily candle is 2025-10-13 (xyz:XYZ100); the window
+  # starts a little earlier so nothing listed at launch is cut off.
+  start: 2025-10-01
+  end: 2026-09-30
+
+costs:
+  # docs.trade.xyz/perpetuals/mechanics/fees: "Standard fees for all HIP-3
+  # assets are currently 2x the usual fees on validator-operated perp markets".
+  # The usual taker q-lab uses for Hyperliquid perps is 3.5 bps
+  # (funding-rate-arbitrage/src/frab/constants.py, PERP_TAKER = 0.00035; the
+  # same figure every other spec here uses), so 7.0 bps. Many xyz instruments
+  # report growthMode "enabled" (fees cut by >= 90% per the same page), but
+  # the API gives only today's mode, not its history -- so the standard rate
+  # is used throughout, an upper bound on cost, not an estimate.
+  taker_fee_bps: 7.0
+  # Same slippage figure as the main-market specs (SCREENING.md: ~4.4 bps per
+  # leg = 3.5 taker + 0.9). xyz books are thinner, so this is a lower bound.
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0    # venues/hyperliquid-xyz.yaml
+# A portfolio, not a pair: a partly filled rebalance mis-sizes the book but
+# leaves no leg uncovered (cards/xyz-equity-bab.yaml, execution.note).
+simultaneous_legs: 1
+
+
+unexpressed_mechanisms:
+  - "ranking within the single-stock asset class: the venue publishes no asset class per instrument, so the implementation can only rank the whole deployment"

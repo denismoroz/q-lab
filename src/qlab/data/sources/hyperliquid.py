@@ -36,6 +36,21 @@ from qlab.data.sources.base import (
 BASE_URL = "https://api.hyperliquid.xyz/info"
 VENUE = "hyperliquid"
 
+# HIP-3 deployments (builder-deployed perp markets on the same HyperCore
+# engine and account) that q-lab can read. Every request type used here takes
+# an optional `dex` and otherwise behaves identically; instrument names come
+# back already prefixed (`xyz:AAPL`), so candles and funding need nothing new.
+# Only `xyz` is listed: of the nine deployments measured 2026-09-22, it is
+# the one live market (cards/README.md); the others are dead or tiny.
+HIP3_DEXES: tuple[str, ...] = ("xyz",)
+
+
+def hip3_venue(dex: str) -> str:
+    """The `source` name a spec uses for one HIP-3 deployment, e.g.
+    `hyperliquid-xyz`. Kept separate from plain `hyperliquid` because the
+    universe, the fee schedule and the execution support all differ."""
+    return f"{VENUE}-{dex}"
+
 # HL caps candleSnapshot/fundingHistory responses; a page shorter than this
 # means we've reached the tail of the available history.
 _MAX_CANDLES_PER_PAGE = 5000
@@ -62,10 +77,16 @@ def _to_ms(ts: pd.Timestamp) -> int:
     return int(ts.timestamp() * 1000)
 
 
-def fetch_meta(client: httpx.Client) -> dict[str, dict]:
+def fetch_meta(client: httpx.Client, dex: str | None = None) -> dict[str, dict]:
     """Return ``{instrument: {"is_delisted": bool, "max_leverage": int}}``
-    from ``metaAndAssetCtxs``."""
-    meta, _asset_ctxs = _post(client, {"type": "metaAndAssetCtxs"})
+    from ``metaAndAssetCtxs`` -- of the main perp market, or of HIP-3
+    deployment `dex` when given. A deployment's list includes its delisted
+    instruments too (19 of 129 for `xyz` on 2026-10-01), so the same
+    survivorship-free argument as for the main market holds."""
+    payload: dict[str, str] = {"type": "metaAndAssetCtxs"}
+    if dex is not None:
+        payload["dex"] = dex
+    meta, _asset_ctxs = _post(client, payload)
     return {
         entry["name"]: {
             "is_delisted": bool(entry.get("isDelisted", False)),
@@ -77,6 +98,8 @@ def fetch_meta(client: httpx.Client) -> dict[str, dict]:
 
 def describe_universe(
     as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+    *,
+    dex: str | None = None,
 ) -> list[tuple[str, bool]]:
     """Return ``[(instrument, is_delisted), ...]`` for HL's full perpetual
     universe — survivors *and* delisted names alike, sorted by instrument.
@@ -91,17 +114,21 @@ def describe_universe(
     which already includes every past delisting.
     """
     with httpx.Client() as client:
-        meta = fetch_meta(client)
+        meta = fetch_meta(client, dex)
     return sorted((name, info["is_delisted"]) for name, info in meta.items())
 
 
-def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None) -> list[str]:
+def discover_universe(
+    as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+    *,
+    dex: str | None = None,
+) -> list[str]:
     """Return just the instrument names from `describe_universe` — the full
     point-in-time-safe universe (survivors + delisted) that
     ``build_snapshot`` uses by default when no explicit instrument list is
     given, so a caller never has to (and never accidentally does) hand-pick
     survivors."""
-    return [name for name, _is_delisted in describe_universe(as_of_range)]
+    return [name for name, _is_delisted in describe_universe(as_of_range, dex=dex)]
 
 
 _CANDLE_FRAME_COLUMNS = ("price", "volume", "trade_count")
@@ -256,8 +283,13 @@ def fetch_universe(
     interval: str,
     *,
     on_missing: str = "raise",
+    dex: str | None = None,
 ) -> dict[str, InstrumentHistory]:
     """Fetch price + funding history for each requested instrument.
+
+    `dex` selects a HIP-3 deployment: its listing metadata is read instead
+    of the main market's, and its raw cache lives under its own source name
+    (`hip3_venue(dex)`) so the two can never be mixed up on disk.
 
     `on_missing` decides what an instrument with no candle data in range
     means, and that depends entirely on where the list came from:
@@ -272,13 +304,13 @@ def fetch_universe(
       just to ask about one year.
     """
     with httpx.Client() as client:
-        meta = fetch_meta(client)
+        meta = fetch_meta(client, dex)
         return fetch_universe_resumable(
             instruments,
             start,
             end,
             interval,
-            source=VENUE,
+            source=VENUE if dex is None else hip3_venue(dex),
             fetch_one=lambda coin: fetch_instrument_history(
                 client, coin, interval, start, end, meta
             ),
