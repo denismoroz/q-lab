@@ -201,6 +201,26 @@ def fetch_candles(
     return frame
 
 
+def has_history_before(coin: str, end: pd.Timestamp, *, dex: str | None = None) -> bool:
+    """Does the venue serve ANY daily candle for `coin` up to `end`?
+
+    Used for one question only: a delisted instrument that returned no data
+    for a requested window -- did it live entirely before the window
+    (ordinary point-in-time truth), or does the venue no longer serve its
+    history at all? On the main market the first holds: every delisted perp
+    missing from a 2025-2026 panel still serves candles ending in 2024. On the
+    `xyz` HIP-3 deployment the second holds: all 19 delisted instruments
+    return zero candles for any range (checked 2026-10-01), although the
+    deployment only launched in October 2025, so each of them traded inside
+    any window that covers it. `dex` is accepted for symmetry with the other
+    source functions; instrument names already carry the deployment prefix.
+    """
+    del dex
+    with httpx.Client() as client:
+        candles = fetch_candles(client, coin, "1d", pd.Timestamp("2015-01-01", tz="UTC"), end)
+    return not candles.empty
+
+
 def fetch_funding(
     client: httpx.Client, coin: str, start: pd.Timestamp, end: pd.Timestamp
 ) -> pd.Series:

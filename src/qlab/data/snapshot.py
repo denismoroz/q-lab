@@ -104,6 +104,7 @@ _SOURCES = {
         # these three keys are absent from binance's spec below, and every
         # call site treats their absence as "this source has no spot
         # markets" via `.get(...)`, never as an error.
+        "has_history_before": hyperliquid_source.has_history_before,
         "fetch_spot": hyperliquid_source.fetch_spot_universe,
         "discover_spot_universe": hyperliquid_source.discover_spot_universe,
         "describe_spot_universe": hyperliquid_source.describe_spot_universe,
@@ -119,6 +120,9 @@ _SOURCES = {
             ),
             "describe_universe": functools.partial(
                 hyperliquid_source.describe_universe, dex=dex
+            ),
+            "has_history_before": functools.partial(
+                hyperliquid_source.has_history_before, dex=dex
             ),
         }
         for dex in hyperliquid_source.HIP3_DEXES
@@ -604,6 +608,36 @@ def build_snapshot(
         raise ValueError(
             f"no instrument had data in [{start_ts}, {end_ts}] at interval {interval!r}"
         )
+
+    # A discovered universe is complete only if every instrument missing from
+    # the panel is missing for a point-in-time reason. A DELISTED instrument
+    # with no data in the window either lived entirely before it (fine) or
+    # the venue no longer serves its history at all -- and then the panel is
+    # survivors-only while claiming otherwise. That second case is what the
+    # `xyz` HIP-3 deployment does (`has_history_before` docstring), so it is
+    # checked, not assumed. A source that cannot answer the question keeps
+    # the previous behaviour; the key is omitted when empty so snapshots
+    # without the problem keep the same id.
+    delisted_without_history: list[str] = []
+    has_history_before = source_spec.get("has_history_before")
+    if universe_complete and has_history_before is not None:
+        skipped = sorted(set(perp_instruments) - set(histories))
+        if skipped:
+            delisted = {name for name, is_dead in source_spec["describe_universe"]() if is_dead}
+            delisted_without_history = [
+                name
+                for name in skipped
+                if name in delisted and not has_history_before(name, end_ts)
+            ]
+        if delisted_without_history:
+            logger.warning(
+                "delisted_instruments_without_history",
+                source=source,
+                n=len(delisted_without_history),
+                instruments=delisted_without_history,
+            )
+            universe_complete = False
+
     instruments_sorted = sorted(histories)
 
     full_index = pd.date_range(start_ts, end_ts, freq=_INTERVAL_TO_PANDAS_FREQ[interval], tz="UTC")
@@ -631,6 +665,8 @@ def build_snapshot(
         no_funding_instruments,
         min_daily_volume_usd,
     )
+    if delisted_without_history:
+        manifest["delisted_without_history"] = delisted_without_history
     manifest_bytes = _manifest_bytes(manifest)
     prices_bytes = _dataframe_bytes(prices)
     funding_bytes = _dataframe_bytes(funding)
@@ -694,6 +730,7 @@ def build_snapshot(
         "universe_complete": universe_complete,
         "no_funding_instruments": no_funding_instruments,
         "min_daily_volume_usd": min_daily_volume_usd,
+        "delisted_without_history": delisted_without_history,
     }
     return MarketPanel(
         snapshot_id=snapshot_id,
@@ -756,6 +793,8 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             # -- None correctly reads as "no liquidity filter was ever
             # applied", not a data-loss error.
             "min_daily_volume_usd": manifest.get("min_daily_volume_usd"),
+            # Absent from every snapshot that had no such instruments.
+            "delisted_without_history": manifest.get("delisted_without_history", []),
         }
         return MarketPanel(
             snapshot_id=snapshot_id,

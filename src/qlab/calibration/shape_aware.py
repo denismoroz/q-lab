@@ -52,7 +52,12 @@ from qlab.calibration.percentile import (
     compute_shape_aware_percentiles,
 )
 from qlab.calibration.run import NoiseTrial, run_noise_series
-from qlab.pipeline.evaluate import Evaluation, evaluate_spec, not_evaluable_reasons
+from qlab.pipeline.evaluate import (
+    Evaluation,
+    evaluate_spec,
+    not_evaluable_reasons,
+    resolve_panel,
+)
 from qlab.pipeline.spec import StrategySpec
 from qlab.rules.schema import RuleSet
 
@@ -118,7 +123,7 @@ def evaluate_spec_with_shape_aware_bar(
     already-computed noise sample should call `compute_shape_aware_percentiles`
     directly against trials it already has, not this function).
     """
-    if not_evaluable_reasons(spec, None):
+    if not_evaluable_reasons(spec, None, resolve_panel(session, spec).meta):
         # Declared before any data is read: this run cannot test the
         # strategy its idea names (T24), so there is nothing to rank against
         # noise and 200 noise backtests would be wasted. `evaluate_spec`

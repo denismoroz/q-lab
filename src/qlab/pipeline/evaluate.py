@@ -190,6 +190,12 @@ def _find_matching_snapshot(
             DataSnapshot.range_start == start.date(),
             DataSnapshot.range_end == end.date(),
         )
+        # Newest build first: when the same request has been rebuilt, the
+        # later build carries what was learned since (e.g. the
+        # `delisted_without_history` check, added after a first xyz build
+        # had already claimed a complete universe). The earlier one is left
+        # on disk -- trials may reference it -- but is no longer chosen.
+        .order_by(DataSnapshot.fetched_at.desc())
         .all()
     )
     matches: list[str] = []
@@ -224,10 +230,18 @@ def _find_matching_snapshot(
         if manifest.get("min_daily_volume_usd") != min_daily_volume_usd:
             continue
         if wanted_instruments is None:
-            if not manifest.get("universe_complete"):
+            # A discovered-universe request is answered by a discovered build:
+            # complete, or incomplete ONLY because the venue erased delisted
+            # instruments' history (`delisted_without_history`). The latter is
+            # still the answer to this request -- and the one that must be
+            # found, so the run is routed not-evaluable instead of refetching.
+            if not (manifest.get("universe_complete") or manifest.get("delisted_without_history")):
                 continue
         else:
-            if manifest.get("universe_complete"):
+            # Neither a complete discovered build nor one marked for erased
+            # history answers a hand-written list: the latter's flag is a
+            # statement about the discovered universe, not about this list.
+            if manifest.get("universe_complete") or manifest.get("delisted_without_history"):
                 continue
             if sorted(manifest.get("instruments", [])) != wanted_instruments:
                 continue
@@ -249,7 +263,7 @@ def _find_matching_snapshot(
     return matches[0]
 
 
-def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
+def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
     """Load an existing matching snapshot, or build (and fetch) a new one."""
     data_block = data.data
     start_ts = _to_utc_timestamp(data_block.start)
@@ -392,7 +406,11 @@ def complete_book_window(panel: MarketPanel, required: Sequence[str]) -> BookCov
     return BookCoverage(coverage=coverage, window=best, missing=())
 
 
-def not_evaluable_reasons(spec: StrategySpec, coverage: BookCoverage | None) -> list[str]:
+def not_evaluable_reasons(
+    spec: StrategySpec,
+    coverage: BookCoverage | None,
+    panel_meta: Mapping[str, object] | None = None,
+) -> list[str]:
     """Why this run cannot test the strategy `spec.idea_id` names (T24).
 
     Empty means the run can go ahead. Each reason is checked BEFORE any
@@ -402,6 +420,16 @@ def not_evaluable_reasons(spec: StrategySpec, coverage: BookCoverage | None) -> 
     and Bv2 for a book complete on a fifth of its window (T26).
     """
     reasons: list[str] = []
+    erased = list((panel_meta or {}).get("delisted_without_history") or [])
+    if erased:
+        # The universe the spec asked for existed, but part of it can no
+        # longer be priced: a test on the survivors would carry exactly the
+        # bias `honest_universe` exists to catch, so it is not run at all
+        # (qlab.data.sources.hyperliquid.has_history_before).
+        reasons.append(
+            f"the source serves no price history for {len(erased)} delisted instrument(s) "
+            f"of this universe, so only survivors could be tested: " + ", ".join(erased)
+        )
     if spec.unexpressed_mechanisms:
         reasons.append(
             "implementation does not express: " + "; ".join(spec.unexpressed_mechanisms)
@@ -582,7 +610,7 @@ def evaluate_spec(
     legitimate verdict kinds; there is no fourth kind for "run crashed").
     """
     spec_row = _get_or_create_spec_row(session, spec)
-    panel = _resolve_panel(session, spec)
+    panel = resolve_panel(session, spec)
 
     range_start = pd.Timestamp(panel.meta["range_start"]).date()
     range_end = pd.Timestamp(panel.meta["range_end"]).date()
@@ -630,7 +658,7 @@ def evaluate_spec(
         if spec.required_instruments is not None
         else None
     )
-    reasons = not_evaluable_reasons(spec, coverage)
+    reasons = not_evaluable_reasons(spec, coverage, panel.meta)
     if reasons:
         reason = "; ".join(reasons)
         if coverage is not None and not coverage.missing:
@@ -775,5 +803,6 @@ __all__ = [
     "decide_route",
     "evaluate_spec",
     "not_evaluable_reasons",
+    "resolve_panel",
     "resolve_strategy",
 ]

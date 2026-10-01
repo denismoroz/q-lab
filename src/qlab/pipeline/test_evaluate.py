@@ -996,3 +996,22 @@ def test_error_trial_records_its_route_and_moves_nothing(session, tmp_path) -> N
     assert trial.route == TrialRoute.ERROR
     assert "strategy blew up" in trial.route_reason
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE
+
+
+def test_universe_with_erased_delisted_history_is_not_evaluable(session, tmp_path) -> None:
+    """Survivors-only data is not a test of the strategy: not-evaluable, with
+    the instruments named, before any backtest."""
+    _register_discovered(session, tmp_path)
+    manifest_path = tmp_path / DISCOVERED_ID / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["universe_complete"] = False
+    manifest["delisted_without_history"] = ["xyz:LRCX", "xyz:GLW"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:RaisingStrategy")
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "xyz:LRCX" in evaluation.routing.reason and "only survivors" in evaluation.routing.reason

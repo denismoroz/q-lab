@@ -606,6 +606,70 @@ class TestMissingInstrumentProvenance:
         assert seen["on_missing"] == "raise"
 
 
+class TestDelistedWithoutHistory:
+    """A venue that stops serving a delisted instrument's history turns a
+    "discovered" universe into survivors-only. The xyz HIP-3 deployment does
+    exactly that (all 19 delisted instruments return no candles), so the
+    snapshot must say so instead of claiming completeness."""
+
+    @staticmethod
+    def _fetch_without(missing: str):
+        def fetch(instruments, start, end, interval, *, on_missing="raise"):
+            assert on_missing == "skip"
+            kept = [i for i in instruments if i != missing]
+            return _fake_fetch_universe(kept, start, end, interval)
+
+        return fetch
+
+    def _build(self, session, tmp_path):
+        return snap.build_snapshot(
+            "hyperliquid", None, "2026-01-01", "2026-01-03", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+
+    def test_erased_delisted_history_makes_the_universe_incomplete(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._fetch_without("DEADCOIN"))
+        monkeypatch.setitem(
+            snap._SOURCES["hyperliquid"], "has_history_before", lambda coin, end: False
+        )
+        panel = self._build(session, tmp_path)
+
+        assert panel.meta["universe_complete"] is False
+        assert panel.meta["delisted_without_history"] == ["DEADCOIN"]
+        reloaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert reloaded.meta["delisted_without_history"] == ["DEADCOIN"]
+        assert reloaded.meta["universe_complete"] is False
+
+    def test_delisted_that_lived_before_the_window_is_ordinary_truth(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._fetch_without("DEADCOIN"))
+        monkeypatch.setitem(
+            snap._SOURCES["hyperliquid"], "has_history_before", lambda coin, end: True
+        )
+        panel = self._build(session, tmp_path)
+
+        assert panel.meta["universe_complete"] is True
+        assert panel.meta["delisted_without_history"] == []
+
+    def test_live_instrument_without_data_is_not_counted_as_erased(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        asked: list[str] = []
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._fetch_without("ETH"))
+        monkeypatch.setitem(
+            snap._SOURCES["hyperliquid"],
+            "has_history_before",
+            lambda coin, end: asked.append(coin) or False,
+        )
+        panel = self._build(session, tmp_path)
+
+        assert asked == []
+        assert panel.meta["universe_complete"] is True
+
+
 # --------------------------------------------------------------------------
 # Spot markets (docs/TASKS.md, T17): column naming, universe_complete
 # composition, and the structural-vs-gap funding distinction end to end
