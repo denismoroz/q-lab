@@ -29,3 +29,5 @@ data/raw/
 
 # Claude Code local tooling config
 .claude/
+# q-lab own recorded market data (docs/TASKS.md T33) -- irreplaceable, see docs
+data/recorded/

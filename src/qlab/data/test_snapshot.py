@@ -654,6 +654,29 @@ class TestDelistedWithoutHistory:
         assert panel.meta["universe_complete"] is True
         assert panel.meta["delisted_without_history"] == []
 
+    def test_recorded_history_fills_what_the_venue_erased(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        """T33: the daily recorder kept DEADCOIN before the venue dropped it,
+        so the panel has it and the universe stays complete."""
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", self._fetch_without("DEADCOIN"))
+        monkeypatch.setitem(
+            snap._SOURCES["hyperliquid"], "has_history_before", lambda coin, end: False
+        )
+        index = pd.date_range("2026-01-01", "2026-01-02", freq="1h", tz="UTC")
+        monkeypatch.setattr(
+            snap,
+            "load_recorded_history",
+            lambda source, name, interval, start, end, *, store_dir, is_delisted: (
+                _hist(name, index, is_delisted=True) if name == "DEADCOIN" else None
+            ),
+        )
+        panel = self._build(session, tmp_path)
+
+        assert "DEADCOIN" in panel.prices.columns
+        assert panel.meta["universe_complete"] is True
+        assert panel.meta["delisted_without_history"] == []
+
     def test_live_instrument_without_data_is_not_counted_as_erased(
         self, session, patched_source, tmp_path, monkeypatch
     ):

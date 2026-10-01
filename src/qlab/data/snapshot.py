@@ -69,6 +69,8 @@ import structlog
 from sqlalchemy.orm import Session
 
 from qlab.data.panel import MarketPanel
+from qlab.data.recorder import DEFAULT_STORE_DIR as DEFAULT_RECORDED_DIR
+from qlab.data.recorder import load_recorded_history
 from qlab.data.sources import binance as binance_source
 from qlab.data.sources import hyperliquid as hyperliquid_source
 from qlab.data.sources.base import (
@@ -447,8 +449,13 @@ def build_snapshot(
     min_daily_volume_usd: float | None = None,
     snapshots_dir: Path | str = DEFAULT_SNAPSHOTS_DIR,
     session: Session | None = None,
+    recorded_dir: Path = DEFAULT_RECORDED_DIR,
 ) -> MarketPanel:
     """Fetch, assemble, persist and register a ``MarketPanel`` snapshot.
+
+    ``recorded_dir`` is where `qlab.data.recorder` keeps its own copy of what
+    venues stop serving; a delisted instrument missing from the venue is
+    looked up there before it is declared erased.
 
     ``min_daily_volume_usd`` (docs/TASKS.md, T27, gap 2) is an optional
     POINT-IN-TIME liquidity floor: an instrument reads ``tradeable=False``
@@ -624,11 +631,19 @@ def build_snapshot(
         skipped = sorted(set(perp_instruments) - set(histories))
         if skipped:
             delisted = {name for name, is_dead in source_spec["describe_universe"]() if is_dead}
-            delisted_without_history = [
-                name
-                for name in skipped
-                if name in delisted and not has_history_before(name, end_ts)
-            ]
+            for name in skipped:
+                if name not in delisted:
+                    continue
+                # Our own record comes first (docs/TASKS.md T33): anything the
+                # daily recorder kept before the venue dropped it fills the hole.
+                recorded = load_recorded_history(
+                    source, name, interval, start_ts, end_ts,
+                    store_dir=recorded_dir, is_delisted=True,
+                )
+                if recorded is not None:
+                    histories[name] = recorded
+                elif not has_history_before(name, end_ts):
+                    delisted_without_history.append(name)
         if delisted_without_history:
             logger.warning(
                 "delisted_instruments_without_history",

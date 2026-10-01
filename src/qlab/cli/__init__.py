@@ -28,6 +28,8 @@ from qlab.calibration.run import (
     run_real_strategies,
 )
 from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
+from qlab.data.recorder import DEFAULT_STORE_DIR as DEFAULT_RECORDED_DIR
+from qlab.data.recorder import record
 from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
 from qlab.pipeline.evaluate import evaluate_spec
 from qlab.pipeline.spec import load_spec
@@ -335,6 +337,36 @@ def data_universe_cmd(
     typer.echo(f"total: {len(described)} instruments ({n_delisted} delisted)")
 
 
+@data_app.command("record")
+def data_record_cmd(
+    source: list[str] = typer.Option(  # noqa: B008 - idiomatic typer default
+        ..., "--source", help="hyperliquid or hyperliquid-<dex>; repeat for several"
+    ),
+    interval: list[str] = typer.Option(  # noqa: B008 - idiomatic typer default
+        ..., "--interval", help="Candle interval to keep, e.g. 1d, 1h; repeat for several"
+    ),
+    store: Path = typer.Option(  # noqa: B008 - idiomatic typer default
+        DEFAULT_RECORDED_DIR, "--store", help="Where the recorded data lives"
+    ),
+) -> None:
+    """Append every closed candle and funding settlement the venue serves now
+    to q-lab's own store, before the venue stops serving them (docs/TASKS.md
+    T33). Meant to run daily; a missed day is caught up on the next run."""
+    failed = False
+    for name in source:
+        report = record(name, interval, store_dir=store)
+        typer.echo(
+            f"{name}: listed {report.listed}, delisted {report.delisted}, "
+            f"new candles {report.new_candles}, new funding {report.new_funding}, "
+            f"failed {len(report.failed)}"
+        )
+        if report.failed:
+            failed = True
+            typer.echo(f"  failed: {', '.join(report.failed)}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @data_app.command("list")
 def data_list_cmd() -> None:
     """List registered data_snapshot rows, newest first."""
@@ -438,9 +470,10 @@ def evaluate_cmd(
         _echo_status()
         raise typer.Exit(code=1)
 
-    if result.routing.route == "not-evaluable":
+    if result.routing.route == "not-evaluable" and result.metrics is None:
         # Nothing was computed, on purpose (docs/TASKS.md T24): print the
         # reason, not an empty metrics block that would read like a result.
+        # An exploratory run did compute, and falls through to print it.
         typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
         _echo_status()
         return

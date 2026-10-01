@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  q-lab daily market-data recorder (docs/TASKS.md T33).
+  Runs ops/record-daily.sh once a day at 04:10 local time. launchd runs a
+  calendar job that was missed while the Mac slept as soon as it wakes, and
+  the recorder itself catches up from the last stored candle.
+  Install:   cp ops/com.qlab.recorder.plist ~/Library/LaunchAgents/ &&
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.recorder.plist
+  Remove:    launchctl bootout gui/$(id -u)/com.qlab.recorder &&
+             rm ~/Library/LaunchAgents/com.qlab.recorder.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.qlab.recorder</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/d/prj/q-lab/ops/record-daily.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>10</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/d/prj/q-lab/data/recorded/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/d/prj/q-lab/data/recorded/logs/launchd.err</string>
+</dict>
+</plist>
