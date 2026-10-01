@@ -156,6 +156,7 @@ export default function IdeaDetail() {
 const OUTCOME_STYLE = {
   paper: 'border-emerald-300 bg-emerald-50',
   shelf: 'border-indigo-300 bg-indigo-50',
+  'needs-infrastructure': 'border-indigo-300 bg-indigo-50',
   reject: 'border-stone-300 bg-stone-50',
   'not-evaluable': 'border-amber-300 bg-amber-50',
   'needs-more-data': 'border-amber-300 bg-amber-50',

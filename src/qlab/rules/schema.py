@@ -84,6 +84,22 @@ class Comparator(StrEnum):
         raise AssertionError(f"unhandled comparator {self!r}")  # pragma: no cover
 
 
+class RuleKind(StrEnum):
+    """What a failing rule says about a candidate (docs/TASKS.md T35).
+
+    A STRATEGY rule failing means "tested, and the strategy falls short"
+    (edge, tails, capital). An INFRASTRUCTURE rule failing means "we cannot
+    run it here today" -- no execution adapter, no forward data, no atomic
+    execution. The second is a statement about our setup, not about the
+    strategy, so it must neither stop the strategy rules from being
+    evaluated nor send the idea to the graveyard
+    (`qlab.pipeline.evaluate.decide_route`'s `needs-infrastructure`).
+    """
+
+    STRATEGY = "strategy"
+    INFRASTRUCTURE = "infrastructure"
+
+
 class Rule(BaseModel):
     """A single screening rule."""
 
@@ -95,6 +111,7 @@ class Rule(BaseModel):
     comparator: Comparator
     threshold: float
     fatal: bool = False
+    kind: RuleKind = RuleKind.STRATEGY
     near_margin: float | None = Field(
         default=None,
         description=(

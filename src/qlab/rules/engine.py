@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from qlab.rules.schema import STAGE_ORDER, Rule, RuleSet, Stage
+from qlab.rules.schema import STAGE_ORDER, Rule, RuleKind, RuleSet, Stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +60,16 @@ class EvaluationResult:
     failed_rule_ids: tuple[str, ...]
     unknown_metrics: tuple[str, ...]
     decisive: bool
+    # The subset of `failed_rule_ids` that are infrastructure rules
+    # (`RuleKind.INFRASTRUCTURE`, docs/TASKS.md T35). `failed_fatal_rule_id`
+    # never names one of them: it is the first STRATEGY rule that failed
+    # fatally, the one that ends evaluation.
+    failed_infrastructure_rule_ids: tuple[str, ...] = ()
+
+    @property
+    def failed_strategy_rule_ids(self) -> tuple[str, ...]:
+        infra = set(self.failed_infrastructure_rule_ids)
+        return tuple(rule_id for rule_id in self.failed_rule_ids if rule_id not in infra)
 
 
 def evaluate(
@@ -78,9 +88,11 @@ def evaluate(
     - If `stages` is given, only those stages are evaluated (still in the
       fixed relative order); rules belonging to other stages are skipped
       entirely (no row is emitted for them).
-    - If a fatal rule fails, every other rule in that *same* stage is still
-      evaluated (a full picture of the stage is needed to reconsider
-      graveyard verdicts later), but no further stage is processed.
+    - If a fatal STRATEGY rule fails, every other rule in that *same* stage
+      is still evaluated (a full picture of the stage is needed to reconsider
+      graveyard verdicts later), but no further stage is processed. A failing
+      INFRASTRUCTURE rule (`RuleKind`, T35) never stops evaluation: "we have
+      no adapter for this venue" must not hide whether the strategy works.
     - `overall_passed` is fail-closed: it is `True` only if every computed
       row passed and none came back unknown. An unknown row (missing
       metric) or a failing *non-fatal* rule both make `overall_passed`
@@ -95,6 +107,7 @@ def evaluate(
 
     rows: list[VerdictRow] = []
     failed_fatal_rule_id: str | None = None
+    failed_infrastructure: list[str] = []
     unknown_metrics: set[str] = set()
 
     for stage in STAGE_ORDER:
@@ -141,7 +154,9 @@ def evaluate(
                 )
             )
 
-            if not passed and rule.fatal:
+            if not passed and rule.kind == RuleKind.INFRASTRUCTURE:
+                failed_infrastructure.append(rule.id)
+            elif not passed and rule.fatal:
                 stage_has_fatal_failure = True
                 if failed_fatal_rule_id is None:
                     failed_fatal_rule_id = rule.id
@@ -159,4 +174,5 @@ def evaluate(
         failed_rule_ids=failed_rule_ids,
         unknown_metrics=tuple(sorted(unknown_metrics)),
         decisive=decisive,
+        failed_infrastructure_rule_ids=tuple(failed_infrastructure),
     )

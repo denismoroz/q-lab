@@ -29,7 +29,10 @@ from qlab.rules.schema import RuleSet
 # affordable in principle but not with money on hand today (`shelf`). Both
 # are an admission for calibration purposes: the ruleset said yes to the
 # EDGE claim either way, `shelf` only adds a capital-size caveat on top.
-_ADMITTED_ROUTES = frozenset({"paper", "shelf"})
+# `needs-infrastructure` (T35) is the same yes with an infrastructure caveat:
+# noise that passes every strategy rule on a venue we cannot trade is still a
+# false admission of the rules.
+_ADMITTED_ROUTES = frozenset({"paper", "shelf", "needs-infrastructure"})
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DOCS_DIR = PROJECT_ROOT / "docs"

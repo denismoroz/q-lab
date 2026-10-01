@@ -57,6 +57,9 @@ from qlab.registry.models import Idea, IdeaStatus, TrialRoute, Verdict
 ROUTE_TARGET: dict[TrialRoute, IdeaStatus] = {
     TrialRoute.REJECT: IdeaStatus.REJECTED,
     TrialRoute.SHELF: IdeaStatus.BENCH,
+    # Passed every strategy rule, waiting for infrastructure -- idle on the
+    # bench like a shelf idea waiting for capital, never the graveyard (T35).
+    TrialRoute.NEEDS_INFRASTRUCTURE: IdeaStatus.BENCH,
     TrialRoute.PAPER: IdeaStatus.VALIDATED,
 }
 """Routes that decide something, and the status each one moves an idea to.

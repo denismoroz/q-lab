@@ -171,6 +171,9 @@ class TrialRoute(enum.StrEnum):
     REJECT = "reject"
     SHELF = "shelf"
     PAPER = "paper"
+    # Every strategy rule passed; what failed is our ability to run it here
+    # (no execution adapter, no forward data, no atomic execution -- T35).
+    NEEDS_INFRASTRUCTURE = "needs-infrastructure"
     NEEDS_MORE_DATA = "needs-more-data"
     NOT_EVALUABLE = "not-evaluable"
     ERROR = "error"

@@ -1,0 +1,66 @@
+# T35: an infrastructure failure is not a strategy failure.
+#
+# venue_supported, data_forward_available and atomic_execution answer
+# SCREENING.md section 2's question "can WE run it, here, now" -- an execution
+# adapter, forward data, no stranded leg. Until this version they were
+# ordinary fatal preflight rules, which did two wrong things at once:
+#
+#   1. a failure routed the candidate to `reject` -- "tested, does not work" --
+#      and so moved the idea to the graveyard for a fact about our setup;
+#   2. a fatal preflight failure stopped the engine before the edge stage, so
+#      the verdict never said whether the strategy itself works.
+#
+# Both happened on the first HIP-3 candidate (docs/STAGE3_XYZ_BAB.md): frab
+# has no adapter for the `xyz` deployment, and five exploratory runs recorded
+# only `venue_supported = 0`, with the edge and noise rules never applied.
+#
+# The three rules are restated unchanged -- same metric, comparator,
+# threshold, fatal flag -- except `kind: infrastructure`. The engine
+# (`qlab.rules.engine.evaluate`) no longer stops on them, and the router
+# (`qlab.pipeline.evaluate.decide_route`) sends a run whose strategy rules all
+# pass but whose infrastructure fails to `needs-infrastructure` (idea status
+# `bench`), never to `reject`.
+#
+# No strategy threshold changes, so the false-admission measurements of
+# 2026-09-22.1 carry over: a noise run that passes every strategy rule on a
+# venue we cannot trade is counted as admitted, exactly as before.
+
+version: "2026-10-01.1"
+based_on: "2026-09-22.1"
+
+rules:
+  - id: venue_supported
+    stage: preflight
+    kind: infrastructure
+    metric: venue_supported
+    comparator: "=="
+    threshold: 1.0
+    fatal: true
+    rationale: >
+      SCREENING.md section 2: "площадка: есть инфраструктура (сейчас только HL)".
+      A fact about our execution adapters, not about the strategy: failing it
+      routes needs-infrastructure, not reject (docs/TASKS.md T35).
+
+  - id: data_forward_available
+    stage: preflight
+    kind: infrastructure
+    metric: data_forward_available
+    comparator: "=="
+    threshold: 1.0
+    fatal: true
+    rationale: >
+      SCREENING.md section 2: "данные: бесплатные и доступные forward, а не
+      только исторически". Whether we can feed the strategy live is a fact
+      about our data access, not about its edge (docs/TASKS.md T35).
+
+  - id: atomic_execution
+    stage: preflight
+    kind: infrastructure
+    metric: atomic_execution
+    comparator: "=="
+    threshold: 1.0
+    fatal: true
+    rationale: >
+      SCREENING.md section 2: "атомарность: не остаётся ли неприкрытая нога при
+      сбое". Answered by the venue's order primitives and our engine's
+      rollback, not by the strategy (docs/TASKS.md T35).

@@ -682,3 +682,57 @@ def test_shape_aware_rule_admits_candidate_at_or_above_99th_percentile() -> None
 
     assert result.overall_passed is True
     assert result.decisive is True
+
+
+# --------------------------------------------------------------------------
+# T35: infrastructure rules never stop evaluation and never count as a
+# strategy failure.
+# --------------------------------------------------------------------------
+
+
+def _infra_and_edge_ruleset() -> RuleSet:
+    from qlab.rules.schema import RuleKind
+
+    return RuleSet(
+        version="2026-10-01.1",
+        rules=[
+            _rule(id="venue_supported", stage=Stage.PREFLIGHT, metric="venue",
+                  comparator=Comparator.EQ, threshold=1, fatal=True,
+                  kind=RuleKind.INFRASTRUCTURE),
+            _rule(id="net_edge", stage=Stage.EDGE, metric="ret",
+                  comparator=Comparator.GE, threshold=0.04, fatal=True),
+        ],
+    )
+
+
+def test_failing_infrastructure_rule_does_not_stop_the_edge_stage() -> None:
+    result = evaluate({"venue": 0.0, "ret": 0.10}, _infra_and_edge_ruleset())
+
+    assert [row.rule_id for row in result.rows] == ["venue_supported", "net_edge"]
+    assert result.failed_infrastructure_rule_ids == ("venue_supported",)
+    assert result.failed_strategy_rule_ids == ()
+    assert result.failed_fatal_rule_id is None  # never names an infrastructure rule
+    assert result.overall_passed is False
+
+
+def test_strategy_failure_is_reported_next_to_infrastructure_failure() -> None:
+    result = evaluate({"venue": 0.0, "ret": 0.01}, _infra_and_edge_ruleset())
+
+    assert result.failed_infrastructure_rule_ids == ("venue_supported",)
+    assert result.failed_strategy_rule_ids == ("net_edge",)
+    assert result.failed_fatal_rule_id == "net_edge"
+
+
+def test_rule_kind_defaults_to_strategy() -> None:
+    from qlab.rules.schema import RuleKind
+
+    assert _rule().kind == RuleKind.STRATEGY
+
+
+def test_latest_ruleset_marks_the_three_infrastructure_rules() -> None:
+    from qlab.rules.schema import RuleKind
+
+    kinds = {rule.id: rule.kind for rule in load("2026-10-01.1").rules}
+    infra = {rule_id for rule_id, kind in kinds.items() if kind == RuleKind.INFRASTRUCTURE}
+    assert infra == {"venue_supported", "data_forward_available", "atomic_execution"}
+    assert kinds["net_edge_positive"] == RuleKind.STRATEGY

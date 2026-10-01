@@ -8,6 +8,7 @@ fail loudly if the pipeline ever tries to fetch instead of reusing it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -47,7 +48,7 @@ from qlab.registry.models import (
     Spec as SpecRow,
 )
 from qlab.rules.engine import EvaluationResult
-from qlab.rules.schema import Comparator, Rule, RuleSet, Stage
+from qlab.rules.schema import Comparator, Rule, RuleKind, RuleSet, Stage
 
 IDEA_ID = "toy-idea"
 SOURCE = "hyperliquid"
@@ -1052,3 +1053,58 @@ def test_exploratory_flag_changes_nothing_when_there_is_no_reason(session, tmp_p
 
     assert evaluation.routing.route == "paper"
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.VALIDATED
+
+
+# --------------------------------------------------------------------------
+# T35: missing infrastructure is not a rejection.
+# --------------------------------------------------------------------------
+
+NO_SUCH_VENUE_METRIC = Rule(
+    # Always fails: the toy pipeline never emits this metric as 1.
+    id="venue_supported",
+    stage=Stage.PREFLIGHT,
+    metric="min_capital_usd",
+    comparator=Comparator.LE,
+    threshold=1.0,
+    fatal=True,
+    kind=RuleKind.INFRASTRUCTURE,
+)
+
+
+def test_decide_route_needs_infrastructure_when_only_infrastructure_fails() -> None:
+    result = _result(decisive=True, overall_passed=False, failed=("venue_supported",))
+    result = dataclasses.replace(result, failed_infrastructure_rule_ids=("venue_supported",))
+    routing = decide_route(result, {"min_capital_usd": 50.0}, deployable_capital_usd=1000)
+    assert routing.route == "needs-infrastructure"
+    assert "venue_supported" in routing.reason
+
+
+def test_decide_route_rejects_when_a_strategy_rule_also_fails() -> None:
+    result = _result(
+        decisive=True, overall_passed=False, failed_fatal="net_edge_positive",
+        failed=("venue_supported", "net_edge_positive"),
+    )
+    result = dataclasses.replace(result, failed_infrastructure_rule_ids=("venue_supported",))
+    routing = decide_route(result, {"min_capital_usd": 50.0}, deployable_capital_usd=1000)
+    assert routing.route == "reject"
+    assert "net_edge_positive" in routing.reason and "missing infrastructure" in routing.reason
+
+
+def test_missing_infrastructure_benches_the_idea_and_keeps_the_strategy_verdict(
+    session, tmp_path
+) -> None:
+    _register_discovered(session, tmp_path)
+
+    evaluation = evaluate_spec(
+        _make_spec(),
+        session=session,
+        ruleset=_ruleset([NO_SUCH_VENUE_METRIC, CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
+        deployable_capital_usd=1e9,
+    )
+
+    assert evaluation.routing.route == "needs-infrastructure"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.BENCH
+    rule_ids = {
+        v.rule_id for v in session.query(Verdict).filter(Verdict.trial_id == evaluation.trial_id)
+    }
+    assert "honest_universe" in rule_ids  # the edge stage was still evaluated

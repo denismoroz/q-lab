@@ -49,7 +49,9 @@ from qlab.rules.schema import RuleSet
 from qlab.venues.config import load_venue
 from qlab.venues.derive import derive_venue_metrics
 
-Route = Literal["reject", "needs-more-data", "not-evaluable", "shelf", "paper", "error"]
+Route = Literal[
+    "reject", "needs-more-data", "not-evaluable", "needs-infrastructure", "shelf", "paper", "error"
+]
 
 
 class StrategyResolutionError(ImportError):
@@ -472,8 +474,11 @@ def decide_route(
          "we don't know" and "it failed" are different findings, and only
          the former should ever send a candidate back for more data instead
          of rejecting it outright.
-      2. `not result.overall_passed` -> `"reject"`. Every metric was
-         computed and at least one rule failed — fatal or not. The task
+      2. A STRATEGY rule failed -> `"reject"`. Every metric was
+         computed and at least one strategy rule failed — fatal or not.
+         2b. Only INFRASTRUCTURE rules failed -> `"needs-infrastructure"`
+         (docs/TASKS.md T35): the strategy passed everything it was asked;
+         what is missing is our ability to run it. The task
          describes `"reject"` via the fatal case (`capital_fit` needing more
          than the whole capital horizon), but a ruleset can define a
          non-fatal rule too (`Rule.fatal=False`); a candidate that fails a
@@ -500,14 +505,34 @@ def decide_route(
             reason=f"metric(s) could not be computed: {', '.join(result.unknown_metrics)}",
         )
 
-    if not result.overall_passed:
-        failed = ", ".join(result.failed_rule_ids) or "(none listed)"
+    if result.failed_strategy_rule_ids:
+        failed = ", ".join(result.failed_strategy_rule_ids)
         fatal_note = (
             f"; fatal rule: {result.failed_fatal_rule_id}"
             if result.failed_fatal_rule_id
             else ""
         )
-        return RoutingDecision(route="reject", reason=f"rule(s) failed: {failed}{fatal_note}")
+        infra = (
+            f"; also missing infrastructure: {', '.join(result.failed_infrastructure_rule_ids)}"
+            if result.failed_infrastructure_rule_ids
+            else ""
+        )
+        return RoutingDecision(
+            route="reject", reason=f"rule(s) failed: {failed}{fatal_note}{infra}"
+        )
+
+    if result.failed_infrastructure_rule_ids:
+        # Every strategy rule was computed and passed; only our setup falls
+        # short. Not a rejection (T35): the claim "tested, does not work"
+        # would be false.
+        return RoutingDecision(
+            route="needs-infrastructure",
+            reason=(
+                "every strategy rule passed; missing infrastructure: "
+                + ", ".join(result.failed_infrastructure_rule_ids)
+            ),
+            required_capital_usd=metrics.get("min_capital_usd"),
+        )
 
     required = metrics.get("min_capital_usd")
     if required is not None and required > deployable_capital_usd:
