@@ -167,6 +167,16 @@ function CardBody({ card }) {
         </ul>
       </Panel>
 
+      <Panel title="Простыми словами">
+        {card.plain_summary ? (
+          <p className="max-w-3xl text-sm leading-relaxed text-slate-800">{card.plain_summary}</p>
+        ) : (
+          <Absent>
+            пересказа нет: карточка написана до правила «без жаргона» (cards/SCHEMA.md, 2026-10-01)
+          </Absent>
+        )}
+      </Panel>
+
       {PARTS.map((name) => {
         const part = card.parts[name]
         if (name === 'protection') {

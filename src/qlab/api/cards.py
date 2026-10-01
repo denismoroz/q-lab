@@ -96,6 +96,9 @@ def parse_card(raw: dict[str, Any], *, path: str) -> dict[str, Any]:
         "idea_id": raw.get("idea_id"),
         "title": raw.get("title"),
         "found_at": str(raw["found_at"]) if raw.get("found_at") is not None else None,
+        # Required by cards/SCHEMA.md since 2026-10-01; cards written before
+        # the rule carry None, and the UI says so rather than hiding it.
+        "plain_summary": raw.get("plain_summary"),
         "path": path,
         "sources": raw.get("sources") or [],
         "parts": parts,
