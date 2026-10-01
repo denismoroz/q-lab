@@ -107,6 +107,7 @@ _SOURCES = {
         # call site treats their absence as "this source has no spot
         # markets" via `.get(...)`, never as an error.
         "has_history_before": hyperliquid_source.has_history_before,
+        "served_candles_cap": hyperliquid_source.SERVED_CANDLES_CAP,
         "fetch_spot": hyperliquid_source.fetch_spot_universe,
         "discover_spot_universe": hyperliquid_source.discover_spot_universe,
         "describe_spot_universe": hyperliquid_source.describe_spot_universe,
@@ -126,6 +127,7 @@ _SOURCES = {
             "has_history_before": functools.partial(
                 hyperliquid_source.has_history_before, dex=dex
             ),
+            "served_candles_cap": hyperliquid_source.SERVED_CANDLES_CAP,
         }
         for dex in hyperliquid_source.HIP3_DEXES
     },
@@ -655,6 +657,37 @@ def build_snapshot(
 
     instruments_sorted = sorted(histories)
 
+    # Truncated history (docs/TASKS.md T25): a venue that serves only its last
+    # N candles makes an instrument look listed from the first served bar.
+    # The instrument is truncated when that first bar lies after the window
+    # start AND exactly N bars before the newest candle the venue could have
+    # served it -- now for a live instrument, its last candle for a dead one.
+    # A real listing date coinciding with that boundary is not told apart;
+    # the window start it implies would be late, not wrong. One bar of slack
+    # for the candle still forming at fetch time. "Now" stands in for the
+    # moment the raw data was fetched: rebuilding long after the fetch can
+    # flag a recently listed instrument too, which again only moves the
+    # honest start later -- never lets truncated data in.
+    history_truncated: dict[str, str] = {}
+    cap = source_spec.get("served_candles_cap")
+    if cap is not None:
+        bar_td = pd.Timedelta(_INTERVAL_TO_PANDAS_FREQ[interval])
+        now_ts = pd.Timestamp.now(tz="UTC")
+        for name, hist in histories.items():
+            if not hist.has_funding or hist.first_seen <= start_ts:
+                continue
+            anchor = hist.last_seen if hist.is_delisted else now_ts
+            if anchor - hist.first_seen >= (cap - 1) * bar_td - bar_td:
+                history_truncated[name] = hist.first_seen.isoformat()
+        if history_truncated:
+            logger.warning(
+                "history_truncated_by_venue_cap",
+                source=source,
+                interval=interval,
+                n=len(history_truncated),
+                honest_from=max(history_truncated.values()),
+            )
+
     full_index = pd.date_range(start_ts, end_ts, freq=_INTERVAL_TO_PANDAS_FREQ[interval], tz="UTC")
     if len(full_index) == 0:
         raise ValueError(f"empty index for range [{start_ts}, {end_ts}] at interval {interval!r}")
@@ -682,6 +715,8 @@ def build_snapshot(
     )
     if delisted_without_history:
         manifest["delisted_without_history"] = delisted_without_history
+    if history_truncated:
+        manifest["history_truncated"] = history_truncated
     manifest_bytes = _manifest_bytes(manifest)
     prices_bytes = _dataframe_bytes(prices)
     funding_bytes = _dataframe_bytes(funding)
@@ -746,6 +781,7 @@ def build_snapshot(
         "no_funding_instruments": no_funding_instruments,
         "min_daily_volume_usd": min_daily_volume_usd,
         "delisted_without_history": delisted_without_history,
+        "history_truncated": history_truncated,
     }
     return MarketPanel(
         snapshot_id=snapshot_id,
@@ -810,6 +846,7 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             "min_daily_volume_usd": manifest.get("min_daily_volume_usd"),
             # Absent from every snapshot that had no such instruments.
             "delisted_without_history": manifest.get("delisted_without_history", []),
+            "history_truncated": manifest.get("history_truncated", {}),
         }
         return MarketPanel(
             snapshot_id=snapshot_id,

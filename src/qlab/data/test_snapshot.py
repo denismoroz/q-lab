@@ -693,6 +693,35 @@ class TestDelistedWithoutHistory:
         assert panel.meta["universe_complete"] is True
 
 
+class TestHistoryTruncatedByVenueCap:
+    """T25: a venue that serves only its last N candles makes live instruments
+    look listed from the first served bar. With a tiny cap every staggered
+    fake listing after the window start reads as truncated; with a cap the
+    data never reaches, none does."""
+
+    def _build(self, session, tmp_path, monkeypatch, cap):
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "served_candles_cap", cap)
+        return snap.build_snapshot(
+            "hyperliquid", ["BTC", "ETH"], "2026-01-01", "2026-01-03", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+
+    def test_instrument_starting_exactly_cap_bars_back_is_truncated(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        panel = self._build(session, tmp_path, monkeypatch, cap=10)
+        # BTC starts at the window start (not truncated); ETH one bar later.
+        assert set(panel.meta["history_truncated"]) == {"ETH"}
+        reloaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert set(reloaded.meta["history_truncated"]) == {"ETH"}
+
+    def test_cap_beyond_the_data_flags_nothing(
+        self, session, patched_source, tmp_path, monkeypatch
+    ):
+        panel = self._build(session, tmp_path, monkeypatch, cap=10**9)
+        assert panel.meta["history_truncated"] == {}
+
+
 # --------------------------------------------------------------------------
 # Spot markets (docs/TASKS.md, T17): column naming, universe_complete
 # composition, and the structural-vs-gap funding distinction end to end

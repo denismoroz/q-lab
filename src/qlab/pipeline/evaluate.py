@@ -644,6 +644,20 @@ def evaluate_spec(
 
     range_start = pd.Timestamp(panel.meta["range_start"]).date()
     range_end = pd.Timestamp(panel.meta["range_end"]).date()
+
+    truncated = dict(panel.meta.get("history_truncated") or {})
+    if truncated:
+        # The venue served only its last N candles (T25): before the latest
+        # truncated instrument's first served bar, instruments that were
+        # alive are missing. Cutting the judged window is not enough -- a
+        # strategy's own warm-up would still start early on whatever history
+        # happened to be served further back, which is the history of
+        # instruments that died sooner. So EVERY instrument starts at the same
+        # bar: the panel itself begins there, before any weight is computed.
+        honest_from = pd.Timestamp(max(truncated.values()))
+        cut = int(panel.prices.index.searchsorted(honest_from))
+        panel = _slice_rows(panel, cut, len(panel.prices.index) - 1)
+        range_start = panel.prices.index[0].date()
     started_at = datetime.now(UTC)
     config_hash = _config_hash(spec.params)
     code_sha = _code_sha()
@@ -720,10 +734,11 @@ def evaluate_spec(
         weights = strategy.target_weights(panel, spec.params)
         validate_weights(panel, weights)
 
-        eval_panel, eval_weights = panel, weights
+        first, last = 0, len(panel.prices.index) - 1
         if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
-            # `not_evaluable_reasons` already guaranteed a window exists.
             first, last = coverage.window
+        eval_panel, eval_weights = panel, weights
+        if (first, last) != (0, len(panel.prices.index) - 1):
             eval_panel = _slice_rows(panel, first, last)
             eval_weights = weights.iloc[first : last + 1]
             range_start = eval_panel.prices.index[0].date()
@@ -738,6 +753,8 @@ def evaluate_spec(
         metrics["min_capital_usd"] = min_capital_usd(eval_weights, spec.min_leg_notional)
         if coverage is not None:
             metrics["book_coverage"] = coverage.coverage
+        if truncated:
+            metrics["history_truncated_instruments"] = float(len(truncated))
         metrics["point_in_time_universe"] = (
             1.0 if bool(panel.meta.get("universe_complete")) else 0.0
         )

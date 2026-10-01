@@ -1127,3 +1127,28 @@ def test_strategy_not_valid_on_the_spec_interval_is_not_evaluable(session, tmp_p
     assert evaluation.routing.route == "not-evaluable"
     assert "not valid on '1h'" in evaluation.routing.reason
     assert session.get(Trial, evaluation.trial_id).status == TrialStatus.NOT_EVALUABLE
+
+
+def test_truncated_history_moves_the_judged_window_to_where_it_is_honest(
+    session, tmp_path
+) -> None:
+    """T25: verdicts are rendered only from the last truncated instrument's
+    first served bar onward."""
+    _register_discovered(session, tmp_path)
+    index, *_ = _fixture_frames(INSTRUMENTS)
+    honest_from = index[10]
+    manifest_path = tmp_path / DISCOVERED_ID / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["history_truncated"] = {"ETH": honest_from.isoformat(), "BTC": index[3].isoformat()}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    evaluation = evaluate_spec(
+        _make_spec(), session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+        deployable_capital_usd=1e9,
+    )
+
+    assert evaluation.metrics["history_truncated_instruments"] == 2.0
+    # Judged from bar 10 (the later of the two truncation points) to the end.
+    assert evaluation.metrics["n_periods"] <= len(index) - 10
+    verdict = session.query(Verdict).filter(Verdict.trial_id == evaluation.trial_id).one()
+    assert verdict.data_range_start == honest_from.date()

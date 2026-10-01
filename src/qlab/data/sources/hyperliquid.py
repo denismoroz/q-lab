@@ -57,6 +57,15 @@ def hip3_venue(dex: str) -> str:
 # HL caps candleSnapshot/fundingHistory responses; a page shorter than this
 # means we've reached the tail of the available history.
 _MAX_CANDLES_PER_PAGE = 5000
+
+# The venue serves only the most recent candles of an instrument -- this many
+# per interval (Hyperliquid info-endpoint docs on candleSnapshot: "Only the
+# most recent 5000 candles are available"). Measured 2026-10-01: on 1h bars
+# 200 of 222 main-market instruments span exactly the last ~5000 hours
+# although their daily history goes back years. Older bars do not exist at
+# the source, which the panel would otherwise read as "not yet listed"
+# (`qlab.data.snapshot`, `history_truncated`).
+SERVED_CANDLES_CAP = 5000
 _MAX_FUNDING_PER_PAGE = 500
 
 FUNDING_NATIVE_INTERVAL = pd.Timedelta(hours=1)
