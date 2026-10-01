@@ -121,6 +121,22 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"idea not found: {idea_id}")
         return idea
 
+    def _latest_outcome(session: Session, spec_ids: list[int]) -> dict[str, Any] | None:
+        """What q-lab's own latest routed run concluded for this idea -- the
+        one answer the idea page must lead with (owner, 2026-10-01: "смотрю
+        на идею и не понимаю ... прибыльна ли она"). Runs made before routes
+        were stored are counted, not shown: their route was never recorded."""
+        if not spec_ids:
+            return None
+        trials = session.query(Trial).filter(Trial.spec_id.in_(spec_ids))
+        latest = (
+            trials.filter(Trial.route.isnot(None)).order_by(Trial.id.desc()).first()
+        )
+        unrouted = trials.filter(Trial.route.is_(None)).count()
+        if latest is None:
+            return {"trial": None, "unrouted_trials": unrouted}
+        return {"trial": trial_json(latest), "unrouted_trials": unrouted}
+
     @app.get("/api/ideas/{idea_id}")
     def get_idea(idea_id: str, session: SessionDep) -> dict[str, Any]:
         idea = _load_idea(session, idea_id)
@@ -149,6 +165,7 @@ def create_app() -> FastAPI:
         }
         detail = idea_detail_json(idea, driver)
         detail["counts"] = counts
+        detail["latest_outcome"] = _latest_outcome(session, spec_ids)
         return detail
 
     @app.get("/api/ideas/{idea_id}/specs")

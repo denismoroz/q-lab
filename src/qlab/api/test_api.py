@@ -443,3 +443,44 @@ def test_every_route_is_a_get(client):
     for route in app.routes:
         methods = getattr(route, "methods", set())
         assert methods <= {"GET", "HEAD"}, f"{route.path} exposes {methods}"
+
+
+
+def test_idea_detail_without_routed_trials_says_so(client):
+    """All three fixture trials predate stored routes: the outcome block
+    must report that, not invent a decision."""
+    body = client.get("/api/ideas/alpha").json()
+
+    assert body["latest_outcome"] == {"trial": None, "unrouted_trials": 3}
+
+
+def test_idea_detail_leads_with_the_latest_routed_trial(client, session_factory):
+    from qlab.registry.models import Spec, TrialRoute
+
+    session = session_factory()
+    spec_id = session.query(Spec.id).filter(Spec.idea_id == "alpha").scalar()
+    for route, reason in (
+        (TrialRoute.REJECT, "older decision"),
+        (TrialRoute.NOT_EVALUABLE, "implementation does not express: X"),
+    ):
+        repo.add_trial(
+            session,
+            spec_id=spec_id,
+            config_hash="h",
+            snapshot_id="snap-1",
+            code_sha="abc123",
+            params={},
+            status=TrialStatus.NOT_EVALUABLE
+            if route == TrialRoute.NOT_EVALUABLE
+            else TrialStatus.OK,
+            route=route,
+            route_reason=reason,
+        )
+    session.commit()
+    session.close()
+
+    outcome = client.get("/api/ideas/alpha").json()["latest_outcome"]
+
+    assert outcome["trial"]["route"] == "not-evaluable"
+    assert outcome["trial"]["route_reason"] == "implementation does not express: X"
+    assert outcome["unrouted_trials"] == 3

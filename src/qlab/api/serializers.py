@@ -165,6 +165,9 @@ def trial_json(
         "finished_at": _iso(trial.finished_at),
         "metrics": trial.metrics,
         "status": trial.status.value,
+        # Null for runs made before routes were stored (docs/TASKS.md T31).
+        "route": trial.route.value if trial.route is not None else None,
+        "route_reason": trial.route_reason,
         "kept": trial.kept,
         "token_cost": trial.token_cost,
         "cpu_seconds": trial.cpu_seconds,

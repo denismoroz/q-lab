@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { Absent, DateText, IdeaLink, Json, Num } from './ui.jsx'
-import { ROW_SOURCE, TRIAL_STATUS, label } from '../labels.js'
+import { ROW_SOURCE, TRIAL_ROUTE, TRIAL_STATUS, label } from '../labels.js'
 
 // The metrics shown as columns. Anything else a trial recorded is still
 // there — the row expands to the stored JSON — but these four are what the
@@ -88,6 +88,11 @@ export default function TrialTable({ trials, showIdea = true }) {
                   >
                     {label(TRIAL_STATUS, trial.status)}
                   </div>
+                  {trial.route ? (
+                    <div className="font-medium text-slate-800">{label(TRIAL_ROUTE, trial.route)}</div>
+                  ) : (
+                    <div className="text-slate-400">исход не записан</div>
+                  )}
                   <div className="text-slate-400">{label(ROW_SOURCE, trial.source)}</div>
                   {/* A discarded run stays in the ledger: deflation counts
                       every trial, not just the reported ones. */}

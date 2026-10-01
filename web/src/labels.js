@@ -81,7 +81,7 @@ export const VERDICT_OUTCOME = {
   measurement: 'измерение',
 }
 
-export const TRIAL_STATUS = { ok: 'ok', error: 'ошибка' }
+export const TRIAL_STATUS = { ok: 'ok', error: 'ошибка', 'not-evaluable': 'не оценима' }
 export const ROW_SOURCE = { qlab: 'q-lab', imported: 'импорт' }
 
 export const CARD_PART = {

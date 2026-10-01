@@ -10,6 +10,8 @@ import {
   PROFILE,
   SHUTDOWN_CAUSE,
   SOURCE_TYPE,
+  TRIAL_ROUTE,
+  TRIAL_ROUTE_HINT,
   label,
 } from '../labels.js'
 
@@ -76,7 +78,14 @@ export default function IdeaDetail() {
         ← к реестру
       </Link>
 
-      <QueryState query={ideaQuery}>{ideaQuery.data && <Header idea={ideaQuery.data} />}</QueryState>
+      <QueryState query={ideaQuery}>
+        {ideaQuery.data && (
+          <>
+            <Outcome outcome={ideaQuery.data.latest_outcome} />
+            <Header idea={ideaQuery.data} />
+          </>
+        )}
+      </QueryState>
 
       <Section
         title="Спецификации"
@@ -141,6 +150,73 @@ export default function IdeaDetail() {
         {(items) => <VerdictList items={items} />}
       </Section>
     </div>
+  )
+}
+
+const OUTCOME_STYLE = {
+  paper: 'border-emerald-300 bg-emerald-50',
+  shelf: 'border-indigo-300 bg-indigo-50',
+  reject: 'border-stone-300 bg-stone-50',
+  'not-evaluable': 'border-amber-300 bg-amber-50',
+  'needs-more-data': 'border-amber-300 bg-amber-50',
+  error: 'border-rose-300 bg-rose-50',
+}
+
+function pct(value) {
+  return typeof value === 'number' ? `${(value * 100).toFixed(2)}%` : null
+}
+
+// The one question the idea page must answer first (owner, 2026-10-01):
+// what did q-lab itself conclude, and why. Statuses can come from imports
+// or from people; this block is only q-lab's own latest decision.
+function Outcome({ outcome }) {
+  const trial = outcome?.trial
+  if (!trial) {
+    return (
+      <Panel title="Что говорит q-lab">
+        <p className="text-sm text-slate-600">
+          q-lab ещё не выносил по этой идее решения с записанным исходом.
+          {outcome?.unrouted_trials
+            ? ` Есть ${outcome.unrouted_trials} прогонов до 2026-10-01 — тогда исход печатался и не сохранялся.`
+            : ''}
+        </p>
+      </Panel>
+    )
+  }
+  const m = trial.metrics ?? {}
+  const numbers = [
+    ['доходность в год после комиссий', pct(m.ann_return_net)],
+    ['Шарп после комиссий', typeof m.sharpe_net === 'number' ? m.sharpe_net.toFixed(2) : null],
+    ['худшая просадка', pct(m.max_dd)],
+    ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
+    ['книга была полной', pct(m.book_coverage)],
+  ].filter(([, v]) => v !== null)
+  return (
+    <section className={`rounded border p-4 ${OUTCOME_STYLE[trial.route] ?? 'border-slate-200'}`}>
+      <div className="text-xs uppercase tracking-wide text-slate-500">Что говорит q-lab</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">{label(TRIAL_ROUTE, trial.route)}</div>
+      <p className="text-sm text-slate-700">{TRIAL_ROUTE_HINT[trial.route]}</p>
+      <p className="mt-2 text-sm text-slate-800">
+        <span className="text-slate-500">Почему: </span>
+        {trial.route_reason}
+      </p>
+      {numbers.length > 0 && (
+        <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          {numbers.map(([name, value]) => (
+            <div key={name} className="flex justify-between gap-4">
+              <dt className="text-slate-500">{name}</dt>
+              <dd className="tabular-nums font-medium">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <p className="mt-3 text-xs text-slate-500">
+        прогон #{trial.id}, {trial.started_at?.slice(0, 10)}
+        {outcome.unrouted_trials
+          ? ` · ещё ${outcome.unrouted_trials} прогонов до 2026-10-01 без записанного исхода; их числа ниже — история, а не вывод`
+          : ''}
+      </p>
+    </section>
   )
 }
 

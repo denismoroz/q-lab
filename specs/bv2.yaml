@@ -98,8 +98,14 @@ simultaneous_legs: 2
 # under this idea (its module docstring, "Left OUT"). Each changes the
 # returns, so a number from this transcription is a number about a
 # different strategy and the run is routed `not-evaluable` (docs/TASKS.md T24).
+#
+# The transcription also leaves out the funding-carry sleeve on the idle
+# reserve, but that is NOT listed: both production instances (b2 and b2_cold
+# in `strategies.params_json` of frab.db on 10.8.0.5, read 2026-10-01) run
+# with `carry_enabled: false`, so the strategy actually running has no
+# sleeve either. The two instances differ only in hedge_margin_headroom
+# (1.0 vs 1.5), which lives inside the margin model listed below.
 unexpressed_mechanisms:
-  - "funding-carry sleeve on the idle cash reserve (carry_enabled, carry_fraction, carry_entry_apr, carry_exit_hours)"
   - "margin, liquidation and top-up model (frab/strategy/b2/book.py)"
   - "refill: rebuying spot back to target once the trend turns up after a hedge closes with spot below target (book.py step 3)"
 
