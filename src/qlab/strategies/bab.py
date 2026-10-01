@@ -129,6 +129,9 @@ class BettingAgainstBeta:
     """See module docstring. `params` must carry every key in `_REQUIRED`."""
 
     name = "betting-against-beta"
+    # `window_bars`/`min_observations` are counted in bars and the paper's
+    # values are for daily data; on other bars they would mean other windows.
+    valid_intervals = ("1d",)
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         missing = [key for key in _REQUIRED if key not in params]

@@ -1108,3 +1108,22 @@ def test_missing_infrastructure_benches_the_idea_and_keeps_the_strategy_verdict(
         v.rule_id for v in session.query(Verdict).filter(Verdict.trial_id == evaluation.trial_id)
     }
     assert "honest_universe" in rule_ids  # the edge stage was still evaluated
+
+
+class DailyOnlyToy(ToyStrategy):
+    valid_intervals = ("1d",)
+
+
+def test_strategy_not_valid_on_the_spec_interval_is_not_evaluable(session, tmp_path) -> None:
+    """T25: this module's fixture panel is hourly; a strategy that declares
+    itself valid on daily bars only must not be run on it."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:DailyOnlyToy")
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "not valid on '1h'" in evaluation.routing.reason
+    assert session.get(Trial, evaluation.trial_id).status == TrialStatus.NOT_EVALUABLE

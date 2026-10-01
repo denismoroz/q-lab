@@ -102,6 +102,9 @@ class FrabFundingHarvest:
     """
 
     name = "frab"
+    # The signal window is in funding ticks, which settle hourly on
+    # Hyperliquid; the live engine and every FRAB spec run on hourly bars.
+    valid_intervals = ("1h",)
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         spot_columns: Mapping[str, str] = params["spot_columns"]

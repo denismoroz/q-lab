@@ -33,11 +33,13 @@ from qlab.data.recorder import record
 from qlab.data.snapshot import DEFAULT_SNAPSHOTS_DIR, build_snapshot, describe_universe
 from qlab.pipeline.evaluate import evaluate_spec
 from qlab.pipeline.spec import load_spec
+from qlab.pipeline.variants import split_cadence_variant, timeframe_variants
 from qlab.registry.db import get_db_path, session_scope
 from qlab.registry.importer import ImportReport, import_graveyard
 from qlab.registry.models import DataSnapshot
 from qlab.registry.queries import (
     RevivalReport,
+    family_report,
     funnel_stats,
     killed_by_retired_rules,
     near_threshold,
@@ -55,6 +57,8 @@ graveyard_app = typer.Typer(add_completion=False, help="Graveyard queries.")
 app.add_typer(graveyard_app, name="graveyard")
 data_app = typer.Typer(add_completion=False, help="Market data snapshots (point-in-time panels).")
 app.add_typer(data_app, name="data")
+spec_app = typer.Typer(add_completion=False, help="Declared sets of spec variants (T25).")
+app.add_typer(spec_app, name="spec")
 
 
 # --------------------------------------------------------------------------
@@ -497,6 +501,81 @@ def evaluate_cmd(
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
     _echo_status()
+
+
+# --------------------------------------------------------------------------
+# spec variants and family report (docs/TASKS.md T25)
+# --------------------------------------------------------------------------
+
+
+@spec_app.command("timeframes")
+def spec_timeframes_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
+    interval: list[str] = typer.Option(..., "--interval", "-i"),  # noqa: B008
+    out_dir: Path = typer.Option(Path("specs"), "--out-dir"),  # noqa: B008
+) -> None:
+    """Write one variant per interval. The set is declared before any run;
+    report it whole with `qlab family`. Refuses intervals the strategy does
+    not declare valid."""
+    try:
+        written = timeframe_variants(spec_path, interval, out_dir)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    for path in written:
+        typer.echo(str(path))
+
+
+@spec_app.command("split")
+def spec_split_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
+    fast: str = typer.Option(..., "--fast", help="Bar interval the book is checked on, e.g. 1h"),
+    entry: str = typer.Option(..., "--entry", help="Grow the book only at these closes, e.g. 1D"),
+    exit_: str = typer.Option(..., "--exit", help="Shrink the book at these closes, e.g. 1h"),
+    out_dir: Path = typer.Option(Path("specs"), "--out-dir"),  # noqa: B008
+) -> None:
+    """Write the split-cadence variant: entries and exits on different timeframes."""
+    try:
+        path = split_cadence_variant(
+            spec_path, fast=fast, entry_every=entry, exit_every=exit_, out_dir=out_dir
+        )
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(str(path))
+
+
+@app.command("family")
+def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
+    """All variants of one idea side by side, with the whole-set summary."""
+    with session_scope() as session:
+        members = family_report(session, idea_id)
+    if not members:
+        typer.echo(f"{idea_id}: no routed runs")
+        return
+    typer.echo(f"{'v':>3} {'bars':>4} {'entry/exit':>11} {'return':>8} {'sharpe':>7} "
+               f"{'noise%':>7}  route")
+    positive = beats_noise = with_numbers = 0
+    for m in members:
+        metrics = m.metrics or {}
+        ret, sharpe = metrics.get("ann_return_net"), metrics.get("sharpe_net")
+        pct = metrics.get("noise_return_percentile")
+        cadence = f"{m.entry_every}/{m.exit_every}" if m.entry_every else "-"
+        if ret is not None:
+            with_numbers += 1
+            positive += ret > 0
+            beats_noise += pct is not None and pct >= 0.99
+        fmt = lambda v, f: f.format(v) if v is not None else "-"  # noqa: E731
+        typer.echo(
+            f"{m.spec_version:>3} {m.interval or '-':>4} {cadence:>11} "
+            f"{fmt(ret, '{:+.2%}'):>8} {fmt(sharpe, '{:.2f}'):>7} {fmt(pct, '{:.3f}'):>7}  "
+            f"{m.route}"
+        )
+    typer.echo(
+        f"\nwhole set: {len(members)} variants, {with_numbers} with numbers; "
+        f"positive on {positive} of {with_numbers}; beats matched noise on "
+        f"{beats_noise} of {with_numbers}"
+    )
 
 
 # --------------------------------------------------------------------------

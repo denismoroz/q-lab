@@ -98,6 +98,9 @@ class BStrategyV2:
     """
 
     name = "bv2"
+    # Evaluated on daily bars only so far; the live engine is hourly, but this
+    # transcription has not been checked for bar-size invariance on 1h.
+    valid_intervals = ("1d",)
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         spot_columns: Mapping[str, str] = params["spot_columns"]

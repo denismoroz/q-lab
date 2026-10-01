@@ -445,8 +445,56 @@ def funnel_stats(session: Session) -> FunnelStats:
     )
 
 
+@dataclass(slots=True)
+class FamilyMember:
+    """One spec of an idea and what its latest routed run concluded."""
+
+    spec_version: int
+    code_ref: str
+    interval: str | None
+    entry_every: str | None
+    exit_every: str | None
+    trial_id: int
+    route: str
+    metrics: dict | None
+
+
+def family_report(session: Session, idea_id: str) -> list[FamilyMember]:
+    """Every spec of `idea_id` with its latest ROUTED trial (docs/TASKS.md
+    T25): the whole declared set of variants side by side, so the answer is
+    "holds on N of M", not the best member. Specs never run with a recorded
+    route are absent."""
+    members: list[FamilyMember] = []
+    specs = session.query(Spec).filter(Spec.idea_id == idea_id).order_by(Spec.version).all()
+    for spec in specs:
+        trial = (
+            session.query(Trial)
+            .filter(Trial.spec_id == spec.id, Trial.route.is_not(None))
+            .order_by(Trial.id.desc())
+            .first()
+        )
+        if trial is None:
+            continue
+        params = spec.params or {}
+        members.append(
+            FamilyMember(
+                spec_version=spec.version,
+                code_ref=spec.code_ref,
+                interval=(spec.data_requirements or {}).get("interval"),
+                entry_every=params.get("entry_every"),
+                exit_every=params.get("exit_every"),
+                trial_id=trial.id,
+                route=_enum_value(trial.route),
+                metrics=trial.metrics,
+            )
+        )
+    return members
+
+
 __all__ = [
     "CALIBRATION_IDEA_PREFIX",
+    "FamilyMember",
+    "family_report",
     "FunnelStats",
     "NearMiss",
     "NearThresholdReport",

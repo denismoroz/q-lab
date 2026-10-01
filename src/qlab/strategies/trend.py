@@ -92,6 +92,10 @@ class TrendTSMOMEnsemble:
     """
 
     name = "trend"
+    # Every param is in calendar time and the volatility is put in daily units
+    # (see target_weights), so the same params mean the same thing on these
+    # bars; checked by test_trend.test_position_size_does_not_depend_on_bar_size.
+    valid_intervals = ("1d", "4h", "1h")
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         lookbacks_days: Sequence[float] = params["lookbacks_days"]
@@ -119,6 +123,14 @@ class TrendTSMOMEnsemble:
         # window.
         returns = prices.pct_change()
         vol = returns.rolling(vol_window_periods, min_periods=vol_window_periods).std(ddof=0)
+        # `vol_target_daily` is a DAILY volatility, `vol` is per BAR. On daily
+        # bars they are the same unit; on 1h bars the per-bar figure is about
+        # sqrt(24) times smaller and, uncorrected, every position would come
+        # out ~5x too large (docs/TASKS.md T25). Scaling by sqrt(bars per
+        # day) puts both in daily units; on daily bars the factor is exactly 1,
+        # so every existing daily result is unchanged.
+        bars_per_day = pd.Timedelta(days=1) / index.to_series().diff().median()
+        vol = vol * np.sqrt(bars_per_day)
 
         raw = ensemble * vol_target_daily / vol
         raw = raw.where(vol > 0, 0.0)  # undefined/zero vol -> no sizeable position

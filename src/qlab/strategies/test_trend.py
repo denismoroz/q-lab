@@ -117,3 +117,54 @@ def test_trend_is_deterministic() -> None:
     weights1 = strategy.target_weights(panel, params)
     weights2 = strategy.target_weights(panel, params)
     pd.testing.assert_frame_equal(weights1, weights2)
+
+
+def _gbm_panels(seed: int = 3) -> tuple[MarketPanel, MarketPanel]:
+    """The same random walk seen on 1h bars and on 1d bars (each daily close
+    is the last hourly close of that day)."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    hours = pd.date_range("2025-01-01", periods=24 * 400, freq="1h", tz="UTC")
+    cols = ["X", "Y", "Z"]
+    hourly_ret = rng.normal(0.0, 0.004, size=(len(hours), len(cols)))
+    hourly = (1.0 + pd.DataFrame(hourly_ret, index=hours, columns=cols)).cumprod() * 100.0
+    daily = hourly.resample("1D").last()
+
+    def panel(prices: pd.DataFrame) -> MarketPanel:
+        return MarketPanel(
+            snapshot_id="gbm",
+            prices=prices,
+            funding=pd.DataFrame(0.0, index=prices.index, columns=cols),
+            tradeable=pd.DataFrame(True, index=prices.index, columns=cols),
+            meta={"universe_complete": True},
+        )
+
+    return panel(hourly), panel(daily)
+
+
+def test_position_size_does_not_depend_on_bar_size() -> None:
+    """T25: the same params on 1h and 1d bars must size positions alike. The
+    target is a DAILY volatility; before `vol` was put in daily units, hourly
+    positions came out about sqrt(24) ~ 4.9 times larger."""
+    hourly, daily = _gbm_panels()
+    params = {
+        "lookbacks_days": [30, 60],
+        "vol_window_days": 30,
+        "vol_target_daily": 0.02,
+        "leverage_cap": 1e9,  # never binds: the test is about raw sizing
+        "risk_scale": 1.0,
+        "min_history_days": 61,
+    }
+    w_hourly = TrendTSMOMEnsemble().target_weights(hourly, params)
+    w_daily = TrendTSMOMEnsemble().target_weights(daily, params)
+
+    size_hourly = w_hourly.abs().sum(axis=1)
+    size_hourly = size_hourly[size_hourly > 0].median()
+    size_daily = w_daily.abs().sum(axis=1)
+    size_daily = size_daily[size_daily > 0].median()
+    assert size_hourly / size_daily == pytest.approx(1.0, abs=0.15)
+
+
+def test_trend_declares_the_intervals_it_was_checked_on() -> None:
+    assert TrendTSMOMEnsemble.valid_intervals == ("1d", "4h", "1h")

@@ -113,6 +113,10 @@ class LiveTrendTSMOMEnsemble:
     """
 
     name = "trend-live"
+    # frab's own signal code counts lookbacks in daily closes (its live
+    # engine feeds it one close per day); fed hourly closes, "30" would mean
+    # 30 hours. Daily only until frab's code says otherwise.
+    valid_intervals = ("1d",)
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         raw_params = dict(params)

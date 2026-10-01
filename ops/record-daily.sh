@@ -12,5 +12,14 @@ mkdir -p data/recorded/logs
   uv run qlab data record --source hyperliquid-xyz --interval 1d --interval 1h
   # Main market: daily history is fully served; hourly only ~5000 bars back.
   uv run qlab data record --source hyperliquid --interval 1h
+  # Off-machine copy: the store is irreplaceable by construction. No
+  # --delete: a file gone here stays there. Runs even if a record step
+  # failed -- whatever was written must still be copied.
+  echo "--- backup to dis@10.8.0.5:qlab-backup/recorded/"
+  STATS="$(rsync -a --partial --stats -e "ssh -o BatchMode=yes -o ConnectTimeout=20" \
+    data/recorded/ dis@10.8.0.5:qlab-backup/recorded/ 2>&1)"
+  RC=$?
+  print -r -- "$STATS" | grep -E "Number of files transferred|Total transferred file size|rsync"
+  if [[ $RC -ne 0 ]]; then echo "BACKUP FAILED (rsync exit $RC)"; else echo "backup ok"; fi
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end"
 } >> "$LOG" 2>&1

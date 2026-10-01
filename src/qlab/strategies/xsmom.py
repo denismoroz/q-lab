@@ -270,6 +270,9 @@ class XsmomCrossSectionalMomentum:
     """
 
     name = "xsmom"
+    # Rebalance rows are anchored to a weekday of daily bars (`_rebalance_rows`);
+    # on intraday bars every bar of that weekday would rebalance.
+    valid_intervals = ("1d",)
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         universe: Sequence[str] | None = params["universe"]

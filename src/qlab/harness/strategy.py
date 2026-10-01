@@ -85,6 +85,17 @@ class Strategy(Protocol):
     `validate_weights`'s. A strategy that peeks at `t+1` while computing
     `weights.loc[t]` produces a weights frame that is structurally
     indistinguishable from an honest one — see `validate_weights`.
+
+    **Valid intervals** (docs/TASKS.md T25). A strategy may declare a class
+    attribute `valid_intervals: tuple[str, ...]` -- the bar intervals on
+    which its params mean what they say. Converting calendar durations to
+    bars (`qlab.strategies._periods.periods_for`) is necessary but not
+    sufficient: a per-bar statistic compared with a per-day target (trend's
+    `vol_target_daily / vol`) silently changes meaning with the bar size.
+    `qlab.pipeline.evaluate` routes a spec whose interval a strategy does not
+    declare to `not-evaluable`; `qlab spec timeframes` refuses to generate
+    such a variant. A strategy that declares nothing is not checked (and
+    cannot be varied across timeframes).
     """
 
     name: str

@@ -58,6 +58,11 @@ class StrategyResolutionError(ImportError):
     """`spec.code_ref` does not resolve to a usable `Strategy`."""
 
 
+class _NotValidOnInterval(Exception):
+    """The strategy declares `valid_intervals` and the spec's interval is not
+    one of them (T25) -- a not-evaluable outcome, not a crash."""
+
+
 @dataclass(frozen=True, slots=True)
 class RoutingDecision:
     """What `evaluate_spec` decided to do with a run, and why.
@@ -705,6 +710,13 @@ def evaluate_spec(
 
     try:
         strategy = resolve_strategy(spec.code_ref)
+        valid = getattr(strategy, "valid_intervals", None)
+        if valid is not None and spec.data.interval not in valid:
+            raise _NotValidOnInterval(
+                f"strategy {spec.code_ref} is not valid on {spec.data.interval!r} bars "
+                f"(declares valid_intervals={tuple(valid)}): its params would not mean "
+                "what they say"
+            )
         weights = strategy.target_weights(panel, spec.params)
         validate_weights(panel, weights)
 
@@ -754,6 +766,19 @@ def evaluate_spec(
         if extra_metrics is not None:
             resolved_extra = extra_metrics(metrics) if callable(extra_metrics) else extra_metrics
             metrics.update(resolved_extra)
+    except _NotValidOnInterval as exc:
+        routing = RoutingDecision(route="not-evaluable", reason=str(exc))
+        trial_id, decision = _record(
+            status=TrialStatus.NOT_EVALUABLE, metrics=None, routing=routing, data_end=None
+        )
+        return Evaluation(
+            trial_id=trial_id,
+            metrics=None,
+            rules_result=None,
+            routing=routing,
+            error=None,
+            status_decision=decision,
+        )
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary; this
         # is the pipeline's error-isolation boundary. Anything from here on
         # (a missing code_ref, a strategy that raises, invalid weights, a
