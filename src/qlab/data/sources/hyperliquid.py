@@ -19,17 +19,20 @@ listed" (tradeable=True through the end of the panel).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import httpx
 import pandas as pd
 import structlog
 
 from qlab.data.sources.base import (
+    DEFAULT_RAW_CACHE_DIR,
     INTERVAL_TO_TIMEDELTA,
     SPOT_COLUMN_SUFFIX,
     InstrumentHistory,
     fetch_universe_resumable,
     http_retry,
+    load_cached_history,
     polite_sleep,
 )
 
@@ -263,7 +266,10 @@ def fetch_instrument_history(
     start: pd.Timestamp,
     end: pd.Timestamp,
     meta: dict[str, dict],
+    funding: pd.Series | None = None,
 ) -> InstrumentHistory:
+    """`funding`, when given, is used instead of fetching it -- see
+    `reusable_funding`."""
     candles = fetch_candles(client, coin, interval, start, end)
     if candles.empty:
         raise ValueError(f"hyperliquid: no candle data for {coin!r} in [{start}, {end}]")
@@ -279,9 +285,10 @@ def fetch_instrument_history(
     # partial sum as the period's funding, and the harness then refuses to run
     # on a NaN rate. The data is there; only the window was too narrow.
     bar = pd.Timedelta(interval)
-    funding = fetch_funding(
-        client, coin, start - bar, end + FUNDING_NATIVE_INTERVAL
-    )
+    if funding is None:
+        funding = fetch_funding(
+            client, coin, start - bar, end + FUNDING_NATIVE_INTERVAL
+        )
 
     is_delisted = bool(meta.get(coin, {}).get("is_delisted", False))
     return InstrumentHistory(
@@ -294,6 +301,39 @@ def fetch_instrument_history(
         last_seen=prices.index.max(),
         is_delisted=is_delisted,
     )
+
+
+def reusable_funding(
+    source: str,
+    coin: str,
+    interval: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    *,
+    cache_dir: Path = DEFAULT_RAW_CACHE_DIR,
+) -> pd.Series | None:
+    """Funding for `coin` over this window, already cached by a fetch at
+    ANOTHER interval -- or None (docs/TASKS.md T20).
+
+    Funding settles hourly whatever the bar size, so the series is the same
+    for a 1h, 4h or 1d panel of the same window; only the raw cache key
+    differed. Refetching it per interval cost ~30 requests per instrument
+    (about 2.5 hours for the main market) to download an identical series.
+
+    Only a cache at an interval AT LEAST as long as the requested one is
+    reused: each fetch pads its start by one of its own bars (the first bar's
+    funding bucket reaches back one bar), so a 1d cache covers what a 4h or
+    1h panel needs, while a 1h cache would leave a 4h panel's first bucket
+    three hours short.
+    """
+    bar = INTERVAL_TO_TIMEDELTA[interval]
+    for other, other_bar in sorted(INTERVAL_TO_TIMEDELTA.items(), key=lambda kv: -kv[1]):
+        if other == interval or other_bar < bar:
+            continue
+        cached = load_cached_history(cache_dir, source, coin, other, start, end)
+        if cached is not None and cached.has_funding and not cached.funding.empty:
+            return cached.funding
+    return None
 
 
 def fetch_universe(
@@ -332,7 +372,10 @@ def fetch_universe(
             interval,
             source=VENUE if dex is None else hip3_venue(dex),
             fetch_one=lambda coin: fetch_instrument_history(
-                client, coin, interval, start, end, meta
+                client, coin, interval, start, end, meta,
+                funding=reusable_funding(
+                    VENUE if dex is None else hip3_venue(dex), coin, interval, start, end
+                ),
             ),
             on_missing=on_missing,
         )

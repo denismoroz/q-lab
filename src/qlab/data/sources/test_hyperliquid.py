@@ -341,3 +341,36 @@ def test_fetch_spot_universe_skips_missing_when_on_missing_skip():
     result = hl.fetch_spot_universe(["BTC", "DOGE"], start, end, "1h", on_missing="skip")
 
     assert set(result) == {"BTC-SPOT"}
+
+
+def test_funding_cached_at_a_longer_interval_is_reused(tmp_path) -> None:
+    """T20: hourly funding is the same series for 1h, 4h and 1d panels of one
+    window. A 1d cache serves a 4h request; a 1h cache does not (its fetch
+    started only one hour before the window, a 4h panel's first bucket
+    reaches back four)."""
+    import pandas as pd
+
+    from qlab.data.sources.base import InstrumentHistory, store_cached_history
+    from qlab.data.sources.hyperliquid import reusable_funding
+
+    start, end = pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-01-03", tz="UTC")
+    hours = pd.date_range(start - pd.Timedelta("1D"), end, freq="1h", tz="UTC")
+    funding = pd.Series(0.00001, index=hours)
+
+    def store(interval: str) -> None:
+        idx = pd.date_range(start, end, freq=interval, tz="UTC")
+        store_cached_history(
+            tmp_path, "hyperliquid", interval, start, end,
+            InstrumentHistory(
+                instrument="BTC", prices=pd.Series(100.0, index=idx), funding=funding,
+                volume=pd.Series(1.0, index=idx), trade_count=pd.Series(1, index=idx),
+                first_seen=idx[0], last_seen=idx[-1], is_delisted=False,
+            ),
+        )
+
+    store("1h")
+    assert reusable_funding("hyperliquid", "BTC", "4h", start, end, cache_dir=tmp_path) is None
+    store("1d")
+    reused = reusable_funding("hyperliquid", "BTC", "4h", start, end, cache_dir=tmp_path)
+    assert reused is not None and len(reused) == len(funding)
+    assert reusable_funding("hyperliquid", "ETH", "4h", start, end, cache_dir=tmp_path) is None
