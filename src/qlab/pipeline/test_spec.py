@@ -169,3 +169,8 @@ def test_required_instruments_defaults_to_none() -> None:
 def test_empty_required_instruments_rejected() -> None:
     with pytest.raises(ValidationError, match="at least one"):
         StrategySpec.model_validate(_spec_dict(required_instruments=[]))
+
+
+def test_exploratory_must_say_why() -> None:
+    with pytest.raises(ValidationError, match="say why"):
+        StrategySpec.model_validate(_spec_dict(exploratory="   "))

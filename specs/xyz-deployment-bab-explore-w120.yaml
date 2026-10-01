@@ -1,0 +1,68 @@
+# EXPLORATORY variant of specs/xyz-deployment-bab.yaml -- beta window 120 days.
+#
+# Owner, 2026-10-01: "не тупо следовать описанию а пробывать прогнать стратегию
+# на доступных данных". The deployment is a year old, but its instruments
+# listed gradually (11 by the end of November 2025, half after March 2026), so
+# the paper's 200-observation minimum leaves a book only from June 2026. This
+# grid shortens the beta window to see what the data that exists shows.
+#
+# The grid is declared in full BEFORE any of it is run -- 365 (the paper), 180,
+# 120, 90, 60 days -- and every variant is reported, not the best one. All five
+# share one idea, so deflation counts them as five tries of one strategy. The
+# window lengths are not from the source; they are the owner-authorised grid.
+# The minimum number of observations keeps the source's own ratio, 200 of 365
+# (so 66 of 120). This variant: four months.
+#
+# `exploratory` lets the run go past "only survivors can be tested" (the venue
+# serves no history for 19 delisted instruments); the route stays
+# not-evaluable, the numbers and the rules' answer are recorded.
+
+idea_id: xyz-deployment-bab
+title: "BAB across the xyz deployment, exploratory, beta window 120 days"
+code_ref: "qlab.strategies.bab:BettingAgainstBeta"
+
+# Every value is the source's, see qlab.strategies.bab's docstring for the
+# verbatim quotes and for why beta estimation follows the 2010 working paper
+# (NBER w16601) while portfolio construction follows the 2014 published one.
+params:
+  # The deployment's own index, and the only proxy with enough history: the
+  # alternative, xyz:SP500, had 189 daily bars on 2026-09-22, below the
+  # paper's 200-observation minimum (cards/xyz-equity-bab.yaml, legs).
+  market: "xyz:XYZ100"
+  window_bars: 120        # owner-authorised exploratory grid, see header
+  min_observations: 66   # the source's ratio 200/365 applied to 120
+  dimson_lags: 5          # "lags up to K = 5 trading days"
+  shrink_weight: 0.5      # "we set w = 0.5 and beta_XS = 1"
+  shrink_target: 1.0
+
+data:
+  source: hyperliquid-xyz
+  interval: "1d"
+  # The deployment's first daily candle is 2025-10-13 (xyz:XYZ100); the window
+  # starts a little earlier so nothing listed at launch is cut off.
+  start: 2025-10-01
+  end: 2026-09-30
+
+costs:
+  # docs.trade.xyz/perpetuals/mechanics/fees: "Standard fees for all HIP-3
+  # assets are currently 2x the usual fees on validator-operated perp markets".
+  # The usual taker q-lab uses for Hyperliquid perps is 3.5 bps
+  # (funding-rate-arbitrage/src/frab/constants.py, PERP_TAKER = 0.00035; the
+  # same figure every other spec here uses), so 7.0 bps. Many xyz instruments
+  # report growthMode "enabled" (fees cut by >= 90% per the same page), but
+  # the API gives only today's mode, not its history -- so the standard rate
+  # is used throughout, an upper bound on cost, not an estimate.
+  taker_fee_bps: 7.0
+  # Same slippage figure as the main-market specs (SCREENING.md: ~4.4 bps per
+  # leg = 3.5 taker + 0.9). xyz books are thinner, so this is a lower bound.
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0    # venues/hyperliquid-xyz.yaml
+# A portfolio, not a pair: a partly filled rebalance mis-sizes the book but
+# leaves no leg uncovered (cards/xyz-equity-bab.yaml, execution.note).
+simultaneous_legs: 1
+
+# The implementation expresses the whole method of this spec's own idea.
+unexpressed_mechanisms: []
+
+exploratory: "owner 2026-10-01: run on the survivors-only data that exists, beta window 120 days; informs, does not decide"

@@ -180,6 +180,20 @@ class StrategySpec(BaseModel):
     the strategy as specified, judged by the same rules as any other window.
     """
 
+    exploratory: str | None = None
+    """The owner's explicit permission to run despite named not-evaluable
+    reasons, and why (owner, 2026-10-01: "не тупо следовать описанию а
+    пробывать прогнать стратегию на доступных данных").
+
+    When set and `qlab.pipeline.evaluate.not_evaluable_reasons` is non-empty,
+    the run is computed in full -- backtest, metrics, matched noise, every
+    rule -- and the verdict rows are written, but the route stays
+    `not-evaluable`: a number on survivors-only data, or on a strategy the
+    code does not fully express, can inform a decision but cannot be one. The
+    route reason carries what the rules alone would have said. When there
+    are no such reasons, this field changes nothing.
+    """
+
     @field_validator("idea_id", "title", "code_ref")
     @classmethod
     def _not_blank(cls, value: str) -> str:
@@ -206,6 +220,13 @@ class StrategySpec(BaseModel):
     def _named_mechanisms(cls, value: list[str]) -> list[str]:
         if any(not item.strip() for item in value):
             raise ValueError("each unexpressed mechanism must be named, not blank")
+        return value
+
+    @field_validator("exploratory")
+    @classmethod
+    def _exploratory_says_why(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("exploratory must say why the owner accepts the run")
         return value
 
     @field_validator("required_instruments")

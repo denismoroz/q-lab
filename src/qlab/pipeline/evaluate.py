@@ -659,7 +659,8 @@ def evaluate_spec(
         else None
     )
     reasons = not_evaluable_reasons(spec, coverage, panel.meta)
-    if reasons:
+    exploratory = bool(reasons) and spec.exploratory is not None
+    if reasons and not exploratory:
         reason = "; ".join(reasons)
         if coverage is not None and not coverage.missing:
             reason += f" (complete book on {coverage.coverage:.1%} of bars)"
@@ -683,7 +684,7 @@ def evaluate_spec(
         validate_weights(panel, weights)
 
         eval_panel, eval_weights = panel, weights
-        if coverage is not None and coverage.coverage < 1.0:
+        if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
             # `not_evaluable_reasons` already guaranteed a window exists.
             first, last = coverage.window
             eval_panel = _slice_rows(panel, first, last)
@@ -754,6 +755,17 @@ def evaluate_spec(
     # it exists, and the status change below sees a complete trial.
     rules_result = evaluate_rules(metrics, ruleset)
     routing = decide_route(rules_result, metrics, deployable_capital_usd)
+    if exploratory:
+        # Computed in full on the owner's say-so, but not a decision: keep the
+        # rules' answer visible and the route where the reasons put it.
+        routing = RoutingDecision(
+            route="not-evaluable",
+            reason=(
+                f"exploratory run ({spec.exploratory}); rules alone would route "
+                f"{routing.route} ({routing.reason}); not evaluable because: "
+                + "; ".join(reasons)
+            ),
+        )
 
     trial_id, decision = _record(
         status=TrialStatus.OK, metrics=metrics, routing=routing, data_end=range_end

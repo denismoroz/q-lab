@@ -1015,3 +1015,40 @@ def test_universe_with_erased_delisted_history_is_not_evaluable(session, tmp_pat
 
     assert evaluation.routing.route == "not-evaluable"
     assert "xyz:LRCX" in evaluation.routing.reason and "only survivors" in evaluation.routing.reason
+
+
+def test_exploratory_run_computes_everything_but_decides_nothing(session, tmp_path) -> None:
+    """Owner-authorised run past a named reason: metrics and verdict rows
+    exist, the rules' own answer is visible, the route stays not-evaluable
+    and the idea's status does not move."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(
+        unexpressed_mechanisms=["a mechanism the toy leaves out"],
+        exploratory="owner wants to see the number on the data that exists",
+    )
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "not-evaluable"
+    assert "rules alone would route paper" in evaluation.routing.reason
+    assert "a mechanism the toy leaves out" in evaluation.routing.reason
+    assert evaluation.metrics is not None and "ann_return_net" in evaluation.metrics
+    trial = session.get(Trial, evaluation.trial_id)
+    assert trial.status == TrialStatus.OK
+    assert trial.route == TrialRoute.NOT_EVALUABLE
+    assert session.query(Verdict).filter(Verdict.trial_id == trial.id).count() == 1
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE
+
+
+def test_exploratory_flag_changes_nothing_when_there_is_no_reason(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(exploratory="nothing to override")
+
+    evaluation = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+    )
+
+    assert evaluation.routing.route == "paper"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.VALIDATED
