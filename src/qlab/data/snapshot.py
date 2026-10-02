@@ -390,6 +390,7 @@ def _top_k_by_volume_mask(
     volume: pd.DataFrame,
     bar_interval: pd.Timedelta,
     k: int,
+    eligible: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Point-in-time "the k most traded instruments", the ranked counterpart
     of `_liquidity_eligible_mask`.
@@ -410,6 +411,12 @@ def _top_k_by_volume_mask(
     enough history, or volume itself unknown) cannot be ranked and is
     excluded, never ranked last-but-included.
 
+    ``eligible``, when given, restricts WHO is ranked: an instrument reading
+    False there at bar ``t`` is left out of that bar's ranking, so the k
+    slots go to the most traded of the eligible ones instead of being
+    spent on instruments the strategy cannot trade yet. The caller must
+    build it causally (from data through ``t`` at the latest).
+
     Ties are broken by `rank(method="first")`, i.e. by column order, so the
     mask is deterministic. Exact ties in a 24h dollar volume are
     vanishingly unlikely on real data; the determinism matters for
@@ -418,6 +425,8 @@ def _top_k_by_volume_mask(
     bars = max(round(_LIQUIDITY_WINDOW / bar_interval), 1)
     volume_usd = volume * prices
     trailing = volume_usd.rolling(window=bars, min_periods=bars).sum().shift(1)
+    if eligible is not None:
+        trailing = trailing.where(eligible.reindex_like(trailing).fillna(False).astype(bool))
     ranks = trailing.rank(axis=1, ascending=False, method="first")
     return (ranks <= k).fillna(False)
 

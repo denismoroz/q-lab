@@ -180,3 +180,25 @@ def test_book_vol_scale_never_sees_bar_ts_own_return(monkeypatch: pytest.MonkeyP
             f"bar {i}: equity history does not show the shock "
             f"({captured[i]!r}) -- book_vol_scale should see it by now"
         )
+
+
+def test_top_k_with_history_rule_ranks_only_coins_old_enough_to_trade() -> None:
+    """The 1-slot ranking would pick the young, heavily traded coin "N";
+    with `top_k_requires_history` the slot goes to the most traded coin that
+    already holds `min_history_days` closes, so the book is never left with
+    an untradeable slot."""
+    from qlab.data.snapshot import _top_k_by_volume_mask
+
+    index = pd.date_range("2026-01-01", periods=8, freq="1D", tz="UTC")
+    prices = pd.DataFrame(
+        {"OLD": [100.0 + i for i in range(8)], "N": [None] * 4 + [10.0, 11.0, 12.0, 13.0]},
+        index=index,
+    )
+    volume = pd.DataFrame({"OLD": [1.0] * 8, "N": [None] * 4 + [1e6] * 4}, index=index)
+    plain = _top_k_by_volume_mask(prices, volume, pd.Timedelta(days=1), 1)
+    assert bool(plain["N"].iloc[6]) and not bool(plain["OLD"].iloc[6])
+
+    eligible = prices.notna().cumsum() >= 4
+    ruled = _top_k_by_volume_mask(prices, volume, pd.Timedelta(days=1), 1, eligible=eligible)
+    assert bool(ruled["OLD"].iloc[6]) and not bool(ruled["N"].iloc[6])
+    assert bool(ruled["N"].iloc[7])  # N's 4th close is at row 7; then it outranks OLD

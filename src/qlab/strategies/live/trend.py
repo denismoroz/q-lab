@@ -170,8 +170,16 @@ class LiveTrendTSMOMEnsemble:
                     "top_k_by_volume needs a panel carrying volume; this snapshot has none "
                     "(unknown volume is not zero volume — rebuild the snapshot)"
                 )
+            # `top_k_requires_history`: rank only instruments that already
+            # hold `min_history_days` closes at that bar -- the live engine's
+            # own threshold for trading a coin at all. Without it, slots go
+            # to coins too young to trade and the book runs below k legs
+            # (owner, 2026-10-02: "прогони с правилом 151 дня").
+            eligible = None
+            if raw_params.get("top_k_requires_history"):
+                eligible = prices.notna().cumsum() >= trend_params.min_history_days
             rank_mask = _top_k_by_volume_mask(
-                prices, panel.volume, _bar_interval(index), int(top_k)
+                prices, panel.volume, _bar_interval(index), int(top_k), eligible=eligible
             )
 
         running_closes: dict[str, list[float]] = {c: [] for c in traded_coins}
