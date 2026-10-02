@@ -197,6 +197,9 @@ def run_noise_series(
             # A noise idea is a measuring instrument, not a candidate: its
             # status must never move (docs/TASKS.md T31).
             update_idea_status=False,
+            # Its generators are q-lab's own and tested; the candidate it is
+            # matched to is checked on its own run (docs/LOOKAHEAD.md).
+            check_lookahead=False,
         )
         trials.append(
             NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)

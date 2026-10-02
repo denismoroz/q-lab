@@ -1390,3 +1390,25 @@ def test_forward_only_economic_floor_miss_still_rejects() -> None:
         metrics={"sharpe_net": 0.2, "forward_days_needed": 9e4, "forward_days": 447.0},
     )
     assert route.route == "reject"
+
+
+class PeekingStrategy:
+    """Holds a coin tomorrow's price says will rise -- reads the future."""
+
+    name = "peeking"
+
+    def target_weights(self, panel, params):
+        nxt = panel.prices.shift(-1) > panel.prices
+        return (nxt.astype(float) * 0.4).where(panel.tradeable, 0.0)
+
+
+def test_a_strategy_that_reads_the_future_is_an_error_not_a_verdict(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:PeekingStrategy")
+
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+                           deployable_capital_usd=1000.0)
+
+    assert result.routing.route == "error"
+    assert "look-ahead" in result.routing.reason
+    assert session.query(Verdict).filter(Verdict.trial_id == result.trial_id).count() == 0

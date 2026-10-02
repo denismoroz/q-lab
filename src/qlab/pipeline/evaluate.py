@@ -36,6 +36,7 @@ from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
+from qlab.harness.lookahead import lookahead_violation
 from qlab.harness.metrics import compute_metrics, min_capital_usd
 from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, validate_weights
@@ -769,8 +770,15 @@ def evaluate_spec(
         Mapping[str, float] | Callable[[dict[str, float]], Mapping[str, float]] | None
     ) = None,
     update_idea_status: bool = True,
+    check_lookahead: bool = True,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
+
+    Unless `check_lookahead` is False, the strategy is run again on panels
+    whose data after a cut was changed, and its weights up to the cut must
+    not move (`qlab.harness.lookahead`); a strategy that reads the future
+    becomes an `error` trial with the bar named. Only calibration noise, whose
+    generators are q-lab's own and tested, passes False.
 
     The run's route is stored on its trial and, unless `update_idea_status`
     is False, applied to the idea's status in the same transaction
@@ -939,6 +947,15 @@ def evaluate_spec(
             )
         weights = strategy.target_weights(panel, spec.params)
         validate_weights(panel, weights)
+        if check_lookahead:
+            # Every candidate, every run (docs/LOOKAHEAD.md). A fresh instance,
+            # so a strategy that remembers its last run (`diagnostics`) still
+            # reports the untampered one.
+            violation = lookahead_violation(
+                resolve_strategy(spec.code_ref), panel, spec.params, weights
+            )
+            if violation is not None:
+                raise ValueError(violation)
 
         first, last = 0, len(panel.prices.index) - 1
         if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
