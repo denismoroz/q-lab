@@ -1,0 +1,40 @@
+# Outcome of one prediction from seed/preregistration/2026-09-21-paper-bv2-trend.yaml.
+# That file is not edited: a prediction rewritten after the fact is destroyed.
+# This file records what happened, with the evidence.
+
+checked_at: 2026-10-02
+prediction_file: seed/preregistration/2026-09-21-paper-bv2-trend.yaml
+
+outcomes:
+  - metric: daily_return_correlation_paper_vs_bench_replay
+    applies_to: strategy-b-v2
+    predicted: ">= 0.80"
+    observed:
+      b2: 1.0000        # 19 daily returns, 2026-09-13 .. 2026-10-02
+      b2_cold: 1.0000
+    hit: true
+    method: >
+      scripts/replay_bv2_paper.py drives frab's live book (frab.strategy.b2.book)
+      on q-lab's own recorded hourly data (T33) from each paper book's first hour,
+      with the engine's startup history and warm-up, and compares every hour of
+      equity with b2_equity exported read-only from frab.db on 10.8.0.5. Prices
+      matched on all 3540 common hours.
+    finding: >
+      b2_cold reproduces to the cent (max hourly equity difference 0.0000). b2
+      reproduces to the cent only when its books are SIZED with carry enabled and
+      stepped with carry disabled: the book was created on 2026-09-13 while carry
+      was still on, its persisted position sizes kept the carry-on values after
+      carry was switched off, so b2 holds ~64% of the spot its declared
+      configuration implies (BTC spot target $28.77 instead of $44.80). Replayed
+      with the declared configuration from scratch, b2 would read +9.23% instead
+      of the paper's +5.90% over the same hours.
+    note: >
+      The prediction was written against the TRANSCRIPTION, whose known mismatches
+      (margin, ratchet state, one book vs two) it listed. It is checked here
+      against the live-book adapter, which removes all three -- so the hit says
+      the adapter and the data reproduce the engine, not that the old
+      transcription would have.
+
+  - stop_condition: "live-vs-model daily correlation below 0.3 over any 20-day window"
+    applies_to: strategy-b-v2
+    triggered: false
