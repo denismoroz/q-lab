@@ -389,6 +389,6 @@ def test_several_settlements_in_one_native_slot_are_summed_not_counted() -> None
 
     times = pd.date_range("2025-01-01 04:00", periods=6, freq="4h", tz="UTC")
     raw = pd.Series(0.0001, index=times)
-    index = pd.DatetimeIndex([pd.Timestamp("2025-01-02", tz="UTC")])
+    index = pd.date_range("2025-01-01", periods=2, freq="1D", tz="UTC")
     aligned = align_funding_to_index(raw, index, pd.Timedelta(hours=8))
-    assert aligned.iloc[0] == pytest.approx(0.0006)
+    assert aligned.iloc[1] == pytest.approx(0.0006)
