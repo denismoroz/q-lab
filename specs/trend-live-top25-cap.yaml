@@ -1,0 +1,68 @@
+# Live trend code on the 25 largest coins by market cap as known at each bar,
+# stablecoins excluded.
+#
+# One of a SET of selection rules declared together on 2026-10-02, before any
+# of them was run (docs/COIN_ATTRIBUTES.md): trend-live-top25-cap,
+# trend-live-top25-cap-nomemes. The set is reported whole.
+#
+# Owner, 2026-10-02: "как сделать так, чтобы фреймворк умел выбирать такие вот
+# варианты, как сейчас выбран с 25 монетами, а не брал торгуемые". The rule
+# asks whether "large established projects" -- what the hand-written list
+# looks like -- written as a rule that uses only what was known at each bar,
+# earns what the list earned. No number is new: 25 is the list's length, 151
+# days the strategy's own min_history_days.
+
+idea_id: trend-live-top25-cap
+title: "[по капитализации] Trend (живой код) — 25 крупнейших монет по рыночной стоимости на каждую дату, без стейблкоинов"
+code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
+
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md).
+params_fixed_at: 2026-10-02
+params_fixed_evidence: >
+  params as specs/trend-live.yaml (frab, 2026-09-14); this selection rule was
+  declared on 2026-10-02 (docs/COIN_ATTRIBUTES.md), before it was run
+
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+
+params:
+  # null -> every discovered instrument is a candidate; the per-bar ranking
+  # below, not a hand-written list, decides which 25 are traded when.
+  coins: null
+  # Rank by market cap as known at each bar (docs/COIN_ATTRIBUTES.md).
+  top_k_by_market_cap: 25
+  exclude_tags: [stablecoin]
+  # Rank only coins already holding min_history_days (151) closes.
+  top_k_requires_history: true
+  capital_usd: 3000.0
+  lookbacks: [30, 60, 90, 120]
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.30
+  min_history_days: 151
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 1
+
+# Calls frab's own trend code bar by bar, book volatility targeting
+# included (`qlab.strategies.live.trend`). Its one documented fidelity gap --
+# the equity fed to book_vol_scale excludes trading costs -- is a small
+# deterministic drag inside an expressed mechanism, not a missing mechanism.
+unexpressed_mechanisms: []

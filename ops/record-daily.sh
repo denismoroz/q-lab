@@ -12,6 +12,9 @@ mkdir -p data/recorded/logs
   uv run qlab data record --source hyperliquid-xyz --interval 1d --interval 1h
   # Main market: daily history is fully served; hourly only ~5000 bars back.
   uv run qlab data record --source hyperliquid --interval 1h
+  # Coin attributes as of each Sunday (docs/COIN_ATTRIBUTES.md); history the
+  # source keeps, so only the last three weeks are checked.
+  uv run qlab data coin-attributes --start "$(date -u -v-21d +%Y-%m-%d)"
   # Off-machine copy: the store is irreplaceable by construction. No
   # --delete: a file gone here stays there. Runs even if a record step
   # failed -- whatever was written must still be copied.

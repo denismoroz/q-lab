@@ -89,6 +89,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from qlab.data.snapshot import _top_k_by_volume_mask
+from qlab.data.sources import coinmarketcap
 from qlab.harness.accrual import compute_accrual
 from qlab.harness.capacity import _bar_interval
 from qlab.harness.panel import MarketPanel
@@ -182,6 +183,28 @@ class LiveTrendTSMOMEnsemble:
                 prices, panel.volume, _bar_interval(index), int(top_k), eligible=eligible
             )
 
+        # `top_k_by_market_cap` -- the k largest coins by market cap as known
+        # at each bar, from CoinMarketCap's weekly historical snapshots
+        # (`qlab.data.sources.coinmarketcap`, docs/COIN_ATTRIBUTES.md). Owner,
+        # 2026-10-02: "как сделать так, чтобы фреймворк умел выбирать такие вот
+        # варианты, как сейчас выбран с 25 монетами". `exclude_tags` drops
+        # coins carrying any of the named tags (e.g. "stablecoin", "memes");
+        # `top_k_requires_history` applies as for the volume ranking.
+        top_cap = raw_params.get("top_k_by_market_cap")
+        if top_cap is not None:
+            if rank_mask is not None:
+                raise ValueError("top_k_by_volume and top_k_by_market_cap are alternatives")
+            rank_mask = _top_k_by_market_cap_mask(
+                prices,
+                int(top_cap),
+                exclude_tags=tuple(raw_params.get("exclude_tags") or ()),
+                min_history=(
+                    trend_params.min_history_days
+                    if raw_params.get("top_k_requires_history")
+                    else None
+                ),
+            )
+
         running_closes: dict[str, list[float]] = {c: [] for c in traded_coins}
         weight_rows: list[dict[str, float]] = []
 
@@ -262,3 +285,36 @@ class LiveTrendTSMOMEnsemble:
         # place even if a future edit changes the loop.
         weights = weights.where(panel.tradeable, 0.0)
         return weights
+
+
+def _top_k_by_market_cap_mask(
+    prices: pd.DataFrame,
+    k: int,
+    *,
+    exclude_tags: tuple[str, ...] = (),
+    min_history: int | None = None,
+    store=None,
+) -> pd.DataFrame:
+    """True where a column is among the k largest by market cap as known at
+    that bar (each weekly snapshot visible only after its date). A coin
+    outside the snapshot's top 200, unmapped to a Hyperliquid perp, carrying
+    an excluded tag, or (with `min_history`) holding fewer closes, is not
+    ranked."""
+    history = coinmarketcap.load_history(store or coinmarketcap.DEFAULT_STORE)
+    if history.empty:
+        raise ValueError(
+            "top_k_by_market_cap needs CoinMarketCap snapshots; run "
+            "`qlab data coin-attributes --start <date>` first"
+        )
+    columns = list(prices.columns)
+    cap = coinmarketcap.as_of_frame(history, prices.index, columns, "market_cap_usd")
+    if exclude_tags:
+        wanted = set(exclude_tags)
+        history = history.assign(excluded=history["tags"].map(lambda t: bool(wanted & set(t))))
+        excluded = coinmarketcap.as_of_frame(history, prices.index, columns, "excluded")
+        cap = cap.where(excluded.astype(float) != 1.0)
+    if min_history is not None:
+        cap = cap.where(prices.notna().cumsum() >= min_history)
+    cap = cap.where(prices.notna())
+    ranks = cap.rank(axis=1, ascending=False, method="first")
+    return (ranks <= k).fillna(False)

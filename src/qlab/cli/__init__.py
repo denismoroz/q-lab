@@ -371,6 +371,24 @@ def data_record_cmd(
         raise typer.Exit(code=1)
 
 
+@data_app.command("coin-attributes")
+def data_coin_attributes_cmd(
+    start: str = typer.Option(..., "--start", help="First date, YYYY-MM-DD"),
+    end: str | None = typer.Option(None, "--end", help="Last date, YYYY-MM-DD (default: today)"),
+) -> None:
+    """Fetch CoinMarketCap's weekly historical snapshots (rank, market cap,
+    tags as of each Sunday) into data/raw/coinmarketcap/historical
+    (docs/COIN_ATTRIBUTES.md). Snapshots already on disk are not refetched."""
+    from qlab.data.sources import coinmarketcap
+
+    last = date.fromisoformat(end) if end else date.today()
+    new, failed = coinmarketcap.download(date.fromisoformat(start), last)
+    typer.echo(f"new snapshots {new}, failed {len(failed)}")
+    if failed:
+        typer.echo("  failed: " + ", ".join(d.isoformat() for d in failed), err=True)
+        raise typer.Exit(code=1)
+
+
 @data_app.command("list")
 def data_list_cmd() -> None:
     """List registered data_snapshot rows, newest first."""

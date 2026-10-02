@@ -202,3 +202,28 @@ def test_top_k_with_history_rule_ranks_only_coins_old_enough_to_trade() -> None:
     ruled = _top_k_by_volume_mask(prices, volume, pd.Timedelta(days=1), 1, eligible=eligible)
     assert bool(ruled["OLD"].iloc[6]) and not bool(ruled["N"].iloc[6])
     assert bool(ruled["N"].iloc[7])  # N's 4th close is at row 7; then it outranks OLD
+
+
+def test_top_k_by_market_cap_ranks_by_snapshot_cap_and_drops_excluded_tags(tmp_path) -> None:
+    import json
+
+    from qlab.strategies.live.trend import _top_k_by_market_cap_mask
+
+    def snap(day: str, rows: list[tuple[str, int, float, list[str]]]) -> None:
+        payload = {"date": day, "rows": [
+            {"symbol": s, "cmcRank": r, "market_cap_usd": c, "tags": t} for s, r, c, t in rows]}
+        (tmp_path / f"{day}.json").write_text(json.dumps(payload))
+
+    snap("2026-01-04", [("BIG", 1, 9e9, []), ("USDX", 2, 8e9, ["stablecoin"]),
+                        ("MID", 3, 5e9, []), ("MEME", 4, 4e9, ["memes"])])
+    index = pd.date_range("2026-01-03", periods=4, freq="1D", tz="UTC")
+    prices = pd.DataFrame(1.0, index=index, columns=["BIG", "USDX", "MID", "MEME"])
+
+    mask = _top_k_by_market_cap_mask(prices, 2, exclude_tags=("stablecoin",), store=tmp_path)
+    assert not mask.iloc[1].any()  # snapshot dated 01-04 is not visible on 01-04 itself
+    assert mask.iloc[2].to_dict() == {"BIG": True, "USDX": False, "MID": True, "MEME": False}
+
+    no_memes = _top_k_by_market_cap_mask(
+        prices, 3, exclude_tags=("stablecoin", "memes"), store=tmp_path
+    )
+    assert no_memes.iloc[2].to_dict() == {"BIG": True, "USDX": False, "MID": True, "MEME": False}
