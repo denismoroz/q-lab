@@ -112,7 +112,8 @@ def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: fl
     """Per-regime metrics of a strategy's net returns (indexed by decision
     time t; each return is realised over (t, t+1]). A return takes the label
     of the last day closed by the end of its period. Keys:
-    regime_<r>_share, _return (compounded over the regime's periods),
+    regime_<r>_share, _days (distinct calendar days), _return (compounded
+    over the regime's periods),
     _ann_return, _sharpe, _max_dd, _btc_return (BTC over the same days)."""
     if len(net_return) < 2:
         return {}
@@ -128,6 +129,7 @@ def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: fl
         mask = (label == r).to_numpy()
         part = net_return[mask]
         out[f"regime_{r}_share"] = float(mask.mean())
+        out[f"regime_{r}_days"] = float(pd.DatetimeIndex(days[mask]).unique().size)
         if len(part) < 2:
             continue
         growth = float((1.0 + part).prod())

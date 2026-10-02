@@ -1428,3 +1428,20 @@ def test_a_spec_with_an_unsourced_number_does_not_start(session, tmp_path) -> No
         evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
                       deployable_capital_usd=1000.0)
     assert session.query(Trial).count() == 0
+
+
+def test_a_forward_test_that_missed_a_regime_waits() -> None:
+    ruleset = RuleSet(version="2026-01-01.1", rules=[NET_EDGE],
+                      forward_resolution=RESOLUTION, regime_coverage_days=30)
+    passing = _rows(("net_edge", True))
+    base = {"sharpe_net": 2.0, "forward_days_needed": 100.0, "forward_days": 400.0,
+            "min_capital_usd": 10.0, "regime_bull_days": 120.0, "regime_flat_days": 200.0}
+    kwargs = dict(ruleset=ruleset, selection=None, forward=passing,
+                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 1, 1))
+
+    missed = decide_fit_forward_route(**kwargs, metrics={**base, "regime_bear_days": 12.0})
+    assert missed.route == "needs-forward" and "bear 12 days" in missed.reason
+    seen = decide_fit_forward_route(**kwargs, metrics={**base, "regime_bear_days": 80.0})
+    assert seen.route == "paper"
+    unlabeled = {k: v for k, v in base.items() if not k.startswith("regime_")}
+    assert decide_fit_forward_route(**kwargs, metrics=unlabeled).route == "paper"

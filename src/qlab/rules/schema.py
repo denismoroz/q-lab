@@ -233,6 +233,10 @@ class RuleSet(BaseModel):
     rules: list[Rule] = Field(default_factory=list)
     retired: list[RetiredRule] = Field(default_factory=list)
     forward_resolution: ForwardResolution | None = None
+    regime_coverage_days: int | None = None
+    """From 2026-10-02.3: a forward test decides only once it has seen every
+    market regime (`qlab.regimes`) for at least this many days; otherwise it
+    is too early to tell (docs/REGIMES.md)."""
     """Present from 2026-10-02.1 on. A ruleset without it judges the whole
     window as one, exactly as before the split existed, so older verdicts
     stay reproducible under their own rules."""

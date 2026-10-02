@@ -1,0 +1,19 @@
+# A forward test decides only after it has seen every market regime.
+#
+# Owner, 2026-10-02, order «2-1-3», item 1: «"Не видела режима → рано судить"» --
+# a strategy never observed in some market regime has not been tested in it,
+# and a verdict on it is incomplete (docs/REGIMES.md).
+#
+# Regimes: BTC's 30-day return, terciles over 2019-09 .. today (qlab.regimes;
+# owner: «BTC, терцили, окно 30 дней»). A forward test (or a strategy that
+# chooses its parameters causally) that would route anything but
+# `needs-forward` while holding fewer than `regime_coverage_days` days of some
+# regime routes `needs-forward`, naming the regime. A rejection on the
+# selection period stands. No threshold of any rule changes.
+
+version: "2026-10-02.3"
+based_on: "2026-10-02.2"
+
+# The regime window's own length, not a new number: a regime "seen" for less
+# than one window was not seen as a regime.
+regime_coverage_days: 30

@@ -673,6 +673,47 @@ def decide_fit_forward_route(
     deployable_capital_usd: float,
     params_fixed_at: date | None,
 ) -> RoutingDecision:
+    """`_decide_fit_forward`, then -- when the ruleset asks for it
+    (`regime_coverage_days`) -- a forward test that would decide anything but
+    has seen some market regime for fewer days waits instead
+    (docs/REGIMES.md). A rejection on the selection period stands: it does
+    not rest on the forward test."""
+    routing = _decide_fit_forward(
+        ruleset=ruleset, selection=selection, forward=forward, metrics=metrics,
+        deployable_capital_usd=deployable_capital_usd, params_fixed_at=params_fixed_at,
+    )
+    need = ruleset.regime_coverage_days
+    if (need is None or forward is None or routing.route == "needs-forward"
+            or routing.reason.startswith("fails on the selection period")):
+        return routing
+    from qlab.regimes import REGIMES
+
+    days = {r: metrics.get(f"regime_{r}_days") for r in REGIMES}
+    if any(v is None for v in days.values()):
+        return routing  # no regime labels for this run: nothing to check
+    short = {r: int(v) for r, v in days.items() if v < need}
+    if not short:
+        return routing
+    return RoutingDecision(
+        route="needs-forward",
+        reason=(
+            "has not seen every market regime for " + f"{need} days: "
+            + ", ".join(f"{r} {n} days" for r, n in short.items())
+            + f"; so far it would route {routing.route} ({routing.reason})"
+        ),
+        required_capital_usd=metrics.get("min_capital_usd"),
+    )
+
+
+def _decide_fit_forward(
+    *,
+    ruleset: RuleSet,
+    selection: EvaluationResult | None,
+    forward: EvaluationResult | None,
+    metrics: dict[str, float],
+    deployable_capital_usd: float,
+    params_fixed_at: date | None,
+) -> RoutingDecision:
     """The route of a run judged under a ruleset with `forward_resolution`.
 
     1. On the selection period, a failed CONCLUSIVE strategy rule rejects:

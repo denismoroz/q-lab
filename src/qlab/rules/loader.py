@@ -121,6 +121,9 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
         rules=list(merged_rules.values()),
         retired=list(merged_retired.values()),
         forward_resolution=ruleset.forward_resolution or base.forward_resolution,
+        regime_coverage_days=(ruleset.regime_coverage_days
+                              if ruleset.regime_coverage_days is not None
+                              else base.regime_coverage_days),
     )
 
 
