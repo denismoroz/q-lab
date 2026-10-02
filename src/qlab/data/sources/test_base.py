@@ -8,6 +8,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from qlab.data.sources.base import (
     MAX_PLAUSIBLE_BAR_MOVE,
@@ -379,3 +380,15 @@ def test_spot_repeating_a_round_level_with_trades_is_kept_when_a_perp_is_known()
     trades = pd.Series([270, 281, 254, 243, 260], index=idx)
     perp = _series(idx, [1877.0, 1879.0, 1880.0, 1879.0, 1880.5])
     assert not detect_bad_price_bars(prices, trade_count=trades, reference=perp).any()
+
+
+def test_several_settlements_in_one_native_slot_are_summed_not_counted() -> None:
+    """A Binance contract on 4-hourly funding settles twice per 8-hour slot;
+    a daily bar must still read complete, with the day's funding summed."""
+    from qlab.data.sources.base import align_funding_to_index
+
+    times = pd.date_range("2025-01-01 04:00", periods=6, freq="4h", tz="UTC")
+    raw = pd.Series(0.0001, index=times)
+    index = pd.DatetimeIndex([pd.Timestamp("2025-01-02", tz="UTC")])
+    aligned = align_funding_to_index(raw, index, pd.Timedelta(hours=8))
+    assert aligned.iloc[0] == pytest.approx(0.0006)

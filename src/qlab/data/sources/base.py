@@ -338,7 +338,11 @@ def align_funding_to_index(
 
     funding_raw = funding_raw.copy()
     funding_raw.index = funding_raw.index.floor(native_interval)
-    funding_raw = funding_raw.sort_index()
+    # Several settlements in one native slot -- a Binance contract moved to
+    # 4-hourly or hourly funding (common since 2023) -- are that slot's
+    # funding together: summed, not counted as extra slots (which would make
+    # every such day read as incomplete).
+    funding_raw = funding_raw.groupby(level=0).sum().sort_index()
     bar = index[1] - index[0] if len(index) > 1 else native_interval
 
     values: list[float] = []

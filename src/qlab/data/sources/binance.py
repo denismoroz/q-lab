@@ -159,7 +159,100 @@ def _empty_kline_frame() -> pd.DataFrame:
     return frame.astype({"price": float, "volume": float, "trade_count": "int64"})
 
 
+ARCHIVE_FILES_URL = "https://data.binance.vision"
+
+
+def _archive_keys(client: httpx.Client, prefix: str) -> list[str]:
+    keys: list[str] = []
+    marker = ""
+    while True:
+        params = {"prefix": prefix}
+        if marker:
+            params["marker"] = marker
+        resp = client.get(ARCHIVE_LIST_URL, params=params, timeout=30.0)
+        resp.raise_for_status()
+        page = re.findall(r"<Key>([^<]+\.zip)</Key>", resp.text)
+        keys += page
+        if "<IsTruncated>true</IsTruncated>" not in resp.text or not page:
+            return keys
+        marker = page[-1]
+
+
+def _archive_rows(client: httpx.Client, key: str) -> list[list[str]]:
+    """Rows of one archive CSV; a header row (newer files) is dropped."""
+    import csv
+    import io
+    import zipfile
+
+    resp = client.get(f"{ARCHIVE_FILES_URL}/{key}", timeout=60.0)
+    resp.raise_for_status()
+    polite_sleep()
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+        text = z.read(z.namelist()[0]).decode("utf-8")
+    return [row for row in csv.reader(io.StringIO(text)) if row and row[0][:1].isdigit()]
+
+
+def _months(start: pd.Timestamp, end: pd.Timestamp) -> set[str]:
+    return {p.strftime("%Y-%m") for p in pd.period_range(start.tz_localize(None),
+                                                        end.tz_localize(None), freq="M")}
+
+
+def archive_candles(client: httpx.Client, instrument: str, interval: str, start: pd.Timestamp,
+                    end: pd.Timestamp) -> pd.DataFrame:
+    """Candles from the public archive's monthly kline files -- for a contract
+    the REST API no longer knows (it answers 400, "Invalid symbol")."""
+    symbol = _symbol(instrument)
+    months = _months(start, end)
+    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
+    for key in _archive_keys(client, f"{ARCHIVE_PREFIX}{symbol}/{interval}/"):
+        if key[-11:-4] not in months:
+            continue
+        for k in _archive_rows(client, key):
+            ts = pd.Timestamp(int(k[0]), unit="ms", tz="UTC")
+            if start <= ts <= end:
+                rows[ts] = (float(k[4]), float(k[5]), int(k[8]))
+    if not rows:
+        return _empty_kline_frame()
+    frame = pd.DataFrame.from_dict(rows, orient="index", columns=list(_KLINE_FRAME_COLUMNS))
+    frame.index.name = "timestamp"
+    return frame.sort_index()
+
+
+def archive_funding(client: httpx.Client, instrument: str, start: pd.Timestamp,
+                    end: pd.Timestamp) -> pd.Series:
+    """Funding from the archive's monthly fundingRate files (calc_time,
+    funding_interval_hours, last_funding_rate)."""
+    symbol = _symbol(instrument)
+    months = _months(start, end)
+    rows: dict[pd.Timestamp, float] = {}
+    prefix = f"data/futures/um/monthly/fundingRate/{symbol}/"
+    for key in _archive_keys(client, prefix):
+        if key[-11:-4] not in months:
+            continue
+        for r in _archive_rows(client, key):
+            ts = pd.Timestamp(int(r[0]), unit="ms", tz="UTC")
+            if start <= ts <= end:
+                rows[ts] = float(r[2])
+    return pd.Series(rows, dtype=float).sort_index()
+
+
+def _unknown_symbol(exc: httpx.HTTPStatusError) -> bool:
+    return exc.response.status_code == 400
+
+
 def fetch_candles(
+    client: httpx.Client, instrument: str, interval: str, start: pd.Timestamp, end: pd.Timestamp
+) -> pd.DataFrame:
+    """REST candles; for a contract the API no longer knows, the archive's."""
+    try:
+        return _rest_candles(client, instrument, interval, start, end)
+    except httpx.HTTPStatusError as exc:
+        if not _unknown_symbol(exc):
+            raise
+        return archive_candles(client, instrument, interval, start, end)
+
+
+def _rest_candles(
     client: httpx.Client, instrument: str, interval: str, start: pd.Timestamp, end: pd.Timestamp
 ) -> pd.DataFrame:
     """Page through ``/fapi/v1/klines`` and return a DataFrame indexed by the
@@ -215,6 +308,18 @@ def fetch_candles(
 
 
 def fetch_funding(
+    client: httpx.Client, instrument: str, start: pd.Timestamp, end: pd.Timestamp
+) -> pd.Series:
+    """REST funding; for a contract the API no longer knows, the archive's."""
+    try:
+        return _rest_funding(client, instrument, start, end)
+    except httpx.HTTPStatusError as exc:
+        if not _unknown_symbol(exc):
+            raise
+        return archive_funding(client, instrument, start, end)
+
+
+def _rest_funding(
     client: httpx.Client, instrument: str, start: pd.Timestamp, end: pd.Timestamp
 ) -> pd.Series:
     """Page through ``/fapi/v1/fundingRate`` and return a funding-rate
