@@ -50,6 +50,7 @@ from qlab.calibration.percentile import (
     CANONICAL_SERIES,
     ShapeAwarePercentiles,
     compute_shape_aware_percentiles,
+    noise_percentile,
 )
 from qlab.calibration.run import NoiseTrial, run_noise_series
 from qlab.pipeline.evaluate import (
@@ -160,6 +161,17 @@ def evaluate_spec_with_shape_aware_bar(
             extra["noise_return_percentile"] = percentiles.return_percentile
         if percentiles.sharpe_percentile is not None:
             extra["noise_sharpe_percentile"] = percentiles.sharpe_percentile
+        # Inside each market regime too (docs/REGIMES.md): the candidate's
+        # return on those days against the same noise books' on the same days.
+        for key, value in base_metrics.items():
+            if not (key.startswith("regime_") and key.endswith("_ann_return")):
+                continue
+            noise = [t.evaluation.metrics[key] for t in noise_trials
+                     if t.series == series and t.evaluation.metrics
+                     and key in t.evaluation.metrics]
+            if noise and value == value:
+                extra[key.replace("_ann_return", "_noise_percentile")] = noise_percentile(
+                    value, noise)
         return extra
 
     candidate = evaluate_spec(

@@ -228,6 +228,7 @@ function Outcome({ outcome }) {
       {fitNumbers.length > 0 && (
         <NumberList title="период подбора — только для сведения" numbers={fitNumbers} />
       )}
+      <RegimeTable m={m} />
       <p className="mt-3 text-xs text-slate-500">
         прогон #{trial.id}, {trial.started_at?.slice(0, 10)}
         {outcome.unrouted_trials
@@ -235,6 +236,56 @@ function Outcome({ outcome }) {
           : ''}
       </p>
     </section>
+  )
+}
+
+// docs/REGIMES.md: BTC's 30-day return, split in thirds over 2019-2026 --
+// a description of where the strategy earns and loses, read by no rule.
+const REGIME_ROWS = [
+  ['bull', 'рост'],
+  ['flat', 'боковик'],
+  ['bear', 'падение'],
+]
+
+function RegimeTable({ m }) {
+  if (typeof m.regime_bull_share !== 'number') return null
+  const cell = (v, f) => (typeof v === 'number' ? f(v) : '—')
+  const p = (v) => `${(v * 100).toFixed(1)}%`
+  return (
+    <div className="mt-3">
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        по режимам рынка (BTC за 30 дней: падение ниже {cell(m.regime_bear_below, p)}, рост выше{' '}
+        {cell(m.regime_bull_above, p)}) — для сведения
+      </div>
+      <table className="mt-1 w-full text-sm tabular-nums">
+        <thead className="text-xs text-slate-500">
+          <tr>
+            <th className="text-left font-normal">режим</th>
+            <th className="text-right font-normal">доля дней</th>
+            <th className="text-right font-normal">стратегия</th>
+            <th className="text-right font-normal">в год</th>
+            <th className="text-right font-normal">Шарп</th>
+            <th className="text-right font-normal">просадка</th>
+            <th className="text-right font-normal">BTC</th>
+            <th className="text-right font-normal">обгоняет шум</th>
+          </tr>
+        </thead>
+        <tbody>
+          {REGIME_ROWS.map(([key, name]) => (
+            <tr key={key}>
+              <td>{name}</td>
+              <td className="text-right">{cell(m[`regime_${key}_share`], p)}</td>
+              <td className="text-right">{cell(m[`regime_${key}_return`], p)}</td>
+              <td className="text-right">{cell(m[`regime_${key}_ann_return`], p)}</td>
+              <td className="text-right">{cell(m[`regime_${key}_sharpe`], (v) => v.toFixed(2))}</td>
+              <td className="text-right">{cell(m[`regime_${key}_max_dd`], p)}</td>
+              <td className="text-right">{cell(m[`regime_${key}_btc_return`], p)}</td>
+              <td className="text-right">{cell(m[`regime_${key}_noise_percentile`], p)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

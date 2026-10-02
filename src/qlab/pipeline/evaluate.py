@@ -18,6 +18,7 @@ are read from `qlab.venues`, never synthesized here).
 from __future__ import annotations
 
 import dataclasses
+import functools
 import hashlib
 import importlib
 import json
@@ -37,11 +38,12 @@ from qlab.data.snapshot import build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
 from qlab.harness.lookahead import lookahead_violation
-from qlab.harness.metrics import compute_metrics, min_capital_usd
+from qlab.harness.metrics import compute_metrics, min_capital_usd, periods_per_year
 from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, validate_weights
 from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
+from qlab.regimes import breakdown as regime_breakdown
 from qlab.registry import repo
 from qlab.registry.lifecycle import StatusDecision, apply_route
 from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialStatus
@@ -465,6 +467,15 @@ def not_evaluable_reasons(
         elif coverage.window is None:
             reasons.append("the specified book was never complete in the data")
     return reasons
+
+
+@functools.lru_cache(maxsize=1)
+def _regimes():
+    """The stored regime labels (`qlab regimes build`), or None: without them
+    a run simply carries no regime breakdown."""
+    from qlab.regimes import load
+
+    return load()
 
 
 def review_reasons(session: Session, spec: StrategySpec) -> list[str]:
@@ -1011,6 +1022,13 @@ def evaluate_spec(
                 part_weights = weights.iloc[lo : hi + 1]
             result = run_backtest(part_panel, part_weights, costs, part_panel.funding)
             measured = compute_metrics(result)
+            # How the result splits across BTC's bull / flat / bear days
+            # (docs/REGIMES.md): a description, read by no rule.
+            regime_series = _regimes()
+            if regime_series is not None and len(result.net_return) >= 2:
+                measured.update(regime_breakdown(
+                    result.net_return, regime_series, periods_per_year(part_panel.prices.index)
+                ))
             measured["min_capital_usd"] = min_capital_usd(part_weights, spec.min_leg_notional)
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage

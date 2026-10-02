@@ -635,6 +635,27 @@ def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
 # --------------------------------------------------------------------------
 
 
+regimes_app = typer.Typer(help="Market regimes: BTC bull / flat / bear (docs/REGIMES.md).",
+                          no_args_is_help=True)
+app.add_typer(regimes_app, name="regimes")
+
+
+@regimes_app.command("build")
+def regimes_build_cmd() -> None:
+    """Fetch BTC's whole daily history and label every day by the tercile of
+    its 30-day return (owner, 2026-10-02: «BTC, терцили, окно 30 дней»)."""
+    from qlab.regimes import REGIMES, build
+
+    series = build()
+    labels = series.labels.dropna()
+    typer.echo(series.source)
+    typer.echo(f"bear below {series.bear_below:+.1%}, bull above {series.bull_above:+.1%} "
+               "(30-day BTC return)")
+    for r in REGIMES:
+        typer.echo(f"  {r:<5} {(labels == r).mean():.0%} of {len(labels)} days")
+    typer.echo(f"latest: {labels.index[-1]:%Y-%m-%d} {labels.iloc[-1]}")
+
+
 budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
 app.add_typer(budget_app, name="budget")
 
