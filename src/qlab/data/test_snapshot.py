@@ -577,9 +577,12 @@ class TestUniverseComplete:
         )
         assert discovered.snapshot_id != manual.snapshot_id
 
-    def test_source_without_discovery_requires_explicit_instruments(self, session, tmp_path):
-        monkeypatch_result = snap._SOURCES["binance"]["discover_universe"]((None, None))
-        assert monkeypatch_result is None  # sanity: binance really has no discovery
+    def test_source_without_discovery_requires_explicit_instruments(
+        self, session, tmp_path, monkeypatch
+    ):
+        # A source whose API cannot list its delisted contracts (Binance's
+        # REST API alone, before the archive was used) answers None.
+        monkeypatch.setitem(snap._SOURCES["binance"], "discover_universe", lambda rng: None)
 
         with pytest.raises(ValueError, match="does not expose a full point-in-time universe"):
             snap.build_snapshot(
@@ -591,7 +594,8 @@ class TestUniverseComplete:
         described = snap.describe_universe("hyperliquid")
         assert described == [("BTC", False), ("DEADCOIN", True), ("ETH", False)]
 
-    def test_describe_universe_binance_is_none(self):
+    def test_describe_universe_none_when_the_source_cannot_list_delisted(self, monkeypatch):
+        monkeypatch.setitem(snap._SOURCES["binance"], "describe_universe", lambda: None)
         assert snap.describe_universe("binance") is None
 
     def test_describe_universe_unknown_source_raises(self):

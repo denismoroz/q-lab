@@ -133,15 +133,38 @@ def test_fetch_instrument_history_marks_delisted_when_absent_from_exchange_info(
     assert hist.last_seen == end
 
 
-def test_discover_universe_is_none_no_network():
-    """Binance's free API cannot expose delisted symbols at all -- this must
-    return None unconditionally, without making any request."""
-    assert bn.discover_universe() is None
-    assert bn.discover_universe((pd.Timestamp("2024-01-01"), pd.Timestamp("2024-02-01"))) is None
+_PAGE_1 = (
+    "<ListBucketResult><NextMarker>data/futures/um/monthly/klines/ETHUSDT/</NextMarker>"
+    "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/BTCUSDT/</Prefix></CommonPrefixes>"
+    "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/BTCUSDT_250328/</Prefix>"
+    "</CommonPrefixes>"
+    "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/SRMUSDT/</Prefix></CommonPrefixes>"
+    "</ListBucketResult>"
+)
+_PAGE_2 = (
+    "<ListBucketResult>"
+    "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/ETHUSDT/</Prefix></CommonPrefixes>"
+    "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/ETHBUSD/</Prefix></CommonPrefixes>"
+    "</ListBucketResult>"
+)
 
 
-def test_describe_universe_is_none_no_network():
-    assert bn.describe_universe() is None
+@respx.mock
+def test_universe_is_the_archive_plus_exchange_info_with_delisted_flagged(monkeypatch):
+    """The archive lists every contract ever listed (SRM is long delisted and
+    absent from exchangeInfo); dated quarterlies and non-USDT quotes are not
+    perpetual USDT instruments."""
+    monkeypatch.setattr(bn, "polite_sleep", lambda: None)
+    respx.get(bn.ARCHIVE_LIST_URL).mock(side_effect=lambda req: httpx.Response(
+        200, text=_PAGE_2 if req.url.params.get("marker") else _PAGE_1))
+    respx.get(f"{bn.BASE_URL}/fapi/v1/exchangeInfo").mock(return_value=httpx.Response(200, json={
+        "symbols": [{"symbol": "BTCUSDT", "status": "TRADING"},
+                    {"symbol": "FTTUSDT", "status": "SETTLING"}]}))
+
+    described = bn.describe_universe()
+
+    assert described == [("BTC", False), ("ETH", True), ("FTT", True), ("SRM", True)]
+    assert bn.discover_universe() == ["BTC", "ETH", "FTT", "SRM"]
 
 
 @respx.mock

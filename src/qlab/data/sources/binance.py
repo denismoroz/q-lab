@@ -15,19 +15,22 @@ returned (``last_seen``), following the point-in-time-via-price-presence
 approach used in funding-rate-arbitrage's crypto cross-sectional research
 (research/cross_sectional/crypto/survivorship.py).
 
-**A survivorship-free universe cannot be built from Binance's free API at
-all.** Point-in-time ``tradeable`` for an instrument you already asked for
-is honest, but ``exchangeInfo`` only ever lists what's TRADING *now* — dead
-perpetuals aren't in it, and there's no free historical-listing endpoint to
-recover them from. So there is no way to discover "every contract that was
-ever listed" the way `hyperliquid.describe_universe` can. `discover_universe`
-therefore returns ``None`` here, not an empty list and not the current
-survivor set — callers must fall back to an explicit instrument list, which
-is honestly tagged ``universe_complete=False`` (see `qlab.data.panel`).
+**The full universe comes from Binance's public data archive**
+(``data.binance.vision``, 2026-10-02). ``exchangeInfo`` lists only what
+Binance still knows (TRADING, plus SETTLING for some delisted contracts); the
+archive keeps a monthly kline file for EVERY USDT-margined contract ever
+listed, dead ones included, so its listing is the survivorship-free set.
+Prices and funding still come from the REST API, which -- checked on SRM,
+TOMO, HNT, ANT, BTS -- serves delisted contracts' history too; an instrument
+without candles inside a window is skipped by `fetch_universe(on_missing=
+"skip")`, as for Hyperliquid. Until 2026-10-02 this module returned ``None``
+here and documented the universe as impossible to build; the archive was
+not known then.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 import httpx
@@ -89,20 +92,62 @@ def fetch_exchange_info(client: httpx.Client) -> dict[str, dict]:
     return out
 
 
-def describe_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None) -> None:
-    """See `discover_universe` and the module docstring: Binance's free API
-    has no way to list delisted contracts, so there is no honest universe
-    description to hand back here. Always returns ``None``."""
-    return None
+ARCHIVE_LIST_URL = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+ARCHIVE_PREFIX = "data/futures/um/monthly/klines/"
+_ARCHIVE_ENTRY = re.compile(r"<Prefix>" + re.escape(ARCHIVE_PREFIX) + r"([^/<]+)/</Prefix>")
+_NEXT_MARKER = re.compile(r"<NextMarker>([^<]+)</NextMarker>")
 
 
-def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None) -> None:
-    """Always returns ``None`` — Binance's free ``exchangeInfo`` only lists
-    currently-TRADING symbols, so a full (survivors + delisted) universe
-    cannot be discovered from it. See the module docstring. Callers must
-    pass an explicit instrument list to `fetch_universe`/`build_snapshot`,
-    which then must be marked ``universe_complete=False``."""
-    return None
+def archive_symbols(client: httpx.Client) -> list[str]:
+    """Every symbol with a monthly kline folder in the public archive -- the
+    contracts Binance ever listed, delisted ones included."""
+    symbols: list[str] = []
+    marker = ""
+    while True:
+        params = {"delimiter": "/", "prefix": ARCHIVE_PREFIX}
+        if marker:
+            params["marker"] = marker
+        resp = client.get(ARCHIVE_LIST_URL, params=params, timeout=30.0)
+        resp.raise_for_status()
+        symbols += _ARCHIVE_ENTRY.findall(resp.text)
+        found = _NEXT_MARKER.search(resp.text)
+        if not found:
+            return sorted(set(symbols))
+        marker = found.group(1)
+        polite_sleep()
+
+
+def _usdt_perpetual(symbol: str) -> str | None:
+    """The instrument name of a USDT-margined perpetual (``BTCUSDT`` ->
+    ``BTC``); None for a dated quarterly (``BTCUSDT_250328``) or another
+    quote asset."""
+    if "_" in symbol or not symbol.endswith("USDT") or symbol == "USDT":
+        return None
+    return symbol[: -len("USDT")]
+
+
+def describe_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None
+                      ) -> list[tuple[str, bool]]:
+    """``[(instrument, is_delisted)]`` for every USDT perpetual Binance ever
+    listed: the archive's set plus anything ``exchangeInfo`` knows; delisted
+    = not TRADING now. Raises if the archive cannot be read -- a partial list
+    would silently reintroduce survivorship."""
+    with httpx.Client() as client:
+        info = fetch_exchange_info(client)
+        names = set(archive_symbols(client)) | set(info)
+    out = {}
+    for symbol in names:
+        instrument = _usdt_perpetual(symbol)
+        if instrument:
+            out[instrument] = info.get(symbol, {}).get("status") != "TRADING"
+    return sorted(out.items())
+
+
+def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None
+                      ) -> list[str]:
+    """Every instrument of `describe_universe`; those without candles inside
+    the window are skipped by `fetch_universe(on_missing="skip")`."""
+    return [instrument for instrument, _ in describe_universe(as_of_range)]
 
 
 _KLINE_FRAME_COLUMNS = ("price", "volume", "trade_count")
@@ -273,6 +318,7 @@ def fetch_universe(
 __all__ = [
     "VENUE",
     "FUNDING_NATIVE_INTERVAL",
+    "archive_symbols",
     "fetch_exchange_info",
     "describe_universe",
     "discover_universe",
