@@ -124,10 +124,10 @@ class ForwardResolution(BaseModel):
 
     The forward window needs about ((z_conf + z_power) / S)^2 years to tell a
     strategy whose selection-period Sharpe is S from zero (one-sided test at
-    `confidence`, with `power`). A shorter forward test that fails routes
-    `needs-forward`, not `reject`. A forward test that PASSES is never held
-    back by this: the rules themselves already ask for separation from
-    noise.
+    `confidence`, with `power`). A shorter forward test decides nothing in
+    either direction and routes `needs-forward`: a failure is too early to
+    call, and so is a pass (18 days of trend read +446% a year and beat all
+    200 noise books).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

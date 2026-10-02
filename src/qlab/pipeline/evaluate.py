@@ -638,11 +638,13 @@ def decide_fit_forward_route(
        forward test routes `needs-more-data`.
     2. No forward test -> `needs-forward`: a selection-period pass proves
        nothing, whatever the informational rules said.
-    3. A forward test is judged by every rule (`decide_route`). If it fails
-       while shorter than `forward_years_needed` of the selection-period
-       Sharpe, it is too early to tell -> `needs-forward`; otherwise its
-       route stands. With no selection period (parameters fixed before the
-       data began) the forward route stands as is.
+    3. A forward test is judged by every rule (`decide_route`). While it is
+       shorter than `forward_years_needed` of the selection-period Sharpe it
+       decides nothing in EITHER direction -> `needs-forward`, with what it
+       would route so far in the reason: 18 days of trend once read +446% a
+       year, passed every rule and would have gone to `paper`. Once long
+       enough, its route stands. With no selection period (parameters fixed
+       before the data began) the forward route stands as is.
     """
     assert ruleset.forward_resolution is not None
     by_id = {rule.id: rule for rule in ruleset.rules}
@@ -700,7 +702,7 @@ def decide_fit_forward_route(
         )
 
     routing = decide_route(forward, metrics, deployable_capital_usd)
-    if routing.route != "reject" or selection is None:
+    if selection is None:
         return routing
 
     days = metrics.get("forward_days", 0.0)
@@ -716,15 +718,16 @@ def decide_fit_forward_route(
         return RoutingDecision(
             route="needs-forward",
             reason=(
-                f"forward test so far fails ({routing.reason}) but is too short to tell: "
-                f"{days:,.0f} days; {how_long}"
+                f"forward test too short to tell either way: {days:,.0f} days; {how_long}; "
+                f"so far it would route {routing.route} ({routing.reason})"
             ),
             required_capital_usd=metrics.get("min_capital_usd"),
         )
-    return RoutingDecision(
-        route="reject", reason=f"forward test failed over {days:,.0f} days: {routing.reason}"
-    )
-
+    if routing.route == "reject":
+        return RoutingDecision(
+            route="reject", reason=f"forward test failed over {days:,.0f} days: {routing.reason}"
+        )
+    return routing
 
 def evaluate_spec(
     spec: StrategySpec,

@@ -1255,7 +1255,9 @@ def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_pa
     assert result.metrics["fit_point_in_time_universe"] == 0.0  # chosen with hindsight before
     assert result.metrics["selection_days"] == pytest.approx(5.0)
     assert result.metrics["forward_days"] == pytest.approx(5.0 + 1 / 24)
-    assert result.routing.route == "paper"
+    # Five days pass every rule, and still decide nothing.
+    assert result.routing.route == "needs-forward"
+    assert "would route paper" in result.routing.reason
 
     rows = session.query(Verdict).filter(Verdict.trial_id == result.trial_id).all()
     forward = [v for v in rows if v.note == FORWARD_NOTE]
@@ -1308,6 +1310,19 @@ def test_short_failing_forward_test_waits_long_failing_one_rejects() -> None:
     )
     assert long.route == "reject"
     assert "forward test failed" in long.reason
+
+
+def test_short_passing_forward_test_also_waits() -> None:
+    ruleset = _split_ruleset([NET_EDGE])
+    passing = _rows(("net_edge", True))
+    base = {"fit_sharpe_net": 0.5, "forward_days_needed": 9000.0, "min_capital_usd": 10.0}
+    kwargs = dict(ruleset=ruleset, selection=passing, forward=passing,
+                  deployable_capital_usd=1000.0, params_fixed_at=date(2026, 1, 1))
+
+    assert decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 18.0}).route \
+        == "needs-forward"
+    assert decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 9500.0}).route \
+        == "paper"
 
 
 def test_without_forward_resolution_the_window_is_judged_as_before(session, tmp_path) -> None:

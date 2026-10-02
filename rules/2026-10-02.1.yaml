@@ -22,10 +22,11 @@
 #     hindsight and a lack of separation from luck are exactly what the
 #     selection period cannot settle. A pass on the selection period routes
 #     `needs-forward`, never `paper` or `shelf`.
-#   - On the FORWARD test every rule applies as before. A forward test that
-#     fails while still too short to resolve the selection-period Sharpe routes
-#     `needs-forward` ("too early to tell"); only a long-enough one routes
-#     `reject`.
+#   - On the FORWARD test every rule applies as before, but while the forward
+#     test is too short to resolve the selection-period Sharpe it decides
+#     nothing in either direction: it routes `needs-forward` ("too early to
+#     tell"), its would-be route in the reason. Only a long-enough forward test
+#     routes `reject`, `paper` or `shelf`.
 #
 # No threshold of any rule changes. `forward_resolution` uses the conventional
 # one-sided 95% confidence and 80% power -- the same constants as the horizon
@@ -43,8 +44,8 @@ forward_resolution:
     Conventional one-sided 95% / 80%, the constants of the horizon formula in
     seed/preregistration/2026-09-21-paper-bv2-trend.yaml. A forward test
     shorter than ((1.645 + 0.842) / S)^2 years, S being the selection-period
-    Sharpe, cannot distinguish that strategy from zero, so its failure is
-    "too early to tell", not "does not work".
+    Sharpe, cannot distinguish that strategy from zero, so neither its failure
+    nor its pass decides anything yet.
 
 rules:
   - id: honest_universe
