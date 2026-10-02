@@ -314,14 +314,15 @@ def align_funding_to_index(
       (``round(bar / native)``); a short or empty bucket is NaN, never a
       partial sum silently passed off as the full period's funding.
     - If the panel bar is *finer* than the native interval (e.g. hourly bars
-      over Binance's 8h funding), a bucket can hold at most one settlement.
-      That settlement's value is used at the bar where it lands; every other
-      bar is NaN. This is not a "missing value" — no settlement occurs
-      between marks — but callers aggregating over multiple bars must
-      `sum(skipna=True)` rather than treat each NaN bar as a zero-cost bar.
+      over Binance's 8h funding), a settlement's value lands on the bar
+      ending at its native mark. A bar between marks is 0.0 -- no
+      settlement can occur there, a structural zero, not a filled gap (until
+      2026-10-02 it was NaN, which made holding through any hour between
+      marks impossible: Bv2 on Binance's hourly history). A bar ending ON a
+      mark with no settlement is NaN: a settlement was due and is missing.
 
-    Either way, a bucket with **no data present** is NaN. Funding is never
-    zero-filled here.
+    A due settlement that is missing is NaN in both cases; a missing value is
+    never zero-filled.
 
     Real venues settle a few milliseconds *after* the nominal mark
     (Hyperliquid's ``fundingHistory`` timestamps typically land 20-40ms past
@@ -356,8 +357,12 @@ def align_funding_to_index(
             expected = round(bar / native_interval)
             complete = expected >= 1 and len(window) == expected
             value = float(window.sum()) if complete else float("nan")
+        elif len(window):
+            value = float(window.sum())
+        elif (ts - pd.Timestamp(0, tz="UTC")) % native_interval == pd.Timedelta(0):
+            value = float("nan")  # a settlement was due at this mark and is missing
         else:
-            value = float(window.iloc[0]) if len(window) == 1 else float("nan")
+            value = 0.0  # between marks no settlement can occur: a true zero
         values.append(value)
         prev = ts
 

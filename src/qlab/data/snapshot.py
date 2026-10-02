@@ -243,10 +243,9 @@ def _build_frames_from_histories(
         # in the universe and leaves the strategy unable to hold it exactly
         # where the data cannot support the claim.
         #
-        # Only when the panel's bar is coarser than or equal to the venue's
-        # settlement interval, where NaN means "incomplete". On a finer panel
-        # (hourly bars over 8h funding) most bars are NaN by construction and
-        # this test would make everything untradeable.
+        # On a panel finer than the settlement interval a bar between marks
+        # carries a structural 0.0 and only a missing DUE settlement is NaN
+        # (`align_funding_to_index`), so the rule holds for every bar size.
         #
         # AND only when `hist.has_funding` is True. An instrument that
         # structurally never pays funding (a spot market, see
@@ -254,7 +253,7 @@ def _build_frames_from_histories(
         # not because a settlement was dropped -- applying this rule to it
         # would mark every spot bar untradeable, which is the exact trap
         # docs/TASKS.md T17 warns about, not an honest data gap.
-        if bar_interval >= funding_native_interval and hist.has_funding:
+        if hist.has_funding:
             tradeable &= funding_cols[coin].notna()
 
         # Quote sanity (docs/TASKS.md, T17): a corrupted print -- a
@@ -323,18 +322,15 @@ def _build_frames_from_histories(
 
     # A weight decided at bar t is held over (t, t+1] (qlab.harness.run): it
     # earns the price move to t+1 and pays t+1's funding. So t is tradeable
-    # only if bar t+1 has a price and, for a funded instrument on a panel at
-    # least as coarse as its settlement interval, a known funding rate. The
+    # only if bar t+1 has a price and, for a funded instrument, a known
+    # funding rate. The
     # mask used to check bar t's own funding; on Binance's long history this
     # left books holding into a delisting (SXP, 2025-12-06: no funding after
     # the last trading day) and stopped every run. Knowing one bar ahead that
     # a contract will not exist is what a delisting announcement gives (they
     # come days ahead); for a mere data gap it hides no price. The panel's
     # last bar realises no return and is left as it is.
-    funded = [
-        coin for coin in instruments
-        if histories[coin].has_funding and bar_interval >= funding_native_interval
-    ]
+    funded = [coin for coin in instruments if histories[coin].has_funding]
     next_ok = prices.shift(-1).notna()
     if funded:
         next_ok[funded] &= funding[funded].shift(-1).notna()

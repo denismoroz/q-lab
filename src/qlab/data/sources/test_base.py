@@ -51,15 +51,18 @@ def test_coarser_bar_sums_complete_bucket():
     assert np.isnan(out.iloc[1])
 
 
-def test_finer_bar_places_single_settlement_rest_nan():
-    """Panel bar finer than native settlement (hourly bar, 8h funding):
-    the settlement lands on exactly one bar; every other bar is NaN, never 0."""
+def test_finer_bar_places_the_settlement_and_zero_between_marks():
+    """Panel bar finer than native settlement (hourly bar, 8h funding): the
+    settlement lands on the bar ending at its mark; bars between marks carry a
+    structural 0.0 (no settlement can occur there); a mark whose settlement is
+    missing is NaN, never 0."""
     index = pd.date_range("2024-01-01 00:00", periods=9, freq="1h", tz="UTC")
     raw = pd.Series({pd.Timestamp("2024-01-01 08:00", tz="UTC"): 0.0003})
     out = align_funding_to_index(raw, index, pd.Timedelta(hours=8))
     assert out.loc["2024-01-01 08:00"] == 0.0003
-    non_settlement = out.drop(pd.Timestamp("2024-01-01 08:00", tz="UTC"))
-    assert non_settlement.isna().all()
+    assert pd.isna(out.loc["2024-01-01 00:00"])  # due at this mark, missing
+    between = out.loc["2024-01-01 01:00":"2024-01-01 07:00"]
+    assert (between == 0.0).all()
 
 
 def test_settlement_jitter_past_the_mark_stays_in_its_own_bucket():
