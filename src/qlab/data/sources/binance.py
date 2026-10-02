@@ -39,6 +39,7 @@ import structlog
 
 from qlab.data.sources.base import (
     INTERVAL_TO_TIMEDELTA,
+    SPOT_COLUMN_SUFFIX,
     InstrumentHistory,
     fetch_universe_resumable,
     http_retry,
@@ -150,7 +151,7 @@ def discover_universe(as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = No
     return [instrument for instrument, _ in describe_universe(as_of_range)]
 
 
-_KLINE_FRAME_COLUMNS = ("price", "volume", "trade_count")
+_KLINE_FRAME_COLUMNS = ("price", "volume", "trade_count", "high")
 
 
 def _empty_kline_frame() -> pd.DataFrame:
@@ -203,14 +204,14 @@ def archive_candles(client: httpx.Client, instrument: str, interval: str, start:
     the REST API no longer knows (it answers 400, "Invalid symbol")."""
     symbol = _symbol(instrument)
     months = _months(start, end)
-    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
+    rows: dict[pd.Timestamp, tuple[float, float, int, float]] = {}
     for key in _archive_keys(client, f"{ARCHIVE_PREFIX}{symbol}/{interval}/"):
         if key[-11:-4] not in months:
             continue
         for k in _archive_rows(client, key):
             ts = pd.Timestamp(int(k[0]), unit="ms", tz="UTC")
             if start <= ts <= end:
-                rows[ts] = (float(k[4]), float(k[5]), int(k[8]))
+                rows[ts] = (float(k[4]), float(k[5]), int(k[8]), float(k[2]))
     if not rows:
         return _empty_kline_frame()
     frame = pd.DataFrame.from_dict(rows, orient="index", columns=list(_KLINE_FRAME_COLUMNS))
@@ -269,7 +270,7 @@ def _rest_candles(
     symbol = _symbol(instrument)
     step = INTERVAL_TO_TIMEDELTA[interval]
     cursor = start
-    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
+    rows: dict[pd.Timestamp, tuple[float, float, int, float]] = {}
 
     while cursor <= end:
         params = {
@@ -288,7 +289,7 @@ def _rest_candles(
             ts = pd.Timestamp(int(k[0]), unit="ms", tz="UTC")
             if ts > end:
                 continue
-            rows[ts] = (float(k[4]), float(k[5]), int(k[8]))
+            rows[ts] = (float(k[4]), float(k[5]), int(k[8]), float(k[2]))
             if ts > max_ts:
                 max_ts = ts
 
@@ -383,11 +384,83 @@ def fetch_instrument_history(
         prices=prices,
         funding=funding,
         volume=candles["volume"],
+        high=candles["high"],
         trade_count=candles["trade_count"],
         first_seen=first_seen,
         last_seen=prices.index.max(),
         is_delisted=is_delisted,
     )
+
+
+SPOT_BASE_URL = "https://api.binance.com"
+
+
+def _spot_candles(client: httpx.Client, coin: str, interval: str, start: pd.Timestamp,
+                  end: pd.Timestamp) -> pd.DataFrame:
+    """Spot candles from ``/api/v3/klines`` (same array shape as futures)."""
+    step = INTERVAL_TO_TIMEDELTA[interval]
+    cursor = start
+    rows: dict[pd.Timestamp, tuple[float, float, int, float]] = {}
+    while cursor <= end:
+        params = {"symbol": _symbol(coin), "interval": interval, "startTime": _to_ms(cursor),
+                  "endTime": _to_ms(end), "limit": 1000}
+
+        @http_retry()
+        def _do(params=params) -> object:
+            resp = client.get(f"{SPOT_BASE_URL}/api/v3/klines", params=params, timeout=30.0)
+            resp.raise_for_status()
+            return resp.json()
+
+        klines = _do()
+        polite_sleep()
+        if not klines:
+            break
+        max_ts = cursor
+        for k in klines:
+            ts = pd.Timestamp(int(k[0]), unit="ms", tz="UTC")
+            if ts > end:
+                continue
+            rows[ts] = (float(k[4]), float(k[5]), int(k[8]), float(k[2]))
+            max_ts = max(max_ts, ts)
+        if len(klines) < 1000:
+            break
+        cursor = max_ts + step
+    if not rows:
+        return _empty_kline_frame()
+    frame = pd.DataFrame.from_dict(rows, orient="index", columns=list(_KLINE_FRAME_COLUMNS))
+    frame.index.name = "timestamp"
+    return frame.sort_index()
+
+
+def fetch_spot_universe(
+    coins: Sequence[str],
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    interval: str,
+    *,
+    on_missing: str = "raise",
+) -> dict[str, InstrumentHistory]:
+    """Spot markets (``<COIN>USDT`` on api.binance.com), keyed ``<coin>-SPOT``;
+    a spot market never pays funding (``has_funding=False``). For a strategy
+    holding spot against its perp (Bv2 on Binance's long history)."""
+    with httpx.Client() as client:
+        def fetch_one(name: str) -> InstrumentHistory:
+            coin = name[: -len(SPOT_COLUMN_SUFFIX)]
+            candles = _spot_candles(client, coin, interval, start, end)
+            if candles.empty:
+                raise ValueError(f"binance spot: no kline data for {coin!r} in [{start}, {end}]")
+            prices = candles["price"]
+            return InstrumentHistory(
+                instrument=name, prices=prices, funding=pd.Series(dtype=float),
+                volume=candles["volume"], trade_count=candles["trade_count"],
+                high=candles["high"], first_seen=prices.index.min(),
+                last_seen=prices.index.max(), is_delisted=False, has_funding=False,
+            )
+
+        return fetch_universe_resumable(
+            [f"{c}{SPOT_COLUMN_SUFFIX}" for c in coins], start, end, interval, source=VENUE,
+            fetch_one=fetch_one, on_missing=on_missing,
+        )
 
 
 def fetch_universe(
@@ -430,5 +503,6 @@ __all__ = [
     "fetch_candles",
     "fetch_funding",
     "fetch_instrument_history",
+    "fetch_spot_universe",
     "fetch_universe",
 ]

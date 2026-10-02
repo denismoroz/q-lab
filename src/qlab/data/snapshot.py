@@ -136,6 +136,9 @@ _SOURCES = {
         "funding_native_interval": binance_source.FUNDING_NATIVE_INTERVAL,
         "discover_universe": binance_source.discover_universe,
         "describe_universe": binance_source.describe_universe,
+        # Spot by explicit list only (Bv2 on Binance's history); no spot
+        # discovery is wired for Binance.
+        "fetch_spot": binance_source.fetch_spot_universe,
     },
 }
 
