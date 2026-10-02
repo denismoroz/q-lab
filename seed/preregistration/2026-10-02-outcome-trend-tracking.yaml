@@ -1,0 +1,90 @@
+# Outcome of the trend predictions from seed/preregistration/2026-09-21-paper-bv2-trend.yaml.
+# That file is not edited: a prediction rewritten after the fact is destroyed.
+# This file records what happened, with the evidence.
+#
+# Every number below is over the paper book's first 17.6 days
+# (2026-09-14 13:00 .. 2026-10-02 01:00 UTC). PREDICTION 0 of the source file
+# stands: none of it says anything about profitability.
+
+checked_at: 2026-10-02
+prediction_file: seed/preregistration/2026-09-21-paper-bv2-trend.yaml
+paper_book: "frab.db strategies.id = 5 (trend), exported read-only from 10.8.0.5"
+
+outcomes:
+  - metric: daily_return_correlation_paper_vs_bench_replay
+    applies_to: trend-tsmom-crypto
+    predicted: ">= 0.80"
+    observed: 1.0000      # 18 daily returns
+    hit: true
+    method: >
+      scripts/replay_trend_paper.py drives frab's live trend book
+      (frab.strategy.trend.book) and signal code (frab.strategy.trend.signals)
+      exactly as frab/strategy/trend/engine.py's tick does, on q-lab's own
+      recorded hourly closes and funding (T33) and daily candles from
+      Hyperliquid, from the paper book's first hour, and compares every hour
+      of equity and every fill with trend_equity / trend_events.
+    finding: >
+      All 119 fills reproduce: same bar, coin and kind, identical prices,
+      quantities within 1.5e-5 relative. Hourly equity matches within half a
+      cent at the median; 6 of 417 hours differ by $1..$15 and return to
+      agreement the next hour -- hours where the paper engine marked a coin at
+      a different price than the candle Hyperliquid serves now (the
+      2026-09-30 outage hours, fixed in frab ba65b33, are absent from the
+      paper record and so from the comparison). End equity: paper 3151.11,
+      replay 3151.08.
+    note: >
+      As for Bv2, the prediction was written against the transcription
+      (specs/trend.yaml) and is checked here against frab's own code, which
+      removes the listed mismatches (universe, book-vol targeting, $10
+      minimum order). The hit says q-lab's data and driver reproduce the
+      engine, not that the transcription would have.
+
+  - metric: realised_cost_per_unit_turnover_bps
+    applies_to: trend-tsmom-crypto
+    predicted: "4.4 +/- 1.5"
+    observed: 8.5         # fees 2.646 / traded notional 3113.16
+    hit: false
+    finding: >
+      Paper never fills, so nothing here is REALISED: 8.5 bps is the paper
+      book's own cost model (PERP_TAKER 3.5 bps + params.slippage 0.0005 =
+      5.0 bps). The miss is therefore between two models: the bench specs
+      (specs/trend.yaml, specs/trend-live.yaml) charge 0.9 bps of slippage,
+      the paper book charges 5.0. Neither number has been measured on real
+      fills; until one is, the bench and paper disagree on trend's cost by
+      a factor of two.
+
+  - metric: funding_accrual_sign
+    applies_to: trend-tsmom-crypto
+    predicted: "negative (the momentum book PAYS funding, net)"
+    observed: -4.34       # USD, cumulative to 2026-10-02 01:00; replay -4.36
+    hit: true
+
+  - metric: instruments_held_median
+    applies_to: trend-tsmom-crypto
+    predicted: "< 25, and materially below the bench book's breadth"
+    observed: 24          # hourly legs: min 19, max 25
+    hit: true
+    note: >
+      Below 25 by one leg. Against the transcription's discovered universe
+      (222 instruments) it is materially below; against frab's own 25-coin
+      list, which the paper trades, the $10 minimum-order truncation is
+      barely visible.
+
+  - metric: turnover_annualised
+    applies_to: trend-tsmom-crypto
+    predicted: "< 35.96 (the bench figure)"
+    observed: 20.75       # traded notional / mean equity, annualised; 15.15 without the first-hour build
+    hit: true
+
+  - stop_condition: "trend: cumulative paper drawdown worse than -20%"
+    triggered: false      # max drawdown -2.03%
+
+  - stop_condition: "either: a single day worse than the bench's worst day by more than 2x"
+    triggered: false
+    note: >
+      Paper's worst day -1.30%. The bench stores worst_week (-7.66%, trial
+      10565) but not its worst day; a -7.66% week implies a day of at most
+      about -1.1%, so the trigger would need a paper day below about -2.2%.
+
+  - stop_condition: "either: live-vs-model daily correlation below 0.3 over any 20-day window"
+    triggered: false

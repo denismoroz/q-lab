@@ -64,6 +64,9 @@ ALLOWED_MODULES: frozenset[str] = frozenset(
     {
         "frab.strategy.trend.signals",
         "frab.strategy.trend.params",
+        # Added 2026-10-02 for the paper replay: imports only math, dataclasses,
+        # frab.constants and frab.strategy.trend.params (checked).
+        "frab.strategy.trend.book",
         "frab.strategy.b2.book",
         "frab.strategy.b2.params",
         "frab.strategy.xsmom.evaluators.signal",
