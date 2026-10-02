@@ -13,6 +13,8 @@ build/
 data/*.db
 data/*.db-journal
 data/snapshots/
+data/regimes/
+data/*.db.bak-*
 !data/.gitkeep
 dossiers/*.md
 !dossiers/.gitkeep
