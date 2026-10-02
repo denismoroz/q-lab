@@ -54,6 +54,7 @@ def test_hyperliquid_symbol_handles_the_thousand_unit_prefix() -> None:
     assert hyperliquid_symbol("BTC", names) == "BTC"
     assert hyperliquid_symbol("PEPE", names) == "kPEPE"
     assert hyperliquid_symbol("XYZ", names) is None
+    assert hyperliquid_symbol("SHIB", {"1000SHIB"}) == "1000SHIB"  # Binance's spelling
 
 
 def test_as_of_frame_is_point_in_time_and_does_not_carry_dropped_coins() -> None:

@@ -1,0 +1,94 @@
+# Live trend, 25 most traded coins older than 151 days, on Binance's whole history (2019-09 .. 2026-09) -- the long-history
+# check of specs/trend-live-top25-seasoned.yaml (owner, 2026-10-02: «длинная история с Binance», order 2-1-3).
+#
+# Why Binance: Hyperliquid's history starts in 2023 and our judged window
+# (2025-01 .. 2026-09) holds no bull market like 2020-2021 (docs/REGIMES.md).
+# Binance's USDT perpetuals cover 2019-09 on, and the universe is complete:
+# the public data archive lists every contract ever listed, delisted ones
+# included (qlab.data.sources.binance). Binance is a DATA proxy here: the
+# strategy would trade on Hyperliquid, so costs and the minimum order are
+# Hyperliquid's; funding is Binance's own (8-hourly). The route's venue facts
+# are Binance's (no adapter), so a pass reads "needs infrastructure" -- the
+# point of this run is the regime breakdown, not deployment.
+#
+# Declared on 2026-10-02 before any run on this data, together with
+# trend-binance-cap, trend-binance-volume and trend-binance-retune-weekly.
+
+idea_id: trend-binance-volume
+title: 'Trend (живой код) на Binance 2019–2026: 25 самых торгуемых среди монет старше
+  151 дня'
+code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+params:
+  coins: null
+  top_k_by_volume: 25
+  top_k_requires_history: true
+  capital_usd: 3000.0
+  lookbacks:
+  - 30
+  - 60
+  - 90
+  - 120
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.3
+  min_history_days: 151
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+sources:
+  top_k_by_volume: 'specs/trend-live.yaml: the length of the live list (25 coins);
+    q-lab c6bf6a7, 2026-09-22'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker
+    3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
+    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  top_k_requires_history: 'владелец 2026-10-02: «да, прогони с правилом 151 дня»'
+  coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-09-20'
+params_fixed_at: '2026-10-02'
+params_fixed_evidence: the rule of specs/trend-live-top25-seasoned.yaml applied to
+  Binance data, declared 2026-10-02 (q-lab) before any run on it; params from frab
+  TrendParams (2026-09-14)

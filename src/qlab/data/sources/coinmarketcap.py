@@ -157,18 +157,29 @@ def load_history(store: Path = DEFAULT_STORE) -> pd.DataFrame:
     return history
 
 
-def hyperliquid_symbol(cmc_symbol: str, hl_names: set[str]) -> str | None:
-    """The Hyperliquid perp for a CoinMarketCap symbol, or None.
+_UNIT_PREFIXES = ("k", "1000", "1000000", "1M")
+"""How venues list a low-priced coin per many units: Hyperliquid kPEPE,
+Binance 1000PEPE, 1000000MOG, 1MBABYDOGE."""
 
-    Hyperliquid lists some low-priced coins per 1000 units with a `k` prefix
-    (kPEPE, kBONK, kSHIB); the rest by the plain symbol. Symbols are not
-    unique on CoinMarketCap, so callers resolve a symbol to the HIGHEST-ranked
-    coin carrying it in each snapshot (`as_of_frame`).
-    """
-    if cmc_symbol in hl_names:
+
+def venue_symbol(cmc_symbol: str, names: set[str]) -> str | None:
+    """The panel column for a CoinMarketCap symbol, or None: the plain symbol,
+    else the same coin listed per many units (`_UNIT_PREFIXES`). Symbols are
+    not unique on CoinMarketCap, so callers resolve a symbol to the
+    HIGHEST-ranked coin carrying it in each snapshot (`as_of_frame`); a symbol
+    reused by a later coin maps to the same column, whose prices end when the
+    old contract did."""
+    if cmc_symbol in names:
         return cmc_symbol
-    prefixed = f"k{cmc_symbol}"
-    return prefixed if prefixed in hl_names else None
+    for prefix in _UNIT_PREFIXES:
+        if f"{prefix}{cmc_symbol}" in names:
+            return f"{prefix}{cmc_symbol}"
+    return None
+
+
+def hyperliquid_symbol(cmc_symbol: str, hl_names: set[str]) -> str | None:
+    """Kept for callers written before Binance; same as `venue_symbol`."""
+    return venue_symbol(cmc_symbol, hl_names)
 
 
 def as_of_frame(
@@ -180,7 +191,7 @@ def as_of_frame(
     NaN where no snapshot is known yet or the coin was outside the top 200."""
     names = set(columns)
     rows = history.sort_values(["snapshot", "cmcRank"]).copy()
-    rows["hl"] = rows["symbol"].map(lambda s: hyperliquid_symbol(str(s), names))
+    rows["hl"] = rows["symbol"].map(lambda s: venue_symbol(str(s), names))
     rows = rows.dropna(subset=["hl"]).drop_duplicates(["snapshot", "hl"], keep="first")
     wide = rows.pivot(index="snapshot", columns="hl", values=value)
     wide = wide.reindex(columns=columns)
@@ -202,6 +213,7 @@ __all__ = [
     "download",
     "fetch_snapshot",
     "hyperliquid_symbol",
+    "venue_symbol",
     "load_history",
     "parse_snapshot",
     "snapshot_dates",
