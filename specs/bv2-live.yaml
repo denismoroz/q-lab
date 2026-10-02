@@ -72,6 +72,13 @@ unexpressed_mechanisms: []
 # 5000 candles, so the judged window is what remains where everything exists.
 required_instruments: [BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX]
 
+# How the source says the strategy behaves in each BTC regime (docs/REGIMES.md),
+# declared before the run; nothing is claimed for the flat regime, the source
+# says nothing about it.
+regime_claim:
+  bull: earns
+  bear: beats_market
+
 # Where every number and choice comes from (docs/SOURCES.md); checked
 # before any run starts.
 sources:
@@ -99,3 +106,5 @@ sources:
   "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
   "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
   "mode": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"

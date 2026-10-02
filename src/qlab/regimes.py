@@ -148,5 +148,28 @@ def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: fl
     return out
 
 
-__all__ = ["MARKET", "REGIMES", "WINDOW_DAYS", "RegimeSeries", "breakdown", "build",
+def claim_checks(claim: dict[str, str], measured: dict[str, float]) -> dict[str, float]:
+    """`regime_<r>_claim_met` = 1.0 / 0.0 for every claimed regime the run saw
+    for at least one regime window (`WINDOW_DAYS`); absent when it did not --
+    "no data" is not "claim failed"."""
+    out: dict[str, float] = {}
+    for regime, word in claim.items():
+        days = measured.get(f"regime_{regime}_days", 0.0)
+        ret = measured.get(f"regime_{regime}_return")
+        if ret is None or days < WINDOW_DAYS:
+            continue
+        if word == "earns":
+            met = ret > 0
+        elif word == "loses":
+            met = ret < 0
+        else:  # beats_market
+            btc = measured.get(f"regime_{regime}_btc_return")
+            if btc is None:
+                continue
+            met = ret > btc
+        out[f"regime_{regime}_claim_met"] = 1.0 if met else 0.0
+    return out
+
+
+__all__ = ["MARKET", "claim_checks", "REGIMES", "WINDOW_DAYS", "RegimeSeries", "breakdown", "build",
            "label_days", "load"]

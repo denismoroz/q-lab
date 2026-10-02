@@ -44,6 +44,7 @@ from qlab.harness.strategy import Strategy, validate_weights
 from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
 from qlab.regimes import breakdown as regime_breakdown
+from qlab.regimes import claim_checks as regime_claim_checks
 from qlab.registry import repo
 from qlab.registry.lifecycle import StatusDecision, apply_route
 from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialStatus
@@ -1070,6 +1071,7 @@ def evaluate_spec(
                 measured.update(regime_breakdown(
                     result.net_return, regime_series, periods_per_year(part_panel.prices.index)
                 ))
+                measured.update(regime_claim_checks(spec.regime_claim, measured))
             measured["min_capital_usd"] = min_capital_usd(part_weights, spec.min_leg_notional)
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage

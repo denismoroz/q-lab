@@ -64,6 +64,7 @@ def spec_leaves(spec: StrategySpec) -> list[tuple[str, object]]:
     """(dotted path, value) for every leaf that needs a source; lists are one
     leaf, None needs none."""
     leaves = list(_leaves("", spec.params))
+    leaves += [(f"regime_claim.{r}", w) for r, w in spec.regime_claim.items()]
     leaves += [("costs.taker_fee_bps", spec.costs.taker_fee_bps),
                ("costs.slippage_bps", spec.costs.slippage_bps),
                ("min_leg_notional", spec.min_leg_notional)]

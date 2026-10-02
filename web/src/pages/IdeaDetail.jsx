@@ -268,6 +268,7 @@ function RegimeTable({ m }) {
             <th className="text-right font-normal">просадка</th>
             <th className="text-right font-normal">BTC</th>
             <th className="text-right font-normal">обгоняет шум</th>
+            <th className="text-right font-normal">заявка сбылась</th>
           </tr>
         </thead>
         <tbody>
@@ -281,6 +282,9 @@ function RegimeTable({ m }) {
               <td className="text-right">{cell(m[`regime_${key}_max_dd`], p)}</td>
               <td className="text-right">{cell(m[`regime_${key}_btc_return`], p)}</td>
               <td className="text-right">{cell(m[`regime_${key}_noise_percentile`], p)}</td>
+              <td className="text-right">
+                {cell(m[`regime_${key}_claim_met`], (v) => (v === 1 ? 'да' : 'нет'))}
+              </td>
             </tr>
           ))}
         </tbody>

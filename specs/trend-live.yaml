@@ -131,6 +131,13 @@ simultaneous_legs: 1
 # deterministic drag inside an expressed mechanism, not a missing mechanism.
 unexpressed_mechanisms: []
 
+# How the source says the strategy behaves in each BTC regime (docs/REGIMES.md),
+# declared before the run; nothing is claimed for the flat regime, the source
+# says nothing about it.
+regime_claim:
+  bull: earns
+  bear: earns
+
 # Where every number and choice comes from (docs/SOURCES.md); checked
 # before any run starts.
 sources:
@@ -152,3 +159,5 @@ sources:
   "book_vol_prior_ann": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
   "capital_usd": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
   "min_order_usd": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"

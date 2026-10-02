@@ -220,6 +220,24 @@ class StrategySpec(BaseModel):
     (`qlab.pipeline.sources`, docs/SOURCES.md). A citation at a path covers
     everything under it. Checked before any run starts."""
 
+    regime_claim: dict[str, str] = Field(default_factory=dict)
+    """How the source says the strategy behaves in each market regime
+    (`qlab.regimes`: bull / flat / bear), declared before the run and cited in
+    `sources` like any parameter (docs/REGIMES.md). Words the code can check:
+    "earns" (compounded return in the regime > 0), "loses" (< 0),
+    "beats_market" (better than BTC on the same days). Each run records
+    whether the claim held; no rule reads it."""
+
+    @field_validator("regime_claim")
+    @classmethod
+    def _known_regimes_and_words(cls, value: dict[str, str]) -> dict[str, str]:
+        for regime, word in value.items():
+            if regime not in ("bull", "flat", "bear"):
+                raise ValueError(f"unknown regime {regime!r} (bull, flat, bear)")
+            if word not in ("earns", "loses", "beats_market"):
+                raise ValueError(f"unknown claim {word!r} (earns, loses, beats_market)")
+        return value
+
     review_answers: dict[str, str] = Field(default_factory=dict)
     """Answers to the reviewer agent's findings (docs/REVIEWER.md): finding
     summary -> why it is not a gap in this implementation. An accepted

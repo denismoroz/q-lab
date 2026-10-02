@@ -38,3 +38,15 @@ def test_breakdown_splits_returns_by_the_label_of_their_period() -> None:
     assert out["regime_bull_return"] == pytest.approx(1.01 ** 2 - 1)
     assert out["regime_bear_return"] == pytest.approx(0.98 * 0.98 ** 3 - 1)
     assert out["regime_flat_share"] == 0.0 and "regime_flat_return" not in out
+
+
+def test_claims_are_checked_only_where_the_run_saw_the_regime() -> None:
+    from qlab.regimes import claim_checks
+
+    measured = {"regime_bull_days": 40.0, "regime_bull_return": 0.05,
+                "regime_bear_days": 45.0, "regime_bear_return": -0.02,
+                "regime_bear_btc_return": -0.20,
+                "regime_flat_days": 10.0, "regime_flat_return": 0.01}
+    out = claim_checks({"bull": "earns", "bear": "beats_market", "flat": "loses"}, measured)
+    assert out == {"regime_bull_claim_met": 1.0, "regime_bear_claim_met": 1.0}  # flat: too few days
+    assert claim_checks({"bear": "earns"}, measured) == {"regime_bear_claim_met": 0.0}

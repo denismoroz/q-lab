@@ -15,8 +15,7 @@
 # trend-binance-cap, trend-binance-volume and trend-binance-retune-weekly.
 
 idea_id: trend-binance-cap
-title: 'Trend (живой код) на Binance 2019–2026: 25 крупнейших по рыночной стоимости,
-  без стейблкоинов'
+title: 'Trend (живой код) на Binance 2019–2026: 25 крупнейших по рыночной стоимости, без стейблкоинов'
 code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
 params:
   coins: null
@@ -48,51 +47,54 @@ min_leg_notional: 10.0
 simultaneous_legs: 1
 unexpressed_mechanisms: []
 sources:
-  top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest,
-    stablecoins excluded)'
-  exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins
-    excluded)'
+  top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins excluded)'
+  exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins excluded)'
   top_k_requires_history: docs/TREND_LIVE_REPLAY.md (the 151-day rule, owner 2026-10-02)
-  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker
-    3.5 + проскальзывание»'
-  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
-    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
-  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'
-  coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)
+  capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)
+  vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
     25-coin DEFAULT_COINS)
-  capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
-  min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
-    defaults; 25-coin DEFAULT_COINS)
+  book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
 data:
   source: binance
   interval: 1d
   start: '2019-09-08'
   end: '2026-09-20'
 params_fixed_at: '2026-10-02'
-params_fixed_evidence: the rule of specs/trend-live-top25-cap.yaml applied to Binance
-  data, declared 2026-10-02 (q-lab) before any run on it; params from frab TrendParams
-  (2026-09-14)
+params_fixed_evidence: the rule of specs/trend-live-top25-cap.yaml applied to Binance data, declared 2026-10-02
+  (q-lab) before any run on it; params from frab TrendParams (2026-09-14)
+regime_claim:
+  bull: earns
+  bear: earns
