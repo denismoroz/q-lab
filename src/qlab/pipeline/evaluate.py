@@ -467,6 +467,30 @@ def not_evaluable_reasons(
     return reasons
 
 
+def review_reasons(session: Session, spec: StrategySpec) -> list[str]:
+    """Not evaluable while the latest review of exactly this implementation
+    holds a verified blocking finding the spec does not answer
+    (docs/REVIEWER.md). The agent proposed it; the evidence was checked by
+    code; this rule, not the agent, decides."""
+    from qlab.agents.reviewer import code_files, review_key, unanswered_blocking
+    from qlab.registry.models import Review
+
+    latest = (
+        session.query(Review)
+        .filter(Review.idea_id == spec.idea_id,
+                Review.review_key == review_key(spec, code_files(spec)))
+        .order_by(Review.id.desc())
+        .first()
+    )
+    if latest is None:
+        return []
+    return [
+        f"reviewer (review {latest.id}) found, with verified evidence, {f['kind']}: "
+        f"{f['summary']} -- declare it in unexpressed_mechanisms or answer it in review_answers"
+        for f in unanswered_blocking(spec, latest.accepted)
+    ]
+
+
 def _slice_rows(panel: MarketPanel, first: int, last: int) -> MarketPanel:
     """`panel` restricted to rows `first..last` inclusive. Works for both the
     real `qlab.data.panel.MarketPanel` and the harness stand-in: both are
@@ -927,6 +951,7 @@ def evaluate_spec(
         else None
     )
     reasons = not_evaluable_reasons(spec, coverage, panel.meta)
+    reasons += review_reasons(session, spec)
     exploratory = bool(reasons) and spec.exploratory is not None
     if reasons and not exploratory:
         reason = "; ".join(reasons)

@@ -220,6 +220,11 @@ class StrategySpec(BaseModel):
     (`qlab.pipeline.sources`, docs/SOURCES.md). A citation at a path covers
     everything under it. Checked before any run starts."""
 
+    review_answers: dict[str, str] = Field(default_factory=dict)
+    """Answers to the reviewer agent's findings (docs/REVIEWER.md): finding
+    summary -> why it is not a gap in this implementation. An accepted
+    finding without an answer makes the run not evaluable."""
+
     selects_causally: bool = False
     """The strategy chooses its own parameters from past data only, by code
     (`qlab.strategies.retune.Retune`), and `params_fixed_at` is the bar of its

@@ -698,6 +698,84 @@ def budget_probe_cmd() -> None:
                f"cost {result.report.usage.total if result.report.usage else 0:,} tokens")
 
 
+@app.command("review")
+def review_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
+    source: list[Path] = typer.Option(  # noqa: B008
+        ..., "--source", help="What the implementation must express: a card, quotes, the "
+        "production code (repeat)"),
+    blind: bool = typer.Option(False, "--blind", help="Hide the spec's own list of unexpressed "
+                               "mechanisms and review answers, to test the reviewer"),
+    model: str = typer.Option("opus", "--model"),
+) -> None:
+    """Have the reviewer agent check the implementation against its source
+    (docs/REVIEWER.md). Runs through the budget guard; findings without
+    verified evidence are discarded; accepted blocking findings make the spec
+    not evaluable until declared or answered."""
+    from datetime import UTC, datetime, timedelta
+
+    import yaml
+
+    from qlab.agents.reviewer import code_files, run_review, unanswered_blocking
+    from qlab.budget import NightBudget, Stage, probe
+    from qlab.budget.usage import UsageReading, Window
+    from qlab.pipeline.sources import QLAB_ROOT
+    from qlab.registry.models import TokenSpend
+
+    spec = load_spec(spec_path)
+    raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    if blind:
+        for key in ("unexpressed_mechanisms", "review_answers"):
+            raw.pop(key, None)
+        spec_text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    else:
+        spec_text = spec_path.read_text(encoding="utf-8")
+    texts = {}
+    for path in source:
+        resolved = path if path.is_file() else QLAB_ROOT.parent / path
+        texts[str(path)] = resolved.read_text(encoding="utf-8")
+    code = code_files(spec)
+
+    with session_scope() as session:
+        last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
+                .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+        now = datetime.now(UTC)
+        # A reading older than the five-hour window's own length describes a
+        # window that is gone; take a fresh one first.
+        fresh = last is not None and last.at.replace(tzinfo=UTC) > now - timedelta(hours=5)
+        if fresh:
+            reading = UsageReading("allowed", None,
+                                   Window(last.seven_day_util,
+                                          last.seven_day_resets_at.replace(tzinfo=UTC)))
+        else:
+            reading = probe(session).report.reading
+        night = NightBudget.open(session, reading, now=now)
+        candidate = night.stage(Stage.IMPLEMENT, candidates=1).candidate(spec.idea_id)
+        outcome = run_review(spec=spec, spec_text=spec_text, sources=texts, code=code,
+                             budget=candidate, session=session, model=model)
+        blocking = unanswered_blocking(spec, [f.__dict__ for f in outcome.accepted])
+        spent = candidate.spent_tokens
+
+    typer.echo(f"reviewed {spec.idea_id}: code {', '.join(code)}; sources {', '.join(texts)}"
+               f"{' (blind)' if blind else ''}; {spent:,} tokens")
+    typer.echo(f"accepted {len(outcome.accepted)}:")
+    for f in outcome.accepted:
+        typer.echo(f"  [{f.kind}] {f.summary}")
+        if f.source_quote:
+            typer.echo(f"      source: \"{f.source_quote[:160]}\"")
+        if f.code_ref:
+            typer.echo(f"      code:   {f.code_ref}")
+    typer.echo(f"rejected {len(outcome.rejected)} (evidence did not check out):")
+    for f, why in outcome.rejected:
+        summary = f.summary if hasattr(f, "summary") else str(f)[:80]
+        typer.echo(f"  {summary} -- {why}")
+    if spec.unexpressed_mechanisms:
+        typer.echo("declared in the spec as unexpressed:")
+        for m in spec.unexpressed_mechanisms:
+            typer.echo(f"  {m}")
+    typer.echo(f"blocking until declared or answered: {len(blocking)}")
+
+
 @app.command("calibrate-planted")
 def calibrate_planted_cmd(
     reference: Path = typer.Option(  # noqa: B008

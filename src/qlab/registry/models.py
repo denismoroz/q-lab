@@ -493,6 +493,24 @@ class TokenSpend(Base):
     status: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class Review(Base):
+    """`review` -- what the reviewer agent found in one implementation, with
+    the evidence the code verified (qlab.agents.reviewer, docs/REVIEWER.md).
+    `review_key` covers the spec and the code: a changed implementation
+    needs a new review."""
+
+    __tablename__ = "review"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    review_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    sources: Mapped[list] = mapped_column(JSON, nullable=False)
+    accepted: Mapped[list] = mapped_column(JSON, nullable=False)
+    rejected: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
 class Dossier(Base):
     """`dossier` — rendered artifact pointer for an idea."""
 
