@@ -114,11 +114,13 @@ class TestPointInTimeTradeable:
         assert not tradeable["NEWCOIN"].iloc[:3].any()
         assert tradeable["NEWCOIN"].iloc[3:].all()
 
-        # DEADCOIN: True up to (and including) delisting bar, False after —
+        # DEADCOIN: tradeable until the bar BEFORE its last one, False after --
         # a panel that read all-True here would be exactly the survivorship
-        # bias documented in funding-rate-arbitrage's XSMOM stress test.
-        assert tradeable["DEADCOIN"].iloc[:4].all()
-        assert not tradeable["DEADCOIN"].iloc[4:].any()
+        # bias documented in funding-rate-arbitrage's XSMOM stress test. Its
+        # last bar (3) is not holdable: a weight there would be held into a
+        # bar that does not exist (2026-10-02, the next-bar rule).
+        assert tradeable["DEADCOIN"].iloc[:3].all()
+        assert not tradeable["DEADCOIN"].iloc[3:].any()
 
     def test_prices_may_be_nan_where_not_listed(self):
         full_index = pd.date_range("2024-01-01", periods=5, freq="1h", tz="UTC")
@@ -152,8 +154,10 @@ class TestFundingGapTradeable:
             histories, full_index, pd.Timedelta(days=1)
         )
 
-        assert not tradeable["BTC"].iloc[1]
-        assert tradeable["BTC"].iloc[[0, 2, 3]].all()
+        # Bar 1's own funding is unknown, and a weight at bar 0 is held into
+        # bar 1 and pays its funding (the next-bar rule, 2026-10-02).
+        assert not tradeable["BTC"].iloc[[0, 1]].any()
+        assert tradeable["BTC"].iloc[[2, 3]].all()
 
     def test_spot_all_nan_funding_stays_tradeable(self):
         """A spot column's funding is NaN for its entire life by

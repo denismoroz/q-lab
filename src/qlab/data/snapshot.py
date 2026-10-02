@@ -318,6 +318,26 @@ def _build_frames_from_histories(
     tradeable = pd.DataFrame(tradeable_cols, index=full_index)[instruments].astype(bool)
     tradeable.index.name = "timestamp"
 
+    # A weight decided at bar t is held over (t, t+1] (qlab.harness.run): it
+    # earns the price move to t+1 and pays t+1's funding. So t is tradeable
+    # only if bar t+1 has a price and, for a funded instrument on a panel at
+    # least as coarse as its settlement interval, a known funding rate. The
+    # mask used to check bar t's own funding; on Binance's long history this
+    # left books holding into a delisting (SXP, 2025-12-06: no funding after
+    # the last trading day) and stopped every run. Knowing one bar ahead that
+    # a contract will not exist is what a delisting announcement gives (they
+    # come days ahead); for a mere data gap it hides no price. The panel's
+    # last bar realises no return and is left as it is.
+    funded = [
+        coin for coin in instruments
+        if histories[coin].has_funding and bar_interval >= funding_native_interval
+    ]
+    next_ok = prices.shift(-1).notna()
+    if funded:
+        next_ok[funded] &= funding[funded].shift(-1).notna()
+    next_ok.iloc[-1] = True
+    tradeable &= next_ok
+
     if min_daily_volume_usd is not None:
         tradeable &= _liquidity_eligible_mask(prices, volume, bar_interval, min_daily_volume_usd)
 

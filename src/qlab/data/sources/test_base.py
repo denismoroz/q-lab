@@ -392,3 +392,16 @@ def test_several_settlements_in_one_native_slot_are_summed_not_counted() -> None
     index = pd.date_range("2025-01-01", periods=2, freq="1D", tz="UTC")
     aligned = align_funding_to_index(raw, index, pd.Timedelta(hours=8))
     assert aligned.iloc[1] == pytest.approx(0.0006)
+
+
+def test_a_jump_between_two_traded_bars_is_real() -> None:
+    """LUNA, 2022-05-11: -96% in a day with millions of trades is a crash,
+    not a corrupted print; without trades the jump is still suspect."""
+    from qlab.data.sources.base import detect_bad_price_bars
+
+    index = pd.date_range("2022-05-09", periods=4, freq="1D", tz="UTC")
+    prices = pd.Series([30.1, 17.5, 0.6, 0.0002], index=index)
+    traded = pd.Series([900_000, 1_200_000, 2_500_000, 1_800_000], index=index)
+    assert not detect_bad_price_bars(prices, trade_count=traded).any()
+    assert detect_bad_price_bars(prices, trade_count=traded * 0).iloc[2]
+    assert detect_bad_price_bars(prices).iloc[2]  # count unknown: still suspect

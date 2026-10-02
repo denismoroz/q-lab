@@ -471,6 +471,13 @@ def detect_bad_price_bars(
 
     pct_change = (prices - prev).abs() / prev.abs()
     big_jump = pct_change > MAX_PLAUSIBLE_BAR_MOVE
+    if trade_count is not None:
+        # A jump between two bars that both had trades is price discovery,
+        # not a corrupted print: LUNA fell 96% in a day on 2022-05-11 with
+        # millions of trades, and the jump test erased the crash from the
+        # panel (found on Binance's long history, 2026-10-02). The jump test
+        # stays for bars without trades or without a known count.
+        big_jump &= ~(traded & traded.shift(1, fill_value=False))
 
     return (constant | big_jump).fillna(False)
 
