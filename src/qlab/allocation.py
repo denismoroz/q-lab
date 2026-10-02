@@ -74,7 +74,8 @@ def switch(legs: dict[str, Leg], assignment: dict[str, str | None], labels: pd.S
     the day they describe; day d uses the label known at its start (d 00:00)."""
     known = labels.dropna()
     regime_at = known.reindex(days, method="ffill")
-    held = regime_at.map(lambda r: assignment.get(r) if isinstance(r, str) else None)
+    # A plain list: pandas would turn a None (cash) into NaN.
+    held = [assignment.get(r) if isinstance(r, str) else None for r in regime_at]
     out = np.zeros(len(days))
     previous: str | None = None
     for i, (d, leg_name) in enumerate(zip(days, held, strict=True)):
@@ -90,7 +91,7 @@ def switch(legs: dict[str, Leg], assignment: dict[str, str | None], labels: pd.S
                     r -= leg.cost_rate * (0.0 if pd.isna(gross) else float(gross))
             previous = leg_name
         out[i] = r
-    return pd.Series(out, index=days), held
+    return pd.Series(out, index=days), pd.Series(held, index=days, dtype=object)
 
 
 def summary(returns: pd.Series) -> dict[str, float]:

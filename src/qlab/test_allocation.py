@@ -32,6 +32,9 @@ def test_capital_follows_the_regime_known_at_the_start_of_the_day() -> None:
 def test_cash_regime_earns_nothing() -> None:
     days = pd.date_range("2025-01-02", periods=2, freq="1D", tz="UTC")
     legs = {"trend": _leg("trend", 0.01, 1.0, days)}
+    labels = pd.Series(["flat", "bull"], index=days)
+    out, held = switch(legs, {"bull": "trend", "flat": None}, labels, days)
+    assert held.tolist() == [None, "trend"]
     labels = pd.Series(["flat", "flat"], index=days)
     out, held = switch(legs, {"bull": "trend", "flat": None}, labels, days)
     assert out.tolist() == [0.0, 0.0] and held.isna().all()
