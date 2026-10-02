@@ -222,6 +222,21 @@ def _build_frames_from_histories(
         hist = histories[coin]
         price_cols[coin] = hist.prices.reindex(full_index)
         volume_cols[coin] = hist.volume.reindex(full_index)
+        # A spot candle with no trades has no price of its own: the venue
+        # repeats the last trade, which on a thin token can be days old and
+        # far from fair value (AVAX spot sat at 4.60 for hours while its perp
+        # traded at 6.6, 2026-06-18; the next real trade at 6.26 then read as
+        # +36% in an hour). On such bars the spot is marked at its own perp --
+        # the convention frab's live and paper engines already use for every
+        # spot leg. Bars with real trades keep their real price.
+        if coin.endswith(SPOT_COLUMN_SUFFIX):
+            perp_name = coin[: -len(SPOT_COLUMN_SUFFIX)]
+            if perp_name in histories:
+                no_trade = hist.trade_count.reindex(full_index).fillna(0) <= 0
+                perp_price = histories[perp_name].prices.reindex(full_index)
+                price_cols[coin] = price_cols[coin].where(
+                    ~(no_trade & price_cols[coin].notna() & perp_price.notna()), perp_price
+                )
         funding_cols[coin] = align_funding_to_index(
             hist.funding, full_index, funding_native_interval
         )

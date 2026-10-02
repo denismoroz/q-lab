@@ -216,16 +216,21 @@ class TestBadPriceBarsExcludedFromTradeable:
             histories, full_index, pd.Timedelta(days=1)
         )
 
-        # Every placeholder bar, and the implausible transition bar itself,
-        # must read untradeable -- not just "some of them".
-        assert not tradeable["BTC-SPOT"].iloc[:12].any()
-        # The two genuinely ordinary bars after the transition are fine.
+        spot = out_prices["BTC-SPOT"]
+        # The invariant: the placeholder price never reaches the panel. The two
+        # bars where it actually traded (5 and 1 tiny trades) are flagged by
+        # their distance from the perp -- NaN and untradeable.
+        assert spot.iloc[[0, 5]].isna().all()
+        assert not tradeable["BTC-SPOT"].iloc[[0, 5]].any()
+        # Its zero-trade days have no price of their own and are marked at the
+        # perp (frab's own convention) -- or, right after a flagged bar, read
+        # as a jump and dropped too. Never the placeholder.
+        assert not spot.isin([6969696.0, 7979573.0]).any()
+        assert (spot.iloc[[2, 3, 4, 7, 8, 9, 10]] == 100000.0).all()
+        assert (spot.dropna() < 2 * perp_prices.reindex(spot.dropna().index)).all()
+        # Real trading afterwards keeps its real prints.
+        assert spot.iloc[11] == 97578.0 and spot.iloc[12] == 97597.0
         assert tradeable["BTC-SPOT"].iloc[12]
-        # The corrupted print must not linger in `prices` either -- a
-        # momentum/signal computation reading `panel.prices` directly (not
-        # just position sizing) must not see it.
-        assert out_prices["BTC-SPOT"].iloc[:12].isna().all()
-        assert out_prices["BTC-SPOT"].iloc[12] == 97597.0
 
     def test_ordinary_instrument_unaffected(self):
         """A normal, non-corrupted price series must not lose any
