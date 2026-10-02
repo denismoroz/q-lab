@@ -375,7 +375,11 @@ def align_funding_to_index(
 MAX_PLAUSIBLE_BAR_MOVE = 0.80
 
 
-def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
+def detect_bad_price_bars(
+    prices: pd.Series,
+    trade_count: pd.Series | None = None,
+    reference: pd.Series | None = None,
+) -> pd.Series:
     """Flag bars whose price looks like a corrupted print rather than real
     price discovery (docs/TASKS.md, T17) -- a data-quality gate applied
     during collection, not a strategy-time filter, so a bad bar never
@@ -393,6 +397,22 @@ def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
     Two independent signals, either one flags a bar; a bar with no
     predecessor or successor to compare against is never flagged (nothing
     to detect an anomaly against):
+
+    Revised again 2026-10-02 after the owner pointed out that FRAB trades
+    AVAX spot live: what the placeholder and a merely quiet market have in
+    common is a candle with NO trades, which repeats the last price by
+    construction. The placeholder's interior was exactly that (UBTC/USDC,
+    Feb 2025: 5 tiny trades at 6969696, then four days of zero-trade candles
+    at the same price), and so are most hours of Hyperliquid's AVAX spot
+    token (UAVAX in the API, AVAX spot in the venue's interface), which FRAB
+    bought live on 2026-08-19 at 6.3883 against a 6.3648 perp. The
+    difference is the LEVEL, not the repetition. So:
+
+    - constancy ignores zero-trade bars when `trade_count` is known: a
+      quiet hour is not a frozen quote;
+    - `reference` (the perp of the same asset, for a spot column) flags a
+      bar whose price is more than `MAX_PLAUSIBLE_BAR_MOVE` away from it --
+      the placeholder sat 70x above BTC's perp, a real spot token cannot.
 
     - constancy: part of a RUN of three or more identical closes; every
       bar of such a run is flagged, the first included. Two identical closes
@@ -418,9 +438,29 @@ def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
         return pd.Series(False, index=prices.index, dtype=bool)
 
     prev = prices.shift(1)
-    run_id = (prices != prev).cumsum()
-    run_length = run_id.map(run_id.value_counts())
-    constant = (run_length >= 3) & prices.notna()
+    traded = prices.notna()
+    if trade_count is not None:
+        traded &= trade_count.reindex(prices.index).fillna(0) > 0
+    # Runs are counted over traded bars only: a zero-trade bar neither joins
+    # nor breaks a run of repeated prints.
+    traded_prices = prices.where(traded)
+    run_source = traded_prices.dropna()
+    run_id = (run_source != run_source.shift(1)).cumsum()
+    run_length = run_id.map(run_id.value_counts()).reindex(prices.index)
+    # The run test only stands in for data that cannot tell a frozen quote
+    # from a quiet or pinned market: caches written before trade counts were
+    # kept. With trade counts, every repeated close found so far has been
+    # real -- AVAX spot at 9.00 three hours running, ETH spot at 1879.5 three
+    # hours with ~250 trades each, low-priced perps (HMSTR, MEME, NOT) on a
+    # coarse tick -- and the placeholder this test was written for is caught
+    # by its level instead (below) and by the jump test.
+    if trade_count is None:
+        constant = (run_length >= 3) & traded
+    else:
+        constant = pd.Series(False, index=prices.index)
+    if reference is not None:
+        ratio = prices / reference.reindex(prices.index)
+        constant |= (ratio - 1.0).abs() > MAX_PLAUSIBLE_BAR_MOVE
 
     pct_change = (prices - prev).abs() / prev.abs()
     big_jump = pct_change > MAX_PLAUSIBLE_BAR_MOVE

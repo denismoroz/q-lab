@@ -267,7 +267,16 @@ def _build_frames_from_histories(
         # cleared from `tradeable` (so a strategy cannot hold through it) --
         # the same "exclude just the affected bars" policy as the funding
         # gap above, not a guess and not a whole-instrument drop.
-        bad_price = detect_bad_price_bars(price_cols[coin])
+        perp = coin[: -len(SPOT_COLUMN_SUFFIX)] if coin.endswith(SPOT_COLUMN_SUFFIX) else None
+        bad_price = detect_bad_price_bars(
+            price_cols[coin],
+            trade_count=hist.trade_count.reindex(full_index),
+            reference=(
+                histories[perp].prices.reindex(full_index)
+                if perp is not None and perp in histories
+                else None
+            ),
+        )
         if bad_price.any():
             logger.warning(
                 "bad_price_bars_excluded",

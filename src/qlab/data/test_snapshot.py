@@ -194,7 +194,23 @@ class TestBadPriceBarsExcludedFromTradeable:
         garbage = [6969696.0] * 5 + [7979573.0] * 6
         real = [97578.0, 97597.0]
         prices = pd.Series(garbage + real, index=full_index)
-        histories = {"BTC-SPOT": _hist("BTC-SPOT", full_index, is_delisted=False, prices=prices)}
+        # Trade counts as the venue serves them (re-fetched 2026-10-02): a few
+        # tiny trades at the placeholder, zero-trade days repeating it, then
+        # real trading. The spot is built next to its perp, as in every panel
+        # that holds a spot leg; the perp is what gives the placeholder away.
+        import dataclasses
+
+        spot = dataclasses.replace(
+            _hist("BTC-SPOT", full_index, is_delisted=False, prices=prices),
+            trade_count=pd.Series(
+                [5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 8044, 18185], index=full_index, dtype="int64"
+            ),
+        )
+        perp_prices = pd.Series([100000.0] * 11 + [97600.0, 97650.0], index=full_index)
+        histories = {
+            "BTC": _hist("BTC", full_index, is_delisted=False, prices=perp_prices),
+            "BTC-SPOT": spot,
+        }
 
         out_prices, _funding, tradeable, _volume = snap._build_frames_from_histories(
             histories, full_index, pd.Timedelta(days=1)

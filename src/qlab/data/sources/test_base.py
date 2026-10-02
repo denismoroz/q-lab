@@ -335,3 +335,47 @@ def test_empty_series_returns_empty_result():
     idx = pd.DatetimeIndex([], tz="UTC")
     flagged = detect_bad_price_bars(pd.Series(dtype=float, index=idx))
     assert len(flagged) == 0
+
+
+def test_quiet_zero_trade_hours_are_not_a_frozen_quote():
+    """Revised 2026-10-02: a candle with no trades repeats the last price by
+    construction. AVAX spot on Hyperliquid has many such hours yet trades
+    every day and tracks its perp; those hours must stay."""
+    idx = pd.date_range("2026-08-19", periods=6, freq="1h", tz="UTC")
+    prices = _series(idx, [6.3883, 6.3883, 6.3883, 6.3883, 6.41, 6.40])
+    trades = pd.Series([3, 0, 0, 0, 2, 4], index=idx)
+    perp = _series(idx, [6.3648, 6.37, 6.36, 6.38, 6.40, 6.39])
+    assert not detect_bad_price_bars(prices, trade_count=trades, reference=perp).any()
+
+
+def test_placeholder_is_caught_by_its_distance_from_the_perp():
+    """The Feb 2025 UBTC placeholder, exactly as the venue serves it: a few tiny
+    trades at an absurd price, then zero-trade days repeating it. What gives it
+    away is the level -- 70x the perp -- not the repetition."""
+    idx = pd.date_range("2025-02-03", periods=13, freq="1D", tz="UTC")
+    prices = _series(idx, [6969696.0] * 5 + [7979573.0] * 6 + [97578.0, 97597.0])
+    trades = pd.Series([5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 8044, 18185], index=idx)
+    perp = _series(idx, [100000.0] * 11 + [97600.0, 97650.0])
+    flagged = detect_bad_price_bars(prices, trade_count=trades, reference=perp)
+    assert flagged.iloc[:11].all()
+    assert not flagged.iloc[12]
+
+
+def test_repeated_prints_with_trades_behind_them_are_real_when_counts_are_known():
+    """Low-priced perps on a coarse tick close at the same level for hours with
+    trades behind them; with trade counts known, repetition flags nothing."""
+    idx = pd.date_range("2026-01-01", periods=5, freq="1h", tz="UTC")
+    prices = _series(idx, [0.0101, 0.0102, 0.0102, 0.0102, 0.0103])
+    trades = pd.Series([10, 12, 9, 11, 10], index=idx)
+    assert not detect_bad_price_bars(prices, trade_count=trades).any()
+
+
+def test_spot_repeating_a_round_level_with_trades_is_kept_when_a_perp_is_known():
+    """ETH spot closed at 1879.5 three hours running on 2026-08-16 with ~250
+    trades each hour: a real level. With the perp as reference, only distance
+    from the perp can flag a spot bar."""
+    idx = pd.date_range("2026-08-16 08:00", periods=5, freq="1h", tz="UTC")
+    prices = _series(idx, [1878.0, 1879.5, 1879.5, 1879.5, 1881.0])
+    trades = pd.Series([270, 281, 254, 243, 260], index=idx)
+    perp = _series(idx, [1877.0, 1879.0, 1880.0, 1879.0, 1880.5])
+    assert not detect_bad_price_bars(prices, trade_count=trades, reference=perp).any()
