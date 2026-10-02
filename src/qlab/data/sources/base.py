@@ -327,9 +327,9 @@ def align_funding_to_index(
     (Hyperliquid's ``fundingHistory`` timestamps typically land 20-40ms past
     the hour, not exactly on it) — under a strict ``(prev, t]`` window that
     jitter would push a settlement into the *next* bucket instead of the one
-    it actually belongs to. Raw timestamps are floored to ``native_interval``
-    first so a settlement is attributed by the period it belongs to, not by
-    clock jitter.
+    it actually belongs to. Raw timestamps are dropped to the minute and
+    rounded up to ``native_interval`` first, so a settlement is attributed to
+    the native period it closes, not shifted by clock jitter.
     """
     if len(index) == 0:
         return pd.Series(dtype=float, index=index)
@@ -337,11 +337,14 @@ def align_funding_to_index(
         return pd.Series(float("nan"), index=index, dtype=float)
 
     funding_raw = funding_raw.copy()
-    funding_raw.index = funding_raw.index.floor(native_interval)
-    # Several settlements in one native slot -- a Binance contract moved to
-    # 4-hourly or hourly funding (common since 2023) -- are that slot's
-    # funding together: summed, not counted as extra slots (which would make
+    # A settlement closes the interval that ends at it, so it belongs to the
+    # native slot ENDING at or after it: clock jitter is dropped to the minute,
+    # then the time is rounded UP to the slot boundary (a time on the grid
+    # stays where it is). Several settlements in one slot -- a Binance
+    # contract on 4-hourly or hourly funding, common since 2023 -- are that
+    # slot's funding together: summed, not counted as extra slots (which made
     # every such day read as incomplete).
+    funding_raw.index = funding_raw.index.floor("min").ceil(native_interval)
     funding_raw = funding_raw.groupby(level=0).sum().sort_index()
     bar = index[1] - index[0] if len(index) > 1 else native_interval
 
