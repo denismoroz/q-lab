@@ -10,6 +10,12 @@
 idea_id: trend-live-full-universe
 title: Trend TSMOM ensemble, live frab code, every discovered instrument (222)
 code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-09-14
+params_fixed_evidence: >
+  params as specs/trend-live.yaml (frab 5bb0d2f, 40ba28a, b661918, 2026-09-14); the universe is every discovered instrument, which involves no choice
 params:
   coins:
   - 0G

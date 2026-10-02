@@ -174,6 +174,10 @@ class TrialRoute(enum.StrEnum):
     # Every strategy rule passed; what failed is our ability to run it here
     # (no execution adapter, no forward data, no atomic execution -- T35).
     NEEDS_INFRASTRUCTURE = "needs-infrastructure"
+    # Passed everything the selection period can show (or failed a forward
+    # test still too short to tell): waiting for data after the parameters
+    # were fixed (docs/FIT_VS_FORWARD.md).
+    NEEDS_FORWARD = "needs-forward"
     NEEDS_MORE_DATA = "needs-more-data"
     NOT_EVALUABLE = "not-evaluable"
     ERROR = "error"

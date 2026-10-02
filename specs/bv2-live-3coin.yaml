@@ -23,6 +23,12 @@ idea_id: strategy-b-v2-3coin
 title: "Strategy B v2 on BTC/ETH/SOL — live frab book, hourly, production b2 configuration"
 code_ref: "qlab.strategies.live.bv2:LiveBv2"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-10-02
+params_fixed_evidence: >
+  params as specs/bv2-live.yaml (frab, 2026-09-13); dropping AVAX was decided in q-lab on 2026-10-02 (0658f2f) after seeing the data
+
 # The production `b2` instance verbatim (frab.db strategies.params_json on
 # 10.8.0.5, id 3, read 2026-10-01). `b2_cold` differs only in
 # hedge_margin_headroom 1.5 -- a second spec if it is ever needed.

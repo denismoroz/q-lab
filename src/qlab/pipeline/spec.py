@@ -20,7 +20,7 @@ from datetime import date
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SpecData(BaseModel):
@@ -193,6 +193,35 @@ class StrategySpec(BaseModel):
     route reason carries what the rules alone would have said. When there
     are no such reasons, this field changes nothing.
     """
+
+    params_fixed_at: date | None = None
+    """The date on which this spec's parameters AND its instrument list (or
+    instrument-selection rule) were last chosen -- the end of the period the
+    choice could have been fitted to (docs/FIT_VS_FORWARD.md).
+
+    Owner, 2026-10-02: "нужно разделять период выбора параметров стратегии и
+    тестирования". Data before this date is the SELECTION period: a result
+    there shows how well the choice fits the data it was made on, and a pass
+    there proves nothing. Data from this date on is the FORWARD test: only
+    there can the strategy show something it was not chosen to show.
+
+    `None` means the date is unknown, and then the whole window counts as the
+    selection period -- otherwise a strategy whose fitting history nobody
+    wrote down would look better than one described honestly.
+    """
+
+    params_fixed_evidence: str | None = None
+    """Where `params_fixed_at` comes from (a commit, a document, a database
+    row). Required whenever the date is given: an undocumented date would
+    let anyone move the boundary to where the results look best."""
+
+    @model_validator(mode="after")
+    def _fixed_date_has_evidence(self) -> StrategySpec:
+        if self.params_fixed_at is not None and not (self.params_fixed_evidence or "").strip():
+            raise ValueError(
+                "params_fixed_at needs params_fixed_evidence: say where the date comes from"
+            )
+        return self
 
     @field_validator("idea_id", "title", "code_ref")
     @classmethod

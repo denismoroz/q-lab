@@ -32,6 +32,12 @@ idea_id: trend-live-top25
 title: "Trend (живой код) — 25 самых торгуемых монет на каждом баре (point-in-time аналог живого списка)"
 code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-09-22
+params_fixed_evidence: >
+  params as specs/trend-live.yaml (frab, 2026-09-14); the top-25-by-volume rule was written in q-lab commit c6bf6a7 on 2026-09-22, after the hand-written list's result was known
+
 params:
   # null -> every discovered instrument is a candidate; the per-bar ranking
   # below, not a hand-written list, decides which 25 are traded when.

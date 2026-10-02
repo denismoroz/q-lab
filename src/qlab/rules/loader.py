@@ -120,6 +120,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
         based_on=ruleset.based_on,
         rules=list(merged_rules.values()),
         retired=list(merged_retired.values()),
+        forward_resolution=ruleset.forward_resolution or base.forward_resolution,
     )
 
 

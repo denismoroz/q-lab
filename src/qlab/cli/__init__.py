@@ -632,6 +632,16 @@ def calibrate_cmd(
 
     ruleset = load(rules_version) if rules_version is not None else load_latest()
     reference_spec = load_reference_spec(reference) if reference else load_reference_spec()
+    # Noise has no fitted parameters: its whole window is a forward test
+    # (docs/FIT_VS_FORWARD.md). Inheriting the reference's selection period
+    # would route every passing noise book `needs-forward` and read as a 0%
+    # false-admission rate.
+    reference_spec = reference_spec.model_copy(
+        update={
+            "params_fixed_at": reference_spec.data.start,
+            "params_fixed_evidence": "calibration noise has no fitted parameters",
+        }
+    )
 
     series_summaries = {}
     generator_breakdowns = {}

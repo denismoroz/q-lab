@@ -29,6 +29,12 @@ idea_id: trend-live
 title: "TSMOM-ансамбль на крипто-перпах HL -- живой код (25 монет, book-vol targeting)"
 code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-09-14
+params_fixed_evidence: >
+  frab commits 5bb0d2f (25-coin list and signal params), 40ba28a (book volatility target), b661918 (capital $3000), all 2026-09-14; the signal params come from research/trend_following, fitted on 2020-2026 data
+
 # `frab.strategy.trend.params.TrendParams()` defaults, verbatim -- see
 # `qlab.strategies.live.trend.LiveTrendTSMOMEnsemble`'s docstring:
 # `TrendParams.from_dict` validates this mapping itself (positive
@@ -78,7 +84,9 @@ data:
   # the two specs answer the same question over the same data, differing
   # only in strategy code and universe.
   start: 2025-01-01
-  end: 2026-09-20
+  # Extended from 2026-09-20 on 2026-10-02 so the run holds a forward test
+  # (data after params_fixed_at), docs/FIT_VS_FORWARD.md.
+  end: 2026-10-01
   # Explicit 25-coin universe (unlike `specs/trend.yaml`'s discovered
   # universe) -- this is the live engine's OWN universe
   # (`TrendParams.coins`), named here so `data.instruments` matches

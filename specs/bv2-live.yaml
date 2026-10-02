@@ -14,6 +14,12 @@ idea_id: strategy-b-v2
 title: "Strategy B v2 — live frab book, hourly, production b2 configuration"
 code_ref: "qlab.strategies.live.bv2:LiveBv2"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-09-13
+params_fixed_evidence: >
+  frab commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13): the b2 paper engine, margin model and the removal of carry; coins BTC/ETH/SOL/AVAX set there
+
 # The production `b2` instance verbatim (frab.db strategies.params_json on
 # 10.8.0.5, id 3, read 2026-10-01). `b2_cold` differs only in
 # hedge_margin_headroom 1.5 -- a second spec if it is ever needed.
@@ -46,7 +52,9 @@ data:
   interval: "1h"
   include_spot: true
   start: 2025-01-01
-  end: 2026-09-20
+  # Extended from 2026-09-20 on 2026-10-02 so the run holds a forward test
+  # (data after params_fixed_at), docs/FIT_VS_FORWARD.md.
+  end: 2026-10-01
 
 # Same blended rate as specs/bv2.yaml, for the same reason (spot taker 7.0bp
 # and perp taker 3.5bp move together whenever the hedge trades).

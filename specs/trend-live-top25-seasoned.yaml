@@ -22,6 +22,12 @@ idea_id: trend-live-top25-seasoned
 title: "[151 дней] Trend (живой код) — 25 самых торгуемых монет на каждом баре (point-in-time аналог живого списка)"
 code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-10-02
+params_fixed_evidence: >
+  params as specs/trend-live.yaml (frab, 2026-09-14); the 151-day rule was written on 2026-10-02 (q-lab 92e764f), after both top-25 results were known
+
 params:
   # null -> every discovered instrument is a candidate; the per-bar ranking
   # below, not a hand-written list, decides which 25 are traded when.

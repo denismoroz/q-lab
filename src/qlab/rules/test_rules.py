@@ -736,3 +736,17 @@ def test_latest_ruleset_marks_the_three_infrastructure_rules() -> None:
     infra = {rule_id for rule_id, kind in kinds.items() if kind == RuleKind.INFRASTRUCTURE}
     assert infra == {"venue_supported", "data_forward_available", "atomic_execution"}
     assert kinds["net_edge_positive"] == RuleKind.STRATEGY
+
+
+def test_fit_forward_ruleset_inherits_and_marks_informational_rules() -> None:
+    """2026-10-02.1 (docs/FIT_VS_FORWARD.md): forward_resolution is declared,
+    a child without it inherits it, and only the two trust rules are
+    informational on the selection period."""
+    from qlab.rules.schema import FitPeriodUse
+
+    ruleset = load("2026-10-02.1", rules_dir=DEFAULT_RULES_DIR)
+    assert ruleset.forward_resolution is not None
+    assert ruleset.forward_resolution.confidence == 0.95
+    informational = {r.id for r in ruleset.rules if r.fit_period == FitPeriodUse.INFORMATIONAL}
+    assert informational == {"honest_universe", "shape_aware_edge"}
+    assert load("2026-10-01.1", rules_dir=DEFAULT_RULES_DIR).forward_resolution is None

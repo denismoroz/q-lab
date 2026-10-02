@@ -51,7 +51,7 @@ const STATUS_FILL = {
   retired: '#a8a29e',
 }
 
-const ROUTE_ORDER = ['paper', 'shelf', 'needs-infrastructure', 'reject', 'not-evaluable', 'needs-more-data', 'error']
+const ROUTE_ORDER = ['paper', 'shelf', 'needs-infrastructure', 'needs-forward', 'reject', 'not-evaluable', 'needs-more-data', 'error']
 
 const OUTCOME_ORDER = ['passed', 'failed', 'unknown', 'measurement']
 const OUTCOME_STYLE = {

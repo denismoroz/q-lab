@@ -60,6 +60,10 @@ ROUTE_TARGET: dict[TrialRoute, IdeaStatus] = {
     # Passed every strategy rule, waiting for infrastructure -- idle on the
     # bench like a shelf idea waiting for capital, never the graveyard (T35).
     TrialRoute.NEEDS_INFRASTRUCTURE: IdeaStatus.BENCH,
+    # Nothing the data so far can show is against it; waiting for data after
+    # its parameters were fixed (docs/FIT_VS_FORWARD.md). Idle on the bench,
+    # not validated: a selection-period pass proves nothing.
+    TrialRoute.NEEDS_FORWARD: IdeaStatus.BENCH,
     TrialRoute.PAPER: IdeaStatus.VALIDATED,
 }
 """Routes that decide something, and the status each one moves an idea to.

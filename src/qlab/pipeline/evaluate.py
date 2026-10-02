@@ -21,6 +21,7 @@ import dataclasses
 import hashlib
 import importlib
 import json
+import statistics
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -33,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import build_snapshot, load_snapshot
-from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
+from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
 from qlab.harness.metrics import compute_metrics, min_capital_usd
 from qlab.harness.run import run_backtest
@@ -45,12 +46,19 @@ from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialSta
 from qlab.registry.models import Spec as SpecRow
 from qlab.rules.engine import EvaluationResult
 from qlab.rules.engine import evaluate as evaluate_rules
-from qlab.rules.schema import RuleSet
+from qlab.rules.schema import FitPeriodUse, ForwardResolution, RuleKind, RuleSet
 from qlab.venues.config import load_venue
 from qlab.venues.derive import derive_venue_metrics
 
 Route = Literal[
-    "reject", "needs-more-data", "not-evaluable", "needs-infrastructure", "shelf", "paper", "error"
+    "reject",
+    "needs-more-data",
+    "needs-forward",
+    "not-evaluable",
+    "needs-infrastructure",
+    "shelf",
+    "paper",
+    "error",
 ]
 
 
@@ -554,6 +562,170 @@ def decide_route(
     return RoutingDecision(route="paper", reason="passed and affordable")
 
 
+# --------------------------------------------------------------------------
+# Selection period vs forward test (docs/FIT_VS_FORWARD.md)
+# --------------------------------------------------------------------------
+
+SELECTION_NOTE = "selection period"
+FORWARD_NOTE = "forward test"
+
+
+@dataclass(frozen=True, slots=True)
+class PeriodSplit:
+    """Row bounds (inclusive) of the judged window's two parts: the SELECTION
+    period, before the spec's `params_fixed_at`, and the FORWARD test, from it
+    on. A part shorter than two bars has no return to measure and is None."""
+
+    selection: tuple[int, int] | None
+    forward: tuple[int, int] | None
+
+
+def split_at_fixed_date(
+    index: pd.DatetimeIndex, first: int, last: int, params_fixed_at: date | None
+) -> PeriodSplit:
+    """Split rows `first..last` at the first bar on or after `params_fixed_at`.
+    An unknown date (None) makes the whole window the selection period."""
+    if params_fixed_at is None:
+        return PeriodSplit(selection=(first, last), forward=None)
+    boundary = pd.Timestamp(params_fixed_at, tz="UTC")
+    k = min(max(int(index.searchsorted(boundary)), first), last + 1)
+    selection = (first, k - 1) if k - 1 > first else None
+    forward = (k, last) if last > k else None
+    return PeriodSplit(selection=selection, forward=forward)
+
+
+def forward_years_needed(
+    selection_sharpe: float | None, resolution: ForwardResolution
+) -> float | None:
+    """Years of forward data needed to tell a strategy whose selection-period
+    Sharpe is `selection_sharpe` from zero: ((z_conf + z_power) / S)^2.
+    None when the Sharpe is unknown or not positive -- there is then no
+    positive claim for a forward test to resolve."""
+    if selection_sharpe is None or selection_sharpe != selection_sharpe or selection_sharpe <= 0:
+        return None
+    z = statistics.NormalDist()
+    z_sum = z.inv_cdf(resolution.confidence) + z.inv_cdf(resolution.power)
+    return (z_sum / selection_sharpe) ** 2
+
+
+def _for_selection_period(ruleset: RuleSet) -> RuleSet:
+    """The ruleset as applied to the selection period: an informational rule
+    is never fatal there, so its failure cannot stop the engine before a
+    conclusive rule in a later stage is evaluated."""
+    rules = [
+        rule.model_copy(update={"fatal": False})
+        if rule.fit_period == FitPeriodUse.INFORMATIONAL
+        else rule
+        for rule in ruleset.rules
+    ]
+    return ruleset.model_copy(update={"rules": rules})
+
+
+def decide_fit_forward_route(
+    *,
+    ruleset: RuleSet,
+    selection: EvaluationResult | None,
+    forward: EvaluationResult | None,
+    metrics: dict[str, float],
+    deployable_capital_usd: float,
+    params_fixed_at: date | None,
+) -> RoutingDecision:
+    """The route of a run judged under a ruleset with `forward_resolution`.
+
+    1. On the selection period, a failed CONCLUSIVE strategy rule rejects:
+       the period flatters the strategy, so falling short even there is a
+       finding no forward data can undo. An unknown conclusive metric with no
+       forward test routes `needs-more-data`.
+    2. No forward test -> `needs-forward`: a selection-period pass proves
+       nothing, whatever the informational rules said.
+    3. A forward test is judged by every rule (`decide_route`). If it fails
+       while shorter than `forward_years_needed` of the selection-period
+       Sharpe, it is too early to tell -> `needs-forward`; otherwise its
+       route stands. With no selection period (parameters fixed before the
+       data began) the forward route stands as is.
+    """
+    assert ruleset.forward_resolution is not None
+    by_id = {rule.id: rule for rule in ruleset.rules}
+
+    def _conclusive(row) -> bool:
+        rule = by_id.get(row.rule_id)
+        return (
+            rule is not None
+            and rule.kind == RuleKind.STRATEGY
+            and rule.fit_period == FitPeriodUse.CONCLUSIVE
+        )
+
+    when = (
+        f"parameters fixed on {params_fixed_at}"
+        if params_fixed_at is not None
+        else "the date the parameters were fixed is unknown, so the whole window is the "
+        "selection period"
+    )
+
+    if selection is not None:
+        failed = [r.rule_id for r in selection.rows if r.passed is False and _conclusive(r)]
+        if failed:
+            return RoutingDecision(
+                route="reject",
+                reason=(
+                    "fails on the selection period, the data its parameters were chosen on "
+                    f"and which flatters it: {', '.join(failed)}"
+                ),
+            )
+        unknown = [r.metric for r in selection.rows if r.passed is None and _conclusive(r)]
+        if unknown and forward is None:
+            return RoutingDecision(
+                route="needs-more-data",
+                reason=f"metric(s) could not be computed: {', '.join(unknown)}",
+            )
+
+    if forward is None:
+        informational = (
+            [r.rule_id for r in selection.rows if r.passed is False and not _conclusive(r)]
+            if selection is not None
+            else []
+        )
+        note = (
+            f"; informational on that period, not judged there: {', '.join(informational)} failed"
+            if informational
+            else ""
+        )
+        return RoutingDecision(
+            route="needs-forward",
+            reason=(
+                f"no forward test yet ({when}); the selection period shows nothing against "
+                f"it{note}"
+            ),
+            required_capital_usd=metrics.get("min_capital_usd"),
+        )
+
+    routing = decide_route(forward, metrics, deployable_capital_usd)
+    if routing.route != "reject" or selection is None:
+        return routing
+
+    days = metrics.get("forward_days", 0.0)
+    needed = metrics.get("forward_days_needed")
+    if needed is None or days < needed:
+        sharpe = metrics.get("fit_sharpe_net")
+        how_long = (
+            f"telling a selection-period Sharpe of {sharpe:.2f} from zero takes about "
+            f"{needed:,.0f} days"
+            if needed is not None and sharpe is not None
+            else "the selection period shows no positive Sharpe for it to resolve"
+        )
+        return RoutingDecision(
+            route="needs-forward",
+            reason=(
+                f"forward test so far fails ({routing.reason}) but is too short to tell: "
+                f"{days:,.0f} days; {how_long}"
+            ),
+            required_capital_usd=metrics.get("min_capital_usd"),
+        )
+    return RoutingDecision(
+        route="reject", reason=f"forward test failed over {days:,.0f} days: {routing.reason}"
+    )
+
+
 def evaluate_spec(
     spec: StrategySpec,
     *,
@@ -738,49 +910,94 @@ def evaluate_spec(
         first, last = 0, len(panel.prices.index) - 1
         if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
             first, last = coverage.window
-        eval_panel, eval_weights = panel, weights
-        if (first, last) != (0, len(panel.prices.index) - 1):
-            eval_panel = _slice_rows(panel, first, last)
-            eval_weights = weights.iloc[first : last + 1]
-            range_start = eval_panel.prices.index[0].date()
-            range_end = eval_panel.prices.index[-1].date()
 
         costs = CostModel(
             taker_fee_bps=spec.costs.taker_fee_bps, slippage_bps=spec.costs.slippage_bps
         )
-        result = run_backtest(eval_panel, eval_weights, costs, eval_panel.funding)
+        index = panel.prices.index
+        bar = INTERVAL_TO_TIMEDELTA.get(spec.data.interval)
 
-        metrics = compute_metrics(result)
-        metrics["min_capital_usd"] = min_capital_usd(eval_weights, spec.min_leg_notional)
-        if coverage is not None:
-            metrics["book_coverage"] = coverage.coverage
-        if truncated:
-            metrics["history_truncated_instruments"] = float(len(truncated))
-        metrics["point_in_time_universe"] = (
-            1.0 if bool(panel.meta.get("universe_complete")) else 0.0
-        )
-        # This pipeline always runs the backtest with the panel's real
-        # funding as accrual (never `NO_ACCRUAL`, see the call above) —
-        # `accrual_applied` is therefore honestly always 1 for any run that
-        # reaches this point, not a fabricated pass-through value.
-        metrics["accrual_applied"] = 1.0
-        # venue_supported / data_forward_available / atomic_execution
-        # (docs/TASKS.md T13): infrastructure facts a backtest cannot
-        # derive, read from `venues/<source>.yaml` (qlab.venues.config) and
-        # combined with this spec's `simultaneous_legs`
-        # (qlab.venues.derive.derive_venue_metrics). A venue with no config
-        # file, or a fact left unset in it, is silently absent from
-        # `metrics` here -- never guessed -- so `qlab.rules.engine.evaluate`
-        # honestly reports the corresponding rule as unknown rather than
-        # passing or failing it.
-        metrics.update(
-            derive_venue_metrics(
-                load_venue(spec.data.source),
-                snapshot_source=str(panel.meta.get("venue", spec.data.source)),
-                venue_id=spec.data.source,
-                simultaneous_legs=spec.simultaneous_legs,
+        def _measure(lo: int, hi: int, *, forward_part: bool = False) -> dict[str, float]:
+            """Backtest metrics plus the facts the rules read, on rows lo..hi."""
+            if (lo, hi) == (0, len(index) - 1):
+                part_panel, part_weights = panel, weights
+            else:
+                part_panel = _slice_rows(panel, lo, hi)
+                part_weights = weights.iloc[lo : hi + 1]
+            result = run_backtest(part_panel, part_weights, costs, part_panel.funding)
+            measured = compute_metrics(result)
+            measured["min_capital_usd"] = min_capital_usd(part_weights, spec.min_leg_notional)
+            if coverage is not None:
+                measured["book_coverage"] = coverage.coverage
+            if truncated:
+                measured["history_truncated_instruments"] = float(len(truncated))
+            # A fixed instrument list chosen on `params_fixed_at` cannot know
+            # what happened after that date: on the forward test it is a
+            # point-in-time universe by construction (docs/FIT_VS_FORWARD.md).
+            # A discovered universe keeps the panel's own answer, which also
+            # covers instruments the venue erased.
+            honest = bool(panel.meta.get("universe_complete")) or (
+                forward_part and spec.data.instruments is not None
             )
+            measured["point_in_time_universe"] = 1.0 if honest else 0.0
+            # This pipeline always runs the backtest with the panel's real
+            # funding as accrual (never `NO_ACCRUAL`, see the call above) —
+            # `accrual_applied` is therefore honestly always 1 for any run that
+            # reaches this point, not a fabricated pass-through value.
+            measured["accrual_applied"] = 1.0
+            # venue_supported / data_forward_available / atomic_execution
+            # (docs/TASKS.md T13): infrastructure facts a backtest cannot
+            # derive, read from `venues/<source>.yaml` (qlab.venues.config) and
+            # combined with this spec's `simultaneous_legs`
+            # (qlab.venues.derive.derive_venue_metrics). A venue with no config
+            # file, or a fact left unset in it, is silently absent from
+            # `metrics` here -- never guessed -- so `qlab.rules.engine.evaluate`
+            # honestly reports the corresponding rule as unknown rather than
+            # passing or failing it.
+            measured.update(
+                derive_venue_metrics(
+                    load_venue(spec.data.source),
+                    snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+                    venue_id=spec.data.source,
+                    simultaneous_legs=spec.simultaneous_legs,
+                )
+            )
+            return measured
+
+        def _days(part: tuple[int, int]) -> float:
+            span = index[part[1]] - index[part[0]] + (bar or pd.Timedelta(0))
+            return span / pd.Timedelta(days=1)
+
+        split_mode = ruleset.forward_resolution is not None
+        split = (
+            split_at_fixed_date(index, first, last, spec.params_fixed_at)
+            if split_mode
+            else PeriodSplit(selection=None, forward=(first, last))
         )
+        judged = split.forward if split.forward is not None else split.selection
+        if judged is None:  # the whole window is shorter than two bars
+            judged = (first, last)
+        metrics = _measure(*judged, forward_part=split_mode and split.forward is not None)
+        if judged != (0, len(index) - 1):
+            range_start = index[judged[0]].date()
+            range_end = index[judged[1]].date()
+
+        selection_metrics: dict[str, float] | None = None
+        if split_mode:
+            if split.forward is not None and split.selection is not None:
+                selection_metrics = _measure(*split.selection)
+                metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()})
+            elif split.forward is None:
+                selection_metrics = metrics
+            metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
+            metrics["selection_days"] = _days(split.selection) if split.selection else 0.0
+            metrics["forward_days"] = _days(split.forward) if split.forward else 0.0
+            if split.forward is not None and selection_metrics is not None:
+                years = forward_years_needed(
+                    selection_metrics.get("sharpe_net"), ruleset.forward_resolution
+                )
+                if years is not None:
+                    metrics["forward_days_needed"] = years * 365.0
         if extra_metrics is not None:
             resolved_extra = extra_metrics(metrics) if callable(extra_metrics) else extra_metrics
             metrics.update(resolved_extra)
@@ -822,7 +1039,24 @@ def evaluate_spec(
     # before the trial is written: the row carries its route from the moment
     # it exists, and the status change below sees a complete trial.
     rules_result = evaluate_rules(metrics, ruleset)
-    routing = decide_route(rules_result, metrics, deployable_capital_usd)
+    selection_result: EvaluationResult | None = None
+    if split_mode:
+        if split.forward is None:
+            # The judged window IS the selection period.
+            rules_result = evaluate_rules(metrics, _for_selection_period(ruleset))
+            selection_result = rules_result
+        elif selection_metrics is not None:
+            selection_result = evaluate_rules(selection_metrics, _for_selection_period(ruleset))
+        routing = decide_fit_forward_route(
+            ruleset=ruleset,
+            selection=selection_result,
+            forward=rules_result if split.forward is not None else None,
+            metrics=metrics,
+            deployable_capital_usd=deployable_capital_usd,
+            params_fixed_at=spec.params_fixed_at,
+        )
+    else:
+        routing = decide_route(rules_result, metrics, deployable_capital_usd)
     if exploratory:
         # Computed in full on the owner's say-so, but not a decision: keep the
         # rules' answer visible and the route where the reasons put it.
@@ -840,27 +1074,43 @@ def evaluate_spec(
     )
 
     decided_at = datetime.now(UTC)
-    verdict_rows = [
-        {
-            "idea_id": spec.idea_id,
-            "spec_id": spec_row.id,
-            "trial_id": trial_id,
-            "stage": row.stage.value,
-            "rule_id": row.rule_id,
-            "rules_version": row.rules_version,
-            "metric": row.metric,
-            "value": row.value,
-            "comparator": row.comparator,
-            "threshold": row.threshold,
-            "passed": row.passed,
-            "data_range_start": range_start,
-            "data_range_end": range_end,
-            "decided_at": decided_at,
-            "note": row.note,
-            "source": TrialSource.QLAB,
-        }
-        for row in rules_result.rows
-    ]
+
+    def _verdict_rows(result: EvaluationResult, start: date, end: date, period: str | None):
+        return [
+            {
+                "idea_id": spec.idea_id,
+                "spec_id": spec_row.id,
+                "trial_id": trial_id,
+                "stage": row.stage.value,
+                "rule_id": row.rule_id,
+                "rules_version": row.rules_version,
+                "metric": row.metric,
+                "value": row.value,
+                "comparator": row.comparator,
+                "threshold": row.threshold,
+                "passed": row.passed,
+                "data_range_start": start,
+                "data_range_end": end,
+                "decided_at": decided_at,
+                "note": "; ".join(n for n in (period, row.note) if n) or None,
+                "source": TrialSource.QLAB,
+            }
+            for row in result.rows
+        ]
+
+    if not split_mode:
+        verdict_rows = _verdict_rows(rules_result, range_start, range_end, None)
+    elif split.forward is None:
+        verdict_rows = _verdict_rows(rules_result, range_start, range_end, SELECTION_NOTE)
+    else:
+        verdict_rows = _verdict_rows(rules_result, range_start, range_end, FORWARD_NOTE)
+        if selection_result is not None and split.selection is not None:
+            verdict_rows += _verdict_rows(
+                selection_result,
+                index[split.selection[0]].date(),
+                index[split.selection[1]].date(),
+                SELECTION_NOTE,
+            )
     if verdict_rows:
         repo.add_verdicts(session, verdict_rows)
 
@@ -875,7 +1125,13 @@ def evaluate_spec(
 
 
 __all__ = [
+    "FORWARD_NOTE",
+    "SELECTION_NOTE",
     "BookCoverage",
+    "PeriodSplit",
+    "decide_fit_forward_route",
+    "forward_years_needed",
+    "split_at_fixed_date",
     "Evaluation",
     "RoutingDecision",
     "StrategyResolutionError",

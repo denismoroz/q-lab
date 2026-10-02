@@ -22,11 +22,17 @@ from sqlalchemy.pool import StaticPool
 
 from qlab.data.panel import MarketPanel
 from qlab.pipeline.evaluate import (
+    FORWARD_NOTE,
+    SELECTION_NOTE,
+    PeriodSplit,
     StrategyResolutionError,
     complete_book_window,
+    decide_fit_forward_route,
     decide_route,
     evaluate_spec,
+    forward_years_needed,
     resolve_strategy,
+    split_at_fixed_date,
 )
 from qlab.pipeline.spec import StrategySpec
 from qlab.registry import repo
@@ -48,7 +54,15 @@ from qlab.registry.models import (
     Spec as SpecRow,
 )
 from qlab.rules.engine import EvaluationResult
-from qlab.rules.schema import Comparator, Rule, RuleKind, RuleSet, Stage
+from qlab.rules.schema import (
+    Comparator,
+    FitPeriodUse,
+    ForwardResolution,
+    Rule,
+    RuleKind,
+    RuleSet,
+    Stage,
+)
 
 IDEA_ID = "toy-idea"
 SOURCE = "hyperliquid"
@@ -150,10 +164,10 @@ def _no_network(monkeypatch):
 
 
 def _fixture_frames(
-    instruments: list[str],
+    instruments: list[str], end: date | None = None
 ) -> tuple[pd.DatetimeIndex, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     index = pd.date_range(
-        pd.Timestamp(START, tz="UTC"), pd.Timestamp(END, tz="UTC"), freq="1h"
+        pd.Timestamp(START, tz="UTC"), pd.Timestamp(end or END, tz="UTC"), freq="1h"
     )
     rng = np.random.default_rng(42)
     log_returns = rng.normal(0.0015, 0.01, size=(len(index), len(instruments)))
@@ -171,12 +185,14 @@ def _register_snapshot(
     instruments: list[str],
     universe_complete: bool,
     tradeable: pd.DataFrame | None = None,
+    end: date | None = None,
 ) -> None:
     """Write a snapshot's parquet + manifest to disk and register its
     `data_snapshot` row directly -- the same shape `build_snapshot` would
     have produced, without touching the network. `tradeable` overrides the
     default all-True listing mask."""
-    _, prices, funding, default_tradeable = _fixture_frames(instruments)
+    end = end or END
+    _, prices, funding, default_tradeable = _fixture_frames(instruments, end)
     tradeable = default_tradeable if tradeable is None else tradeable
 
     snap_dir = tmp_path / snapshot_id
@@ -188,7 +204,7 @@ def _register_snapshot(
         "source": SOURCE,
         "instruments": sorted(instruments),
         "start": pd.Timestamp(START, tz="UTC").isoformat(),
-        "end": pd.Timestamp(END, tz="UTC").isoformat(),
+        "end": pd.Timestamp(end, tz="UTC").isoformat(),
         "interval": INTERVAL,
         "universe_complete": universe_complete,
     }
@@ -200,7 +216,7 @@ def _register_snapshot(
         source=SOURCE,
         instruments=dict.fromkeys(sorted(instruments), True),
         range_start=START,
-        range_end=END,
+        range_end=end,
         path=str(snap_dir),
         rows=len(prices.index),
         fetched_at=datetime.now(UTC),
@@ -1152,3 +1168,158 @@ def test_truncated_history_moves_the_judged_window_to_where_it_is_honest(
     assert evaluation.metrics["n_periods"] <= len(index) - 10
     verdict = session.query(Verdict).filter(Verdict.trial_id == evaluation.trial_id).one()
     assert verdict.data_range_start == honest_from.date()
+
+
+# --------------------------------------------------------------------------
+# Selection period vs forward test (docs/FIT_VS_FORWARD.md)
+# --------------------------------------------------------------------------
+
+LONG_END = date(2026, 1, 11)  # ten days of hourly bars
+RESOLUTION = ForwardResolution(confidence=0.95, power=0.80, rationale="test")
+HONEST_UNIVERSE_INFO = HONEST_UNIVERSE.model_copy(
+    update={"fit_period": FitPeriodUse.INFORMATIONAL}
+)
+
+
+def _split_ruleset(rules: list[Rule]) -> RuleSet:
+    return RuleSet(version="2026-01-01.1", rules=rules, forward_resolution=RESOLUTION)
+
+
+def _explicit_long(session, tmp_path, **spec_overrides) -> StrategySpec:
+    _register_snapshot(
+        session,
+        tmp_path,
+        snapshot_id="snap-long",
+        instruments=INSTRUMENTS,
+        universe_complete=False,
+        end=LONG_END,
+    )
+    data = {"source": SOURCE, "interval": INTERVAL, "start": START, "end": LONG_END,
+            "instruments": INSTRUMENTS}
+    return _make_spec(params={"weight": 0.4}, data=data, **spec_overrides)
+
+
+def test_split_at_fixed_date_bounds() -> None:
+    index = pd.date_range("2026-01-01", periods=48, freq="1h", tz="UTC")
+    assert split_at_fixed_date(index, 0, 47, None) == PeriodSplit((0, 47), None)
+    assert split_at_fixed_date(index, 0, 47, date(2026, 1, 2)) == PeriodSplit((0, 23), (24, 47))
+    # Fixed before the data began: all forward. Fixed after it ended: all selection.
+    assert split_at_fixed_date(index, 0, 47, date(2025, 12, 1)) == PeriodSplit(None, (0, 47))
+    assert split_at_fixed_date(index, 0, 47, date(2026, 2, 1)) == PeriodSplit((0, 47), None)
+
+
+def test_forward_years_needed_matches_the_preregistered_horizon() -> None:
+    # seed/preregistration/2026-09-21-paper-bv2-trend.yaml: trend at Sharpe
+    # 0.305 needs 66.5 years.
+    assert forward_years_needed(0.305, RESOLUTION) == pytest.approx(66.5, abs=0.1)
+    assert forward_years_needed(0.0, RESOLUTION) is None
+    assert forward_years_needed(float("nan"), RESOLUTION) is None
+
+
+def test_unknown_fixed_date_makes_a_pass_wait_for_forward_not_paper(session, tmp_path) -> None:
+    spec = _explicit_long(session, tmp_path)
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    # The hand-picked universe fails honest_universe, but on the selection
+    # period that is informational: it neither rejects nor admits.
+    assert result.routing.route == "needs-forward"
+    assert "honest_universe" in result.routing.reason
+    assert result.metrics["judged_on_forward"] == 0.0
+    notes = {v.note for v in session.query(Verdict).filter(Verdict.trial_id == result.trial_id)}
+    assert notes == {SELECTION_NOTE}
+
+
+def test_conclusive_failure_on_the_selection_period_rejects(session, tmp_path) -> None:
+    spec = _explicit_long(session, tmp_path)
+    ruleset = _split_ruleset([CAPITAL_FIT_TIGHT, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.routing.route == "reject"
+    assert "selection period" in result.routing.reason
+    assert "capital_fit" in result.routing.reason
+
+
+def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_path) -> None:
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"
+    )
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.metrics["judged_on_forward"] == 1.0
+    assert result.metrics["point_in_time_universe"] == 1.0  # list fixed before the forward test
+    assert result.metrics["fit_point_in_time_universe"] == 0.0  # chosen with hindsight before
+    assert result.metrics["selection_days"] == pytest.approx(5.0)
+    assert result.metrics["forward_days"] == pytest.approx(5.0 + 1 / 24)
+    assert result.routing.route == "paper"
+
+    rows = session.query(Verdict).filter(Verdict.trial_id == result.trial_id).all()
+    forward = [v for v in rows if v.note == FORWARD_NOTE]
+    selection = [v for v in rows if v.note == SELECTION_NOTE]
+    assert {v.data_range_start for v in forward} == {date(2026, 1, 6)}
+    assert {v.data_range_end for v in selection} == {date(2026, 1, 5)}
+
+
+def _rows(*rows: tuple[str, bool | None]) -> EvaluationResult:
+    from qlab.rules.engine import VerdictRow
+
+    built = tuple(
+        VerdictRow(stage=Stage.EDGE, rule_id=rid, rules_version="t", metric=rid, value=None,
+                   comparator=">=", threshold=0.0, passed=passed)
+        for rid, passed in rows
+    )
+    failed = tuple(r.rule_id for r in built if r.passed is False)
+    return EvaluationResult(
+        rows=built,
+        overall_passed=not failed and all(r.passed for r in built),
+        failed_fatal_rule_id=failed[0] if failed else None,
+        failed_rule_ids=failed,
+        unknown_metrics=tuple(r.metric for r in built if r.passed is None),
+        decisive=all(r.passed is not None for r in built),
+    )
+
+
+NET_EDGE = Rule(id="net_edge", stage=Stage.EDGE, metric="net_edge",
+                comparator=Comparator.GE, threshold=0.04, fatal=True)
+
+
+def test_short_failing_forward_test_waits_long_failing_one_rejects() -> None:
+    ruleset = _split_ruleset([NET_EDGE])
+    selection = _rows(("net_edge", True))
+    forward = _rows(("net_edge", False))
+    base = {"fit_sharpe_net": 0.5, "forward_days_needed": 9000.0, "min_capital_usd": 10.0}
+
+    short = decide_fit_forward_route(
+        ruleset=ruleset, selection=selection, forward=forward,
+        metrics={**base, "forward_days": 30.0}, deployable_capital_usd=1000.0,
+        params_fixed_at=date(2026, 1, 1),
+    )
+    assert short.route == "needs-forward"
+    assert "too short" in short.reason
+
+    long = decide_fit_forward_route(
+        ruleset=ruleset, selection=selection, forward=forward,
+        metrics={**base, "forward_days": 9500.0}, deployable_capital_usd=1000.0,
+        params_fixed_at=date(2026, 1, 1),
+    )
+    assert long.route == "reject"
+    assert "forward test failed" in long.reason
+
+
+def test_without_forward_resolution_the_window_is_judged_as_before(session, tmp_path) -> None:
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"
+    )
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([HONEST_UNIVERSE]),
+                           deployable_capital_usd=1000.0)
+    assert result.routing.route == "reject"
+    assert "judged_on_forward" not in result.metrics
+
+
+def test_fixed_date_without_evidence_is_refused() -> None:
+    with pytest.raises(ValueError, match="params_fixed_evidence"):
+        _make_spec(params_fixed_at=date(2026, 1, 1))

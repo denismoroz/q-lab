@@ -157,6 +157,7 @@ const OUTCOME_STYLE = {
   paper: 'border-emerald-300 bg-emerald-50',
   shelf: 'border-indigo-300 bg-indigo-50',
   'needs-infrastructure': 'border-indigo-300 bg-indigo-50',
+  'needs-forward': 'border-sky-300 bg-sky-50',
   reject: 'border-stone-300 bg-stone-50',
   'not-evaluable': 'border-amber-300 bg-amber-50',
   'needs-more-data': 'border-amber-300 bg-amber-50',
@@ -185,13 +186,32 @@ function Outcome({ outcome }) {
     )
   }
   const m = trial.metrics ?? {}
+  const sharpe = (v) => (typeof v === 'number' ? v.toFixed(2) : null)
+  const days = (v) => (typeof v === 'number' ? `${Math.round(v)} дн.` : null)
+  // docs/FIT_VS_FORWARD.md: the plain metrics are the JUDGED part -- the
+  // forward test when there is one, else the selection period; `fit_*` are
+  // the selection period's when both exist.
+  const split = typeof m.judged_on_forward === 'number'
+  const judged = split && m.judged_on_forward === 1 ? 'проверка вперёд' : 'период подбора'
   const numbers = [
     ['доходность в год после комиссий', pct(m.ann_return_net)],
-    ['Шарп после комиссий', typeof m.sharpe_net === 'number' ? m.sharpe_net.toFixed(2) : null],
+    ['Шарп после комиссий', sharpe(m.sharpe_net)],
     ['худшая просадка', pct(m.max_dd)],
     ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
     ['книга была полной', pct(m.book_coverage)],
   ].filter(([, v]) => v !== null)
+  const fitNumbers = [
+    ['доходность в год после комиссий', pct(m.fit_ann_return_net)],
+    ['Шарп после комиссий', sharpe(m.fit_sharpe_net)],
+    ['худшая просадка', pct(m.fit_max_dd)],
+  ].filter(([, v]) => v !== null)
+  const periods = split
+    ? [
+        ['период подбора', days(m.selection_days)],
+        ['проверка вперёд', days(m.forward_days)],
+        ['нужно для вывода', days(m.forward_days_needed)],
+      ].filter(([, v]) => v !== null)
+    : []
   return (
     <section className={`rounded border p-4 ${OUTCOME_STYLE[trial.route] ?? 'border-slate-200'}`}>
       <div className="text-xs uppercase tracking-wide text-slate-500">Что говорит q-lab</div>
@@ -201,15 +221,12 @@ function Outcome({ outcome }) {
         <span className="text-slate-500">Почему: </span>
         {trial.route_reason}
       </p>
+      {periods.length > 0 && <NumberList title="Данные" numbers={periods} />}
       {numbers.length > 0 && (
-        <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-          {numbers.map(([name, value]) => (
-            <div key={name} className="flex justify-between gap-4">
-              <dt className="text-slate-500">{name}</dt>
-              <dd className="tabular-nums font-medium">{value}</dd>
-            </div>
-          ))}
-        </dl>
+        <NumberList title={split ? `${judged} — по ней решение` : null} numbers={numbers} />
+      )}
+      {fitNumbers.length > 0 && (
+        <NumberList title="период подбора — только для сведения" numbers={fitNumbers} />
       )}
       <p className="mt-3 text-xs text-slate-500">
         прогон #{trial.id}, {trial.started_at?.slice(0, 10)}
@@ -218,6 +235,22 @@ function Outcome({ outcome }) {
           : ''}
       </p>
     </section>
+  )
+}
+
+function NumberList({ title, numbers }) {
+  return (
+    <div className="mt-3">
+      {title && <div className="text-xs uppercase tracking-wide text-slate-500">{title}</div>}
+      <dl className="mt-1 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+        {numbers.map(([name, value]) => (
+          <div key={name} className="flex justify-between gap-4">
+            <dt className="text-slate-500">{name}</dt>
+            <dd className="tabular-nums font-medium">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   )
 }
 

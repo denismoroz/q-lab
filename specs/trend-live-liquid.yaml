@@ -33,6 +33,12 @@ idea_id: trend-live-liquid
 title: "Trend (живой код) на point-in-time ликвидном универсе — контроль на отбор задним числом"
 code_ref: "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# data before this date is the selection period, from it on the forward test.
+params_fixed_at: 2026-09-22
+params_fixed_evidence: >
+  params as specs/trend-live.yaml (frab, 2026-09-14); the $1M/day liquidity rule was written in q-lab commit c6bf6a7 on 2026-09-22
+
 params:
   # null -> every instrument the panel has is a candidate; the liquidity
   # filter below, not a hand-written list, decides which are tradeable when.

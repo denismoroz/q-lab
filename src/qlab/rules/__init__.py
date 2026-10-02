@@ -12,6 +12,8 @@ from qlab.rules.nearness import NearnessVerdict, classify_nearness, is_near, nea
 from qlab.rules.schema import (
     STAGE_ORDER,
     Comparator,
+    FitPeriodUse,
+    ForwardResolution,
     RetiredRule,
     Rule,
     RuleKind,
@@ -25,6 +27,8 @@ __all__ = [
     "STAGE_ORDER",
     "Comparator",
     "EvaluationResult",
+    "FitPeriodUse",
+    "ForwardResolution",
     "NearnessVerdict",
     "Rule",
     "RuleKind",

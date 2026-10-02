@@ -113,7 +113,7 @@ def summarize_series(trials: list[NoiseTrial]) -> SeriesSummary:
             n_admitted += 1
         elif route == "reject":
             n_rejected += 1
-        elif route in ("needs-more-data", "not-evaluable"):
+        elif route in ("needs-more-data", "needs-forward", "not-evaluable"):
             # Neither decided anything; both are "not judged", which is what
             # this counter reports.
             n_needs_more_data += 1

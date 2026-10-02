@@ -1,0 +1,74 @@
+# The selection period and the forward test are judged differently
+# (docs/FIT_VS_FORWARD.md).
+#
+# Owner, 2026-10-02: «нужно разделять период выбора параметров стратегии и
+# тестирования - backtest and froward test - может просто нужно разделить эти
+# понятия а не давать вердикт - не прошел и все тут».
+#
+# Until this version a single verdict was rendered on a window that, for every
+# strategy q-lab has run so far, lay entirely BEFORE the date its parameters
+# and coin list were chosen. Trend's hand-written 25-coin list was committed on
+# 2026-09-14 and judged on 2025-01-01..2026-09-20: the +12.1% was a measure of
+# how well the choice fits the data it was made on, and the "reject" a verdict
+# on the same thing.
+#
+# What changes (`qlab.pipeline.evaluate`, with a spec's `params_fixed_at`):
+#
+#   - On the SELECTION period only a failure the flattery of fitting cannot
+#     explain is conclusive: below the economic floor, more capital than the
+#     horizon allows, no funding accrual. Those rules keep the default
+#     `fit_period: conclusive`. `honest_universe` and `shape_aware_edge` are
+#     restated below as `informational` there: a universe chosen with
+#     hindsight and a lack of separation from luck are exactly what the
+#     selection period cannot settle. A pass on the selection period routes
+#     `needs-forward`, never `paper` or `shelf`.
+#   - On the FORWARD test every rule applies as before. A forward test that
+#     fails while still too short to resolve the selection-period Sharpe routes
+#     `needs-forward` ("too early to tell"); only a long-enough one routes
+#     `reject`.
+#
+# No threshold of any rule changes. `forward_resolution` uses the conventional
+# one-sided 95% confidence and 80% power -- the same constants as the horizon
+# table in seed/preregistration/2026-09-21-paper-bv2-trend.yaml
+# ("years = (1.645 + 0.842)^2 / sharpe^2"); they are conventions, not
+# measurements, and the owner may change them in a later version.
+
+version: "2026-10-02.1"
+based_on: "2026-10-01.1"
+
+forward_resolution:
+  confidence: 0.95
+  power: 0.80
+  rationale: >
+    Conventional one-sided 95% / 80%, the constants of the horizon formula in
+    seed/preregistration/2026-09-21-paper-bv2-trend.yaml. A forward test
+    shorter than ((1.645 + 0.842) / S)^2 years, S being the selection-period
+    Sharpe, cannot distinguish that strategy from zero, so its failure is
+    "too early to tell", not "does not work".
+
+rules:
+  - id: honest_universe
+    stage: edge
+    metric: point_in_time_universe
+    comparator: "=="
+    threshold: 1.0
+    fatal: true
+    fit_period: informational
+    rationale: >
+      Unchanged, except `fit_period: informational`. A coin list chosen after
+      the fact inflates the selection-period number; on the forward test a
+      list fixed before it began cannot know the future, so there the rule is
+      met by construction for a fixed list (docs/FIT_VS_FORWARD.md).
+
+  - id: shape_aware_edge
+    stage: edge
+    metric: noise_return_percentile
+    comparator: ">="
+    threshold: 0.99
+    fatal: true
+    near_margin: 0.1
+    fit_period: informational
+    rationale: >
+      Unchanged, except `fit_period: informational`. Beating matched noise on
+      the data the parameters were chosen on is what fitting produces; it is
+      the forward test's separation from noise that counts.

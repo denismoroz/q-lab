@@ -100,6 +100,43 @@ class RuleKind(StrEnum):
     INFRASTRUCTURE = "infrastructure"
 
 
+class FitPeriodUse(StrEnum):
+    """What a rule's failure means on the SELECTION period -- the data the
+    strategy's parameters were chosen on (docs/FIT_VS_FORWARD.md).
+
+    That period flatters the strategy: its parameters were picked to look
+    good there. So a failure there is CONCLUSIVE for a rule whose failure
+    the flattery cannot explain (below the economic floor even on data it
+    was fitted to; more capital than we will ever have). For a rule about
+    whether the number can be trusted at all -- a universe chosen with
+    hindsight, separation from luck -- the selection period is exactly where
+    the number cannot be trusted, so the result there is INFORMATIONAL: it
+    is recorded and shown, and the forward test decides.
+    """
+
+    CONCLUSIVE = "conclusive"
+    INFORMATIONAL = "informational"
+
+
+class ForwardResolution(BaseModel):
+    """When a FAILED forward test is long enough to count as a failure
+    rather than as "too early to tell" (docs/FIT_VS_FORWARD.md).
+
+    The forward window needs about ((z_conf + z_power) / S)^2 years to tell a
+    strategy whose selection-period Sharpe is S from zero (one-sided test at
+    `confidence`, with `power`). A shorter forward test that fails routes
+    `needs-forward`, not `reject`. A forward test that PASSES is never held
+    back by this: the rules themselves already ask for separation from
+    noise.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    confidence: float = Field(gt=0.5, lt=1.0)
+    power: float = Field(gt=0.0, lt=1.0)
+    rationale: str
+
+
 class Rule(BaseModel):
     """A single screening rule."""
 
@@ -112,6 +149,7 @@ class Rule(BaseModel):
     threshold: float
     fatal: bool = False
     kind: RuleKind = RuleKind.STRATEGY
+    fit_period: FitPeriodUse = FitPeriodUse.CONCLUSIVE
     near_margin: float | None = Field(
         default=None,
         description=(
@@ -180,6 +218,10 @@ class RuleSet(BaseModel):
     based_on: str | None = None
     rules: list[Rule] = Field(default_factory=list)
     retired: list[RetiredRule] = Field(default_factory=list)
+    forward_resolution: ForwardResolution | None = None
+    """Present from 2026-10-02.1 on. A ruleset without it judges the whole
+    window as one, exactly as before the split existed, so older verdicts
+    stay reproducible under their own rules."""
 
     @field_validator("version")
     @classmethod

@@ -18,6 +18,8 @@ DATA_END = date(2026, 9, 20)
     [
         (TrialRoute.REJECT, IdeaStatus.REJECTED),
         (TrialRoute.SHELF, IdeaStatus.BENCH),
+        (TrialRoute.NEEDS_INFRASTRUCTURE, IdeaStatus.BENCH),
+        (TrialRoute.NEEDS_FORWARD, IdeaStatus.BENCH),
         (TrialRoute.PAPER, IdeaStatus.VALIDATED),
     ],
 )
