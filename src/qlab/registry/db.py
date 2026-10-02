@@ -32,6 +32,14 @@ def get_database_url() -> str:
 def _enable_foreign_keys(dbapi_connection: object, _connection_record: object) -> None:
     cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
     cursor.execute("PRAGMA foreign_keys=ON")
+    # The console reads the registry while a long evaluation writes it. In
+    # SQLite's default rollback journal a reader blocks a writer's commit,
+    # and runs failed with "database is locked" (2026-10-02, Binance runs).
+    # WAL lets readers and one writer work at once (an in-memory database
+    # ignores it); a busy connection waits up to a minute instead of failing
+    # at once. Connection plumbing, not research parameters.
+    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
 

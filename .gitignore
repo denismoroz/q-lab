@@ -12,6 +12,8 @@ build/
 # data & artifacts
 data/*.db
 data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/snapshots/
 data/regimes/
 data/*.db.bak-*
