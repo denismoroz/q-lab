@@ -50,3 +50,18 @@ def test_claims_are_checked_only_where_the_run_saw_the_regime() -> None:
     out = claim_checks({"bull": "earns", "bear": "beats_market", "flat": "loses"}, measured)
     assert out == {"regime_bull_claim_met": 1.0, "regime_bear_claim_met": 1.0}  # flat: too few days
     assert claim_checks({"bear": "earns"}, measured) == {"regime_bear_claim_met": 0.0}
+
+
+def test_causal_labels_never_see_the_future() -> None:
+    from qlab.regimes import causal_labels
+
+    closes = _closes(300)
+    labels = causal_labels(closes, window=30)
+    cut = 200
+    tampered = closes.copy()
+    tampered.iloc[cut + 1:] *= np.linspace(1.0, 4.0, len(closes) - cut - 1)
+    again = causal_labels(tampered, window=30)
+    pd.testing.assert_series_equal(labels.iloc[: cut + 1], again.iloc[: cut + 1])
+    # A trailing return exists from day 30; a day needs 30 of them BEFORE it.
+    assert labels.iloc[:60].isna().all()
+    assert labels.iloc[60:].notna().all()

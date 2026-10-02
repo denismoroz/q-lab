@@ -1,0 +1,114 @@
+# Live trend (25 largest by market cap) on Binance 2019-09 .. 2026-09, trading only
+# in the regimes its source says it earns in -- bull and bear -- and flat in the
+# flat regime (owner, 2026-10-02: «в стратегию детект режима — можно встроить?»).
+#
+# The regime is the one a strategy may KNOW at each bar (qlab.regimes.causal_labels:
+# BTC's 30-day return against terciles of the days before it), not the hindsight
+# labels used to describe results.
+#
+# Declared on 2026-10-02 before any run of trend on Binance data. Honest reading:
+# 2019-09 .. 2024-12 is data on which nobody saw trend's per-regime behaviour; 2025-26
+# overlaps the Hyperliquid window where its loss on flat days was seen, so the two
+# parts are reported apart (docs/REGIMES.md). Compared with trend-binance-cap, the
+# same strategy ungated.
+
+idea_id: trend-binance-cap-gated
+title: Trend по капитализации на Binance 2019–2026, торгует только на росте и падении (определитель режима
+  только по прошлому)
+code_ref: qlab.strategies.regime_gate:RegimeGate
+params:
+  inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+  inner_params:
+    coins: null
+    top_k_by_market_cap: 25
+    exclude_tags:
+    - stablecoin
+    top_k_requires_history: true
+    capital_usd: 3000.0
+    lookbacks:
+    - 30
+    - 60
+    - 90
+    - 120
+    vol_window: 30
+    vol_target_daily: 0.02
+    leverage_cap: 3.0
+    risk_scale: 0.2
+    book_vol_target_ann: 0.14
+    book_vol_window_days: 60
+    book_vol_min_days: 20
+    book_vol_scale_min: 0.25
+    book_vol_scale_max: 2.0
+    book_vol_prior_ann: 0.3
+    min_history_days: 151
+  trade_in:
+  - bull
+  - bear
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-09-20'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+regime_claim:
+  bull: earns
+  bear: earns
+sources:
+  inner_params.top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins
+    excluded)'
+  inner_params.exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins
+    excluded)'
+  inner_params.top_k_requires_history: docs/TREND_LIVE_REPLAY.md (the 151-day rule, owner 2026-10-02)
+  inner_params.coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_code_ref: src/qlab/strategies/live/trend.py
+  trade_in: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins
+    («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка
+    на «crisis alpha» подтверждается едва» -- the regimes the source says trend earns in; nothing is claimed
+    for flat'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+params_fixed_at: '2026-10-02'
+params_fixed_evidence: the gate's regimes come from frab's research claim (FINDINGS.md) and were declared
+  on 2026-10-02 BEFORE any trend run on Binance data; trend's loss on flat days had been seen only on
+  Hyperliquid 2025-2026 (docs/REGIMES.md), which this window also covers

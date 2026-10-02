@@ -65,6 +65,27 @@ def label_days(closes: pd.Series, window: int = WINDOW_DAYS) -> tuple[pd.Series,
     return labels.where(trailing.notna()), float(bear_below), float(bull_above)
 
 
+def causal_labels(closes: pd.Series, window: int = WINDOW_DAYS) -> pd.Series:
+    """Labels a strategy may TRADE on: the same terciles, but each day's
+    thresholds come only from the trailing returns of the days before it
+    (an expanding window). Unknown until `window` trailing returns exist
+    before the day. `label_days` is the hindsight version, for description."""
+    trailing = closes / closes.shift(window) - 1.0
+    past = trailing.shift(1)
+    low = past.expanding(min_periods=window).quantile(1 / 3)
+    high = past.expanding(min_periods=window).quantile(2 / 3)
+    labels = pd.Series(np.where(trailing >= high, "bull",
+                                np.where(trailing < low, "bear", "flat")),
+                       index=closes.index, dtype=object)
+    return labels.where(trailing.notna() & low.notna())
+
+
+def market_closes(store: Path = DEFAULT_DIR) -> pd.Series | None:
+    """BTC daily closes from the stored regime build, indexed by close time."""
+    path = store / f"{_FILE}.parquet"
+    return pd.read_parquet(path)["close"] if path.is_file() else None
+
+
 def build(store: Path = DEFAULT_DIR) -> RegimeSeries:
     """Fetch BTC's whole daily history from Binance, label it, and store it.
     Only closed days are kept (a candle is closed once its open + 1 day has
@@ -171,5 +192,16 @@ def claim_checks(claim: dict[str, str], measured: dict[str, float]) -> dict[str,
     return out
 
 
-__all__ = ["MARKET", "claim_checks", "REGIMES", "WINDOW_DAYS", "RegimeSeries", "breakdown", "build",
-           "label_days", "load"]
+__all__ = [
+    "MARKET",
+    "REGIMES",
+    "WINDOW_DAYS",
+    "RegimeSeries",
+    "breakdown",
+    "build",
+    "causal_labels",
+    "claim_checks",
+    "label_days",
+    "load",
+    "market_closes",
+]
