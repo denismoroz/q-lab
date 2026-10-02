@@ -552,3 +552,30 @@ def test_funnel_counts_latest_route_per_real_idea_and_sets_noise_aside(session):
     assert stats.ideas_by_latest_route == {"not-evaluable": 1, "shelf": 1}
     assert stats.calibration_ideas == 1
     assert stats.ideas_by_status == {"candidate": 2}
+
+
+def test_reclassified_rejects_lists_rejections_a_later_run_took_back(session) -> None:
+    from qlab.registry.models import TrialRoute, TrialSource, TrialStatus
+    from qlab.registry.queries import reclassified_rejects
+
+    for idea in ("taken-back", "still-rejected"):
+        repo.upsert_idea(session, id=idea, title=idea, source_type=SourceType.INTERNAL,
+                         asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+    snap = repo.add_data_snapshot(session, id="s", source="hyperliquid", instruments={},
+                                  range_start=date(2026, 1, 1), range_end=date(2026, 1, 2),
+                                  path="/tmp", rows=1, fetched_at=datetime.now(UTC))
+    ids = {}
+    for idea, routes in (("taken-back", ["reject", "needs-forward"]),
+                         ("still-rejected", ["needs-forward", "reject"])):
+        spec = repo.add_spec(session, idea_id=idea, version=1, params={}, data_requirements={},
+                             rebalance="1d", costs_model={}, code_ref="x:y")
+        for route in routes:
+            t = repo.add_trial(session, spec_id=spec.id, config_hash="h", code_sha="c", params={},
+                               status=TrialStatus.OK, snapshot_id=snap.id,
+                               started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
+                               metrics=None, source=TrialSource.QLAB, route=TrialRoute(route),
+                               route_reason="r")
+            ids[(idea, route)] = t.id
+    rows = reclassified_rejects(session)
+    assert [(r.idea_id, r.later_route) for r in rows] == [("taken-back", "needs-forward")]
+    assert rows[0].rejected_trial_id == ids[("taken-back", "reject")]

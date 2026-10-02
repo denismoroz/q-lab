@@ -155,6 +155,20 @@ def graveyard_retired_cmd() -> None:
     typer.echo(f"total: {len(kills)} ideas, {total_verdicts} verdicts on retired rules")
 
 
+@graveyard_app.command("reclassified")
+def graveyard_reclassified_cmd() -> None:
+    """Ideas q-lab rejected and a later run routed elsewhere (docs/TASKS.md
+    T26): rejections the instrument itself took back."""
+    from qlab.registry.queries import reclassified_rejects
+
+    with session_scope() as session:
+        rows = reclassified_rejects(session)
+    for r in rows:
+        typer.echo(f"{r.idea_id:<36} rejected in trial {r.rejected_trial_id}, "
+                   f"later {r.later_route} (trial {r.later_trial_id})")
+    typer.echo(f"{len(rows)} rejection(s) taken back")
+
+
 @graveyard_app.command("near")
 def graveyard_near_cmd(
     margin: float = typer.Option(0.2, "--margin", help="Fallback relative nearness margin"),
@@ -599,6 +613,81 @@ def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
 # --------------------------------------------------------------------------
 # calibrate
 # --------------------------------------------------------------------------
+
+
+@app.command("calibrate-planted")
+def calibrate_planted_cmd(
+    reference: Path = typer.Option(  # noqa: B008
+        ..., "--reference", help="Spec whose book shape the planted books copy"
+    ),
+    books: int = typer.Option(200, "--books", help="Noise books to plant an edge in"),
+    alpha: list[float] = typer.Option(  # noqa: B008
+        [0.0, 0.02, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20], "--alpha",
+        help="Planted edge, a year (repeat)",
+    ),
+    window: list[int] = typer.Option(  # noqa: B008
+        [180, 365], "--window", help="Also judge on the last N days (repeat); the full "
+        "active span is always included",
+    ),
+    capital: float = typer.Option(3000.0, "--capital", help="Capital deployable now (USD)"),
+    rules_version: str | None = typer.Option(None, "--rules"),
+) -> None:
+    """How many strategies with a KNOWN edge does the ruleset admit, call too
+    early, or reject (docs/TASKS.md T26)? Plants `alpha` a year into the
+    reference shape's noise books and judges each like a candidate. A
+    measurement of the ruleset: nothing is written to the registry."""
+    import pandas as pd
+
+    from qlab.calibration.planted import noise_books, planted_outcomes
+    from qlab.harness.costs import CostModel
+    from qlab.pipeline.evaluate import resolve_panel, resolve_strategy
+    from qlab.venues.config import load_venue
+    from qlab.venues.derive import derive_venue_metrics
+
+    spec = load_spec(reference)
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+    with session_scope() as session:
+        panel = resolve_panel(session, spec)
+    weights = resolve_strategy(spec.code_ref).target_weights(panel, spec.params)
+    costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
+                      slippage_bps=spec.costs.slippage_bps)
+    shared = derive_venue_metrics(
+        load_venue(spec.data.source),
+        snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+        venue_id=spec.data.source,
+        simultaneous_legs=spec.simultaneous_legs,
+    )
+    shared["point_in_time_universe"] = 1.0 if panel.meta.get("universe_complete") else 0.0
+    shared["accrual_applied"] = 1.0
+
+    active = weights.abs().sum(axis=1) > 0
+    if not bool(active.any()):
+        typer.echo("error: the reference strategy never holds a position", err=True)
+        raise typer.Exit(code=1)
+    end = panel.prices.index[-1]
+    starts = {"full": active.idxmax()}
+    for days in sorted(window, reverse=True):
+        starts[f"last {days}d"] = max(active.idxmax(), end - pd.Timedelta(days=days))
+
+    built = noise_books(panel, weights, costs, books)
+    typer.echo(f"reference: {spec.idea_id} ({reference}); rules {ruleset.version}; "
+               f"noise books {len(built)} of {books} requested")
+    results = planted_outcomes(
+        panel=panel, reference=weights, books=built, ruleset=ruleset, shared_facts=shared,
+        alphas=alpha, window_starts=starts, min_leg_notional=spec.min_leg_notional,
+        deployable_capital_usd=capital,
+    )
+    for label, rows in results.items():
+        typer.echo("")
+        typer.echo(f"window {label} ({rows[0].window_days:.0f} days)")
+        typer.echo(f"  {'alpha':>6} {'mean ret':>9} {'med Sharpe':>10} {'admitted':>9} "
+                   f"{'early':>7} {'rejected':>9}  rejected by")
+        for r in rows:
+            typer.echo(
+                f"  {r.alpha:>6.0%} {r.mean_return:>9.1%} {r.median_sharpe:>10.2f} "
+                f"{r.admitted / r.n:>9.1%} {r.early / r.n:>7.1%} {r.rejected / r.n:>9.1%}  "
+                + ", ".join(f"{k} {v}" for k, v in r.reject_rules.most_common())
+            )
 
 
 @app.command("calibrate")

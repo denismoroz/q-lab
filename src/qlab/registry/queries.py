@@ -491,8 +491,47 @@ def family_report(session: Session, idea_id: str) -> list[FamilyMember]:
     return members
 
 
+@dataclass(slots=True)
+class ReclassifiedReject:
+    """An idea that q-lab once rejected and a later run of it routed
+    elsewhere (docs/TASKS.md T26). Every such case is a rejection the
+    instrument itself took back -- a measure of the instrument's quality."""
+
+    idea_id: str
+    rejected_trial_id: int
+    later_trial_id: int
+    later_route: str
+
+
+def reclassified_rejects(session: Session) -> list[ReclassifiedReject]:
+    """Ideas whose first `reject` was followed by a run routed anything else
+    (calibration noise left out). One row per idea: its first rejection and
+    the latest later run that did not reject."""
+    rows = (
+        session.query(Spec.idea_id, Trial.id, Trial.route)
+        .join(Trial, Trial.spec_id == Spec.id)
+        .filter(Trial.route.is_not(None), ~Spec.idea_id.startswith(CALIBRATION_IDEA_PREFIX))
+        .order_by(Trial.id)
+        .all()
+    )
+    first_reject: dict[str, int] = {}
+    later: dict[str, tuple[int, str]] = {}
+    for idea_id, trial_id, route in rows:
+        value = _enum_value(route)
+        if value == "reject":
+            first_reject.setdefault(idea_id, trial_id)
+        elif idea_id in first_reject:
+            later[idea_id] = (trial_id, value)
+    return [
+        ReclassifiedReject(idea_id, first_reject[idea_id], tid, route)
+        for idea_id, (tid, route) in sorted(later.items())
+    ]
+
+
 __all__ = [
     "CALIBRATION_IDEA_PREFIX",
+    "ReclassifiedReject",
+    "reclassified_rejects",
     "FamilyMember",
     "family_report",
     "FunnelStats",
