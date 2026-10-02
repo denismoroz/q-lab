@@ -118,6 +118,19 @@ class FitPeriodUse(StrEnum):
     INFORMATIONAL = "informational"
 
 
+class ShortForwardUse(StrEnum):
+    """What a rule's failure means on a forward test too short to resolve
+    the strategy's Sharpe (docs/FIT_VS_FORWARD.md).
+
+    DECIDE: the failure stands whatever the length. WAIT: the rule asks
+    whether the result is separable from luck, and a short window cannot
+    answer that -- its failure reads "too early to tell" (owner, 2026-10-02:
+    "сделай, чтобы тоже читалось как «рано судить»")."""
+
+    DECIDE = "decide"
+    WAIT = "wait"
+
+
 class ForwardResolution(BaseModel):
     """When a FAILED forward test is long enough to count as a failure
     rather than as "too early to tell" (docs/FIT_VS_FORWARD.md).
@@ -150,6 +163,7 @@ class Rule(BaseModel):
     fatal: bool = False
     kind: RuleKind = RuleKind.STRATEGY
     fit_period: FitPeriodUse = FitPeriodUse.CONCLUSIVE
+    on_short_forward: ShortForwardUse = ShortForwardUse.DECIDE
     near_margin: float | None = Field(
         default=None,
         description=(

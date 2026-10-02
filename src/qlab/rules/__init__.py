@@ -18,6 +18,7 @@ from qlab.rules.schema import (
     Rule,
     RuleKind,
     RuleSet,
+    ShortForwardUse,
     Stage,
     parse_version,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "RuleKind",
     "RuleSet",
     "RetiredRule",
+    "ShortForwardUse",
     "Stage",
     "VerdictRow",
     "classify_nearness",

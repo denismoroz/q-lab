@@ -1,0 +1,36 @@
+# A short forward test that fails only the separation-from-luck bar is "too
+# early to tell", also when there is no selection period to compare it with.
+#
+# Owner, 2026-10-02, on monthly re-tuned trend rejected at 98% against the
+# 99% noise bar over 447 forward days: «да, сделай чтобы тоже читалось как
+# „рано судить“».
+#
+# Under 2026-10-02.1 a forward test with no selection period (a strategy that
+# chooses its own parameters causally, docs/RETUNE.md, or one fixed before its
+# data began) was judged by the rules as they stand, so a noise-bar miss on a
+# window far too short to resolve its own Sharpe rejected it. Now, if every
+# failed rule is `on_short_forward: wait` and the forward test is shorter than
+# ((1.645 + 0.842) / S)^2 years for its own Sharpe S, the run routes
+# `needs-forward` (docs/FIT_VS_FORWARD.md). Only `shape_aware_edge` is marked:
+# the economic floor and capital rules still decide whatever the length.
+#
+# No threshold changes.
+
+version: "2026-10-02.2"
+based_on: "2026-10-02.1"
+
+rules:
+  - id: shape_aware_edge
+    stage: edge
+    metric: noise_return_percentile
+    comparator: ">="
+    threshold: 0.99
+    fatal: true
+    near_margin: 0.1
+    fit_period: informational
+    on_short_forward: wait
+    rationale: >
+      Unchanged, except `on_short_forward: wait`. Separation from matched
+      noise is a question of sample length; on a forward test too short to
+      resolve the strategy's own Sharpe its failure is "too early to tell",
+      not "does not work".

@@ -46,7 +46,13 @@ from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialSta
 from qlab.registry.models import Spec as SpecRow
 from qlab.rules.engine import EvaluationResult
 from qlab.rules.engine import evaluate as evaluate_rules
-from qlab.rules.schema import FitPeriodUse, ForwardResolution, RuleKind, RuleSet
+from qlab.rules.schema import (
+    FitPeriodUse,
+    ForwardResolution,
+    RuleKind,
+    RuleSet,
+    ShortForwardUse,
+)
 from qlab.venues.config import load_venue
 from qlab.venues.derive import derive_venue_metrics
 
@@ -703,6 +709,30 @@ def decide_fit_forward_route(
 
     routing = decide_route(forward, metrics, deployable_capital_usd)
     if selection is None:
+        # No selection period: the forward test is judged on its own. A
+        # failure only of rules that ask "separable from luck?" on a window
+        # too short to resolve its own Sharpe is too early to tell.
+        if routing.route != "reject":
+            return routing
+        failed = [r for r in forward.rows if r.passed is False]
+        waits = all(
+            (rule := by_id.get(r.rule_id)) is not None
+            and rule.on_short_forward == ShortForwardUse.WAIT
+            for r in failed
+        )
+        days = metrics.get("forward_days", 0.0)
+        needed = metrics.get("forward_days_needed")
+        if failed and waits and needed is not None and days < needed:
+            return RoutingDecision(
+                route="needs-forward",
+                reason=(
+                    f"forward test too short to tell: {days:,.0f} days fail only "
+                    f"{', '.join(r.rule_id for r in failed)}; telling a Sharpe of "
+                    f"{metrics.get('sharpe_net', float('nan')):.2f} from zero takes about "
+                    f"{needed:,.0f} days"
+                ),
+                required_capital_usd=metrics.get("min_capital_usd"),
+            )
         return routing
 
     days = metrics.get("forward_days", 0.0)
@@ -1003,10 +1033,11 @@ def evaluate_spec(
             metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
             metrics["selection_days"] = _days(split.selection) if split.selection else 0.0
             metrics["forward_days"] = _days(split.forward) if split.forward else 0.0
-            if split.forward is not None and selection_metrics is not None:
-                years = forward_years_needed(
-                    selection_metrics.get("sharpe_net"), ruleset.forward_resolution
-                )
+            if split.forward is not None:
+                # The claim a forward test must resolve: the selection period's
+                # Sharpe, or with no selection period the forward test's own.
+                claim = (selection_metrics or metrics).get("sharpe_net")
+                years = forward_years_needed(claim, ruleset.forward_resolution)
                 if years is not None:
                     metrics["forward_days_needed"] = years * 365.0
         # A strategy may report facts about its own run (a re-tuning wrapper:

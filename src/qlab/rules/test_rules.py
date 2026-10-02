@@ -750,3 +750,12 @@ def test_fit_forward_ruleset_inherits_and_marks_informational_rules() -> None:
     informational = {r.id for r in ruleset.rules if r.fit_period == FitPeriodUse.INFORMATIONAL}
     assert informational == {"honest_universe", "shape_aware_edge"}
     assert load("2026-10-01.1", rules_dir=DEFAULT_RULES_DIR).forward_resolution is None
+
+
+def test_short_forward_wait_marks_only_the_noise_bar() -> None:
+    from qlab.rules.schema import ShortForwardUse
+
+    ruleset = load("2026-10-02.2", rules_dir=DEFAULT_RULES_DIR)
+    waits = {r.id for r in ruleset.rules if r.on_short_forward == ShortForwardUse.WAIT}
+    assert waits == {"shape_aware_edge"}
+    assert ruleset.forward_resolution is not None  # inherited from 2026-10-02.1

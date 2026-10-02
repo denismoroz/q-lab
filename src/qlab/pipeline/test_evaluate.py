@@ -61,6 +61,7 @@ from qlab.rules.schema import (
     Rule,
     RuleKind,
     RuleSet,
+    ShortForwardUse,
     Stage,
 )
 
@@ -1359,3 +1360,33 @@ def test_causal_selection_is_judged_from_its_first_choice_without_waiting(sessio
 def test_causal_selection_needs_its_first_choice_date() -> None:
     with pytest.raises(ValueError, match="first causal choice"):
         _make_spec(selects_causally=True)
+
+
+NOISE_BAR = Rule(id="shape_aware_edge", stage=Stage.EDGE, metric="shape_aware_edge",
+                 comparator=Comparator.GE, threshold=0.99, fatal=True,
+                 on_short_forward=ShortForwardUse.WAIT)
+
+
+def test_forward_only_noise_miss_on_a_short_window_waits() -> None:
+    ruleset = _split_ruleset([NET_EDGE, NOISE_BAR])
+    noise_miss = _rows(("net_edge", True), ("shape_aware_edge", False))
+    kwargs = dict(ruleset=ruleset, selection=None, forward=noise_miss,
+                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 7, 1))
+    base = {"sharpe_net": 0.75, "forward_days_needed": 4000.0, "min_capital_usd": 10.0}
+
+    short = decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 447.0})
+    assert short.route == "needs-forward"
+    assert "shape_aware_edge" in short.reason
+    long = decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 4500.0})
+    assert long.route == "reject"
+
+
+def test_forward_only_economic_floor_miss_still_rejects() -> None:
+    ruleset = _split_ruleset([NET_EDGE, NOISE_BAR])
+    floor_miss = _rows(("net_edge", False), ("shape_aware_edge", False))
+    route = decide_fit_forward_route(
+        ruleset=ruleset, selection=None, forward=floor_miss, deployable_capital_usd=1000.0,
+        params_fixed_at=date(2025, 7, 1),
+        metrics={"sharpe_net": 0.2, "forward_days_needed": 9e4, "forward_days": 447.0},
+    )
+    assert route.route == "reject"
