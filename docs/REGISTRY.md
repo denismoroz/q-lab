@@ -138,8 +138,11 @@
 Калибровочный шум (`noise-*`) статус не меняет: это измерительный прибор.
 
 ### `token_spend` — бюджет
-`at`, `stage`, `idea_id?`, `agent`, `tokens_in`, `tokens_out`, `usd_est`.
-Нужен для главной метрики проекта — **цены одного выжившего**.
+`at`, `stage`, `idea_id?`, `agent`, `tokens_in`, `tokens_out`, `usd_est`; с 2026-10-02
+ещё `model`, `tokens_cache_write`, `tokens_cache_read`, `five_hour_util`,
+`seven_day_util`, `seven_day_resets_at`, `status` — занятость окон подписки, которую вызов
+сообщил после себя (`docs/BUDGET.md`). Пишет только `qlab.budget.run_agent`, каждый вызов.
+Нужен для главной метрики проекта — **цены одного выжившего** — и для калибровки гарда.
 
 ### `dossier`
 `idea_id`, `path`, `rendered_at`, `rules_version`.

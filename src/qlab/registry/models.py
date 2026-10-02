@@ -479,6 +479,18 @@ class TokenSpend(Base):
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False)
     usd_est: Mapped[float] = mapped_column(Float, nullable=False)
+    # Budget guard (qlab.budget, docs/BUDGET.md): cache traffic, the model,
+    # and the subscription windows' utilization the call reported after it
+    # ran -- the shared quota with the owner's own interactive work.
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    tokens_cache_write: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_cache_read: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    five_hour_util: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seven_day_util: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seven_day_resets_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Dossier(Base):

@@ -635,6 +635,69 @@ def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
 # --------------------------------------------------------------------------
 
 
+budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
+app.add_typer(budget_app, name="budget")
+
+
+@budget_app.command("status")
+def budget_status_cmd() -> None:
+    """Tonight's ceiling from the latest recorded reading of the shared
+    windows -- no call is made (use `qlab budget probe` for a fresh one)."""
+    from datetime import UTC, datetime, timedelta
+
+    from qlab.budget.guard import WEEKLY_CEILING, NightBudget, calibrate, nights_until
+    from qlab.budget.usage import UsageReading, Window
+    from qlab.registry.models import TokenSpend
+
+    with session_scope() as session:
+        last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
+                .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+        cal = calibrate(session)
+        if last is None:
+            typer.echo("no reading recorded yet: run `qlab budget probe`")
+            return
+        resets = last.seven_day_resets_at.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        reading = UsageReading("allowed", None, Window(last.seven_day_util, resets))
+        night = NightBudget.open(session, reading, now=now)
+        week_start = resets - timedelta(days=7)
+        rows = session.query(TokenSpend).filter(TokenSpend.at >= week_start).all()
+    by_stage: dict[str, int] = {}
+    for r in rows:
+        total = (r.tokens_in or 0) + (r.tokens_out or 0) + (r.tokens_cache_write or 0) + (
+            r.tokens_cache_read or 0)
+        by_stage[r.stage] = by_stage.get(r.stage, 0) + total
+    typer.echo(f"last reading     {last.at:%Y-%m-%d %H:%M} UTC: weekly {last.seven_day_util:.0%}, "
+               f"five-hour {last.five_hour_util or 0:.0%}")
+    typer.echo(f"weekly reset     {resets:%Y-%m-%d %H:%M} UTC "
+               f"({nights_until(resets, now)} night(s) left)")
+    typer.echo(f"tonight's target weekly {night.target_util:.1%} "
+               f"(ceiling {WEEKLY_CEILING:.0%} of the week)")
+    typer.echo(f"calibration      {cal.util_per_token * 1e8:.2f} pp of the week per million "
+               f"tokens ({cal.source}); "
+               f"cheapest call {cal.min_call_tokens:,} tokens")
+    typer.echo(f"tokens tonight   about {night.tokens_left():,}")
+    typer.echo("spent this week  " + (", ".join(f"{k} {v:,}" for k, v in by_stage.items())
+                                     or "nothing"))
+
+
+@budget_app.command("probe")
+def budget_probe_cmd() -> None:
+    """One minimal call to read the shared windows; recorded in token_spend."""
+    from qlab.budget import probe
+
+    with session_scope() as session:
+        result = probe(session)
+    r = result.report.reading
+    if r is None or r.seven_day is None:
+        typer.echo("the call reported no window reading", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"status {r.status}; weekly {r.seven_day.utilization:.0%} (resets "
+               f"{r.seven_day.resets_at:%Y-%m-%d %H:%M} UTC); five-hour "
+               f"{r.five_hour.utilization if r.five_hour else float('nan'):.0%}; "
+               f"cost {result.report.usage.total if result.report.usage else 0:,} tokens")
+
+
 @app.command("calibrate-planted")
 def calibrate_planted_cmd(
     reference: Path = typer.Option(  # noqa: B008
