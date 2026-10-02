@@ -977,6 +977,12 @@ def evaluate_spec(
             if split_mode
             else PeriodSplit(selection=None, forward=(first, last))
         )
+        warmup = None
+        if split_mode and spec.selects_causally:
+            # The strategy picks its own parameters causally (T38): before its
+            # first choice it is warming up, not fitted -- nothing to judge
+            # there, and no selection period to protect.
+            warmup, split = split.selection, PeriodSplit(selection=None, forward=split.forward)
         judged = split.forward if split.forward is not None else split.selection
         if judged is None:  # the whole window is shorter than two bars
             judged = (first, last)
@@ -992,6 +998,8 @@ def evaluate_spec(
                 metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()})
             elif split.forward is None:
                 selection_metrics = metrics
+            if warmup is not None:
+                metrics["warmup_days"] = _days(warmup)
             metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
             metrics["selection_days"] = _days(split.selection) if split.selection else 0.0
             metrics["forward_days"] = _days(split.forward) if split.forward else 0.0
@@ -1001,6 +1009,11 @@ def evaluate_spec(
                 )
                 if years is not None:
                     metrics["forward_days_needed"] = years * 365.0
+        # A strategy may report facts about its own run (a re-tuning wrapper:
+        # how many re-tunings, how often the choice changed -- T38).
+        diagnostics = getattr(strategy, "diagnostics", None)
+        if callable(diagnostics):
+            metrics.update(diagnostics())
         if extra_metrics is not None:
             resolved_extra = extra_metrics(metrics) if callable(extra_metrics) else extra_metrics
             metrics.update(resolved_extra)

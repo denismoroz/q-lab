@@ -1338,3 +1338,24 @@ def test_without_forward_resolution_the_window_is_judged_as_before(session, tmp_
 def test_fixed_date_without_evidence_is_refused() -> None:
     with pytest.raises(ValueError, match="params_fixed_evidence"):
         _make_spec(params_fixed_at=date(2026, 1, 1))
+
+
+def test_causal_selection_is_judged_from_its_first_choice_without_waiting(session, tmp_path):
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 3), params_fixed_evidence="test",
+        selects_causally=True,
+    )
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    # No selection period: the forward test's own route stands, even when short.
+    assert result.routing.route == "paper"
+    assert result.metrics["warmup_days"] == pytest.approx(2.0)
+    assert result.metrics["selection_days"] == 0.0
+    assert not any(k.startswith("fit_") for k in result.metrics)
+
+
+def test_causal_selection_needs_its_first_choice_date() -> None:
+    with pytest.raises(ValueError, match="first causal choice"):
+        _make_spec(selects_causally=True)

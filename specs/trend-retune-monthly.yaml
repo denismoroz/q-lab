@@ -1,0 +1,94 @@
+# Trend with regular re-tuning (docs/TASKS.md T38, docs/RETUNE.md).
+#
+# Owner, 2026-10-02: "для каждой стратегии подбор параметров должен быть
+# периодическим - раз в неделю/день или месяц". One of a set declared together
+# before any member ran: trend-retune-daily, -weekly, -monthly. Same grid, same
+# window (expanding: every return realised so far) and measure (Sharpe after
+# costs); only the re-tuning frequency differs. Reported as a whole set.
+#
+# At each re-tuning the wrapper scores all ten candidates (2 coin-selection
+# rules x 5 lookback sets) on returns realised BEFORE that bar and trades the
+# best until the next re-tuning; every day from the first choice is a forward
+# test by construction (`selects_causally`, docs/FIT_VS_FORWARD.md).
+
+idea_id: trend-retune-monthly
+title: 'Trend (живой код) с перенастройкой раз в месяц: выбор монет и периодов только
+  по прошлому'
+code_ref: qlab.strategies.retune:Retune
+params_fixed_at: 2025-07-01
+params_fixed_evidence: >
+  The wrapper's first causal choice (qlab.strategies.retune): the inner
+  strategy's warm-up of 151 daily closes from 2025-01-01 plus one whole
+  re-tuning period -- warm-up arithmetic, not a result. Grid values come from
+  sources: lookbacks 30/60/90/120 and their ensemble from frab
+  research/trend_following (2026-09-14); the market-cap universe rule
+  declared 2026-10-02 (q-lab f7577f4), the volume rule 2026-09-22 (c6bf6a7).
+  Both rules' fixed results were known when this grid was declared on
+  2026-10-02: that is the part of the grid that stays in-sample.
+selects_causally: true
+params:
+  inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+  base_params:
+    coins: null
+    capital_usd: 3000.0
+    lookbacks:
+    - 30
+    - 60
+    - 90
+    - 120
+    vol_window: 30
+    vol_target_daily: 0.02
+    leverage_cap: 3.0
+    risk_scale: 0.2
+    book_vol_target_ann: 0.14
+    book_vol_window_days: 60
+    book_vol_min_days: 20
+    book_vol_scale_min: 0.25
+    book_vol_scale_max: 2.0
+    book_vol_prior_ann: 0.3
+    min_history_days: 151
+    top_k_requires_history: true
+  grid:
+    universe:
+      cap:
+        top_k_by_market_cap: 25
+        exclude_tags:
+        - stablecoin
+      volume:
+        top_k_by_volume: 25
+    lookbacks:
+      ens:
+        lookbacks:
+        - 30
+        - 60
+        - 90
+        - 120
+      l30:
+        lookbacks:
+        - 30
+      l60:
+        lookbacks:
+        - 60
+      l90:
+        lookbacks:
+        - 90
+      l120:
+        lookbacks:
+        - 120
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1d
+  start: '2025-01-01'
+  end: '2026-09-20'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []

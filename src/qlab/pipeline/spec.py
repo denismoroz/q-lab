@@ -215,6 +215,24 @@ class StrategySpec(BaseModel):
     row). Required whenever the date is given: an undocumented date would
     let anyone move the boundary to where the results look best."""
 
+    selects_causally: bool = False
+    """The strategy chooses its own parameters from past data only, by code
+    (`qlab.strategies.retune.Retune`), and `params_fixed_at` is the bar of its
+    FIRST choice. Before that it is warming up, not fitted, so the data
+    before it is neither judged nor called a selection period; from it on
+    every day trades a choice made without that day -- the forward test,
+    judged now on history (owner, 2026-10-02: "а нельзя ли делать backtest на
+    3 месяца назад, а forward делать на оставшихся?").
+
+    What stays in-sample is the grid the spec author offered; the evidence
+    must say where its values come from."""
+
+    @model_validator(mode="after")
+    def _causal_selection_needs_a_start(self) -> StrategySpec:
+        if self.selects_causally and self.params_fixed_at is None:
+            raise ValueError("selects_causally needs params_fixed_at: the first causal choice")
+        return self
+
     @model_validator(mode="after")
     def _fixed_date_has_evidence(self) -> StrategySpec:
         if self.params_fixed_at is not None and not (self.params_fixed_evidence or "").strip():
