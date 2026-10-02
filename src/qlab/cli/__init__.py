@@ -540,6 +540,26 @@ def evaluate_cmd(
 # --------------------------------------------------------------------------
 
 
+@spec_app.command("check-sources")
+def spec_check_sources_cmd(
+    spec_paths: list[Path] = typer.Argument(..., metavar="SPEC..."),  # noqa: B008
+) -> None:
+    """Does every number and choice in these specs cite a checkable source
+    (docs/SOURCES.md)? A spec that fails does not run."""
+    from qlab.pipeline.sources import source_problems
+
+    failed = 0
+    for path in spec_paths:
+        problems = source_problems(load_spec(path))
+        typer.echo(f"{path}: {'ok' if not problems else f'{len(problems)} problem(s)'}")
+        for problem in problems:
+            typer.echo(f"  {problem}")
+        failed += bool(problems)
+    if failed:
+        typer.echo(f"{failed} of {len(spec_paths)} spec(s) would not run", err=True)
+        raise typer.Exit(code=1)
+
+
 @spec_app.command("timeframes")
 def spec_timeframes_cmd(
     spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008

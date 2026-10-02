@@ -85,3 +85,16 @@ unexpressed_mechanisms:
   - "whole-book volatility targeting (TrendParams.book_vol_target_ann / book_vol_scale)"
 
 exploratory: "owner 2026-10-01: timeframe robustness of the trend transcription (whole-book vol targeting not expressed); informs, does not decide"
+
+# Where every number and choice comes from (docs/SOURCES.md); checked
+# before any run starts.
+sources:
+  "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"
+  "lookbacks_days": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"
+  "vol_window_days": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"
+  "vol_target_daily": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"
+  "leverage_cap": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"
+  "risk_scale": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"
+  "min_history_days": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS) -- the transcription's own names for the same values"

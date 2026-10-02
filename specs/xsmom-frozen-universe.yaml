@@ -94,3 +94,14 @@ simultaneous_legs: 1
 # setting), which sizes the wallet, not the book's weights. Nothing that
 # shapes returns per unit of notional is missing.
 unexpressed_mechanisms: []
+
+# Where every number and choice comes from (docs/SOURCES.md); checked
+# before any run starts.
+sources:
+  "lookbacks_days": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)"
+  "rebalance_days": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)"
+  "anchor_dow": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)"
+  "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0"
+  "universe": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults), DEFAULT_XSMOM_UNIVERSE"

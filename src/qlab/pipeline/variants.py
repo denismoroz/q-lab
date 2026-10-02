@@ -32,6 +32,10 @@ from qlab.pipeline.evaluate import resolve_strategy
 from qlab.pipeline.spec import StrategySpec
 
 SPLIT_CADENCE_CODE_REF = "qlab.strategies.cadence:SplitCadence"
+_SPLIT_REQUEST = (
+    "владелец 2026-10-01: «возможно нужно использовать разные тайфреймы для входа и разные "
+    "для выхода»"
+)
 
 
 def _check_interval(code_ref: str, interval: str) -> None:
@@ -104,6 +108,18 @@ def split_cadence_variant(
             "exit_every": exit_every,
         },
         "data": {**raw["data"], "interval": fast},
+        # The inner strategy's citations move under `inner_params`; the
+        # wrapper's own choices cite the owner's request (docs/SOURCES.md).
+        "sources": {
+            **{
+                (k if k == "min_leg_notional" or k == "costs" or k.startswith("costs.")
+                 else f"inner_params.{k}"): v
+                for k, v in (raw.get("sources") or {}).items()
+            },
+            "inner_code_ref": "src/" + raw["code_ref"].split(":")[0].replace(".", "/") + ".py",
+            "entry_every": _SPLIT_REQUEST,
+            "exit_every": _SPLIT_REQUEST,
+        },
     }
     header = _header(
         base,

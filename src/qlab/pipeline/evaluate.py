@@ -40,6 +40,7 @@ from qlab.harness.lookahead import lookahead_violation
 from qlab.harness.metrics import compute_metrics, min_capital_usd
 from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, validate_weights
+from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
 from qlab.registry import repo
 from qlab.registry.lifecycle import StatusDecision, apply_route
@@ -771,8 +772,13 @@ def evaluate_spec(
     ) = None,
     update_idea_status: bool = True,
     check_lookahead: bool = True,
+    check_sources: bool = True,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
+
+    Unless `check_sources` is False, every number and choice in the spec must
+    cite a checkable source (`qlab.pipeline.sources`) or the run does not
+    start: `SpecSourceError` is raised and no trial is written.
 
     Unless `check_lookahead` is False, the strategy is run again on panels
     whose data after a cut was changed, and its weights up to the cut must
@@ -853,6 +859,10 @@ def evaluate_spec(
     honest to record as a rule verdict (see docs/REGISTRY.md's three
     legitimate verdict kinds; there is no fourth kind for "run crashed").
     """
+    if check_sources:
+        # Before anything else: a spec with a number from nowhere does not
+        # start (docs/SOURCES.md), so no trial is written for it.
+        require_sources(spec)
     spec_row = _get_or_create_spec_row(session, spec)
     panel = resolve_panel(session, spec)
 

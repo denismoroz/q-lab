@@ -200,6 +200,8 @@ def run_noise_series(
             # Its generators are q-lab's own and tested; the candidate it is
             # matched to is checked on its own run (docs/LOOKAHEAD.md).
             check_lookahead=False,
+            # Noise params (generator, seed) are the instrument's own.
+            check_sources=False,
         )
         trials.append(
             NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)

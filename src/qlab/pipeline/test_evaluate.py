@@ -256,6 +256,10 @@ def _make_spec(**overrides: object) -> StrategySpec:
         "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0},
         "min_leg_notional": 12.0,
         "unexpressed_mechanisms": [],
+        # Test fixtures cite the test author (docs/SOURCES.md).
+        "sources": {"weight": "owner 2026-01-01: test fixture",
+                    "costs": "owner 2026-01-01: test fixture",
+                    "min_leg_notional": "owner 2026-01-01: test fixture"},
     }
     base.update(overrides)
     return StrategySpec.model_validate(base)
@@ -1412,3 +1416,15 @@ def test_a_strategy_that_reads_the_future_is_an_error_not_a_verdict(session, tmp
     assert result.routing.route == "error"
     assert "look-ahead" in result.routing.reason
     assert session.query(Verdict).filter(Verdict.trial_id == result.trial_id).count() == 0
+
+
+def test_a_spec_with_an_unsourced_number_does_not_start(session, tmp_path) -> None:
+    from qlab.pipeline.sources import SpecSourceError
+
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4}, sources={"costs": "owner 2026-01-01: test"})
+
+    with pytest.raises(SpecSourceError, match="no source for weight"):
+        evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+                      deployable_capital_usd=1000.0)
+    assert session.query(Trial).count() == 0

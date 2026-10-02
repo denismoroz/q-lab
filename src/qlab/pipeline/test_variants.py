@@ -31,6 +31,8 @@ BASE = {
     "min_leg_notional": 10.0,
     "unexpressed_mechanisms": [],
 }
+BASE["sources"] = {k: "owner 2026-01-01: test fixture"
+                   for k in [*BASE["params"], "costs", "min_leg_notional"]}
 
 
 @pytest.fixture()
@@ -76,3 +78,8 @@ def test_split_cadence_variant_wraps_the_base_strategy(base, tmp_path) -> None:
     assert spec.params["inner_code_ref"] == BASE["code_ref"]
     assert spec.params["inner_params"] == BASE["params"]
     assert (spec.params["entry_every"], spec.params["exit_every"]) == ("1D", "1h")
+    # Citations follow the params under `inner_params`; the run may start.
+    from qlab.pipeline.sources import source_problems
+
+    assert "inner_params.vol_target_daily" in spec.sources
+    assert source_problems(spec) == []

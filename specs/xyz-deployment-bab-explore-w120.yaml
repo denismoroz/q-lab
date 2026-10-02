@@ -66,3 +66,16 @@ simultaneous_legs: 1
 unexpressed_mechanisms: []
 
 exploratory: "owner 2026-10-01: run on the survivors-only data that exists, beta window 120 days; informs, does not decide"
+
+# Where every number and choice comes from (docs/SOURCES.md); checked
+# before any run starts.
+sources:
+  "market": "docs/STAGE3_XYZ_BAB.md (xyz:XYZ100, the deployment's own index)"
+  "window_bars": "docs/STAGE3_XYZ_BAB.md (exploratory grid: 365, 180, 120, 90, 60)"
+  "min_observations": "derived: round(120 * 200 / 365); docs/STAGE3_XYZ_BAB.md, «в той же пропорции 200/365»"
+  "dimson_lags": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "shrink_weight": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "shrink_target": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "costs.taker_fee_bps": "derived: 0.00070 * 10000; HIP-3 taker at the standard spot rate, funding-rate-arbitrage/src/frab/constants.py SPOT_TAKER"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"

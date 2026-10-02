@@ -122,3 +122,18 @@ required_instruments:
   - ETH
   - SOL
   - AVAX
+
+# Where every number and choice comes from (docs/SOURCES.md); checked
+# before any run starts.
+sources:
+  "spot_columns": "src/qlab/data/sources/base.py (SPOT_COLUMN_SUFFIX naming)"
+  "hedge_columns": "src/qlab/data/sources/base.py (perp columns are bare coin names)"
+  "spot_share": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
+  "hedge_threshold": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
+  "sticky_exit_hours": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
+  "ratchet_threshold": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
+  "mom_short_days": "funding-rate-arbitrage/src/frab/strategy/b2/book.py: H14, H30 = 14 * 24, 30 * 24 hours"
+  "mom_long_days": "funding-rate-arbitrage/src/frab/strategy/b2/book.py: H14, H30 = 14 * 24, 30 * 24 hours"
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"

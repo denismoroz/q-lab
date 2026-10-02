@@ -215,6 +215,11 @@ class StrategySpec(BaseModel):
     row). Required whenever the date is given: an undocumented date would
     let anyone move the boundary to where the results look best."""
 
+    sources: dict[str, str] = Field(default_factory=dict)
+    """Where every number and choice comes from: dotted path -> citation
+    (`qlab.pipeline.sources`, docs/SOURCES.md). A citation at a path covers
+    everything under it. Checked before any run starts."""
+
     selects_causally: bool = False
     """The strategy chooses its own parameters from past data only, by code
     (`qlab.strategies.retune.Retune`), and `params_fixed_at` is the bar of its

@@ -176,6 +176,9 @@ def _reference_spec() -> StrategySpec:
             "min_leg_notional": 10.0,
             "simultaneous_legs": 1,
             "unexpressed_mechanisms": [],
+            "sources": {"seed": "owner 2026-01-01: test fixture",
+                        "costs": "owner 2026-01-01: test fixture",
+                        "min_leg_notional": "owner 2026-01-01: test fixture"},
         }
     )
 
