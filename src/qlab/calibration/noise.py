@@ -484,6 +484,31 @@ def neutralize(
     return pd.DataFrame(result, index=raw.index, columns=raw.columns)
 
 
+_REFERENCE_CACHE: dict[tuple, pd.DataFrame] = {}
+_REFERENCE_CACHE_SIZE = 4
+
+
+def _reference_weights(panel: MarketPanel, code_ref: str, params: Mapping[str, object]
+                       ) -> pd.DataFrame:
+    """The reference strategy's weights, computed once per panel and params:
+    every noise book of a series copies the same reference shape, and on a
+    large panel (Binance 2019-2026, 2570 x 902) recomputing it for each of
+    200 books took about a minute each."""
+    import json
+
+    index = panel.prices.index
+    key = (panel.snapshot_id, str(index[0]), str(index[-1]), len(index),
+           hash(tuple(panel.prices.columns)), code_ref,
+           json.dumps(dict(params), sort_keys=True, default=str))
+    if key not in _REFERENCE_CACHE:
+        weights = resolve_strategy(code_ref).target_weights(panel, params)
+        validate_weights(panel, weights)
+        if len(_REFERENCE_CACHE) >= _REFERENCE_CACHE_SIZE:
+            _REFERENCE_CACHE.pop(next(iter(_REFERENCE_CACHE)))
+        _REFERENCE_CACHE[key] = weights
+    return _REFERENCE_CACHE[key]
+
+
 class NoiseStrategy:
     """A `qlab.harness.strategy.Strategy` whose weights are noise, built
     from a real reference strategy's own weights (docs/TASKS.md, T16).
@@ -534,9 +559,7 @@ class NoiseStrategy:
         if not isinstance(reference_params, Mapping):
             raise TypeError("params['reference_params'] must be a mapping")
 
-        reference_strategy = resolve_strategy(reference_code_ref)
-        reference_weights = reference_strategy.target_weights(panel, reference_params)
-        validate_weights(panel, reference_weights)
+        reference_weights = _reference_weights(panel, reference_code_ref, reference_params)
 
         raw = GENERATORS[generator_name](reference_weights, panel, seed=seed)
         if neutral:
