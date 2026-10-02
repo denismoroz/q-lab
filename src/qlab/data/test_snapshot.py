@@ -217,20 +217,38 @@ class TestBadPriceBarsExcludedFromTradeable:
         )
 
         spot = out_prices["BTC-SPOT"]
-        # The invariant: the placeholder price never reaches the panel. The two
-        # bars where it actually traded (5 and 1 tiny trades) are flagged by
-        # their distance from the perp -- NaN and untradeable.
-        assert spot.iloc[[0, 5]].isna().all()
-        assert not tradeable["BTC-SPOT"].iloc[[0, 5]].any()
-        # Its zero-trade days have no price of their own and are marked at the
-        # perp (frab's own convention) -- or, right after a flagged bar, read
-        # as a jump and dropped too. Never the placeholder.
+        # The invariant: the placeholder price never reaches the panel. Every
+        # placeholder bar sits ~70x off the perp and is flagged on its raw
+        # price, traded or not; the first real print after it is a -98.8%
+        # jump off the placeholder and is flagged too.
+        assert spot.iloc[:12].isna().all()
+        assert not tradeable["BTC-SPOT"].iloc[:12].any()
         assert not spot.isin([6969696.0, 7979573.0]).any()
-        assert (spot.iloc[[2, 3, 4, 7, 8, 9, 10]] == 100000.0).all()
-        assert (spot.dropna() < 2 * perp_prices.reindex(spot.dropna().index)).all()
-        # Real trading afterwards keeps its real prints.
-        assert spot.iloc[11] == 97578.0 and spot.iloc[12] == 97597.0
+        # Afterwards the spot is marked at its own perp (owner's decision
+        # 2026-10-02), not at its own print.
+        assert spot.iloc[12] == 97650.0
         assert tradeable["BTC-SPOT"].iloc[12]
+
+    def test_spot_is_marked_at_its_perp_but_keeps_its_own_listing_and_volume(self):
+        idx = pd.date_range("2026-06-17 22:00", periods=4, freq="1h", tz="UTC")
+        perp = pd.Series([6.7587, 6.7562, 6.7661, 6.70], index=idx)
+        # A real off-market sale at 4.60 (2026-06-17 23:00), then a quiet hour.
+        spot_raw = pd.Series([6.7587, 4.60, 4.60, 6.71], index=idx)
+        import dataclasses
+
+        spot = dataclasses.replace(
+            _hist("AVAX-SPOT", idx, is_delisted=False, prices=spot_raw),
+            trade_count=pd.Series([3, 1, 0, 2], index=idx, dtype="int64"),
+            volume=pd.Series([10.0, 1.0, 0.0, 5.0], index=idx),
+        )
+        histories = {"AVAX": _hist("AVAX", idx, is_delisted=False, prices=perp),
+                     "AVAX-SPOT": spot}
+        prices, _f, tradeable, volume = snap._build_frames_from_histories(
+            histories, idx, pd.Timedelta(hours=1)
+        )
+        pd.testing.assert_series_equal(prices["AVAX-SPOT"], perp, check_names=False)
+        assert tradeable["AVAX-SPOT"].all()
+        assert list(volume["AVAX-SPOT"]) == [10.0, 1.0, 0.0, 5.0]
 
     def test_ordinary_instrument_unaffected(self):
         """A normal, non-corrupted price series must not lose any

@@ -222,21 +222,6 @@ def _build_frames_from_histories(
         hist = histories[coin]
         price_cols[coin] = hist.prices.reindex(full_index)
         volume_cols[coin] = hist.volume.reindex(full_index)
-        # A spot candle with no trades has no price of its own: the venue
-        # repeats the last trade, which on a thin token can be days old and
-        # far from fair value (AVAX spot sat at 4.60 for hours while its perp
-        # traded at 6.6, 2026-06-18; the next real trade at 6.26 then read as
-        # +36% in an hour). On such bars the spot is marked at its own perp --
-        # the convention frab's live and paper engines already use for every
-        # spot leg. Bars with real trades keep their real price.
-        if coin.endswith(SPOT_COLUMN_SUFFIX):
-            perp_name = coin[: -len(SPOT_COLUMN_SUFFIX)]
-            if perp_name in histories:
-                no_trade = hist.trade_count.reindex(full_index).fillna(0) <= 0
-                perp_price = histories[perp_name].prices.reindex(full_index)
-                price_cols[coin] = price_cols[coin].where(
-                    ~(no_trade & price_cols[coin].notna() & perp_price.notna()), perp_price
-                )
         funding_cols[coin] = align_funding_to_index(
             hist.funding, full_index, funding_native_interval
         )
@@ -283,8 +268,9 @@ def _build_frames_from_histories(
         # the same "exclude just the affected bars" policy as the funding
         # gap above, not a guess and not a whole-instrument drop.
         perp = coin[: -len(SPOT_COLUMN_SUFFIX)] if coin.endswith(SPOT_COLUMN_SUFFIX) else None
+        raw_price = price_cols[coin]
         bad_price = detect_bad_price_bars(
-            price_cols[coin],
+            raw_price,
             trade_count=hist.trade_count.reindex(full_index),
             reference=(
                 histories[perp].prices.reindex(full_index)
@@ -303,6 +289,23 @@ def _build_frames_from_histories(
             price_cols[coin] = price_cols[coin].where(~bad_price)
             volume_cols[coin] = volume_cols[coin].where(~bad_price)
             tradeable &= ~bad_price
+
+        # Spot legs are MARKED AT THEIR OWN PERP (owner's decision 2026-10-02),
+        # the convention frab's live and paper engines use. A thin spot token's
+        # own prints are no mark for a holder: zero-trade candles repeat a
+        # days-old trade, and real trades land far from the market (AVAX spot
+        # sold at 4.60 against a 6.76 perp, 2026-06-17), which let the harness
+        # invent profit on a hedged spot leg. The spot's own data still decides
+        # WHEN it exists and is tradeable (listing, bars flagged above as not
+        # 1:1 with the perp); only the price is the perp's. Volume stays the
+        # spot's own, so liquidity measures stay honest. This presumes the token
+        # is 1:1 with the perp's asset -- what `bridge_safe` asserts in
+        # production (docs/TASKS.md T30); a token far from its perp is flagged
+        # above and never marked.
+        if perp is not None and perp in histories:
+            perp_price = histories[perp].prices.reindex(full_index)
+            price_cols[coin] = perp_price.where(price_cols[coin].notna())
+            tradeable &= perp_price.notna()
 
         tradeable_cols[coin] = tradeable
 
