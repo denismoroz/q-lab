@@ -281,16 +281,19 @@ def test_reproduces_live_btc_spot_defect_exact_values():
     assert not flagged.iloc[12]  # 97597 vs 97578: an ordinary ~0.02% move
 
 
-def test_isolated_single_repeat_is_flagged_not_ignored():
-    """A run of length 2 (not "many") is still a constancy hit -- see the
-    function's docstring: no magnitude to calibrate, it's a pure equality
-    test, so there is no minimum run length below which it's ignored."""
-    idx = pd.date_range("2025-01-01", periods=3, freq="1D", tz="UTC")
-    prices = _series(idx, [100.0, 100.0, 101.0])
-    flagged = detect_bad_price_bars(prices)
-    assert flagged.iloc[0]
-    assert flagged.iloc[1]
-    assert not flagged.iloc[2]
+def test_a_single_repeat_is_ordinary_rounding_not_a_placeholder():
+    """Revised 2026-10-02: Hyperliquid rounds prices to five significant
+    figures, so two equal closes in a row are ordinary (BTC hourly: ~0.7% of
+    pairs). Only a run of three or more is flagged."""
+    idx = pd.date_range("2025-01-01", periods=3, freq="1h", tz="UTC")
+    prices = _series(idx, [83708.0, 83708.0, 83711.0])
+    assert not detect_bad_price_bars(prices).any()
+
+
+def test_a_run_of_three_is_flagged_in_full():
+    idx = pd.date_range("2025-01-01", periods=5, freq="1h", tz="UTC")
+    prices = _series(idx, [100.0, 101.0, 101.0, 101.0, 102.0])
+    assert list(detect_bad_price_bars(prices)) == [False, True, True, True, False]
 
 
 def test_ordinary_varying_series_is_never_flagged():

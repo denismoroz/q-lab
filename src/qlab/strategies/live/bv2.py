@@ -45,8 +45,14 @@ decision is the live book's own:
   an unknown high is not the close (`qlab.data.panel.MarketPanel.high`). A bar
   with an unknown high on a coin whose book is running raises.
 - **A coin's book starts on the first bar where both its legs are
-  tradeable,** with the sticky-exit state rebuilt from the preceding bars
-  exactly as the live engine's `_warm_signals` does.
+  tradeable AND the panel already holds the history the live engine loads
+  at startup** (`HISTORY_BARS + WARMUP_BARS` perp closes), with the
+  sticky-exit state rebuilt from the preceding bars exactly as its
+  `_warm_signals` does. For an established coin whose earlier hourly
+  history the panel lacks (the venue serves only its last 5000 candles),
+  this is what the live engine would see; starting earlier would leave the
+  30-day momentum blind for a month and the hedge unable to switch on. A
+  coin genuinely younger than that history would start earlier live.
 - **A bar where a leg is not tradeable is skipped,** as the live engine waits
   on missing data; the book is not stepped and holds nothing in the harness
   for that bar.
@@ -121,11 +127,12 @@ class LiveBv2:
             )
 
             coin_equity = np.full(n, p.book_capital)
-            started = np.flatnonzero(ok)
+            valid = np.flatnonzero(~np.isnan(px))  # closes the live engine would hold
+            history_before = np.cumsum(~np.isnan(px)) - (~np.isnan(px)).astype(int)
+            started = np.flatnonzero(ok & (history_before >= HISTORY_BARS + WARMUP_BARS))
             if started.size:
                 i0 = int(started[0])
                 book = _book.CoinBook.new(coin, p)
-                valid = np.flatnonzero(~np.isnan(px))  # closes the live engine would hold
                 closes = px[valid]
                 # Funding history feeds only the carry signal; an unknown rate
                 # reads as 0 there, exactly like the live engine's

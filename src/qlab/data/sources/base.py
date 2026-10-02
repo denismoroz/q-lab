@@ -394,17 +394,18 @@ def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
     predecessor or successor to compare against is never flagged (nothing
     to detect an anomaly against):
 
-    - constancy: identical to the bar immediately BEFORE or AFTER it. No
-      magnitude to calibrate -- a real market, quoted at full float
-      precision (not rounded to cents), essentially never prints the exact
-      same close on two consecutive bars. Checking both directions catches
-      the FIRST bar of a repeated run too, not just the second bar onward
-      (the run 6969696, 6969696, 6969696 needs to flag all three, not just
-      the last two). A genuinely pegged asset can trip this on an ordinary
-      day; marking one flat bar untradeable there is the same conservative
-      trade-off `snapshot.py` already makes for a funding gap -- excluding
-      the affected bar, not guessing, and not dropping the whole
-      instrument.
+    - constancy: part of a RUN of three or more identical closes; every
+      bar of such a run is flagged, the first included. Two identical closes
+      in a row are NOT enough (revised 2026-10-02): the original premise --
+      "a real market, quoted at full float precision, essentially never
+      prints the same close twice" -- is false on Hyperliquid, which rounds
+      prices to five significant figures (BTC to a whole dollar). On hourly
+      bars BTC repeats its close on about 0.7% of consecutive pairs (32 of
+      ~4700 hours, 2026), and flagging them knocked real bars out of every
+      hourly panel, breaking held positions in the harness. A run of three
+      needs two such coincidences in a row -- about one bar in 20,000 at
+      that rate -- while the placeholder this check exists for held one
+      price for 5 and 6 bars at a time.
     - implausible jump: see `MAX_PLAUSIBLE_BAR_MOVE` for the threshold and
       its justification.
 
@@ -417,8 +418,9 @@ def detect_bad_price_bars(prices: pd.Series) -> pd.Series:
         return pd.Series(False, index=prices.index, dtype=bool)
 
     prev = prices.shift(1)
-    nxt = prices.shift(-1)
-    constant = (prices == prev) | (prices == nxt)
+    run_id = (prices != prev).cumsum()
+    run_length = run_id.map(run_id.value_counts())
+    constant = (run_length >= 3) & prices.notna()
 
     pct_change = (prices - prev).abs() / prev.abs()
     big_jump = pct_change > MAX_PLAUSIBLE_BAR_MOVE

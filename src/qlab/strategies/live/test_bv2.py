@@ -66,7 +66,7 @@ def test_weights_are_valid_and_the_hedge_turns_on_in_the_downtrend() -> None:
 def test_unknown_bar_high_is_refused_not_replaced_by_the_close() -> None:
     panel = _panel()
     high = panel.high.copy()
-    high.iloc[100, 0] = np.nan
+    high.iloc[900, 0] = np.nan  # after the book has started (startup history = 788 bars)
     broken = MarketPanel(
         snapshot_id="bv2", prices=panel.prices, funding=panel.funding,
         tradeable=panel.tradeable, meta=panel.meta, high=high,
@@ -75,11 +75,18 @@ def test_unknown_bar_high_is_refused_not_replaced_by_the_close() -> None:
         LiveBv2().run(broken, PARAMS)
 
 
-def test_book_starts_only_when_both_legs_are_tradeable() -> None:
-    panel = _panel(spot_from=24 * 10)
-    weights = LiveBv2().target_weights(panel, PARAMS)
-    assert (weights.iloc[: 24 * 10] == 0.0).all().all()
-    assert weights["BTC-SPOT"].iloc[24 * 10] > 0
+def test_book_starts_only_with_both_legs_and_the_startup_history() -> None:
+    from qlab.strategies.live.bv2 import HISTORY_BARS, WARMUP_BARS
+
+    need = HISTORY_BARS + WARMUP_BARS
+    late_spot = 24 * 40  # spot lists after the startup history already exists
+    weights = LiveBv2().target_weights(_panel(spot_from=late_spot), PARAMS)
+    assert (weights.iloc[:late_spot] == 0.0).all().all()
+    assert weights["BTC-SPOT"].iloc[late_spot] > 0
+
+    early = LiveBv2().target_weights(_panel(), PARAMS)  # both legs from bar 0
+    assert (early.iloc[:need] == 0.0).all().all()  # waits for the history
+    assert early["BTC-SPOT"].iloc[need] > 0
 
 
 def test_adapter_never_sees_the_future() -> None:
