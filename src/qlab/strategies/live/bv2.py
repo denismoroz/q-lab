@@ -12,8 +12,10 @@ stage 4, "переходник для стратегий со своим счё�
 
 ## How weights are read
 
-Each coin has its own `CoinBook` with `capital / len(coins)`, exactly as the
-live engine runs them. After every bar is stepped, a coin's exposures are
+Weights are read on decision bars only -- a fill, a book start, a pause on
+missing data -- and held in between (see `run`). Each coin has its own
+`CoinBook` with `capital / len(coins)`, exactly as the live engine runs them.
+After every bar is stepped, a coin's exposures are
 
     spot column  (`<COIN>-SPOT`):  +units_spot * P  (+ carry_units * P)
     perp column  (`<COIN>`):        -short_size * P  (- carry_units * P)
@@ -110,6 +112,9 @@ class LiveBv2:
         exposure = pd.DataFrame(0.0, index=index, columns=columns)
         equity = np.zeros(n)
         liquidations = 0
+        # Bars on which some book actually did something: a fill, a start, or
+        # a pause/resume on missing data. Weights are re-read only there.
+        decided = np.zeros(n, dtype=bool)
 
         for coin in p.coins:
             perp, spot = coin, f"{coin}{SPOT_COLUMN_SUFFIX}"
@@ -150,11 +155,15 @@ class LiveBv2:
                         p,
                     )
                 _book.start_book(book, bar_ms=_ms(index[i0]), price=px[i0], params=p)
+                decided[i0] = True
 
                 last_equity = book.equity(px[i0])
                 for i in range(i0, n):
                     if not ok[i]:
                         coin_equity[i] = last_equity
+                        decided[i] = True
+                        if i + 1 < n:
+                            decided[i + 1] = True
                         continue
                     if np.isnan(hi[i]):
                         raise ValueError(
@@ -173,6 +182,8 @@ class LiveBv2:
                         high=float(hi[i]),
                     )
                     liquidations += sum(1 for e in events if e.get("kind") == "liquidation")
+                    if events:
+                        decided[i] = True
                     price = float(px[i])
                     # The carry sleeve holds spot long and perp short in equal
                     # units: `carry_units` with the margin model, the fixed
@@ -189,7 +200,16 @@ class LiveBv2:
                     coin_equity[i] = last_equity
             equity += coin_equity
 
-        weights = exposure.div(equity, axis=0).where(panel.tradeable, 0.0)
+        # The books hold UNITS; as fractions of equity they drift every bar
+        # with price although nothing trades. Handing the drift to the harness
+        # would book a trade every hour (costs on turnover that never
+        # happened) and make every bar a "decision" for matched noise, which
+        # then redraws hourly and fails structural matching. So weights are
+        # read at decision bars -- fills, starts, data pauses -- and held in
+        # between: the harness sees the strategy's own decisions.
+        read = exposure.div(equity, axis=0)
+        weights = read.where(pd.Series(decided, index=index), np.nan).ffill().fillna(0.0)
+        weights = weights.where(panel.tradeable, 0.0)
         return LiveBv2Run(
             weights=weights,
             book_equity=pd.Series(equity, index=index),

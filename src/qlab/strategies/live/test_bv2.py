@@ -109,3 +109,12 @@ def test_missing_column_is_named() -> None:
     with pytest.raises(ValueError, match="ETH"):
         LiveBv2().run(panel, {**PARAMS, "coins": ["BTC", "ETH"],
                               "short_leverage": {"BTC": 3.0, "ETH": 2.0}})
+
+
+def test_weights_change_only_when_the_book_trades() -> None:
+    """The book holds units; as fractions they would drift every bar with
+    price. Weights are re-read only on decision bars, so they change rarely --
+    on hedge switches, ratchet sells, starts -- not hourly."""
+    weights = LiveBv2().target_weights(_panel(), PARAMS)
+    changed = (weights.diff().abs().sum(axis=1) > 0).sum()
+    assert 0 < changed < 0.05 * len(weights)
