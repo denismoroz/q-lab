@@ -1,0 +1,65 @@
+# Strategy B v2 through frab's LIVE book (qlab.strategies.live.bv2), not the
+# transcription. Written 2026-10-02, committed before its first run.
+#
+# The transcription (specs/bv2.yaml) is not evaluable: it leaves out the
+# margin pool, top-ups, liquidation and refill. This spec calls the live
+# book, which carries all of them, so nothing is declared unexpressed. What
+# the harness accounts differently from the book -- liquidation at the bar's
+# close instead of at the liquidation level, the spec's costs instead of
+# frab's own fees, the spot leg on the real spot column instead of the perp
+# price -- is a gap of bookkeeping, not of decisions, and the book's own
+# equity is compared against the harness afterwards (docs/BV2_LIVE.md).
+
+idea_id: strategy-b-v2
+title: "Strategy B v2 — live frab book, hourly, production b2 configuration"
+code_ref: "qlab.strategies.live.bv2:LiveBv2"
+
+# The production `b2` instance verbatim (frab.db strategies.params_json on
+# 10.8.0.5, id 3, read 2026-10-01). `b2_cold` differs only in
+# hedge_margin_headroom 1.5 -- a second spec if it is ever needed.
+params:
+  coins: [BTC, ETH, SOL, AVAX]
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage: {BTC: 3.0, ETH: 2.0, SOL: 1.5, AVAX: 1.5}
+  default_leverage: 1.0
+  maint_margin_rate: {BTC: 0.0125, ETH: 0.02, SOL: 0.025, AVAX: 0.05}
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+
+data:
+  source: hyperliquid
+  # The live book counts its windows in hourly bars (14d = 336, 30d = 720).
+  interval: "1h"
+  include_spot: true
+  start: 2025-01-01
+  end: 2026-09-20
+
+# Same blended rate as specs/bv2.yaml, for the same reason (spot taker 7.0bp
+# and perp taker 3.5bp move together whenever the hedge trades).
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+# All four coins with both legs, at once. Hyperliquid's bridged spot tokens
+# listed late (UAVAX tradeable from 2026-05-06), and hourly history is cut at
+# 5000 candles, so the judged window is what remains where everything exists.
+required_instruments: [BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX]

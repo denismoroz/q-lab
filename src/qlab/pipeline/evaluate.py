@@ -462,6 +462,7 @@ def _slice_rows(panel: MarketPanel, first: int, last: int) -> MarketPanel:
         funding=panel.funding.iloc[rows],
         tradeable=panel.tradeable.iloc[rows],
         volume=panel.volume.iloc[rows],
+        high=panel.high.iloc[rows],
     )
 
 

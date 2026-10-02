@@ -54,8 +54,15 @@ class MarketPanel:
     tradeable: pd.DataFrame
     meta: Mapping[str, object]
     volume: pd.DataFrame | None = None
+    high: pd.DataFrame | None = None
 
     def __post_init__(self) -> None:
+        if self.high is None:
+            object.__setattr__(
+                self,
+                "high",
+                pd.DataFrame(float("nan"), index=self.prices.index, columns=self.prices.columns),
+            )
         if self.volume is None:
             object.__setattr__(
                 self,

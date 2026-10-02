@@ -143,13 +143,13 @@ def discover_universe(
     return [name for name, _is_delisted in describe_universe(as_of_range, dex=dex)]
 
 
-_CANDLE_FRAME_COLUMNS = ("price", "volume", "trade_count")
+_CANDLE_FRAME_COLUMNS = ("price", "volume", "trade_count", "high")
 
 
 def _empty_candle_frame() -> pd.DataFrame:
     frame = pd.DataFrame(columns=list(_CANDLE_FRAME_COLUMNS))
     frame.index = pd.DatetimeIndex([], tz="UTC")
-    return frame.astype({"price": float, "volume": float, "trade_count": "int64"})
+    return frame.astype({"price": float, "volume": float, "trade_count": "int64", "high": float})
 
 
 def fetch_candles(
@@ -173,7 +173,7 @@ def fetch_candles(
     """
     step = INTERVAL_TO_TIMEDELTA[interval]
     cursor = start
-    rows: dict[pd.Timestamp, tuple[float, float, int]] = {}
+    rows: dict[pd.Timestamp, tuple[float, float, int, float]] = {}
 
     while cursor <= end:
         payload = {
@@ -194,7 +194,7 @@ def fetch_candles(
             ts = pd.Timestamp(int(c["t"]), unit="ms", tz="UTC")
             if ts > end:
                 continue
-            rows[ts] = (float(c["c"]), float(c["v"]), int(c["n"]))
+            rows[ts] = (float(c["c"]), float(c["v"]), int(c["n"]), float(c["h"]))
             if ts > max_ts:
                 max_ts = ts
 
@@ -309,6 +309,7 @@ def fetch_instrument_history(
         first_seen=prices.index.min(),
         last_seen=prices.index.max(),
         is_delisted=is_delisted,
+        high=candles["high"],
     )
 
 
@@ -337,7 +338,9 @@ def reusable_funding(
     """
     bar = INTERVAL_TO_TIMEDELTA[interval]
     for other, other_bar in sorted(INTERVAL_TO_TIMEDELTA.items(), key=lambda kv: -kv[1]):
-        if other == interval or other_bar < bar:
+        # The same interval counts too: an entry refetched only because it
+        # predates bar highs still holds exactly the funding needed.
+        if other_bar < bar:
             continue
         cached = load_cached_history(cache_dir, source, coin, other, start, end)
         if cached is not None and cached.has_funding and not cached.funding.empty:
@@ -387,6 +390,9 @@ def fetch_universe(
                 ),
             ),
             on_missing=on_missing,
+            # Entries written before bar highs were kept are refetched (the
+            # candles only -- funding comes back from the cache above).
+            accept_cached=lambda history: history.high is not None,
         )
 
 
@@ -519,6 +525,7 @@ def fetch_spot_instrument_history(
         # fallback, same as a perp whose feed just ends mid-window.
         is_delisted=False,
         has_funding=False,
+        high=candles["high"],
     )
 
 
@@ -565,6 +572,7 @@ def fetch_spot_universe(
             source=VENUE,
             fetch_one=_fetch_one,
             on_missing=on_missing,
+            accept_cached=lambda history: history.high is not None,
         )
 
 

@@ -693,6 +693,38 @@ class TestDelistedWithoutHistory:
         assert panel.meta["universe_complete"] is True
 
 
+class TestBarHigh:
+    """Bar highs travel from the source to the panel and back from disk;
+    without them the panel says unknown (NaN), never the close."""
+
+    def test_high_round_trips_through_a_snapshot(self, session, patched_source, tmp_path,
+                                                 monkeypatch):
+        import dataclasses
+
+        def fetch_with_high(instruments, start, end, interval, *, on_missing="raise"):
+            out = _fake_fetch_universe(instruments, start, end, interval)
+            return {
+                k: dataclasses.replace(h, high=h.prices * 1.01) for k, h in out.items()
+            }
+
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "fetch", fetch_with_high)
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC", "ETH"], "2026-01-01", "2026-01-03", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert (panel.high["BTC"].dropna() > panel.prices["BTC"].dropna()).all()
+        reloaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        pd.testing.assert_frame_equal(reloaded.high, panel.high, check_freq=False)
+
+    def test_without_highs_the_panel_says_unknown(self, session, patched_source, tmp_path):
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC", "ETH"], "2026-01-01", "2026-01-03", "1h",
+            snapshots_dir=tmp_path, session=session,
+        )
+        assert panel.high.isna().all().all()
+        assert not (tmp_path / panel.snapshot_id / "high.parquet").exists()
+
+
 class TestHistoryTruncatedByVenueCap:
     """T25: a venue that serves only its last N candles makes live instruments
     look listed from the first served bar. With a tiny cap every staggered

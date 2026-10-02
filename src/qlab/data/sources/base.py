@@ -119,6 +119,10 @@ class InstrumentHistory:
     last_seen: pd.Timestamp
     is_delisted: bool
     has_funding: bool = True
+    # The bar's high (Bv2's liquidation check runs on it). None when the
+    # source or an older cache entry did not provide it: unknown, never the
+    # close (a short is liquidated by the move INSIDE the bar).
+    high: pd.Series | None = None
 
 
 # Where per-instrument raw history is cached between attempts. Collecting a
@@ -169,6 +173,7 @@ def load_cached_history(
         funding = frame["funding"].dropna()
         volume = frame["volume"].dropna()
         trade_count = frame["trade_count"].dropna().astype("int64")
+        high = frame["high"].dropna() if "high" in frame.columns else None
         return InstrumentHistory(
             instrument=instrument,
             prices=prices,
@@ -182,6 +187,7 @@ def load_cached_history(
             # have no "has_funding" key at all -- they are all perp
             # fetches, so True is the correct backfill, not a guess.
             has_funding=bool(meta.get("has_funding", True)),
+            high=high,
         )
     except Exception:
         return None
@@ -197,14 +203,15 @@ def store_cached_history(
         cache_dir, source, history.instrument, interval, start, end
     )
     frame_path.parent.mkdir(parents=True, exist_ok=True)
-    frame = pd.DataFrame(
-        {
-            "price": history.prices,
-            "funding": history.funding,
-            "volume": history.volume,
-            "trade_count": history.trade_count,
-        }
-    )
+    columns = {
+        "price": history.prices,
+        "funding": history.funding,
+        "volume": history.volume,
+        "trade_count": history.trade_count,
+    }
+    if history.high is not None:
+        columns["high"] = history.high
+    frame = pd.DataFrame(columns)
     frame.to_parquet(frame_path)
     meta_path.write_text(
         json.dumps(
@@ -228,9 +235,15 @@ def fetch_universe_resumable(
     fetch_one: Callable[[str], InstrumentHistory],
     on_missing: str = "raise",
     cache_dir: Path | str = DEFAULT_RAW_CACHE_DIR,
+    accept_cached: Callable[[InstrumentHistory], bool] | None = None,
 ) -> dict[str, InstrumentHistory]:
     """Fetch each instrument, reusing anything already cached from an earlier
     attempt and persisting each success as it lands.
+
+    `accept_cached`, when given, decides whether a cached entry is complete
+    enough to reuse; a rejected one is fetched again (and its replacement
+    overwrites it). Used for entries written before a field existed -- bar
+    highs, here -- when the source can supply it.
 
     `on_missing` decides what an instrument with no data in range means, and
     that depends on where the list came from: `"raise"` for a hand-written
@@ -243,7 +256,7 @@ def fetch_universe_resumable(
     histories: dict[str, InstrumentHistory] = {}
     for instrument in instruments:
         cached = load_cached_history(cache_dir, source, instrument, interval, start, end)
-        if cached is not None:
+        if cached is not None and (accept_cached is None or accept_cached(cached)):
             histories[instrument] = cached
             continue
         try:

@@ -154,7 +154,24 @@ class MarketPanel:
     tell", which is the correct answer, not a silently wrong number.
     """
 
+    high: pd.DataFrame | None = None
+    """The bar's high, same shape as ``prices`` (kept for checks that happen
+    INSIDE a bar, such as a short's liquidation). ``None`` / NaN means
+    unknown -- never the close; a consumer that needs it must refuse to run
+    without it rather than substitute the close."""
+
     def __post_init__(self) -> None:
+        if self.high is None:
+            object.__setattr__(
+                self,
+                "high",
+                pd.DataFrame(float("nan"), index=self.prices.index, columns=self.prices.columns),
+            )
+        elif not (
+            self.high.index.equals(self.prices.index)
+            and list(self.high.columns) == list(self.prices.columns)
+        ):
+            raise ValueError("high must have the same index and columns as prices")
         if self.volume is None:
             object.__setattr__(
                 self,
@@ -221,6 +238,7 @@ class MarketPanel:
             funding=self.funding.loc[start_ts:end_ts],
             tradeable=self.tradeable.loc[start_ts:end_ts],
             volume=self.volume.loc[start_ts:end_ts],
+            high=self.high.loc[start_ts:end_ts],
         )
 
     def restrict(self, instruments: Sequence[str]) -> MarketPanel:
@@ -246,6 +264,7 @@ class MarketPanel:
             funding=self.funding[requested],
             tradeable=self.tradeable[requested],
             volume=self.volume[requested],
+            high=self.high[requested],
             meta=self._meta_with(universe_complete=False),
         )
 
@@ -283,6 +302,7 @@ class MarketPanel:
             funding=self.funding.loc[index, columns],
             tradeable=self.tradeable.loc[index, columns],
             volume=self.volume.loc[index, columns],
+            high=self.high.loc[index, columns],
             meta=self._meta_with(universe_complete=False),
         )
 

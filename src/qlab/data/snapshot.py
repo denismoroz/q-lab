@@ -717,11 +717,31 @@ def build_snapshot(
         manifest["delisted_without_history"] = delisted_without_history
     if history_truncated:
         manifest["history_truncated"] = history_truncated
+
+    # Bar highs (Bv2's liquidation check). Same NaN mask as prices: a bar
+    # whose close was dropped as bad has no trustworthy high either. Written
+    # and hashed only when some instrument carries highs, so a build from
+    # high-less data keeps the id it always had.
+    high = pd.DataFrame(
+        {
+            coin: (
+                histories[coin].high.reindex(prices.index)
+                if histories[coin].high is not None
+                else pd.Series(float("nan"), index=prices.index)
+            )
+            for coin in prices.columns
+        },
+        index=prices.index,
+    )[list(prices.columns)].where(prices.notna())
+    high.index.name = "timestamp"
+    has_high = bool(high.notna().to_numpy().any())
+
     manifest_bytes = _manifest_bytes(manifest)
     prices_bytes = _dataframe_bytes(prices)
     funding_bytes = _dataframe_bytes(funding)
     tradeable_bytes = _dataframe_bytes(tradeable)
     volume_bytes = _dataframe_bytes(volume)
+    high_bytes = _dataframe_bytes(high) if has_high else b""
 
     snapshot_id = hashlib.sha256(
         manifest_bytes
@@ -733,6 +753,7 @@ def build_snapshot(
         + tradeable_bytes
         + b"\0"
         + volume_bytes
+        + ((b"\0" + high_bytes) if has_high else b"")
     ).hexdigest()
 
     snapshot_dir = Path(snapshots_dir) / snapshot_id
@@ -742,6 +763,8 @@ def build_snapshot(
     _write_if_absent(snapshot_dir / "funding.parquet", funding_bytes)
     _write_if_absent(snapshot_dir / "tradeable.parquet", tradeable_bytes)
     _write_if_absent(snapshot_dir / "volume.parquet", volume_bytes)
+    if has_high:
+        _write_if_absent(snapshot_dir / "high.parquet", high_bytes)
     _write_if_absent(snapshot_dir / "manifest.json", manifest_bytes)
 
     fetched_at = datetime.now(UTC)
@@ -789,6 +812,7 @@ def build_snapshot(
         funding=funding,
         tradeable=tradeable,
         volume=volume,
+        high=high if has_high else None,
         meta=meta,
     )
 
@@ -827,6 +851,10 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             # branch documents WHY a legacy snapshot ends up that way.
             volume = pd.DataFrame(float("nan"), index=prices.index, columns=prices.columns)
 
+        # Absent for every snapshot built before bar highs were kept: unknown.
+        high_path = snapshot_dir / "high.parquet"
+        high = pd.read_parquet(high_path) if high_path.exists() else None
+
         meta = {
             "venue": row.source,
             "interval": manifest["interval"],
@@ -854,6 +882,7 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             funding=funding,
             tradeable=tradeable,
             volume=volume,
+            high=high,
             meta=meta,
         )
 
