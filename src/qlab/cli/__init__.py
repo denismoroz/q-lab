@@ -719,6 +719,53 @@ def budget_probe_cmd() -> None:
                f"cost {result.report.usage.total if result.report.usage else 0:,} tokens")
 
 
+@app.command("allocation")
+def allocation_cmd(
+    path: Path = typer.Argument(..., metavar="ALLOCATION"),  # noqa: B008
+) -> None:
+    """Switch capital between strategies by market regime (qlab.allocation,
+    docs/REGIMES.md) and compare the declared assignments: whole window,
+    declared periods, and per regime. A description: no rule reads it."""
+    import pandas as pd
+    import yaml
+
+    from qlab.allocation import leg_from_spec, summary, switch
+    from qlab.regimes import REGIMES, breakdown, causal_labels, load, market_closes
+
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    with session_scope() as session:
+        legs = {name: leg_from_spec(load_spec(Path(spec)), session)
+                for name, spec in config["legs"].items()}
+    closes = market_closes()
+    hindsight = load()
+    if closes is None or hindsight is None:
+        typer.echo("error: run `qlab regimes build` first", err=True)
+        raise typer.Exit(code=1)
+    labels = causal_labels(closes)
+    start = max(leg.first_active for leg in legs.values()).normalize() + pd.Timedelta(days=1)
+    end = min(leg.daily_return.index.max() for leg in legs.values())
+    days = pd.date_range(start, end, freq="1D", tz="UTC")
+    typer.echo(f"{config['name']}: {days[0]:%Y-%m-%d} .. {days[-1]:%Y-%m-%d} ({len(days)} days), "
+               "every leg holding positions")
+    periods = {"whole": (days[0], days[-1])}
+    periods.update({k: (pd.Timestamp(a, tz="UTC"), pd.Timestamp(b, tz="UTC"))
+                    for k, (a, b) in (config.get("periods") or {}).items()})
+    header = f"{'':<26}" + "".join(f"{p:>34}" for p in periods)
+    typer.echo(header)
+    for label, assignment in config["assignments"].items():
+        returns, held = switch(legs, assignment, labels, days)
+        cells = []
+        for a, b in periods.values():
+            part = returns[(returns.index >= a) & (returns.index <= b)]
+            st = summary(part)
+            cells.append(f"{st['ann_return']:+7.1%} Sh {st['sharpe']:4.2f} dd {st['max_dd']:6.1%}")
+        switches = int((held.fillna("cash") != held.fillna("cash").shift()).iloc[1:].sum())
+        typer.echo(f"{label:<26}" + "".join(f"{c:>34}" for c in cells) + f"   switches {switches}")
+        by = breakdown(returns, hindsight, 365.0)
+        typer.echo(f"{'':<26}" + "  ".join(
+            f"{r}: {by.get(f'regime_{r}_return', float('nan')):+.1%}" for r in REGIMES))
+
+
 @app.command("review")
 def review_cmd(
     spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008

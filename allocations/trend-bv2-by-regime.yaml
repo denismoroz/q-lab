@@ -1,0 +1,24 @@
+# Capital switched between strategies by market regime (qlab.allocation,
+# docs/REGIMES.md). Owner, 2026-10-02: «переключение между стратегиями по
+# режиму — делай», answering the proposal «trend на росте и падении, Bv2 или
+# деньги в боковике».
+#
+# Regime: the one known at the start of each day (qlab.regimes.causal_labels:
+# BTC's 30-day return against terciles of the days before it). Trend gets the
+# regimes its source says it earns in (frab research/trend_following/FINDINGS.md:
+# bull and bear); the flat regime, where no source claims anything for trend,
+# goes to Bv2 -- or to cash, the comparison. Declared on 2026-10-02 before any
+# leg was run on Binance's history (trend's ungated and cash-gated runs on
+# Binance had been seen; Bv2 on Binance had not).
+name: trend-bv2-by-regime
+legs:
+  trend: specs/trend-binance-cap.yaml
+  bv2: specs/bv2-binance.yaml
+assignments:
+  "trend always": {bull: trend, flat: trend, bear: trend}
+  "Bv2 always": {bull: bv2, flat: bv2, bear: bv2}
+  "trend, cash when flat": {bull: trend, flat: null, bear: trend}
+  "trend, Bv2 when flat": {bull: trend, flat: bv2, bear: trend}
+periods:
+  "2020–2024": ["2020-01-01", "2024-12-31"]
+  "2025–2026": ["2025-01-01", "2026-09-20"]
