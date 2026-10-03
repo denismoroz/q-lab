@@ -1,0 +1,95 @@
+# Researcher's experiment (docs/research/bv2-2026-10-03.md, hypothesis 2): the pair frab's
+# own limits study calls the most robust one, on the longest history we have.
+#
+# Copy of specs/bv2-binance.yaml -- same live frab book, same production parameters, same
+# source, interval, costs and dates. What the hypothesis needs: the coin list is BTC and
+# ETH only, so capital, leverage, maintenance rates and the instrument list follow it.
+# Two purposes in one trial: (1) test «Самый устойчивый набор — BTC+ETH» (LIMITS.md §4.5);
+# (2) the judged window of specs/bv2-binance.yaml starts 2023-03-24 because one of the
+# eight legs breaks earlier (docs/REGIMES.md) -- with four legs instead of eight the stand
+# can reach the 2020-2021 bull market, which it has never judged Bv2 on, and where almost
+# all of Bv2's historical return was made.
+
+idea_id: bv2-research-btceth
+title: "Bv2 только на BTC и ETH, Binance 2019–2026 (эксперимент исследователя 2)"
+code_ref: "qlab.strategies.live.bv2:LiveBv2"
+
+params_fixed_at: 2026-10-03
+params_fixed_evidence: >
+  declared by the researcher on 2026-10-03: SOL and AVAX are the coins that whipsaw the hedge, and the four-leg gap that cuts the Binance window to 2023 is theirs; BTC+ETH is the set frab's limits study calls the most robust
+
+params:
+  coins: [BTC, ETH]
+  # Per-coin capital of the production book kept: 257.0 / 4 = 64.25 per coin, two coins.
+  capital_usd: 128.5
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage: {BTC: 3.0, ETH: 2.0}
+  default_leverage: 1.0
+  maint_margin_rate: {BTC: 0.0125, ETH: 0.02}
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+
+data:
+  source: binance
+  interval: "1h"
+  start: 2019-09-08
+  end: 2026-09-20
+  instruments: [BTC, BTC-SPOT, ETH, ETH-SPOT]
+
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+required_instruments: [BTC-SPOT, ETH-SPOT, BTC, ETH]
+
+regime_claim:
+  bull: earns
+  bear: beats_market
+
+sources:
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"
+  # The changed numbers: the coin set and what follows from it.
+  "coins": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md: «Самый устойчивый набор — BTC+ETH: в минусе 3% годовых окон, в медвежьем 2022-м +4%, в 2025–26 лучше, чем 4 монеты»"
+  "capital_usd": "derived: 257.0 * 2 / 4; per-coin capital of seed/prod_params/2026-10-02-b2.json kept, SOL and AVAX dropped"
+  "short_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), BTC and ETH entries kept"
+  "maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), BTC and ETH entries kept"
+  "data.instruments": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md: «Самый устойчивый набор — BTC+ETH»; both legs of each coin, as specs/bv2-binance.yaml"
+  "spot_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "sticky_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "ratchet_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_fraction": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_entry_apr": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "slippage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "min_order_usd": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_buffer": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "mode": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"

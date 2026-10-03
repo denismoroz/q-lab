@@ -1,0 +1,94 @@
+# Researcher's experiment (docs/research/bv2-2026-10-03.md, hypothesis 1): a hedge that
+# fires but covers only part of the spot looks, in the P&L, exactly like a mistimed hedge.
+#
+# Copy of specs/bv2-live.yaml -- same live frab book, same production `b2` parameters, same
+# data, same costs. ONE number differs: hedge_margin_headroom 1.0 -> 1.5, the value the
+# other production instance (`b2_cold`) already runs with. With carry disabled the book has
+# nothing to shrink when a hedge needs margin, so a hedge opened against spot that the
+# ratchet let grow above target can only open partially
+# (funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Без carry подрезать нечего»).
+
+idea_id: bv2-research-headroom
+title: "Bv2 как на проде, но пул маржи рассчитан на спот, выросший в 1.5 раза (эксперимент исследователя 1)"
+code_ref: "qlab.strategies.live.bv2:LiveBv2"
+
+params_fixed_at: 2026-10-03
+params_fixed_evidence: >
+  declared by the researcher on 2026-10-03: with carry off the book has nothing to cut for the hedge, so hedges opened against ratcheted-up spot are partial; sizing the margin pool for spot grown to 1 + ratchet_threshold removes that, and that is what `b2_cold` already runs
+
+params:
+  coins: [BTC, ETH, SOL, AVAX]
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage: {BTC: 3.0, ETH: 2.0, SOL: 1.5, AVAX: 1.5}
+  default_leverage: 1.0
+  maint_margin_rate: {BTC: 0.0125, ETH: 0.02, SOL: 0.025, AVAX: 0.05}
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  # THE ONLY CHANGE against specs/bv2-live.yaml.
+  hedge_margin_headroom: 1.5
+  rebalance_at_im_share: 0.5
+  mode: paper
+
+data:
+  source: hyperliquid
+  interval: "1h"
+  include_spot: true
+  start: 2025-01-01
+  end: 2026-10-01
+
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+required_instruments: [BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX]
+
+regime_claim:
+  bull: earns
+  bear: beats_market
+
+sources:
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"
+  "coins": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "capital_usd": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "spot_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "sticky_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "ratchet_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_fraction": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_entry_apr": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "slippage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "min_order_usd": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "short_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_buffer": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  # The changed number: the other production instance already runs it; frab's own margin
+  # study asks for exactly this («пул на HL надо рассчитывать на спот, выросший до 1.5×
+  # (порог храповика)», research/strategy_b_v2/REPORT.md).
+  "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export, instance b2_cold)"
+  "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "mode": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
