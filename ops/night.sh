@@ -10,5 +10,6 @@ mkdir -p data/night/logs
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
   uv run qlab night run
-  echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $?)"
+  rc=$?
+  echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $rc)"
 } >> "$LOG" 2>&1
