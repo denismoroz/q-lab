@@ -87,6 +87,55 @@ logger = structlog.get_logger()
 
 DEFAULT_SNAPSHOTS_DIR = Path("data/snapshots")
 
+PANEL_RULES_VERSION = "2026-10-03.1"
+"""The rules that turn raw histories into a panel: which bars are bad, which
+are holdable, how funding is aligned, how spot is marked. A snapshot is
+reused only if it was built under the same version (`_find_matching_snapshot`
+in qlab.pipeline.evaluate): a snapshot on disk otherwise answers a data
+request with yesterday's rules, and a fix to the data layer silently never
+reaches a run whose request did not change. Bump it with every such change.
+
+- 2026-10-03.1: first recorded version; a spot token that is another asset
+  than its perp is dropped whole (`spot_is_another_asset`). Snapshots without
+  the field were built before it and are never reused."""
+
+SPOT_PERP_PARITY_TOLERANCE = 0.03
+"""frab, src/frab/coin_discovery.py: «Maximum allowed deviation between the
+spot mid and the perp mid for a token to be considered 1:1 with the perp ...
+3% gives comfortable room for normal spread without false positives.» frab
+applies it to one mid before trading; q-lab applies it to the MEDIAN ratio of
+a spot column's traded bars to its perp (`spot_is_another_asset`)."""
+
+
+def spot_is_another_asset(spot: pd.Series, perp: pd.Series,
+                          trade_count: pd.Series | None = None,
+                          already_flagged: pd.Series | None = None) -> float | None:
+    """The median spot/perp price ratio when it is outside frab's parity
+    tolerance -- the spot token sharing the perp's name is another asset --
+    else None.
+
+    Hyperliquid spot names are chosen by whoever deploys the token: the spot
+    pairs named BERA, PUMP, TRUMP and MON sat at medians of 0.0026, 0.049,
+    0.00012 and 0.40 of their perps over 2025-2026, while the real 1:1
+    tokens (BTC, ETH, SOL, AVAX, HYPE, ZEC, XPL, ENA, PURR, STABLE, AZTEC)
+    sat within 0.2%. The per-bar check (`detect_bad_price_bars`) caught the
+    impostors bar by bar but let through bars that happened to lie within
+    its 80% band -- MON's, marked at the MON perp as if they were MON.
+
+    The median is taken over the bars the per-bar check left
+    (`already_flagged` excluded): a real token's placeholder prints before
+    trading begins (UBTC at 70x BTC, Feb 2025) are already removed there and
+    must not outvote its real bars on a short window."""
+    traded = spot.notna() & perp.notna()
+    if already_flagged is not None:
+        traded &= ~already_flagged.reindex(spot.index).fillna(False).astype(bool)
+    if trade_count is not None:
+        traded &= trade_count.reindex(spot.index).fillna(0) > 0
+    if not traded.any():
+        return None
+    median = float((spot[traded] / perp[traded]).median())
+    return median if abs(median - 1.0) > SPOT_PERP_PARITY_TOLERANCE else None
+
 _INTERVAL_TO_PANDAS_FREQ = {
     "1m": "1min",
     "5m": "5min",
@@ -180,6 +229,7 @@ def _canonical_manifest(
         # `meta` without a network call, the same reasoning as
         # `no_funding_instruments`.
         "min_daily_volume_usd": min_daily_volume_usd,
+        "panel_rules": PANEL_RULES_VERSION,
     }
 
 
@@ -306,6 +356,14 @@ def _build_frames_from_histories(
         # above and never marked.
         if perp is not None and perp in histories:
             perp_price = histories[perp].prices.reindex(full_index)
+            other = spot_is_another_asset(raw_price, perp_price,
+                                          hist.trade_count.reindex(full_index), bad_price)
+            if other is not None:
+                logger.warning("spot_token_is_another_asset", instrument=coin,
+                               median_ratio_to_perp=round(other, 6))
+                price_cols[coin] = price_cols[coin].where(pd.Series(False, index=full_index))
+                volume_cols[coin] = volume_cols[coin].where(pd.Series(False, index=full_index))
+                tradeable &= False
             price_cols[coin] = perp_price.where(price_cols[coin].notna())
             tradeable &= perp_price.notna()
 

@@ -34,7 +34,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from qlab.data.panel import MarketPanel
-from qlab.data.snapshot import build_snapshot, load_snapshot
+from qlab.data.snapshot import PANEL_RULES_VERSION, build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
 from qlab.harness.lookahead import lookahead_violation
@@ -234,6 +234,10 @@ def _find_matching_snapshot(
         except (OSError, json.JSONDecodeError):
             continue
         if manifest.get("interval") != interval:
+            continue
+        # Built under other panel rules (bad bars, holdability, funding,
+        # spot marks): the same request would be answered differently today.
+        if manifest.get("panel_rules") != PANEL_RULES_VERSION:
             continue
         # A perp-only snapshot is not a substitute for a spot-inclusive one,
         # and vice versa: a spec that asks for spot must not be silently

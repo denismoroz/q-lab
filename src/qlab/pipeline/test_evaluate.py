@@ -21,11 +21,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from qlab.data.panel import MarketPanel
+from qlab.data.snapshot import PANEL_RULES_VERSION
 from qlab.pipeline.evaluate import (
     FORWARD_NOTE,
     SELECTION_NOTE,
     PeriodSplit,
     StrategyResolutionError,
+    _find_matching_snapshot,
     complete_book_window,
     decide_fit_forward_route,
     decide_route,
@@ -208,6 +210,7 @@ def _register_snapshot(
         "end": pd.Timestamp(end, tz="UTC").isoformat(),
         "interval": INTERVAL,
         "universe_complete": universe_complete,
+        "panel_rules": PANEL_RULES_VERSION,
     }
     (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
@@ -705,6 +708,7 @@ def test_venue_metrics_absent_when_venue_unconfigured(session, tmp_path) -> None
         "end": pd.Timestamp(END, tz="UTC").isoformat(),
         "interval": INTERVAL,
         "universe_complete": True,
+        "panel_rules": PANEL_RULES_VERSION,
     }
     (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     repo.add_data_snapshot(
@@ -1445,3 +1449,23 @@ def test_a_forward_test_that_missed_a_regime_waits() -> None:
     assert seen.route == "paper"
     unlabeled = {k: v for k, v in base.items() if not k.startswith("regime_")}
     assert decide_fit_forward_route(**kwargs, metrics=unlabeled).route == "paper"
+
+
+def test_a_snapshot_built_under_other_panel_rules_is_not_reused(session, tmp_path) -> None:
+    """A fix to the data layer must reach the next run of an unchanged
+    request: a snapshot built under other panel rules is not an answer."""
+    _register_snapshot(session, tmp_path, snapshot_id="snap-rules", instruments=INSTRUMENTS,
+                       universe_complete=False)
+    manifest_path = tmp_path / "snap-rules" / "manifest.json"
+    found = _find_matching_snapshot(
+        session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+        end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=INSTRUMENTS,
+        include_spot=False, min_daily_volume_usd=None)
+    assert found == "snap-rules"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["panel_rules"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert _find_matching_snapshot(
+        session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+        end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=INSTRUMENTS,
+        include_spot=False, min_daily_volume_usd=None) is None

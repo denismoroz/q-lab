@@ -51,3 +51,24 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
+
+
+def test_report_keeps_the_forward_test_out_of_yearly_figures() -> None:
+    from qlab.night import _report_row
+
+    # Nineteen forward days at +390% a year must not be shown as +390%.
+    row = _report_row({"ann_return_net": 3.9, "sharpe_net": 6.4, "forward_days": 19.0,
+                       "fit_ann_return_net": 0.068, "fit_sharpe_net": 0.97,
+                       "fit_regime_bull_return": 0.31, "regime_flat_return": 0.066})
+    yearly, sharpe, days, forward_total, bull, flat, bear = row
+    assert (yearly, sharpe, days) == ("+6.8%", "0.97", "19")
+    assert forward_total == f"{(1 + 3.9) ** (19 / 365.25) - 1:+.1%}"
+    assert (bull, flat, bear) == ("+31.0%", "—", "—")  # the selection period's split only
+
+
+def test_report_without_a_forward_test_shows_the_whole_window() -> None:
+    from qlab.night import _report_row
+
+    row = _report_row({"ann_return_net": 0.076, "sharpe_net": 1.07, "forward_days": 0.0,
+                       "regime_bear_return": 0.124})
+    assert row == ("+7.6%", "1.07", "0", "—", "—", "—", "+12.4%")

@@ -38,7 +38,8 @@ PROD = "dis@10.8.0.5"
 PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's state
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
-               "forward_days", "forward_days_needed")
+               "forward_days", "forward_days_needed", "fit_ann_return_net", "fit_sharpe_net",
+               "fit_max_dd", "selection_days")
 
 
 @dataclass
@@ -112,7 +113,8 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
             result.previous_route = previous_route(session, spec.idea_id, out.trial_id)
             metrics = out.metrics or {}
             result.metrics = {k: metrics[k] for k in KEY_METRICS if k in metrics}
-            result.metrics.update({k: v for k, v in metrics.items() if k.startswith("regime_")
+            result.metrics.update({k: v for k, v in metrics.items()
+                                   if k.startswith(("regime_", "fit_regime_"))
                                    and k.endswith(("_return", "_noise_percentile"))})
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the night goes on
         result.error = f"{type(exc).__name__}: {exc}"
@@ -165,7 +167,7 @@ def paper_reconciliation(day: date) -> list[str]:
     except (subprocess.SubprocessError, OSError) as exc:
         return [f"export from the production host failed: {exc}"]
     runs = {
-        "Bv2 (b2 as created, carry-on sizes)": [
+        "Bv2 (book 3 = b2, sized as created with carry on; book 4 = b2_cold)": [
             "scripts/replay_bv2_paper.py", "--paper", str(folder / "b2_equity.csv"),
             "--b2-sized-with-carry"],
         "trend": ["scripts/replay_trend_paper.py", "--paper", str(folder / "trend_equity.csv"),
@@ -176,7 +178,7 @@ def paper_reconciliation(day: date) -> list[str]:
         done = subprocess.run(["uv", "run", "python", *args], capture_output=True, text=True,
                               timeout=1800)
         keep = [ln for ln in done.stdout.splitlines()
-                if any(w in ln for w in ("correlation", "paper", "replay", "fills matched",
+                if any(w in ln for w in ("book ", "correlation", "paper", "replay", "fills matched",
                                          "matched hours", "max |"))]
         status = "" if done.returncode == 0 else f" (exit {done.returncode})"
         lines.append(f"**{label}**{status}")
@@ -188,6 +190,27 @@ def _pct(v) -> str:
     return f"{v:+.1%}" if isinstance(v, int | float) else "—"
 
 
+def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
+    """Selection period and forward test kept apart (docs/FIT_VS_FORWARD.md).
+
+    With a forward test, the run's own `ann_return_net` is the forward
+    test's, and nineteen days annualized read as +400% a year: the forward
+    test is shown as its total over its days instead, and the yearly
+    figures and the regime split are the selection period's. Without one,
+    the whole window is the selection period."""
+    split = "fit_ann_return_net" in m
+    prefix = "fit_" if split else ""
+    days = m.get("forward_days") or 0
+    forward_total = "—"
+    if split and days > 0 and isinstance(m.get("ann_return_net"), int | float):
+        forward_total = _pct((1 + m["ann_return_net"]) ** (days / 365.25) - 1)
+    sharpe = m.get(f"{prefix}sharpe_net")
+    return (_pct(m.get(f"{prefix}ann_return_net")),
+            f"{sharpe:.2f}" if isinstance(sharpe, int | float) else "—",
+            f"{days:.0f}", forward_total,
+            *(_pct(m.get(f"{prefix}regime_{r}_return")) for r in ("bull", "flat", "bear")))
+
+
 def write_report(day: date, state: dict) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [f"# Ночной прогон {day.isoformat()}", ""]
@@ -197,19 +220,20 @@ def write_report(day: date, state: dict) -> Path:
         group = [r for r in items if r.kind == kind]
         if not group:
             continue
-        lines += [f"## {title}", "", "| стратегия | исход | было | в год | Шарп | вперёд, дней | "
-                  "рост | боковик | падение |", "|---|---|---|---:|---:|---:|---:|---:|---:|"]
+        lines += [f"## {title}", "",
+                  "Годовые числа и режимы — по периоду подбора; проверка вперёд — итогом за её "
+                  "дни, без пересчёта в год.", "",
+                  "| стратегия | исход | было | подбор: в год | Шарп | вперёд, дней | "
+                  "вперёд, итого | рост | боковик | падение |",
+                  "|---|---|---|---:|---:|---:|---:|---:|---:|---:|"]
         for r in group:
             if r.error:
-                lines.append(f"| {r.name} | ошибка: {r.error[:120]} | | | | | | | |")
+                lines.append(f"| {r.name} | ошибка: {r.error[:120]} | | | | | | | | |")
                 continue
             m = r.metrics
             changed = " **(изменился)**" if r.previous_route and r.previous_route != r.route else ""
-            lines.append(
-                f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
-                f"{_pct(m.get('ann_return_net'))} | {m.get('sharpe_net', float('nan')):.2f} | "
-                f"{m.get('forward_days', 0):.0f} | {_pct(m.get('regime_bull_return'))} | "
-                f"{_pct(m.get('regime_flat_return'))} | {_pct(m.get('regime_bear_return'))} |")
+            lines.append(f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
+                         + " | ".join(_report_row(m)) + " |")
         lines.append("")
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]

@@ -30,6 +30,7 @@ from qlab.calibration.run import (
     run_noise_series,
     run_real_strategies,
 )
+from qlab.data.snapshot import PANEL_RULES_VERSION
 from qlab.harness.panel import MarketPanel
 from qlab.pipeline.spec import StrategySpec
 from qlab.registry import repo
@@ -141,6 +142,7 @@ def _register_snapshot(session, tmp_path: Path):
         "end": pd.Timestamp(END, tz="UTC").isoformat(),
         "interval": INTERVAL,
         "universe_complete": True,
+        "panel_rules": PANEL_RULES_VERSION,
         "no_funding_instruments": [],
     }
     (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

@@ -956,3 +956,34 @@ class TestSpotMarkets:
         assert set(panel.instruments) == {"BTC", "BTC-SPOT"}
         assert panel.meta["universe_complete"] is False
         assert panel.meta["no_funding_instruments"] == ["BTC-SPOT"]
+
+
+class TestSpotThatIsAnotherAsset:
+    """A Hyperliquid spot pair named like a perp can be another token: MON's
+    sat at a median 0.40 of the MON perp over 2025-2026, and the bars within
+    the per-bar check's 80% band were marked at the MON perp as if MON."""
+
+    def test_spot_consistently_off_its_perp_is_dropped_whole(self):
+        import dataclasses
+
+        idx = pd.date_range("2026-01-01", periods=6, freq="1h", tz="UTC")
+        perp = pd.Series([0.05, 0.05, 0.05, 0.05, 0.05, 0.05], index=idx)
+        # Within the 80% per-bar band on every bar, yet 60% below the perp.
+        spot_raw = pd.Series([0.02, 0.021, 0.019, 0.02, 0.022, 0.02], index=idx)
+        spot = dataclasses.replace(
+            _hist("MON-SPOT", idx, is_delisted=False, prices=spot_raw),
+            trade_count=pd.Series([3, 1, 2, 4, 1, 2], index=idx, dtype="int64"),
+        )
+        histories = {"MON": _hist("MON", idx, is_delisted=False, prices=perp),
+                     "MON-SPOT": spot}
+        prices, _f, tradeable, _v = snap._build_frames_from_histories(
+            histories, idx, pd.Timedelta(hours=1))
+        assert prices["MON-SPOT"].isna().all()
+        assert not tradeable["MON-SPOT"].any()
+        assert tradeable["MON"].all()
+
+    def test_real_token_within_frabs_parity_tolerance_is_kept(self):
+        idx = pd.date_range("2026-01-01", periods=4, freq="1h", tz="UTC")
+        perp = pd.Series([100.0, 101.0, 102.0, 103.0], index=idx)
+        assert snap.spot_is_another_asset(perp * 0.99, perp) is None
+        assert snap.spot_is_another_asset(perp * 0.40, perp) == pytest.approx(0.40)
