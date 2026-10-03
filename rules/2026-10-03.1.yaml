@@ -1,0 +1,28 @@
+# The economic floor is "above zero", not "above 4%".
+#
+# Owner, 2026-10-03: «давай уберем пока 4% — и сделаем больше 0». The floor of
+# 2026-09-21.1 came from the owner's grading scale («выше 4% — приемлимо»,
+# 2026-09-20). Measured since (docs/T26_FALSE_REJECTIONS.md): a strategy with a
+# true +6-7% a year was rejected 28-50% of the time on a year-long window, almost
+# always by this floor, because a year's realised return is mostly luck. The
+# separation from luck stays with `shape_aware_edge` (99% of matched noise),
+# which is unchanged.
+#
+# `near_margin` is dropped: a relative margin around a zero threshold means
+# nothing (qlab.rules.nearness), and an absolute one would be a new number
+# nobody chose.
+
+version: "2026-10-03.1"
+based_on: "2026-10-02.3"
+
+rules:
+  - id: net_edge_positive
+    stage: edge
+    metric: ann_return_net
+    comparator: ">"
+    threshold: 0.0
+    fatal: true
+    rationale: >
+      Owner, 2026-10-03: «давай уберем пока 4% — и сделаем больше 0». The annual
+      return after real costs and full funding accrual must be positive; whether
+      it is distinguishable from luck is shape_aware_edge's question.
