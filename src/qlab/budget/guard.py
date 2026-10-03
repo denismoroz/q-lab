@@ -105,6 +105,30 @@ def _total(row: TokenSpend) -> int:
     )
 
 
+def _family(model: str | None) -> str | None:
+    for family in ("opus", "sonnet", "haiku"):
+        if model and family in model:
+            return family
+    return None
+
+
+def usd_per_token(session: Session, model: str | None) -> float:
+    """List price per token for `model`'s family from the ledger; with no
+    record of that family, the highest price seen (a cap computed from a
+    cheaper model's price would stop an expensive model long before its
+    token budget is spent -- the first researcher run, opus, was cut off by a
+    price averaged over haiku and sonnet calls)."""
+    rows = [r for r in _calls(session) if _total(r) > 0 and (r.usd_est or 0) > 0]
+    prices: dict[str | None, list[float]] = {}
+    for r in rows:
+        prices.setdefault(_family(r.model), []).append(r.usd_est / _total(r))
+    family = _family(model)
+    if family in prices:
+        return sum(prices[family]) / len(prices[family])
+    every = [p for ps in prices.values() for p in ps]
+    return max(every) if every else USD_PER_TOKEN_PRIOR
+
+
 def calibrate(session: Session) -> Calibration:
     """Weekly utilization per token, from consecutive calls in the same weekly
     window: (sum of utilization gained + one reading's resolution) / tokens

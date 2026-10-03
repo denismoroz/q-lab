@@ -162,6 +162,10 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
                        extra_args=("--allowedTools", TOOLS, "--disallowedTools", "Bash"))
     outcome = ImplementOutcome(idea_id=idea_id, code_path=code_path, spec_path=spec_path,
                                agent_reply=(result.text or "").strip()[:500])
+    if result.exit_code != 0:
+        outcome.problems.append(
+            f"the agent stopped before finishing (exit {result.exit_code}; its spending cap or "
+            "turn limit)")
 
     # Guard 1: only the two allowed paths (and the package marker) changed.
     for path in set(_changed_paths()) - before:

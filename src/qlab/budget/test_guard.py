@@ -186,3 +186,18 @@ def test_no_other_module_starts_the_claude_cli() -> None:
             if text.strip() == "claude" or text.startswith("claude ") or "claude -p" in text:
                 offenders.append(str(path.relative_to(root)))
     assert offenders == []
+
+
+def test_the_price_per_token_is_the_calling_models_own(session) -> None:
+    from qlab.budget.guard import usd_per_token
+
+    session.add_all([
+        TokenSpend(at=NOW, stage="x", agent="a", tokens_in=1000, tokens_out=0, usd_est=0.001,
+                   model="claude-haiku-4-5"),
+        TokenSpend(at=NOW, stage="x", agent="b", tokens_in=1000, tokens_out=0, usd_est=0.010,
+                   model="claude-opus-5"),
+    ])
+    session.flush()
+    assert usd_per_token(session, "opus") == pytest.approx(1e-5)
+    assert usd_per_token(session, "haiku") == pytest.approx(1e-6)
+    assert usd_per_token(session, "sonnet") == pytest.approx(1e-5)  # unknown: the highest seen

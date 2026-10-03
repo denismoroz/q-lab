@@ -140,6 +140,10 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
                                    "--disallowedTools", "Bash,Edit",
                                    "--add-dir", str(QLAB_ROOT.parent / "funding-rate-arbitrage")))
     outcome = ResearchOutcome(memo=None, reply=(result.text or "").strip()[:600])
+    if result.exit_code != 0:
+        outcome.problems.append(
+            f"the agent stopped before finishing (exit {result.exit_code}; its spending cap or "
+            "turn limit): what it wrote may be incomplete")
     for path in sorted(set(_changed_paths()) - before):
         if path == str(memo_path):
             outcome.memo = memo_path

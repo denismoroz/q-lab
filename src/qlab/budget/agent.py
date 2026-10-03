@@ -82,7 +82,9 @@ def run_agent(
             "--model", model, "--max-turns", str(max_turns), *extra_args]
     if isinstance(budget, CandidateBudget):
         budget.check()
-        usd_cap = budget.remaining() * budget.night.calibration.usd_per_token
+        from qlab.budget.guard import usd_per_token
+
+        usd_cap = budget.remaining() * usd_per_token(session, model)
         args += ["--max-budget-usd", f"{usd_cap:.4f}"]
         stage, idea_id = budget.stage.name.lower(), budget.idea_id
     else:
