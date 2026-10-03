@@ -646,6 +646,8 @@ def night_run_cmd(
                                           help="Sweep the graveyard by regime (default: Sundays)"),
     paper: bool = typer.Option(True, "--paper/--no-paper",
                                help="Reconcile the production paper books with the stand"),
+    implement: bool = typer.Option(True, "--implement/--no-implement",
+                                   help="Stage 2: cards in night/implement_queue.yaml (tokens)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -656,7 +658,7 @@ def night_run_cmd(
     from qlab.night import run
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
-               noise_trials=noise_trials)
+               implement=implement, noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
 
@@ -796,6 +798,59 @@ def allocation_cmd(
         by = breakdown(returns, hindsight, 365.0)
         typer.echo(f"{'':<26}" + "  ".join(
             f"{r}: {by.get(f'regime_{r}_return', float('nan')):+.1%}" for r in REGIMES))
+
+
+@app.command("implement")
+def implement_cmd(
+    card: Path = typer.Argument(..., metavar="CARD"),  # noqa: B008
+    evaluate: bool = typer.Option(True, "--evaluate/--no-evaluate"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+) -> None:
+    """Have the implementer agent write the strategy and spec for CARD
+    (docs/IMPLEMENTER.md), then run every guard: allowed files only, sources,
+    import, the reviewer against the card, and the stand. Through the budget
+    guard."""
+    from qlab.agents.implementer import implement
+    from qlab.agents.reviewer import code_files, run_review
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+
+    with session_scope() as session:
+        budget = open_candidate(session, None, Stage.IMPLEMENT)
+        outcome = implement(card, budget=budget, session=session)
+        spent = budget.spent_tokens
+    typer.echo(f"implementer: {outcome.idea_id}: {outcome.code_path}, {outcome.spec_path}; "
+               f"{spent:,} tokens; reply: {outcome.agent_reply}")
+    for problem in outcome.problems:
+        typer.echo(f"  problem: {problem}")
+    if not outcome.ok:
+        raise typer.Exit(code=1)
+    spec = load_spec(outcome.spec_path)
+    with session_scope() as session:
+        budget = open_candidate(session, spec.idea_id, Stage.IMPLEMENT)
+        review = run_review(spec=spec, spec_text=outcome.spec_path.read_text(encoding="utf-8"),
+                            sources={str(card): card.read_text(encoding="utf-8")},
+                            code=code_files(spec), budget=budget, session=session)
+    typer.echo(f"reviewer: {len(review.accepted)} accepted, {len(review.rejected)} rejected")
+    for f in review.accepted:
+        typer.echo(f"  [{f.kind}] {f.summary}")
+    if evaluate:
+        from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
+        from qlab.registry import repo
+        from qlab.registry.models import AssetClass, Idea, Profile, SourceType
+        from qlab.rules.loader import load_latest
+
+        with session_scope() as session:
+            if session.get(Idea, spec.idea_id) is None:
+                repo.upsert_idea(session, id=spec.idea_id, title=spec.title,
+                                 source_type=SourceType.INTERNAL,
+                                 asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                                 notes=f"Implemented by the implementer agent from {card}.")
+            result = evaluate_spec_with_shape_aware_bar(
+                spec, session=session, ruleset=load_latest(), deployable_capital_usd=3000.0,
+                n_trials=noise_trials).candidate
+        typer.echo(f"stand: trial {result.trial_id}: {result.routing.route} "
+                   f"({result.routing.reason})")
 
 
 @app.command("review")

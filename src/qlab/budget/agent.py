@@ -23,7 +23,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from qlab.budget.guard import CandidateBudget, ExplicitNoBudget
+from qlab.budget.guard import CandidateBudget, ExplicitNoBudget, Stage
 from qlab.budget.usage import CallReport, parse_stream
 from qlab.registry.models import TokenSpend
 
@@ -39,6 +39,27 @@ class AgentResult:
 
 def _claude_bin() -> str:
     return os.environ.get(CLAUDE_BIN_ENV, "claude")
+
+
+def open_candidate(session, idea_id: str | None, stage: Stage) -> CandidateBudget:
+    """A one-candidate budget for a run started by hand: tonight's ceiling
+    from the latest reading of the shared windows, refreshed by a probe when
+    that reading is older than the five-hour window's own length."""
+    from datetime import timedelta
+
+    from qlab.budget.guard import NightBudget
+    from qlab.budget.usage import UsageReading, Window
+
+    last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
+            .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+    now = datetime.now(UTC)
+    if last is not None and last.at.replace(tzinfo=UTC) > now - timedelta(hours=5):
+        reading = UsageReading("allowed", None, Window(
+            last.seven_day_util, last.seven_day_resets_at.replace(tzinfo=UTC)))
+    else:
+        reading = probe(session).report.reading
+    night = NightBudget.open(session, reading, now=now)
+    return night.stage(stage, candidates=1).candidate(idea_id)
 
 
 def run_agent(
@@ -99,9 +120,12 @@ def run_agent(
 def probe(session: Session) -> AgentResult:
     """The cheapest call there is, to read the shared windows. It is spent
     like any other call: explicitly outside a night budget, and recorded."""
+    # Its own one-line system prompt and no tools: the call then costs a few
+    # hundred tokens instead of the CLI's own ~40k-token prompt.
     return run_agent(ExplicitNoBudget("reading the subscription windows"),
                      "Reply with exactly: OK", session=session, agent="probe",
-                     model="haiku", max_turns=1)
+                     model="haiku", max_turns=1,
+                     extra_args=("--system-prompt", "Answer in one word.", "--tools", ""))
 
 
-__all__ = ["CLAUDE_BIN_ENV", "AgentResult", "probe", "run_agent"]
+__all__ = ["CLAUDE_BIN_ENV", "AgentResult", "open_candidate", "probe", "run_agent"]

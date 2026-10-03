@@ -44,10 +44,10 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(night, "evaluate_item", fake_eval)
     day = date(2026, 10, 3)
     try:
-        night.run(day, graveyard=False, paper=False)
+        night.run(day, graveyard=False, paper=False, implement=False)
     except KeyboardInterrupt:
         pass
-    report = night.run(day, graveyard=False, paper=False)
+    report = night.run(day, graveyard=False, paper=False, implement=False)
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text

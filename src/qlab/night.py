@@ -30,6 +30,7 @@ import yaml
 from qlab.pipeline.spec import StrategySpec, load_spec
 
 WATCHLIST = Path("night/watchlist.yaml")
+IMPLEMENT_QUEUE = Path("night/implement_queue.yaml")
 STATE_DIR = Path("data/night")
 REPORT_DIR = Path("reports/night")
 PAPER_DIR = Path("data/paper")
@@ -212,14 +213,48 @@ def write_report(day: date, state: dict) -> Path:
         lines.append("")
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
-    lines += ["## Токены", "", "Этот этап токенов не тратит.", ""]
+    if implemented := state.get("implemented"):
+        lines += ["## Реализация карточек агентом", ""]
+        for e in implemented:
+            lines.append(f"- **{e['card']}** → {e.get('idea_id', '?')}: "
+                         f"{e.get('tokens', 0):,} токенов; ответ агента: {e.get('reply') or '—'}")
+            for p in e.get("problems") or []:
+                lines.append(f"    - проверка не пройдена: {p}")
+            for r in e.get("review") or []:
+                lines.append(f"    - проверяющий: {r}")
+            if e.get("stand"):
+                lines.append(f"    - стенд: {e['stand']}")
+            if e.get("stopped"):
+                lines.append(f"    - остановлено: {e['stopped']}")
+        lines.append("")
+    lines += ["## Токены", "", _token_lines(day), ""]
     path = REPORT_DIR / f"{day.isoformat()}.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
 
+def _token_lines(day: date) -> str:
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import TokenSpend
+
+    start = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+    with session_scope() as session:
+        rows = session.query(TokenSpend).filter(TokenSpend.at >= start).all()
+        by: dict[str, int] = {}
+        for r in rows:
+            by[r.stage] = by.get(r.stage, 0) + (r.tokens_in or 0) + (r.tokens_out or 0) + (
+                r.tokens_cache_write or 0) + (r.tokens_cache_read or 0)
+        last = max(rows, key=lambda r: r.at, default=None)
+    if not by:
+        return "Токены за эту ночь не тратились."
+    week = (f"; недельное окно после последнего вызова — {last.seven_day_util:.0%}"
+            if last is not None and last.seven_day_util is not None else "")
+    return "Потрачено: " + ", ".join(f"{k} {v:,}" for k, v in by.items()) + week
+
+
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
-        noise_trials: int = 200, deployable_capital_usd: float = 3000.0) -> Path:
+        implement: bool = True, noise_trials: int = 200,
+        deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly)."""
     day = day or datetime.now(UTC).date()
@@ -247,7 +282,83 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if paper and "paper" not in state:
         state["paper"] = paper_reconciliation(day)
         save_state(day, state)
+    if implement:
+        implement_stage(day, state, noise_trials=noise_trials,
+                        deployable_capital_usd=deployable_capital_usd)
     return write_report(day, state)
+
+
+def implement_stage(day: date, state: dict, *, noise_trials: int,
+                    deployable_capital_usd: float) -> None:
+    """Stage 2 (CLAUDE.md order): cards from `night/implement_queue.yaml` not
+    yet implemented, written by the implementer agent and run through every
+    guard, inside tonight's token budget. A night stop or a candidate's cap
+    is not a failure: the card stays queued for the next night."""
+    from qlab.agents.implementer import implement
+    from qlab.agents.reviewer import code_files, run_review
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.registry.db import session_scope
+
+    if not IMPLEMENT_QUEUE.is_file():
+        return
+    cards = yaml.safe_load(IMPLEMENT_QUEUE.read_text(encoding="utf-8")).get("cards") or []
+    pending = [c for c in cards if f"implement:{c}" not in state["done"]]
+    if not pending:
+        return
+    out = state.setdefault("implemented", [])
+    with session_scope() as session:
+        night_budget = NightBudget.open(session, probe(session).report.reading)
+        stage = night_budget.stage(Stage.IMPLEMENT, candidates=len(pending))
+        for card in pending:
+            entry = {"card": card}
+            try:
+                budget = stage.candidate(None)
+                outcome = implement(Path(card), budget=budget, session=session)
+                entry.update(idea_id=outcome.idea_id, reply=outcome.agent_reply,
+                             problems=outcome.problems)
+                if outcome.ok:
+                    spec = load_spec(outcome.spec_path)
+                    review = run_review(
+                        spec=spec, spec_text=outcome.spec_path.read_text(encoding="utf-8"),
+                        sources={card: Path(card).read_text(encoding="utf-8")},
+                        code=code_files(spec), budget=budget, session=session)
+                    entry["review"] = [f"[{f.kind}] {f.summary}" for f in review.accepted]
+                entry["tokens"] = budget.spent_tokens
+                state["done"][f"implement:{card}"] = datetime.now(UTC).isoformat()
+            except NightExhausted as stop:
+                entry["stopped"] = f"night budget: {stop}"
+                out.append(entry)
+                save_state(day, state)
+                session.commit()
+                return
+            except BudgetExhausted as stop:
+                entry["stopped"] = f"candidate budget: {stop}"
+            out.append(entry)
+            save_state(day, state)
+            session.commit()
+    # The stand runs each implemented spec in its own transaction.
+    for entry in out:
+        if entry.get("problems") == [] and "stand" not in entry:
+            spec = load_spec(Path("specs/agent") / f"{entry['idea_id']}.yaml")
+            _ensure_idea(spec, entry["card"])
+            result = evaluate_item("implemented", spec, end=spec.data.end,
+                                   noise_trials=noise_trials,
+                                   deployable_capital_usd=deployable_capital_usd)
+            entry["stand"] = result.error or f"{result.route}: {result.reason}"
+            save_state(day, state)
+
+
+def _ensure_idea(spec: StrategySpec, card: str) -> None:
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Idea, Profile, SourceType
+
+    with session_scope() as session:
+        if session.get(Idea, spec.idea_id) is None:
+            repo.upsert_idea(session, id=spec.idea_id, title=spec.title,
+                             source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
+                             profile=Profile.OTHER,
+                             notes=f"Implemented by the implementer agent from {card}.")
 
 
 __all__ = ["ItemResult", "evaluate_item", "graveyard_specs", "last_closed_day",
