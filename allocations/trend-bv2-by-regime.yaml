@@ -19,6 +19,13 @@ assignments:
   "Bv2 always": {bull: bv2, flat: bv2, bear: bv2}
   "trend, cash when flat": {bull: trend, flat: null, bear: trend}
   "trend, Bv2 when flat": {bull: trend, flat: bv2, bear: trend}
+  # Added 2026-10-03 AFTER seeing the per-regime results above: chosen on this
+  # history, so its result on this history is a selection-period number.
+  "Bv2 bull, trend bear, cash flat (chosen on this data)": {bull: bv2, flat: null, bear: trend}
+  # Added 2026-10-03: the regime -> strategy choice made from the past only, day
+  # by day (qlab.allocation.learned_plan) -- a result on the whole history that
+  # looks at no day it decides.
+  "choice from the past only": learned
 periods:
   "2020–2024": ["2020-01-01", "2024-12-31"]
   "2025–2026": ["2025-01-01", "2026-09-20"]

@@ -39,3 +39,18 @@ def test_cash_regime_earns_nothing() -> None:
     out, held = switch(legs, {"bull": "trend", "flat": None}, labels, days)
     assert out.tolist() == [0.0, 0.0] and held.isna().all()
     assert summary(pd.Series([0.01, -0.01, 0.02]))["days"] == 3
+
+
+def test_learned_plan_chooses_from_the_past_only() -> None:
+    from qlab.allocation import learned_plan
+
+    days = pd.date_range("2025-01-01", periods=6, freq="1D", tz="UTC")
+    legs = {"a": Leg("a", pd.Series([0.01, 0.01, -0.05, -0.05, 0.0, 0.0], index=days),
+                     pd.Series(1.0, index=days), 0.0, days[0]),
+            "b": Leg("b", pd.Series([0.0, 0.0, 0.02, 0.02, 0.0, 0.0], index=days),
+                     pd.Series(1.0, index=days), 0.0, days[0])}
+    labels = pd.Series("bull", index=days)
+    plan = learned_plan(legs, labels, days, min_days=2)
+    # days 0-1: too little history; day 2: a better so far; day 4: b better
+    assert plan[:2] == [None, None]
+    assert plan[2] == "a" and plan[4] == "b"

@@ -752,7 +752,13 @@ def allocation_cmd(
                     for k, (a, b) in (config.get("periods") or {}).items()})
     header = f"{'':<26}" + "".join(f"{p:>34}" for p in periods)
     typer.echo(header)
+    from qlab.allocation import learned_plan
+    from qlab.regimes import WINDOW_DAYS
+
     for label, assignment in config["assignments"].items():
+        if assignment == "learned":
+            # The regime -> leg choice made from the past only, day by day.
+            assignment = learned_plan(legs, labels, days, min_days=WINDOW_DAYS)
         returns, held = switch(legs, assignment, labels, days)
         cells = []
         for a, b in periods.values():

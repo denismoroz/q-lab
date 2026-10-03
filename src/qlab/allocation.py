@@ -67,15 +67,46 @@ def leg_from_spec(spec: StrategySpec, session) -> Leg:
                first_active=active.idxmax() if bool(active.any()) else index[-1])
 
 
-def switch(legs: dict[str, Leg], assignment: dict[str, str | None], labels: pd.Series,
-           days: pd.DatetimeIndex) -> tuple[pd.Series, pd.Series]:
+def learned_plan(legs: dict[str, Leg], labels: pd.Series, days: pd.DatetimeIndex,
+                 min_days: int) -> list[str | None]:
+    """Which leg holds the capital each day when the regime -> leg choice is
+    itself made from the past only (owner, 2026-10-03: «запустить весь этот
+    алгоритм на всей истории» without looking ahead). On day d, for the regime
+    known that morning, every leg is scored by its mean daily return over the
+    EARLIER days the morning regime label was the same; the best leg holds the
+    capital if its score is positive, else cash. A regime seen on fewer than
+    `min_days` earlier days holds cash -- no choice without evidence."""
+    known = labels.dropna()
+    regime_at = known.reindex(days, method="ffill")
+    rets = pd.DataFrame({n: leg.daily_return.reindex(days) for n, leg in legs.items()})
+    plan: list[str | None] = []
+    for i in range(len(days)):
+        r = regime_at.iloc[i]
+        if not isinstance(r, str):
+            plan.append(None)
+            continue
+        past = rets.iloc[:i][(regime_at.iloc[:i] == r).to_numpy()]
+        if len(past) < min_days:
+            plan.append(None)
+            continue
+        scores = past.mean()
+        best = scores.idxmax()
+        plan.append(best if scores[best] > 0 else None)
+    return plan
+
+
+def switch(legs: dict[str, Leg], assignment: dict[str, str | None] | list[str | None],
+           labels: pd.Series, days: pd.DatetimeIndex) -> tuple[pd.Series, pd.Series]:
     """Daily returns of the switched account over `days`, and the leg held
     each day. `labels` are causal regime labels indexed by the close time of
     the day they describe; day d uses the label known at its start (d 00:00)."""
-    known = labels.dropna()
-    regime_at = known.reindex(days, method="ffill")
-    # A plain list: pandas would turn a None (cash) into NaN.
-    held = [assignment.get(r) if isinstance(r, str) else None for r in regime_at]
+    if isinstance(assignment, list):
+        held = assignment  # a day-by-day plan (`learned_plan`)
+    else:
+        known = labels.dropna()
+        regime_at = known.reindex(days, method="ffill")
+        # A plain list: pandas would turn a None (cash) into NaN.
+        held = [assignment.get(r) if isinstance(r, str) else None for r in regime_at]
     out = np.zeros(len(days))
     previous: str | None = None
     for i, (d, leg_name) in enumerate(zip(days, held, strict=True)):
@@ -106,4 +137,4 @@ def summary(returns: pd.Series) -> dict[str, float]:
     }
 
 
-__all__ = ["Leg", "leg_from_spec", "summary", "switch"]
+__all__ = ["Leg", "learned_plan", "leg_from_spec", "summary", "switch"]
