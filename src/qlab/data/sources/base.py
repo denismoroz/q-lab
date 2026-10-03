@@ -269,6 +269,7 @@ def fetch_universe_resumable(
                                              fetch_range, accept_cached)
             if extended is not None:
                 store_cached_history(cache_dir, source, interval, start, end, extended)
+                _drop_superseded(cache_dir, source, instrument, interval, start, end)
                 histories[instrument] = extended
                 continue
         try:
@@ -313,6 +314,19 @@ def merge_histories(old: InstrumentHistory, new: InstrumentHistory, cut: pd.Time
         has_funding=old.has_funding,
         high=high,
     )
+
+
+def _drop_superseded(cache_dir, source, instrument, interval, start, end) -> None:
+    """Remove entries of the same instrument and start cached to an earlier
+    end: the extended entry holds everything they did (snapshots, which keep
+    their own copy of the data, are untouched)."""
+    folder = Path(cache_dir) / source / interval
+    prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
+    keep = str(pd.Timestamp(end).date())
+    for path in folder.glob(f"{prefix}*"):
+        stem = path.name[len(prefix):].split(".")[0]
+        if stem < keep:
+            path.unlink()
 
 
 def _extend_earlier_cache(cache_dir, source, instrument, interval, start, end, fetch_range,

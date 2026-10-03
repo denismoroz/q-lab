@@ -1,0 +1,14 @@
+# Strategies re-evaluated every night on data extended to the last closed day
+# (qlab.night, docs/NIGHT.md): their forward tests grow by a day each night.
+# Edited by hand; a strategy leaves the list when the owner decides.
+specs:
+  # Hyperliquid, what production trades or could
+  - specs/trend-live.yaml
+  - specs/trend-live-top25-cap.yaml
+  - specs/trend-retune-weekly.yaml
+  - specs/trend-retune-daily.yaml
+  - specs/bv2-live.yaml
+  # Binance, the long-history checks
+  - specs/trend-binance-cap.yaml
+  - specs/trend-binance-cap-gated.yaml
+  - specs/bv2-binance.yaml

@@ -635,6 +635,31 @@ def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
 # --------------------------------------------------------------------------
 
 
+night_app = typer.Typer(help="The nightly run (docs/NIGHT.md).", no_args_is_help=True)
+app.add_typer(night_app, name="night")
+
+
+@night_app.command("run")
+def night_run_cmd(
+    day: str | None = typer.Option(None, "--date", help="Night to run or resume (YYYY-MM-DD)"),
+    graveyard: bool | None = typer.Option(None, "--graveyard/--no-graveyard",
+                                          help="Sweep the graveyard by regime (default: Sundays)"),
+    paper: bool = typer.Option(True, "--paper/--no-paper",
+                               help="Reconcile the production paper books with the stand"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+) -> None:
+    """Re-evaluate the watch list on data extended to the last closed day,
+    sweep the graveyard by regime on Sundays, reconcile paper, write the
+    morning report. Spends no tokens; resumes where a stopped run left off."""
+    from datetime import date as _date
+
+    from qlab.night import run
+
+    path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
+               noise_trials=noise_trials)
+    typer.echo(f"report: {path}")
+
+
 regimes_app = typer.Typer(help="Market regimes: BTC bull / flat / bear (docs/REGIMES.md).",
                           no_args_is_help=True)
 app.add_typer(regimes_app, name="regimes")

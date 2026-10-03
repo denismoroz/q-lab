@@ -440,3 +440,5 @@ def test_a_later_end_extends_the_earlier_cache_instead_of_refetching(tmp_path) -
     assert asked == [(pd.Timestamp("2025-01-09", tz="UTC"), new_end)]
     assert out.prices.loc[:"2025-01-08"].eq(1.0).all()
     assert out.prices.loc["2025-01-09":].eq(2.0).all() and out.prices.index[-1] == new_end
+    left = sorted(p.name for p in (tmp_path / "t" / "1d").iterdir())
+    assert left == ["X__2025-01-01__2025-01-12.json", "X__2025-01-01__2025-01-12.parquet"]

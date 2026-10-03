@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  q-lab nightly run (docs/NIGHT.md).
+  Runs ops/night.sh once a day at 05:30 local time, after the recorder. launchd runs a
+  calendar job that was missed while the Mac slept as soon as it wakes, and
+  a stopped night resumes from its saved state.
+  Install:   cp ops/com.qlab.night.plist ~/Library/LaunchAgents/ &&
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.night.plist
+  Remove:    launchctl bootout gui/$(id -u)/com.qlab.night &&
+             rm ~/Library/LaunchAgents/com.qlab.night.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.qlab.night</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/d/prj/q-lab/ops/night.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>5</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/d/prj/q-lab/data/recorded/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/d/prj/q-lab/data/recorded/logs/launchd.err</string>
+</dict>
+</plist>

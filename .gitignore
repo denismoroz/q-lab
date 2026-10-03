@@ -35,3 +35,6 @@ data/raw/
 .claude/
 # q-lab own recorded market data (docs/TASKS.md T33) -- irreplaceable, see docs
 data/recorded/
+data/night/
+data/paper/
+reports/night/
