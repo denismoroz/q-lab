@@ -18,7 +18,9 @@ def _closes(n: int = 400) -> pd.Series:
 def test_terciles_split_the_labelled_days_in_thirds() -> None:
     labels, bear_below, bull_above = label_days(_closes(), window=30)
     known = labels.dropna()
-    assert labels.iloc[:30].isna().all()
+    # The window is centred on the day: 15 days each side have no label.
+    assert labels.iloc[:15].isna().all() and labels.iloc[-15:].isna().all()
+    assert labels.iloc[15:-15].notna().all()
     assert bear_below < bull_above
     for r in ("bull", "flat", "bear"):
         assert (known == r).mean() == pytest.approx(1 / 3, abs=0.01)

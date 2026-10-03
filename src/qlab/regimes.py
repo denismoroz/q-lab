@@ -9,7 +9,9 @@ Owner, 2026-10-02: «делать нарезку по разным режима�
 
 - the market is BTC (Binance BTCUSDT perpetual, daily closes, from its first
   day, 2019-09-08);
-- a day's state is BTC's return over the 30 days ending at that day's close;
+- a day's state is BTC's return over the 30 days around it (15 before, 15
+  after) -- for testing the description may look ahead (2026-10-03; until
+  then it was the 30 days ending that day, half a month late);
 - the days are split into terciles of that return over the WHOLE history:
   the top third is `bull`, the bottom third `bear`, the middle `flat`.
 
@@ -56,9 +58,15 @@ class RegimeSeries:
 
 
 def label_days(closes: pd.Series, window: int = WINDOW_DAYS) -> tuple[pd.Series, float, float]:
-    """Tercile labels of the trailing `window`-day return; the first `window`
-    days have no label."""
-    trailing = closes / closes.shift(window) - 1.0
+    """Tercile labels of BTC's return over the `window` days AROUND each day
+    (half before, half after). For testing the window may look ahead: it
+    describes what the market was doing on that day, and the trailing window
+    used until 2026-10-03 described the month that had just ended -- half a
+    month late, which put the first days of falls into "flat" and made Bv2
+    read as losing there (-7.3%) when, described around the day, it earned
+    (+7.3%). The first and last `window // 2` days have no label."""
+    half = window // 2
+    trailing = closes.shift(-half) / closes.shift(half) - 1.0
     known = trailing.dropna()
     bear_below, bull_above = known.quantile([1 / 3, 2 / 3]).to_list()
     labels = pd.Series(np.where(trailing >= bull_above, "bull",
@@ -89,7 +97,8 @@ def build(store: Path = DEFAULT_DIR) -> RegimeSeries:
     closes.index = closes.index + pd.Timedelta(days=1)  # label each day by its close time
     labels, bear_below, bull_above = label_days(closes)
     source = (f"Binance {MARKET}USDT perpetual 1d closes {closes.index[0]:%Y-%m-%d}.."
-              f"{closes.index[-1]:%Y-%m-%d}, {WINDOW_DAYS}-day return terciles")
+              f"{closes.index[-1]:%Y-%m-%d}, terciles of the {WINDOW_DAYS}-day return "
+              "around each day")
     store.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame({"close": closes, "label": labels})
     frame.to_parquet(store / f"{_FILE}.parquet")
