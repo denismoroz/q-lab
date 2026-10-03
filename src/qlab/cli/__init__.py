@@ -730,7 +730,8 @@ def allocation_cmd(
     import yaml
 
     from qlab.allocation import leg_from_spec, summary, switch
-    from qlab.regimes import REGIMES, breakdown, causal_labels, load, market_closes
+    from qlab.regimes import REGIMES, breakdown, load
+    from qlab.strategies.detectors import causal_labels, market_closes
 
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     with session_scope() as session:

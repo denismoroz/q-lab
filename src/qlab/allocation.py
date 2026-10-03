@@ -8,7 +8,7 @@ The switch is therefore made between ACCOUNTS: each strategy (a leg) is run
 by the stand on its own panel, exactly as `qlab evaluate` runs it; its net
 returns are compounded per UTC day; and each day the capital sits in the leg
 assigned to the regime known at the START of that day
-(`qlab.regimes.causal_labels`: BTC's 30-day return against terciles of the
+(`qlab.strategies.detectors.direction_terciles`: BTC's 30-day return against terciles of the
 days before it). A regime assigned `None` holds cash.
 
 Each switch pays the cost of closing the old leg's book and opening the new

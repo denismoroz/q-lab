@@ -19,8 +19,9 @@ class Constant:
 def test_weights_are_kept_only_in_the_declared_regimes(monkeypatch) -> None:
     index = pd.date_range("2025-01-01", periods=6, freq="1D", tz="UTC")
     labels = pd.Series([None, "bull", "flat", "bear", "flat", "bull"], index=index, dtype=object)
-    monkeypatch.setattr("qlab.regimes.market_closes", lambda: pd.Series(1.0, index=index))
-    monkeypatch.setattr("qlab.regimes.causal_labels", lambda closes: labels)
+    monkeypatch.setattr("qlab.strategies.detectors.market_closes",
+                        lambda: pd.Series(1.0, index=index))
+    monkeypatch.setattr("qlab.strategies.detectors.causal_labels", lambda closes: labels)
     panel = MarketPanel(snapshot_id="g", prices=pd.DataFrame(1.0, index=index, columns=["A"]),
                         funding=pd.DataFrame(0.0, index=index, columns=["A"]),
                         tradeable=pd.DataFrame(True, index=index, columns=["A"]), meta={})

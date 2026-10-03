@@ -16,10 +16,12 @@ Owner, 2026-10-02: «делать нарезку по разным режима�
 No threshold is chosen by hand; the data set them, and the manifest records
 them so a run can be reproduced.
 
-**This is a description, not a signal.** The thresholds use the whole history,
-so a label is known only afterwards -- fine for explaining where a strategy
-earns and loses, useless for switching strategies by regime (that needs a
-detector built on past data only and is a separate claim to prove). Each
+**This module is for TESTING strategies only** (owner, 2026-10-03: «давай
+разделим 2 задачи — использование в стратегии и тестировании стратегии»): a
+description of what the market was doing, which may know the whole history
+because it explains the past and trades nothing. A regime a strategy trades
+on is a different object with different rules -- it may use only the past
+and is a parameter of the strategy: `qlab.strategies.detectors`. Each
 regime holds about a third of the days, so per-regime numbers are noisier
 than the whole window's; they are shown, not judged (no rule reads them).
 """
@@ -63,21 +65,6 @@ def label_days(closes: pd.Series, window: int = WINDOW_DAYS) -> tuple[pd.Series,
                                 np.where(trailing < bear_below, "bear", "flat")),
                        index=closes.index, dtype=object)
     return labels.where(trailing.notna()), float(bear_below), float(bull_above)
-
-
-def causal_labels(closes: pd.Series, window: int = WINDOW_DAYS) -> pd.Series:
-    """Labels a strategy may TRADE on: the same terciles, but each day's
-    thresholds come only from the trailing returns of the days before it
-    (an expanding window). Unknown until `window` trailing returns exist
-    before the day. `label_days` is the hindsight version, for description."""
-    trailing = closes / closes.shift(window) - 1.0
-    past = trailing.shift(1)
-    low = past.expanding(min_periods=window).quantile(1 / 3)
-    high = past.expanding(min_periods=window).quantile(2 / 3)
-    labels = pd.Series(np.where(trailing >= high, "bull",
-                                np.where(trailing < low, "bear", "flat")),
-                       index=closes.index, dtype=object)
-    return labels.where(trailing.notna() & low.notna())
 
 
 def market_closes(store: Path = DEFAULT_DIR) -> pd.Series | None:
@@ -199,7 +186,6 @@ __all__ = [
     "RegimeSeries",
     "breakdown",
     "build",
-    "causal_labels",
     "claim_checks",
     "label_days",
     "load",

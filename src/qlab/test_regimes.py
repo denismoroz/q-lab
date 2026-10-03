@@ -53,7 +53,7 @@ def test_claims_are_checked_only_where_the_run_saw_the_regime() -> None:
 
 
 def test_causal_labels_never_see_the_future() -> None:
-    from qlab.regimes import causal_labels
+    from qlab.strategies.detectors import causal_labels
 
     closes = _closes(300)
     labels = causal_labels(closes, window=30)

@@ -3,7 +3,7 @@
 docs/REGIMES.md).
 
 `RegimeGate` wraps any strategy: at each bar it reads the regime a strategy
-may know at that bar -- `qlab.regimes.causal_labels`, BTC's 30-day return
+may know at that bar -- `qlab.strategies.detectors.direction_terciles`, BTC's 30-day return
 against terciles of the days BEFORE it -- and keeps the wrapped strategy's
 weights in the regimes listed in `trade_in`, holding nothing in the others
 and while the regime is still unknown.
@@ -42,7 +42,7 @@ class RegimeGate:
             raise ValueError(f"trade_in must name regimes among bull, flat, bear; got {trade_in}")
 
         from qlab.pipeline.evaluate import resolve_strategy
-        from qlab.regimes import causal_labels, market_closes
+        from qlab.strategies.detectors import causal_labels, market_closes
 
         closes = market_closes()
         if closes is None:
