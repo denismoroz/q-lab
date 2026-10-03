@@ -1,0 +1,100 @@
+# Researcher's experiment (docs/research/trend-2026-10-03.md, hypothesis 1): the regime gate carried over to Hyperliquid
+
+idea_id: trend-research-gate-hl
+title: Trend по капитализации на Hyperliquid, выключен в боковике (эксперимент исследователя 1)
+code_ref: qlab.strategies.regime_gate:RegimeGate
+params:
+  inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+  inner_params:
+    coins: null
+    top_k_by_market_cap: 25
+    exclude_tags:
+    - stablecoin
+    top_k_requires_history: true
+    capital_usd: 3000.0
+    lookbacks:
+    - 30
+    - 60
+    - 90
+    - 120
+    vol_window: 30
+    vol_target_daily: 0.02
+    leverage_cap: 3.0
+    risk_scale: 0.2
+    book_vol_target_ann: 0.14
+    book_vol_window_days: 60
+    book_vol_min_days: 20
+    book_vol_scale_min: 0.25
+    book_vol_scale_max: 2.0
+    book_vol_prior_ann: 0.3
+    min_history_days: 151
+  trade_in:
+  - bull
+  - bear
+data:
+  source: hyperliquid
+  interval: 1d
+  start: 2025-01-01
+  end: 2026-09-20
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+regime_claim:
+  bull: earns
+  bear: earns
+sources:
+  inner_params.top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins
+    excluded)'
+  inner_params.exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared 2026-10-02: 25 largest, stablecoins
+    excluded)'
+  inner_params.top_k_requires_history: docs/TREND_LIVE_REPLAY.md (the 151-day rule, owner 2026-10-02)
+  inner_params.coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  inner_params.book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_params.min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams
+    defaults; 25-coin DEFAULT_COINS)
+  inner_code_ref: src/qlab/strategies/live/trend.py
+  trade_in: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins
+    («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка
+    на «crisis alpha» подтверждается едва» -- the regimes the source says trend earns in'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+params_fixed_at: '2026-10-03'
+params_fixed_evidence: declared by the researcher in docs/research/trend-2026-10-03.md (hypothesis 1)
+  on 2026-10-03; spec written by hand from that memo because the agent's spending cap stopped it before
+  it wrote the spec (fixed in c2d68d1)

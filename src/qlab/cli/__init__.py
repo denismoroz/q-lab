@@ -831,46 +831,10 @@ def research_cmd(
         typer.echo(f"  problem: {problem}")
     if not evaluate or outcome.memo is None:
         return
-    from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
-    from qlab.pipeline.sources import source_problems
-    from qlab.registry import repo
-    from qlab.registry.models import AssetClass, Idea, Profile, SourceType
-    from qlab.rules.loader import load_latest
+    from qlab.agents.researcher import run_experiments
 
-    lines = ["", "## Эксперименты на стенде (записано кодом, не исследователем)", ""]
-    for spec_path in outcome.specs:
-        try:
-            experiment = load_spec(spec_path)
-        except Exception as exc:  # noqa: BLE001
-            lines.append(f"- `{spec_path}`: спек не загружается: {exc}")
-            continue
-        if source_problems(experiment):
-            lines.append(f"- `{spec_path}`: не запущен — числа без источника")
-            continue
-        try:
-            with session_scope() as session:
-                if session.get(Idea, experiment.idea_id) is None:
-                    repo.upsert_idea(session, id=experiment.idea_id, title=experiment.title,
-                                     source_type=SourceType.INTERNAL,
-                                     asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
-                                     notes=f"Declared by the researcher ({name}).")
-                result = evaluate_spec_with_shape_aware_bar(
-                    experiment, session=session, ruleset=load_latest(),
-                    deployable_capital_usd=3000.0, n_trials=noise_trials).candidate
-            m = result.metrics or {}
-            regimes = ", ".join(f"{r}: {m[f'regime_{r}_return']:+.1%}" for r in
-                                ("bull", "flat", "bear") if f"regime_{r}_return" in m)
-            lines.append(
-                f"- `{experiment.idea_id}` (прогон {result.trial_id}): {result.routing.route} — "
-                f"в год {m.get('ann_return_net', float('nan')):+.1%}, "
-                f"Шарп {m.get('sharpe_net', float('nan')):.2f}, "
-                f"просадка {m.get('max_dd', float('nan')):.1%}, "
-                f"обгоняет шум {m.get('noise_return_percentile', float('nan')):.0%}; {regimes}")
-        except Exception as exc:  # noqa: BLE001
-            lines.append(f"- `{experiment.idea_id}`: прогон упал: {type(exc).__name__}: {exc}")
-    with outcome.memo.open("a", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
-    typer.echo("\n".join(lines))
+    typer.echo("\n".join(run_experiments(outcome.memo, outcome.specs, name=name,
+                                         noise_trials=noise_trials)))
 
 
 @app.command("implement")

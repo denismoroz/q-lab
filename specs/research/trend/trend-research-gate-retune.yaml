@@ -1,0 +1,108 @@
+# Researcher's experiment (docs/research/trend-2026-10-03.md, hypothesis 2): the regime gate on top of weekly re-tuning
+
+idea_id: trend-research-gate-retune
+title: Trend с перенастройкой раз в неделю, выключен в боковике (эксперимент исследователя 2)
+code_ref: qlab.strategies.regime_gate:RegimeGate
+params:
+  inner_code_ref: qlab.strategies.retune:Retune
+  inner_params:
+    inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+    base_params:
+      coins: null
+      capital_usd: 3000.0
+      lookbacks:
+      - 30
+      - 60
+      - 90
+      - 120
+      vol_window: 30
+      vol_target_daily: 0.02
+      leverage_cap: 3.0
+      risk_scale: 0.2
+      book_vol_target_ann: 0.14
+      book_vol_window_days: 60
+      book_vol_min_days: 20
+      book_vol_scale_min: 0.25
+      book_vol_scale_max: 2.0
+      book_vol_prior_ann: 0.3
+      min_history_days: 151
+      top_k_requires_history: true
+    grid:
+      universe:
+        cap:
+          top_k_by_market_cap: 25
+          exclude_tags:
+          - stablecoin
+        volume:
+          top_k_by_volume: 25
+      lookbacks:
+        ens:
+          lookbacks:
+          - 30
+          - 60
+          - 90
+          - 120
+        l30:
+          lookbacks:
+          - 30
+        l60:
+          lookbacks:
+          - 60
+        l90:
+          lookbacks:
+          - 90
+        l120:
+          lookbacks:
+          - 120
+    refit_every: W
+    window: expanding
+    objective: sharpe_net
+    score_costs:
+      taker_fee_bps: 3.5
+      slippage_bps: 0.9
+  trade_in:
+  - bull
+  - bear
+data:
+  source: hyperliquid
+  interval: 1d
+  start: '2025-01-01'
+  end: '2026-09-20'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+regime_claim:
+  bull: earns
+  bear: earns
+sources:
+  inner_params.inner_code_ref: src/qlab/strategies/live/trend.py
+  inner_params.base_params: specs/trend-live-top25.yaml (frab TrendParams defaults) and docs/TREND_LIVE_REPLAY.md
+    (the 151-day rule)
+  inner_params.grid: 'docs/RETUNE.md (grid: market-cap or volume rule, 25 coins; lookbacks 30, 60, 90,
+    120 and their ensemble from frab research)'
+  inner_params.refit_every: 'владелец 2026-10-02: «раз в неделю/день или месяц»'
+  inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  inner_params.score_costs: 'specs/trend-live-top25.yaml costs: the spec''s own costs'
+  inner_code_ref: src/qlab/strategies/retune.py
+  trade_in: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins
+    («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка
+    на «crisis alpha» подтверждается едва» -- the regimes the source says trend earns in'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+params_fixed_at: '2026-10-03'
+params_fixed_evidence: declared by the researcher in docs/research/trend-2026-10-03.md (hypothesis 2)
+  on 2026-10-03; spec written by hand from that memo because the agent's spending cap stopped it before
+  it wrote the spec (fixed in c2d68d1)
