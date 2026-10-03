@@ -17,9 +17,11 @@ for path in sys.argv[1:]:
     spec = spec.model_copy(update={"params_fixed_at": dt.date(2026, 10, 3)})
     session = get_sessionmaker()()
     try:
-        ev = evaluate_spec(spec, session=session, ruleset=load_latest(), deployable_capital_usd=3000,
-                           update_idea_status=False, check_lookahead=False, check_sources=False)
+        ev = evaluate_spec(spec, session=session, ruleset=load_latest(),
+                           deployable_capital_usd=3000, update_idea_status=False,
+                           check_lookahead=False, check_sources=False)
         m = ev.metrics or {}
         print(path, {k: round(m[k], 4) for k in KEYS if k in m})
     finally:
-        session.rollback(); session.close()
+        session.rollback()
+        session.close()
