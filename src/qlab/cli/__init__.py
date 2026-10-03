@@ -809,6 +809,7 @@ def research_cmd(
     spec: list[Path] = typer.Option(..., "--spec", help="The strategy's specs (repeat)"),  # noqa: B008
     doc: list[Path] = typer.Option([], "--doc", help="Documents to read (repeat)"),  # noqa: B008
     max_experiments: int = typer.Option(3, "--max-experiments"),
+    focus: str | None = typer.Option(None, "--focus", help="The owner's question, verbatim"),
     evaluate: bool = typer.Option(True, "--evaluate/--no-evaluate"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
@@ -823,7 +824,7 @@ def research_cmd(
     with session_scope() as session:
         budget = open_candidate(session, None, Stage.RECHECK)
         outcome = research(name, idea_ids=idea, specs=spec, docs=doc, budget=budget,
-                           session=session, max_experiments=max_experiments)
+                           session=session, max_experiments=max_experiments, focus=focus)
         spent = budget.spent_tokens
     typer.echo(f"researcher: memo {outcome.memo}; experiments {[str(p) for p in outcome.specs]}; "
                f"{spent:,} tokens")

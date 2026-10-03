@@ -102,7 +102,7 @@ Write two kinds of files and nothing else:
    qlab.strategies.retune:Retune, or existing parameters); you cannot write strategy code.
    Write no spec if nothing is worth a trial.
 
-Reply with one line: the memo path and the experiment spec paths."""
+{focus}Reply with one line: the memo path and the experiment spec paths."""
 
 
 @dataclass
@@ -116,7 +116,8 @@ class ResearchOutcome:
 
 def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Path],
              budget: CandidateBudget | ExplicitNoBudget, session, max_experiments: int = 3,
-             model: str = MODEL, max_turns: int = 60) -> ResearchOutcome:
+             model: str = MODEL, max_turns: int = 60, focus: str | None = None
+             ) -> ResearchOutcome:
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
 
@@ -133,7 +134,8 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     prompt = INSTRUCTIONS.format(
         name=name, context_path=context_path, docs=", ".join(map(str, docs)),
         specs=", ".join(map(str, specs)), memo_path=memo_path, spec_dir=spec_dir,
-        max_experiments=max_experiments, today=(today - timedelta(days=0)).isoformat())
+        max_experiments=max_experiments, today=(today - timedelta(days=0)).isoformat(),
+        focus=(f"The owner's question, verbatim -- answer it first: {focus}\n\n" if focus else ""))
     result = run_agent(budget, prompt, session=session, agent="researcher", model=model,
                        max_turns=max_turns, cwd=QLAB_ROOT,
                        extra_args=("--allowedTools", "Read,Glob,Grep,Write",
