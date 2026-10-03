@@ -227,6 +227,26 @@ def write_report(day: date, state: dict) -> Path:
             if e.get("stopped"):
                 lines.append(f"    - остановлено: {e['stopped']}")
         lines.append("")
+    if (events := state.get("events")) is not None:
+        lines += ["## Площадки", ""]
+        structural = [e for e in events if e["kind"] in
+                      ("listed", "delisted", "relisted", "removed", "changed", "status")]
+        if state.get("events_error"):
+            lines.append(f"Наблюдатель упал: {state['events_error']}")
+        lines.append(f"Событий: {len(events)}, из них листинги, снятия и изменения условий — "
+                     f"{len(structural)}.")
+        lines += [f"- {e['source']}: {e['kind']} {e['instrument']} {e['detail']}"
+                  for e in structural]
+        extremes = [e for e in events if e["kind"] == "funding-extreme"]
+        if extremes:
+            lines.append("- крайности фандинга: " + "; ".join(
+                f"{e['instrument']} {e['detail'].split(' a year')[0]}" for e in extremes[:6]))
+        lines.append("")
+    if sc := state.get("scout"):
+        lines += ["## Разведчик", "", f"{sc.get('reply') or sc.get('stopped') or '—'}"
+                  + (f" ({sc.get('tokens', 0):,} токенов)" if sc.get("tokens") else "")]
+        lines += [f"- проверка не пройдена: {p}" for p in sc.get("problems") or []]
+        lines.append("")
     lines += ["## Токены", "", _token_lines(day), ""]
     path = REPORT_DIR / f"{day.isoformat()}.md"
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -253,7 +273,7 @@ def _token_lines(day: date) -> str:
 
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
-        implement: bool = True, noise_trials: int = 200,
+        implement: bool = True, search: bool = True, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly)."""
@@ -285,7 +305,39 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if implement:
         implement_stage(day, state, noise_trials=noise_trials,
                         deployable_capital_usd=deployable_capital_usd)
+    if search:
+        search_stage(day, state)
     return write_report(day, state)
+
+
+def search_stage(day: date, state: dict) -> None:
+    """Stage 3, cut first (CLAUDE.md): the venue watcher's events, then the
+    scout's draft card (if any) inside what tonight's budget has left."""
+    from qlab.agents.scout import scout
+    from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
+    from qlab.registry.db import session_scope
+    from qlab.venue_watch import watch
+
+    if "events" not in state:
+        try:
+            state["events"] = [e.__dict__ for e in watch(day)]
+        except Exception as exc:  # noqa: BLE001 - the report says so, the night goes on
+            state["events"] = []
+            state["events_error"] = f"{type(exc).__name__}: {exc}"
+        save_state(day, state)
+    if "scout" in state:
+        return
+    with session_scope() as session:
+        try:
+            night_budget = NightBudget.open(session, probe(session).report.reading)
+            budget = night_budget.stage(Stage.SEARCH, candidates=1).candidate(None)
+            outcome = scout(day, budget=budget, session=session)
+            state["scout"] = {"reply": outcome.reply, "draft": str(outcome.draft or ""),
+                              "problems": outcome.problems, "tokens": budget.spent_tokens}
+        except BudgetExhausted as stop:
+            state["scout"] = {"reply": None, "stopped": str(stop)}
+        session.commit()
+    save_state(day, state)
 
 
 def implement_stage(day: date, state: dict, *, noise_trials: int,

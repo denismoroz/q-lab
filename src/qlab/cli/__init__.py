@@ -648,6 +648,8 @@ def night_run_cmd(
                                help="Reconcile the production paper books with the stand"),
     implement: bool = typer.Option(True, "--implement/--no-implement",
                                    help="Stage 2: cards in night/implement_queue.yaml (tokens)"),
+    search: bool = typer.Option(True, "--search/--no-search",
+                                help="Stage 3: venue watcher and the scout's draft (tokens)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -658,7 +660,7 @@ def night_run_cmd(
     from qlab.night import run
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
-               implement=implement, noise_trials=noise_trials)
+               implement=implement, search=search, noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
 
