@@ -118,3 +118,26 @@ def test_weights_change_only_when_the_book_trades() -> None:
     weights = LiveBv2().target_weights(_panel(), PARAMS)
     changed = (weights.diff().abs().sum(axis=1) > 0).sum()
     assert 0 < changed < 0.05 * len(weights)
+
+
+def test_an_hour_without_a_spot_price_keeps_both_legs() -> None:
+    """docs/TASKS.md T36: the live engine waits on a missing price with both
+    legs open. The adapter used to report the coin flat for that hour, which
+    dropped the hedge on the perp (still tradeable) and re-opened it after."""
+    from qlab.harness.costs import CostModel
+    from qlab.harness.run import run_backtest
+
+    panel = _panel()
+    gap = len(panel.prices) - 48  # deep in the fall: the hedge is on
+    prices, tradeable = panel.prices.copy(), panel.tradeable.copy()
+    prices.iloc[gap, 1] = np.nan
+    tradeable.iloc[gap, 1] = False
+    holed = MarketPanel(snapshot_id="bv2", prices=prices, funding=panel.funding,
+                        tradeable=tradeable, meta=panel.meta, high=panel.high)
+    weights = LiveBv2().run(holed, PARAMS).weights
+    validate_weights(holed, weights)
+    assert weights["BTC"].iloc[gap - 1] < 0
+    assert weights["BTC"].iloc[gap] == weights["BTC"].iloc[gap - 1]  # the hedge stays
+    result = run_backtest(holed, weights, CostModel(taker_fee_bps=4.5, slippage_bps=0.0),
+                          holed.funding)
+    assert result.turnover.iloc[gap - 1 : gap + 1].sum() == 0.0  # nothing closed or reopened

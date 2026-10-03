@@ -37,6 +37,7 @@ from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import PANEL_RULES_VERSION, build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
+from qlab.harness.gaps import holdable_gaps
 from qlab.harness.lookahead import lookahead_violation
 from qlab.harness.metrics import compute_metrics, min_capital_usd, periods_per_year
 from qlab.harness.run import run_backtest
@@ -419,7 +420,12 @@ def complete_book_window(panel: MarketPanel, required: Sequence[str]) -> BookCov
     if missing:
         return BookCoverage(coverage=0.0, window=None, missing=missing)
 
-    complete = panel.tradeable[list(required)].all(axis=1).to_numpy(dtype=bool)
+    # A bar the book is held through (no price, docs/TASKS.md T36) does not
+    # break the stretch: the harness holds and marks the position across it.
+    gaps = holdable_gaps(panel.prices, panel.funding,
+                         panel.meta.get("no_funding_instruments", ()))
+    present = panel.tradeable | gaps
+    complete = present[list(required)].all(axis=1).to_numpy(dtype=bool)
     n_bars = len(complete)
     coverage = float(complete.mean()) if n_bars else 0.0
 

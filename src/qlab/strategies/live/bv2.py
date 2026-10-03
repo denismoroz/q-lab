@@ -38,8 +38,8 @@ decision is the live book's own:
   be compared (`docs/BV2_LIVE.md`).
 - **Fees.** The book charges frab's own taker fees on its fills; the harness
   charges the spec's costs on weight changes.
-- **Spot price.** The live paper book values spot at the perp price; the
-  harness prices the spot leg on the real spot column.
+- **Spot price.** The live paper book values spot at the perp price, and so
+  does the panel (spot legs are marked at their own perp, 2026-10-02).
 
 ## Rules this driver keeps
 
@@ -56,8 +56,10 @@ decision is the live book's own:
   30-day momentum blind for a month and the hedge unable to switch on. A
   coin genuinely younger than that history would start earlier live.
 - **A bar where a leg is not tradeable is skipped,** as the live engine waits
-  on missing data; the book is not stepped and holds nothing in the harness
-  for that bar.
+  on missing data; the book is not stepped. If the leg merely has no price
+  there (docs/TASKS.md T36, `qlab.harness.gaps`), both legs are held through
+  it, as live; otherwise (an unknown funding rate) the book holds nothing in
+  the harness for that bar.
 - **Signals use the perp's closes,** as the live engine does (it fetches only
   the perp candles), over at most `HISTORY_BARS` of them.
 """
@@ -71,6 +73,7 @@ import numpy as np
 import pandas as pd
 
 from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
+from qlab.harness.gaps import holdable_gaps
 from qlab.harness.panel import MarketPanel
 from qlab.strategies.live._loader import import_frab
 
@@ -110,6 +113,8 @@ class LiveBv2:
         n = len(index)
         columns = panel.prices.columns
         exposure = pd.DataFrame(0.0, index=index, columns=columns)
+        gaps = holdable_gaps(panel.prices, panel.funding,
+                             panel.meta.get("no_funding_instruments", ()))
         equity = np.zeros(n)
         liquidations = 0
         # Bars on which some book actually did something: a fill, a start, or
@@ -129,6 +134,14 @@ class LiveBv2:
                 & panel.tradeable[spot].to_numpy(dtype=bool)
                 & ~np.isnan(px)
                 & ~np.isnan(fr)
+            )
+            # A bar some leg is held through (no price, docs/TASKS.md T36):
+            # the live engine waits with both legs open, and the harness holds
+            # them -- the book is not stepped and keeps its last exposure.
+            held = (
+                (panel.tradeable[perp] | gaps[perp]).to_numpy(dtype=bool)
+                & (panel.tradeable[spot] | gaps[spot]).to_numpy(dtype=bool)
+                & (gaps[perp] | gaps[spot]).to_numpy(dtype=bool)
             )
 
             coin_equity = np.full(n, p.book_capital)
@@ -159,6 +172,12 @@ class LiveBv2:
 
                 last_equity = book.equity(px[i0])
                 for i in range(i0, n):
+                    if not ok[i] and held[i] and i > i0:
+                        coin_equity[i] = last_equity
+                        for col in (spot, perp):
+                            j = columns.get_loc(col)
+                            exposure.iat[i, j] = exposure.iat[i - 1, j]
+                        continue
                     if not ok[i]:
                         coin_equity[i] = last_equity
                         decided[i] = True

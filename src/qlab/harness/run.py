@@ -26,6 +26,7 @@ import pandas as pd
 
 from qlab.harness.accrual import NO_ACCRUAL, compute_accrual
 from qlab.harness.costs import CostModel
+from qlab.harness.gaps import held_through, holdable_gaps, marked_through
 from qlab.harness.panel import MarketPanel
 from qlab.harness.strategy import validate_weights
 
@@ -101,7 +102,17 @@ def run_backtest(
     # tail of a `shift(-1)`).
     keep = panel.prices.index[:-1]
 
-    price_return_fwd = panel.prices.pct_change().shift(-1).loc[keep]
+    # A bar without a price is held through, not forced flat (docs/TASKS.md
+    # T36, `qlab.harness.gaps`): the previous weights are kept there and the
+    # position is marked at the last known price until the next print. The
+    # strategy's own weights were validated above as they are -- it may not
+    # trade on such a bar; holding is the harness's, not the strategy's.
+    gaps = holdable_gaps(panel.prices, panel.funding,
+                         panel.meta.get("no_funding_instruments", ()))
+    weights = held_through(weights, gaps)
+    prices = marked_through(panel.prices, gaps)
+
+    price_return_fwd = prices.pct_change().shift(-1).loc[keep]
     weights_kept = weights.loc[keep]
 
     prev_weights = weights.shift(1).fillna(0.0).loc[keep]

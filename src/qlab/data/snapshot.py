@@ -79,6 +79,7 @@ from qlab.data.sources.base import (
     align_funding_to_index,
     detect_bad_price_bars,
 )
+from qlab.harness.gaps import holdable_gaps
 from qlab.registry import repo
 from qlab.registry.db import session_scope
 from qlab.registry.models import DataSnapshot
@@ -87,7 +88,7 @@ logger = structlog.get_logger()
 
 DEFAULT_SNAPSHOTS_DIR = Path("data/snapshots")
 
-PANEL_RULES_VERSION = "2026-10-03.1"
+PANEL_RULES_VERSION = "2026-10-03.2"
 """The rules that turn raw histories into a panel: which bars are bad, which
 are holdable, how funding is aligned, how spot is marked. A snapshot is
 reused only if it was built under the same version (`_find_matching_snapshot`
@@ -97,7 +98,10 @@ reaches a run whose request did not change. Bump it with every such change.
 
 - 2026-10-03.1: first recorded version; a spot token that is another asset
   than its perp is dropped whole (`spot_is_another_asset`). Snapshots without
-  the field were built before it and are never reused."""
+  the field were built before it and are never reused.
+- 2026-10-03.2: a bar without a price is never tradeable, and the bar before
+  it is when the position can be held through it (docs/TASKS.md T36,
+  `qlab.harness.gaps`)."""
 
 SPOT_PERP_PARITY_TOLERANCE = 0.03
 """frab, src/frab/coin_discovery.py: «Maximum allowed deviation between the
@@ -388,10 +392,24 @@ def _build_frames_from_histories(
     # a contract will not exist is what a delisting announcement gives (they
     # come days ahead); for a mere data gap it hides no price. The panel's
     # last bar realises no return and is left as it is.
+    # Nothing is entered on a bar without a price (docs/TASKS.md T36): such a
+    # bar read tradeable when its listing said so, and a weight there earned
+    # nothing while the move to the next print was dropped as NaN. A
+    # position open before it is held through by the harness instead.
+    tradeable &= prices.notna()
+
     funded = [coin for coin in instruments if histories[coin].has_funding]
     next_ok = prices.shift(-1).notna()
     if funded:
         next_ok[funded] &= funding[funded].shift(-1).notna()
+    # ... or if bar t+1 is one the position is held through (docs/TASKS.md
+    # T36, `qlab.harness.gaps`): a bar with no price inside the instrument's
+    # life, with its funding known. The harness holds the weight across it
+    # and realises the move at the next print -- what a holder experiences.
+    # Without this, the bar before every hour without trades was untradeable
+    # and every book left the market for it.
+    unfunded = [coin for coin in instruments if not histories[coin].has_funding]
+    next_ok |= holdable_gaps(prices, funding, unfunded).shift(-1, fill_value=False)
     next_ok.iloc[-1] = True
     tradeable &= next_ok
 

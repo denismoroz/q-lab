@@ -11,7 +11,7 @@ from qlab.rules.loader import load_latest
 
 KEYS = ("ann_return_net", "sharpe_net", "max_dd", "selection_days", "ann_return_net_ex_best_1pct",
         "regime_bull_return", "regime_flat_return", "regime_bear_return",
-        "regime_bull_days", "regime_flat_days", "regime_bear_days")
+        "regime_bull_days", "regime_flat_days", "regime_bear_days", "book_coverage")
 for path in sys.argv[1:]:
     spec = load_spec(Path(path))
     spec = spec.model_copy(update={"params_fixed_at": dt.date(2026, 10, 3)})
