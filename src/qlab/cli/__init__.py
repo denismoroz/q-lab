@@ -823,6 +823,9 @@ def implement_cmd(
                f"{spent:,} tokens; reply: {outcome.agent_reply}")
     for problem in outcome.problems:
         typer.echo(f"  problem: {problem}")
+    if outcome.not_expressible:
+        typer.echo("  the card is not expressible on the stand's data (an answer, not a failure)")
+        return
     if not outcome.ok:
         raise typer.Exit(code=1)
     spec = load_spec(outcome.spec_path)

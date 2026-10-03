@@ -315,7 +315,8 @@ def implement_stage(day: date, state: dict, *, noise_trials: int,
                 budget = stage.candidate(None)
                 outcome = implement(Path(card), budget=budget, session=session)
                 entry.update(idea_id=outcome.idea_id, reply=outcome.agent_reply,
-                             problems=outcome.problems)
+                             problems=outcome.problems,
+                             not_expressible=outcome.not_expressible)
                 if outcome.ok:
                     spec = load_spec(outcome.spec_path)
                     review = run_review(

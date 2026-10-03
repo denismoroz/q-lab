@@ -105,10 +105,12 @@ class ImplementOutcome:
     agent_reply: str | None
     problems: list[str] = field(default_factory=list)
     reverted: list[str] = field(default_factory=list)
+    not_expressible: str | None = None
 
     @property
     def ok(self) -> bool:
-        return not self.problems
+        """Code and spec written and passing the code-run guards."""
+        return not self.problems and self.not_expressible is None
 
 
 def _changed_paths() -> list[str]:
@@ -168,8 +170,10 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
             outcome.reverted.append(path)
     if outcome.reverted:
         outcome.problems.append(f"wrote outside its two files (reverted): {outcome.reverted}")
-    if (outcome.agent_reply or "").startswith("NOT EXPRESSIBLE"):
-        outcome.problems.append(outcome.agent_reply)
+    reply = (outcome.agent_reply or "").lstrip("*_` ").strip()
+    if reply.upper().startswith("NOT EXPRESSIBLE"):
+        # An honest answer, not a broken attempt: recorded as such.
+        outcome.not_expressible = reply
         return outcome
     if not (QLAB_ROOT / spec_path).is_file() or not (QLAB_ROOT / code_path).is_file():
         outcome.problems.append("the agent did not write both files")
