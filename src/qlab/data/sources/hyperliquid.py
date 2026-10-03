@@ -389,6 +389,9 @@ def fetch_universe(
                     VENUE if dex is None else hip3_venue(dex), coin, interval, start, end
                 ),
             ),
+            fetch_range=lambda coin, a, b: fetch_instrument_history(
+                client, coin, interval, a, b, meta
+            ),
             on_missing=on_missing,
             # Entries written before bar highs were kept are refetched (the
             # candles only -- funding comes back from the cache above).
@@ -553,7 +556,7 @@ def fetch_spot_universe(
         meta = fetch_meta(client)
         pair_by_coin = fetch_spot_meta(client, list(meta))
 
-        def _fetch_one(column: str) -> InstrumentHistory:
+        def _fetch_range(column: str, a: pd.Timestamp, b: pd.Timestamp) -> InstrumentHistory:
             coin = column[: -len(SPOT_COLUMN_SUFFIX)]
             pair_symbol = pair_by_coin.get(coin)
             if pair_symbol is None:
@@ -561,7 +564,7 @@ def fetch_spot_universe(
                     f"hyperliquid: {coin!r} has no USDC-quoted spot market on "
                     "Hyperliquid (no matching base token in spotMeta)"
                 )
-            return fetch_spot_instrument_history(client, coin, pair_symbol, interval, start, end)
+            return fetch_spot_instrument_history(client, coin, pair_symbol, interval, a, b)
 
         columns = [f"{coin}{SPOT_COLUMN_SUFFIX}" for coin in coins]
         return fetch_universe_resumable(
@@ -570,7 +573,8 @@ def fetch_spot_universe(
             end,
             interval,
             source=VENUE,
-            fetch_one=_fetch_one,
+            fetch_one=lambda column: _fetch_range(column, start, end),
+            fetch_range=_fetch_range,
             on_missing=on_missing,
             accept_cached=lambda history: history.high is not None,
         )

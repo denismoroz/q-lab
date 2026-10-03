@@ -408,3 +408,35 @@ def test_a_jump_between_two_traded_bars_is_real() -> None:
     assert not detect_bad_price_bars(prices, trade_count=traded).any()
     assert detect_bad_price_bars(prices, trade_count=traded * 0).iloc[2]
     assert detect_bad_price_bars(prices).iloc[2]  # count unknown: still suspect
+
+
+def test_a_later_end_extends_the_earlier_cache_instead_of_refetching(tmp_path) -> None:
+    """A nightly run moves the end forward by a day: only the gap is fetched,
+    the overlap is refreshed, and the cached past is kept."""
+    from qlab.data.sources.base import InstrumentHistory, fetch_universe_resumable
+
+    def hist(index, value):
+        s = pd.Series(value, index=index, dtype=float)
+        return InstrumentHistory(instrument="X", prices=s, funding=s * 0, volume=s,
+                                 trade_count=s.astype(int), first_seen=index[0],
+                                 last_seen=index[-1], is_delisted=False, high=s)
+
+    start = pd.Timestamp("2025-01-01", tz="UTC")
+    old_end, new_end = pd.Timestamp("2025-01-10", tz="UTC"), pd.Timestamp("2025-01-12", tz="UTC")
+    first = hist(pd.date_range(start, old_end, freq="1D"), 1.0)
+    fetch_universe_resumable(["X"], start, old_end, "1d", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda i: first)
+    asked = []
+
+    def fetch_range(instrument, a, b):
+        asked.append((a, b))
+        return hist(pd.date_range(a, b, freq="1D"), 2.0)
+
+    def refetch_all(instrument):
+        raise AssertionError("must not refetch the whole history")
+
+    out = fetch_universe_resumable(["X"], start, new_end, "1d", source="t", cache_dir=tmp_path,
+                                   fetch_one=refetch_all, fetch_range=fetch_range)["X"]
+    assert asked == [(pd.Timestamp("2025-01-09", tz="UTC"), new_end)]
+    assert out.prices.loc[:"2025-01-08"].eq(1.0).all()
+    assert out.prices.loc["2025-01-09":].eq(2.0).all() and out.prices.index[-1] == new_end

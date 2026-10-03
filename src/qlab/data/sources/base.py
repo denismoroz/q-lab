@@ -236,9 +236,14 @@ def fetch_universe_resumable(
     on_missing: str = "raise",
     cache_dir: Path | str = DEFAULT_RAW_CACHE_DIR,
     accept_cached: Callable[[InstrumentHistory], bool] | None = None,
+    fetch_range: Callable[[str, pd.Timestamp, pd.Timestamp], InstrumentHistory] | None = None,
 ) -> dict[str, InstrumentHistory]:
     """Fetch each instrument, reusing anything already cached from an earlier
     attempt and persisting each success as it lands.
+
+    `fetch_range(instrument, start, end)`, when given, lets a request whose
+    end moved forward extend an entry cached to an earlier end instead of
+    refetching it whole (`_extend_earlier_cache`).
 
     `accept_cached`, when given, decides whether a cached entry is complete
     enough to reuse; a rejected one is fetched again (and its replacement
@@ -259,6 +264,13 @@ def fetch_universe_resumable(
         if cached is not None and (accept_cached is None or accept_cached(cached)):
             histories[instrument] = cached
             continue
+        if fetch_range is not None:
+            extended = _extend_earlier_cache(cache_dir, source, instrument, interval, start, end,
+                                             fetch_range, accept_cached)
+            if extended is not None:
+                store_cached_history(cache_dir, source, interval, start, end, extended)
+                histories[instrument] = extended
+                continue
         try:
             history = fetch_one(instrument)
         except ValueError:
@@ -268,6 +280,68 @@ def fetch_universe_resumable(
         store_cached_history(cache_dir, source, interval, start, end, history)
         histories[instrument] = history
     return histories
+
+
+def _merge_series(old: pd.Series | None, new: pd.Series | None, cut: pd.Timestamp
+                  ) -> pd.Series | None:
+    if old is None and new is None:
+        return None
+    old_part = old[old.index < cut] if old is not None else pd.Series(dtype=float)
+    new_part = new if new is not None else pd.Series(dtype=float)
+    return pd.concat([old_part, new_part]).sort_index()
+
+
+def merge_histories(old: InstrumentHistory, new: InstrumentHistory, cut: pd.Timestamp
+                    ) -> InstrumentHistory:
+    """`old` up to `cut`, `new` from `cut` on (the newer fetch wins where they
+    overlap: the old entry's last bar may have been written before it
+    closed)."""
+    high = None
+    if old.high is not None or new.high is not None:
+        high = _merge_series(old.high if old.high is not None else old.prices * float("nan"),
+                             new.high if new.high is not None else new.prices * float("nan"),
+                             cut)
+    return InstrumentHistory(
+        instrument=old.instrument,
+        prices=_merge_series(old.prices, new.prices, cut),
+        funding=_merge_series(old.funding, new.funding, cut),
+        volume=_merge_series(old.volume, new.volume, cut),
+        trade_count=_merge_series(old.trade_count, new.trade_count, cut),
+        first_seen=min(old.first_seen, new.first_seen),
+        last_seen=max(old.last_seen, new.last_seen),
+        is_delisted=new.is_delisted,
+        has_funding=old.has_funding,
+        high=high,
+    )
+
+
+def _extend_earlier_cache(cache_dir, source, instrument, interval, start, end, fetch_range,
+                          accept_cached) -> InstrumentHistory | None:
+    """The same instrument cached from the same start to an EARLIER end, with
+    only the gap fetched -- so a nightly run adds a day instead of refetching
+    years (and keeps history the venue no longer serves, such as Hyperliquid's
+    candles beyond its last 5000). None when there is no such entry."""
+    folder = Path(cache_dir) / source / interval
+    prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
+    ends = sorted(
+        pd.Timestamp(p.stem[len(prefix):], tz="UTC") for p in folder.glob(f"{prefix}*.parquet")
+        if p.stem[len(prefix):] < str(pd.Timestamp(end).date())
+    )
+    for earlier_end in reversed(ends):
+        cached = load_cached_history(cache_dir, source, instrument, interval, start, earlier_end)
+        if cached is None or (accept_cached is not None and not accept_cached(cached)):
+            continue
+        # Refetch from one day before the old end: its last bars may have
+        # been written before they closed.
+        gap_start = max(pd.Timestamp(start), earlier_end - pd.Timedelta(days=1))
+        if gap_start.tzinfo is None:
+            gap_start = gap_start.tz_localize("UTC")
+        try:
+            fresh = fetch_range(instrument, gap_start, end)
+        except ValueError:
+            return cached  # nothing new in the gap (e.g. delisted since)
+        return merge_histories(cached, fresh, gap_start)
+    return None
 
 
 def polite_sleep() -> None:
@@ -496,6 +570,7 @@ __all__ = [
     "detect_bad_price_bars",
     "fetch_universe_resumable",
     "load_cached_history",
+    "merge_histories",
     "store_cached_history",
     "http_retry",
     "polite_sleep",

@@ -444,11 +444,11 @@ def fetch_spot_universe(
     a spot market never pays funding (``has_funding=False``). For a strategy
     holding spot against its perp (Bv2 on Binance's long history)."""
     with httpx.Client() as client:
-        def fetch_one(name: str) -> InstrumentHistory:
+        def fetch_range(name: str, a: pd.Timestamp, b: pd.Timestamp) -> InstrumentHistory:
             coin = name[: -len(SPOT_COLUMN_SUFFIX)]
-            candles = _spot_candles(client, coin, interval, start, end)
+            candles = _spot_candles(client, coin, interval, a, b)
             if candles.empty:
-                raise ValueError(f"binance spot: no kline data for {coin!r} in [{start}, {end}]")
+                raise ValueError(f"binance spot: no kline data for {coin!r} in [{a}, {b}]")
             prices = candles["price"]
             return InstrumentHistory(
                 instrument=name, prices=prices, funding=pd.Series(dtype=float),
@@ -459,7 +459,8 @@ def fetch_spot_universe(
 
         return fetch_universe_resumable(
             [f"{c}{SPOT_COLUMN_SUFFIX}" for c in coins], start, end, interval, source=VENUE,
-            fetch_one=fetch_one, on_missing=on_missing,
+            fetch_one=lambda name: fetch_range(name, start, end), fetch_range=fetch_range,
+            on_missing=on_missing,
         )
 
 
@@ -488,6 +489,9 @@ def fetch_universe(
             source=VENUE,
             fetch_one=lambda symbol: fetch_instrument_history(
                 client, symbol, interval, start, end, exchange_info
+            ),
+            fetch_range=lambda symbol, a, b: fetch_instrument_history(
+                client, symbol, interval, a, b, exchange_info
             ),
             on_missing=on_missing,
         )
