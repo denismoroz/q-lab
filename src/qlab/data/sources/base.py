@@ -289,7 +289,12 @@ def _merge_series(old: pd.Series | None, new: pd.Series | None, cut: pd.Timestam
         return None
     old_part = old[old.index < cut] if old is not None else pd.Series(dtype=float)
     new_part = new if new is not None else pd.Series(dtype=float)
-    return pd.concat([old_part, new_part]).sort_index()
+    merged = pd.concat([old_part, new_part])
+    # A fetch from `cut` can still return entries stamped just before it
+    # (funding settlements land a few ms around their mark): the newer one
+    # wins, and no timestamp appears twice.
+    merged = merged[~merged.index.duplicated(keep="last")]
+    return merged.sort_index()
 
 
 def merge_histories(old: InstrumentHistory, new: InstrumentHistory, cut: pd.Timestamp

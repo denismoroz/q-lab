@@ -238,8 +238,11 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
             continue
         result = evaluate_item(kind, load_spec(path), end=end, noise_trials=noise_trials,
                                deployable_capital_usd=deployable_capital_usd)
+        state["results"] = [r for r in state["results"]
+                            if not (r["kind"] == kind and r["name"] == result.name)]
         state["results"].append(asdict(result))
-        state["done"][key] = datetime.now(UTC).isoformat()
+        if result.error is None:  # a failed item is tried again on the next run
+            state["done"][key] = datetime.now(UTC).isoformat()
         save_state(day, state)
     if paper and "paper" not in state:
         state["paper"] = paper_reconciliation(day)

@@ -430,7 +430,8 @@ def test_a_later_end_extends_the_earlier_cache_instead_of_refetching(tmp_path) -
 
     def fetch_range(instrument, a, b):
         asked.append((a, b))
-        return hist(pd.date_range(a, b, freq="1D"), 2.0)
+        # One entry stamped just before the gap's start, as funding can be.
+        return hist(pd.date_range(a - pd.Timedelta(days=1), b, freq="1D"), 2.0)
 
     def refetch_all(instrument):
         raise AssertionError("must not refetch the whole history")
@@ -438,7 +439,8 @@ def test_a_later_end_extends_the_earlier_cache_instead_of_refetching(tmp_path) -
     out = fetch_universe_resumable(["X"], start, new_end, "1d", source="t", cache_dir=tmp_path,
                                    fetch_one=refetch_all, fetch_range=fetch_range)["X"]
     assert asked == [(pd.Timestamp("2025-01-09", tz="UTC"), new_end)]
-    assert out.prices.loc[:"2025-01-08"].eq(1.0).all()
-    assert out.prices.loc["2025-01-09":].eq(2.0).all() and out.prices.index[-1] == new_end
+    assert out.prices.index.is_unique
+    assert out.prices.loc[:"2025-01-07"].eq(1.0).all()
+    assert out.prices.loc["2025-01-08":].eq(2.0).all() and out.prices.index[-1] == new_end
     left = sorted(p.name for p in (tmp_path / "t" / "1d").iterdir())
     assert left == ["X__2025-01-01__2025-01-12.json", "X__2025-01-01__2025-01-12.parquet"]
