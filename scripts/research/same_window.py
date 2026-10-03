@@ -5,7 +5,6 @@ nothing to the registry (session rolled back)."""
 import sys
 from pathlib import Path
 
-
 from qlab import regimes
 from qlab.harness.costs import CostModel
 from qlab.harness.metrics import compute_metrics, periods_per_year
