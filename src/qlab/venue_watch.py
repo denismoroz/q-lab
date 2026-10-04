@@ -62,9 +62,15 @@ def diff_hyperliquid(source: str, prev: dict[str, dict], cur: dict[str, dict]) -
         was = prev.get(name)
         dead, was_dead = bool(e.get("isDelisted")), bool(was and was.get("isDelisted"))
         if was is None:
-            events.append(Event(source, "listed", name,
-                                f"max leverage {e.get('maxLeverage')}"
-                                + (" (already delisted)" if dead else "")))
+            # An instrument first seen already delisted (HIP-3 deployments
+            # keep dead entries in their universe) is no listing: nothing can
+            # be traded, and on 2026-10-04 it woke the scout for 486k tokens.
+            if dead:
+                events.append(Event(source, "first-seen-delisted", name,
+                                    f"max leverage {e.get('maxLeverage')}"))
+            else:
+                events.append(Event(source, "listed", name,
+                                    f"max leverage {e.get('maxLeverage')}"))
             continue
         if dead and not was_dead:
             events.append(Event(source, "delisted", name, ""))

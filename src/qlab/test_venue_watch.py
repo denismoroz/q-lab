@@ -34,3 +34,15 @@ def test_binance_status_changes() -> None:
            "ZUSDT": {"status": "PENDING_TRADING"}}
     kinds = {(e.kind, e.instrument) for e in diff_binance(prev, cur)}
     assert kinds == {("delisted", "XUSDT"), ("listed", "ZUSDT")}
+
+
+def test_an_instrument_first_seen_already_delisted_is_not_a_listing() -> None:
+    from qlab.agents.scout import STRUCTURAL
+    from qlab.venue_watch import diff_hyperliquid
+
+    events = diff_hyperliquid("hyperliquid-xyz", {}, {
+        "xyz:ACN": {"maxLeverage": 10, "isDelisted": True},
+        "xyz:NEW": {"maxLeverage": 10}})
+    kinds = {e.instrument: e.kind for e in events}
+    assert kinds == {"xyz:ACN": "first-seen-delisted", "xyz:NEW": "listed"}
+    assert "first-seen-delisted" not in STRUCTURAL  # does not wake the scout
