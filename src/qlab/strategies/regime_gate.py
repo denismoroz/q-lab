@@ -12,6 +12,11 @@ Which regimes to trade in is the spec's declared choice, taken from the
 source's own claim (`regime_claim`), never from looking at how the strategy
 did per regime on the data it is tested on.
 
+`detector` (optional) names what reads the regime: `direction_terciles`
+(the default above) or `predictions:<name>` -- the walk-forward regime
+detector's stored predictions (`qlab.regime_detect`, docs/TASKS.md T39),
+stamped by the daily close they were made at.
+
 The regime of bar t uses BTC closes up to the last day closed by t. BTC's
 closes come from the stored regime build (`qlab regimes build`), outside the
 panel -- like CoinMarketCap snapshots, they are point-in-time by their own
@@ -44,10 +49,19 @@ class RegimeGate:
         from qlab.pipeline.evaluate import resolve_strategy
         from qlab.strategies.detectors import causal_labels, market_closes
 
-        closes = market_closes()
-        if closes is None:
-            raise ValueError("RegimeGate needs BTC closes: run `qlab regimes build` first")
-        labels = causal_labels(closes)
+        detector = str(params.get("detector", "direction_terciles"))
+        if detector == "direction_terciles":
+            closes = market_closes()
+            if closes is None:
+                raise ValueError("RegimeGate needs BTC closes: run `qlab regimes build` first")
+            labels = causal_labels(closes)
+        elif detector.startswith("predictions:"):
+            from qlab.regime_detect import load_predictions
+
+            labels = load_predictions(detector.split(":", 1)[1])["label"]
+        else:
+            raise ValueError(f"unknown detector {detector!r} (direction_terciles, "
+                             "predictions:<name>)")
         inner = resolve_strategy(str(params["inner_code_ref"]))
         weights = inner.target_weights(panel, dict(params["inner_params"]))  # type: ignore[arg-type]
         # The regime known at bar t: the last BTC day closed at or before t.
