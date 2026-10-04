@@ -53,6 +53,13 @@ PREFIX = "meta-"
 
 
 def strategy_returns(spec_path: Path, session) -> pd.Series:
+    """`strategy_returns_of` the spec at `spec_path`."""
+    from qlab.pipeline.spec import load_spec
+
+    return strategy_returns_of(load_spec(spec_path), session)
+
+
+def strategy_returns_of(spec, session) -> pd.Series:
     """The spec's ungated daily net returns from the stand, re-indexed by the
     CLOSE at which each weight was decided: a daily panel is stamped by candle
     open and its price at t is the close at t + 1 day, so the return at panel
@@ -60,9 +67,7 @@ def strategy_returns(spec_path: Path, session) -> pd.Series:
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
     from qlab.pipeline.evaluate import resolve_panel, resolve_strategy
-    from qlab.pipeline.spec import load_spec
 
-    spec = load_spec(spec_path)
     if spec.data.interval != "1d":
         raise ValueError("level 2 is daily: the spec must be on 1d bars")
     panel = resolve_panel(session, spec)
@@ -169,4 +174,4 @@ def load_decisions(name: str, directory: Path = DEFAULT_DIR) -> pd.DataFrame:
 
 
 __all__ = ["HORIZON_DAYS", "MIN_CLASS_DAYS", "features", "known_at", "load_decisions",
-           "outcome", "store", "strategy_returns", "walk_forward"]
+           "outcome", "store", "strategy_returns", "strategy_returns_of", "walk_forward"]

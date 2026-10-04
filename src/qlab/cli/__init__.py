@@ -650,6 +650,8 @@ def night_run_cmd(
                                    help="Stage 2: cards in night/implement_queue.yaml (tokens)"),
     search: bool = typer.Option(True, "--search/--no-search",
                                 help="Stage 3: venue watcher and the scout's draft (tokens)"),
+    detectors: bool = typer.Option(True, "--detectors/--no-detectors",
+                                   help="Rebuild night/detectors.yaml before the watch list"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -660,7 +662,8 @@ def night_run_cmd(
     from qlab.night import run
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
-               implement=implement, search=search, noise_trials=noise_trials)
+               implement=implement, search=search, detectors=detectors,
+               noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
 
@@ -703,56 +706,32 @@ def regimes_detect_cmd(
     """Learn the current regime from the past alone, walking forward month by
     month (docs/TASKS.md T39, docs/REGIME_DETECT.md), store the predictions
     and compare them, and Bv2's own hedge rule, with the testing labels."""
-    import pandas as pd
-
+    from qlab import detector_builds as db
     from qlab import regime_detect as rd
     from qlab.regimes import REGIMES, load, market_closes
 
-    btc = market_closes()
-    regimes = load()
-    if btc is None or regimes is None:
+    regimes, btc = load(), market_closes()
+    if regimes is None or btc is None:
         typer.echo("error: run `qlab regimes build` first", err=True)
         raise typer.Exit(code=1)
-    market = funding = tradeable = None
-    if market_spec and not returns_only:
-        from qlab.pipeline.evaluate import resolve_panel
-        from qlab.pipeline.spec import load_spec
-        from qlab.registry.db import session_scope
-
-        with session_scope() as session:
-            panel = resolve_panel(session, load_spec(Path(market_spec)))
-        day = pd.Timedelta(days=1)  # daily panels are stamped by candle open
-        market = panel.prices.set_axis(panel.prices.index + day)
-        funding = panel.funding.set_axis(panel.funding.index + day)
-        tradeable = panel.tradeable.set_axis(panel.tradeable.index + day)
-    if returns_only:
-        feats = pd.DataFrame({f"ret_{s}": btc / btc.shift(s) - 1.0
-                              for s in rd.return_spans(window)}, index=btc.index)
-    else:
-        if window != 30:
-            typer.echo("error: only the returns-only set is scaled to another window", err=True)
-            raise typer.Exit(code=1)
-        feats = rd.features(btc, market, funding, tradeable)
-    predictions = rd.walk_forward(btc, feats, pd.Timestamp(start, tz="UTC"), window)
-    path = rd.store(name, predictions, {
-        "features": list(feats.columns), "window_days": window,
-        "model": "StandardScaler + LogisticRegression "
-        "(scikit-learn defaults)", "embargo_days": rd.EMBARGO_DAYS,
-        "retrain": "monthly, on labels known at the month's start",
-        "market_spec": None if returns_only else (market_spec or None),
-        "first": predictions.index[0], "last": predictions.index[-1]})
-    typer.echo(f"{path}: {len(predictions)} days, {predictions.index[0]:%Y-%m-%d}.."
-               f"{predictions.index[-1]:%Y-%m-%d}; features: {', '.join(feats.columns)}")
+    try:
+        built = db.level1(name, returns_only=returns_only, window=window, start=start,
+                          market_spec=market_spec or None)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    predictions = rd.load_predictions(name)
+    typer.echo(f"{built.path}: {len(predictions)} days, {built.first:%Y-%m-%d}.."
+               f"{built.last:%Y-%m-%d}; {built.note}")
     acc = rd.accuracy(predictions["label"], regimes.labels)
-    typer.echo(f"against the testing labels: accuracy {acc['accuracy']:.0%} of "
+    typer.echo(f"against the 30-day testing labels: accuracy {acc['accuracy']:.0%} of "
                f"{acc['days']:.0f} days (a third is chance)")
     for r in REGIMES:
         typer.echo(f"  {r:<5} recall {acc[f'{r}_recall']:.0%}, precision "
                    f"{acc[f'{r}_precision']:.0%}")
     typer.echo("hedge signals (share of each regime's days hedged; lag into a fall):")
-    window = predictions.index
     signals = {
-        "Bv2's rule on BTC (14 and 30 days)": rd.bv2_rule(btc).reindex(window),
+        "Bv2's rule on BTC (14 and 30 days)": rd.bv2_rule(btc).reindex(predictions.index),
         "model: hedge unless bull": predictions["label"] != "bull",
         "model: hedge on bear": predictions["label"] == "bear",
     }
@@ -772,29 +751,10 @@ def regimes_meta_cmd(
     """Level 2 for one strategy (docs/TASKS.md T39, docs/REGIME_DETECT.md):
     from level 1's market probabilities and the strategy's own recent state,
     learn walking forward whether it earns over the next 30 days."""
-    from qlab import meta_label as ml
-    from qlab.regime_detect import load_predictions
-    from qlab.regimes import market_closes
-    from qlab.registry.db import session_scope
+    from qlab import detector_builds as db
 
-    with session_scope() as session:
-        returns = ml.strategy_returns(Path(spec), session)
-        session.rollback()  # resolving the panel may register a snapshot; nothing else
-    first = load_predictions(level1)
-    feats = ml.features(first, market_closes(), returns)
-    decisions = ml.walk_forward(feats, returns, first.index[0])
-    path = ml.store(name, decisions, {
-        "spec": spec, "level1": level1, "features": list(feats.columns),
-        "horizon_days": ml.HORIZON_DAYS, "embargo_days": ml.EMBARGO_DAYS,
-        "model": "StandardScaler + LogisticRegression (scikit-learn defaults)",
-        "first": decisions.index[0], "last": decisions.index[-1]})
-    earned = ml.outcome(returns).reindex(decisions.index)
-    both = decisions.assign(earned=earned).dropna(subset=["earned"])
-    hit = (both["trade"] == (both["earned"] == 1.0)).mean()
-    typer.echo(f"{path}: {len(decisions)} days {decisions.index[0]:%Y-%m-%d}.."
-               f"{decisions.index[-1]:%Y-%m-%d}; trades on {decisions['trade'].mean():.0%} of days")
-    typer.echo(f"the strategy earned over the next 30 days on {both['earned'].mean():.0%} of "
-               f"them; level 2 called it right on {hit:.0%}")
+    b = db.meta(name, spec=spec, level1_name=level1)
+    typer.echo(f"{b.path}: {b.first:%Y-%m-%d}..{b.last:%Y-%m-%d}; {b.note}")
 
 
 @regimes_app.command("meta-hedge")
@@ -805,47 +765,20 @@ def regimes_meta_hedge_cmd(
 ) -> None:
     """Level 2 for Bv2 (docs/TASKS.md T39, docs/REGIME_DETECT.md): per coin and
     hour, would a hedge opened now pay over the next 14 days? Learned walking
-    forward; compared with the book's own 14/30-day rule on the same labels."""
-    import pandas as pd
+    forward (scripts/research/hedge_horizons.py compares it with the book's rule)."""
+    from qlab import detector_builds as db
 
-    from qlab import meta_hedge as mh
-    from qlab import meta_label as ml
-    from qlab.pipeline.evaluate import resolve_panel
-    from qlab.pipeline.spec import load_spec
-    from qlab.regime_detect import load_predictions
-    from qlab.registry.db import session_scope
+    b = db.meta_hedge(name, spec=spec, level1_name=level1)
+    typer.echo(f"{b.path}: {b.first:%Y-%m-%d}..{b.last:%Y-%m-%d}; {b.note}")
 
-    the_spec = load_spec(Path(spec))
-    with session_scope() as session:
-        panel = resolve_panel(session, the_spec)
-        session.rollback()
-    first = load_predictions(level1)
-    cost = mh.round_trip_cost(dict(the_spec.params))
-    feats, labels, own = {}, {}, {}
-    for coin in the_spec.params["coins"]:
-        perp, funding = panel.prices[coin], panel.funding[coin]
-        feats[coin] = mh.coin_features(perp, funding, first)
-        labels[coin] = mh.hedge_pays(perp, funding, cost)
-        up = (perp / perp.shift(14 * 24) - 1 > 0) & (perp / perp.shift(30 * 24) - 1 > 0)
-        own[coin] = ~up
-    start = max(first.index[0], panel.prices.index[0])
-    decisions = mh.walk_forward(feats, labels, start)
-    path = ml.store(name, decisions, {
-        "spec": spec, "level1": level1, "features": list(next(iter(feats.values())).columns),
-        "horizon_hours": mh.HORIZON_HOURS, "round_trip_cost": cost,
-        "model": "StandardScaler + LogisticRegression (scikit-learn defaults), pooled over coins",
-        "first": decisions.index[0], "last": decisions.index[-1]})
-    typer.echo(f"{path}: {decisions.index[0]:%Y-%m-%d}..{decisions.index[-1]:%Y-%m-%d}, "
-               f"round trip {cost:.2%}")
-    for coin in the_spec.params["coins"]:
-        both = pd.DataFrame({"model": decisions[coin], "own": own[coin],
-                             "pays": labels[coin]}).dropna()
-        pays = both["pays"] == 1.0
-        typer.echo(
-            f"  {coin:<5} hedge pays on {pays.mean():.0%} of hours; hedged: model "
-            f"{both['model'].mean():.0%}, book's rule {both['own'].astype(bool).mean():.0%}; "
-            f"right: model {(both['model'] == pays).mean():.0%}, book's rule "
-            f"{(both['own'].astype(bool) == pays).mean():.0%}")
+
+@regimes_app.command("refresh")
+def regimes_refresh_cmd() -> None:
+    """Rebuild everything in night/detectors.yaml, as the nightly run does."""
+    from qlab import detector_builds as db
+
+    for line in db.build_all():
+        typer.echo(f"{'ok ' if line['ok'] else 'FAILED'} {line['name']}: {line['note']}")
 
 
 detectors_app = typer.Typer(help="Regime detectors' own trials (docs/REGIME_DETECT.md).",

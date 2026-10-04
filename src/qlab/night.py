@@ -235,6 +235,10 @@ def write_report(day: date, state: dict) -> Path:
             lines.append(f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
                          + " | ".join(_report_row(m)) + " |")
         lines.append("")
+    if built := state.get("detectors"):
+        lines += ["## Определители режима (пересобраны до списка наблюдения)", ""]
+        lines += [f"- {'ок' if b['ok'] else '**сбой**'} — {b['name']}: {b['note']}" for b in built]
+        lines.append("")
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
     if implemented := state.get("implemented"):
@@ -297,7 +301,8 @@ def _token_lines(day: date) -> str:
 
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
-        implement: bool = True, search: bool = True, noise_trials: int = 200,
+        implement: bool = True, search: bool = True, detectors: bool = True,
+        noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly)."""
@@ -306,6 +311,13 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                           + timedelta(hours=12))
     state = load_state(day)
     state.setdefault("results", [])
+    if detectors and "detectors" not in state:
+        # Before the watch list: strategies on it read these files
+        # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.
+        from qlab.detector_builds import CONFIG, build_all
+
+        state["detectors"] = build_all(end) if CONFIG.is_file() else []
+        save_state(day, state)
     watch = yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
     sweep = graveyard if graveyard is not None else day.weekday() == 6
     queue = [("watch", Path(p)) for p in watch]

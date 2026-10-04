@@ -44,10 +44,12 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(night, "evaluate_item", fake_eval)
     day = date(2026, 10, 3)
     try:
-        night.run(day, graveyard=False, paper=False, implement=False, search=False)
+        night.run(day, graveyard=False, paper=False, implement=False, search=False,
+                  detectors=False)
     except KeyboardInterrupt:
         pass
-    report = night.run(day, graveyard=False, paper=False, implement=False, search=False)
+    report = night.run(day, graveyard=False, paper=False, implement=False, search=False,
+                       detectors=False)
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
@@ -72,3 +74,25 @@ def test_report_without_a_forward_test_shows_the_whole_window() -> None:
     row = _report_row({"ann_return_net": 0.076, "sharpe_net": 1.07, "forward_days": 0.0,
                        "regime_bear_return": 0.124})
     assert row == ("+7.6%", "1.07", "0", "—", "—", "—", "+12.4%")
+
+
+def test_detectors_are_rebuilt_before_the_watch_list_and_reported(tmp_path, monkeypatch) -> None:
+    import qlab.detector_builds as db
+    from qlab import night
+
+    order = []
+    config = tmp_path / "detectors.yaml"
+    config.write_text("regimes: false\n")
+    monkeypatch.setattr(db, "CONFIG", config)
+    monkeypatch.setattr(db, "build_all", lambda end, config=config: order.append("detectors")
+                        or [{"name": "level1 x", "ok": True, "note": "2020-01-01..2026-10-03"}])
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: []\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    path = night.run(date(2026, 10, 4), graveyard=False, paper=False, implement=False,
+                     search=False)
+    assert order == ["detectors"]
+    assert "level1 x" in path.read_text(encoding="utf-8")
