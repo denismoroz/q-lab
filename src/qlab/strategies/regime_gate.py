@@ -15,7 +15,9 @@ did per regime on the data it is tested on.
 `detector` (optional) names what reads the regime: `direction_terciles`
 (the default above) or `predictions:<name>` -- the walk-forward regime
 detector's stored predictions (`qlab.regime_detect`, docs/TASKS.md T39),
-stamped by the daily close they were made at.
+stamped by the daily close they were made at; or `meta:<name>` -- a
+strategy's own level-2 decisions (`qlab.meta_label`), with `trade_in:
+[trade]`.
 
 The regime of bar t uses BTC closes up to the last day closed by t. BTC's
 closes come from the stored regime build (`qlab regimes build`), outside the
@@ -42,14 +44,16 @@ class RegimeGate:
         if missing:
             raise ValueError(f"RegimeGate needs params {missing}; none has a default")
         trade_in = set(params["trade_in"])  # type: ignore[arg-type]
-        unknown = trade_in - {"bull", "flat", "bear"}
+        detector = str(params.get("detector", "direction_terciles"))
+        allowed = {"trade"} if detector.startswith("meta:") else {"bull", "flat", "bear"}
+        unknown = trade_in - allowed
         if unknown or not trade_in:
-            raise ValueError(f"trade_in must name regimes among bull, flat, bear; got {trade_in}")
+            raise ValueError(f"trade_in must name {sorted(allowed)} for detector {detector!r}; "
+                             f"got {trade_in}")
 
         from qlab.pipeline.evaluate import resolve_strategy
         from qlab.strategies.detectors import causal_labels, market_closes
 
-        detector = str(params.get("detector", "direction_terciles"))
         if detector == "direction_terciles":
             closes = market_closes()
             if closes is None:
@@ -59,9 +63,14 @@ class RegimeGate:
             from qlab.regime_detect import load_predictions
 
             labels = load_predictions(detector.split(":", 1)[1])["label"]
+        elif detector.startswith("meta:"):
+            from qlab.meta_label import load_decisions
+
+            trade = load_decisions(detector.split(":", 1)[1])["trade"]
+            labels = trade.map({True: "trade", False: "cash"})
         else:
             raise ValueError(f"unknown detector {detector!r} (direction_terciles, "
-                             "predictions:<name>)")
+                             "predictions:<name>, meta:<name>)")
         inner = resolve_strategy(str(params["inner_code_ref"]))
         weights = inner.target_weights(panel, dict(params["inner_params"]))  # type: ignore[arg-type]
         # The regime known at bar t: the last BTC day closed at or before t.

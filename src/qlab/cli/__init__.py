@@ -755,6 +755,40 @@ def regimes_detect_cmd(
                    f"{sc.median_lag_days:.0f} days over {sc.stretches} falls")
 
 
+@regimes_app.command("meta")
+def regimes_meta_cmd(
+    spec: str = typer.Option(..., help="The strategy's ungated daily spec."),
+    level1: str = typer.Option("btc-returns-logistic", help="Stored level-1 predictions."),
+    name: str = typer.Option(..., help="Name of the stored level-2 decisions."),
+) -> None:
+    """Level 2 for one strategy (docs/TASKS.md T39, docs/REGIME_DETECT.md):
+    from level 1's market probabilities and the strategy's own recent state,
+    learn walking forward whether it earns over the next 30 days."""
+    from qlab import meta_label as ml
+    from qlab.regime_detect import load_predictions
+    from qlab.regimes import market_closes
+    from qlab.registry.db import session_scope
+
+    with session_scope() as session:
+        returns = ml.strategy_returns(Path(spec), session)
+        session.rollback()  # resolving the panel may register a snapshot; nothing else
+    first = load_predictions(level1)
+    feats = ml.features(first, market_closes(), returns)
+    decisions = ml.walk_forward(feats, returns, first.index[0])
+    path = ml.store(name, decisions, {
+        "spec": spec, "level1": level1, "features": list(feats.columns),
+        "horizon_days": ml.HORIZON_DAYS, "embargo_days": ml.EMBARGO_DAYS,
+        "model": "StandardScaler + LogisticRegression (scikit-learn defaults)",
+        "first": decisions.index[0], "last": decisions.index[-1]})
+    earned = ml.outcome(returns).reindex(decisions.index)
+    both = decisions.assign(earned=earned).dropna(subset=["earned"])
+    hit = (both["trade"] == (both["earned"] == 1.0)).mean()
+    typer.echo(f"{path}: {len(decisions)} days {decisions.index[0]:%Y-%m-%d}.."
+               f"{decisions.index[-1]:%Y-%m-%d}; trades on {decisions['trade'].mean():.0%} of days")
+    typer.echo(f"the strategy earned over the next 30 days on {both['earned'].mean():.0%} of "
+               f"them; level 2 called it right on {hit:.0%}")
+
+
 budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
 app.add_typer(budget_app, name="budget")
 
