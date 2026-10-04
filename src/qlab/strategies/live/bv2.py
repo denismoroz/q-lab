@@ -101,21 +101,45 @@ class LiveBv2Run:
     liquidations: int
 
 
-def _external_hedge(hedge_by: Mapping[str, object], index: pd.DatetimeIndex) -> np.ndarray:
-    """The hedge wish for the bar after each bar, from stored regime
-    predictions (`qlab.regime_detect`, docs/TASKS.md T39): 1.0 when the
-    latest prediction known at the bar's close is one of `hedge_when`, NaN
-    before the first prediction (the book's own rule then applies).
+def _external_hedge(hedge_by: Mapping[str, object], index: pd.DatetimeIndex,
+                    coins: list[str], sticky_hours: int) -> dict[str, np.ndarray]:
+    """The hedge wish for the bar after each bar, per coin: 1.0 hedge, 0.0
+    not, NaN before the first prediction (the book's own rule then applies).
 
-    Predictions are stamped by the daily close they were made at, from data
-    up to it and a model trained on labels known a month earlier; an hourly
-    bar labelled by its open closes an hour later and may use every
-    prediction stamped by then. The look-ahead guard cannot see into the
-    stored file -- the predictions' own causality is tested in
-    `qlab.test_regime_detect`."""
+    Two sources (docs/TASKS.md T39):
+
+    - `{predictions: <name>, hedge_when: [...]}` -- the market regime
+      detector (`qlab.regime_detect`), one daily wish for every coin: hedge
+      when the latest prediction is one of `hedge_when`;
+    - `{meta: <name>}` -- Bv2's own level 2 (`qlab.meta_hedge`), an hourly
+      wish per coin. Its wish passes through the book's sticky exit, as the
+      book's own rule does (book.py `advance_signals`): on at once, off only
+      after `sticky_exit_hours` hours in a row without it.
+
+    Predictions are stamped by the close they were made at, from data up to
+    it and models trained on labels known a month earlier; an hourly bar
+    labelled by its open closes an hour later and may use every prediction
+    stamped by then. The look-ahead guard cannot see into the stored files --
+    their causality is tested in `qlab.test_regime_detect` and
+    `qlab.test_meta_hedge`."""
+    keys = set(hedge_by)
+    if "meta" in keys:
+        if keys != {"meta"}:
+            extra = sorted(keys - {"meta"})
+            raise ValueError(f"hedge_by with meta takes nothing else, not {extra}")
+        from qlab.meta_label import load_decisions
+
+        decisions = load_decisions(str(hedge_by["meta"]))
+        out = {}
+        for coin in coins:
+            if coin not in decisions.columns:
+                raise ValueError(f"level-2 decisions {hedge_by['meta']!r} have no column {coin!r}")
+            raw = decisions[coin].astype(float).reindex(index).to_numpy()
+            out[coin] = _sticky(raw, sticky_hours)
+        return out
     from qlab.regime_detect import load_predictions
 
-    unknown = set(hedge_by) - {"predictions", "hedge_when"}
+    unknown = keys - {"predictions", "hedge_when"}
     if unknown:
         raise ValueError(f"hedge_by takes predictions and hedge_when, not {sorted(unknown)}")
     when = list(hedge_by.get("hedge_when") or [])
@@ -124,7 +148,26 @@ def _external_hedge(hedge_by: Mapping[str, object], index: pd.DatetimeIndex) -> 
     predictions = load_predictions(str(hedge_by["predictions"]))
     wish = predictions["label"].isin(when).astype(float)
     closes = index + pd.Timedelta(hours=1)
-    return wish.reindex(closes, method="ffill").to_numpy(dtype=float)
+    market = wish.reindex(closes, method="ffill").to_numpy(dtype=float)
+    return {coin: market for coin in coins}
+
+
+def _sticky(raw: np.ndarray, hours: int) -> np.ndarray:
+    """The book's sticky exit applied to an external wish (NaN passes)."""
+    out = raw.copy()
+    on, off = False, 0
+    for i, w in enumerate(raw):
+        if np.isnan(w):
+            on, off = False, 0
+            continue
+        if w:
+            on, off = True, 0
+        elif on:
+            off += 1
+            if off >= hours:
+                on = False
+        out[i] = 1.0 if on else 0.0
+    return out
 
 
 class LiveBv2:
@@ -142,7 +185,8 @@ class LiveBv2:
         hedge_by = params.pop("hedge_by", None)
         p = B2Params.from_dict(params)
         index = panel.prices.index
-        external = _external_hedge(hedge_by, index) if hedge_by else None
+        externals = (_external_hedge(hedge_by, index, list(p.coins), int(p.sticky_exit_hours))
+                     if hedge_by else None)
         n = len(index)
         columns = panel.prices.columns
         exposure = pd.DataFrame(0.0, index=index, columns=columns)
@@ -155,6 +199,7 @@ class LiveBv2:
         decided = np.zeros(n, dtype=bool)
 
         for coin in p.coins:
+            external = externals[coin] if externals is not None else None
             perp, spot = coin, f"{coin}{SPOT_COLUMN_SUFFIX}"
             for col in (perp, spot):
                 if col not in columns:

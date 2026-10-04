@@ -1,0 +1,130 @@
+# docs/TASKS.md T39: Bv2's hedge decided by its own level-2 model, per coin and hour.
+# Declared 2026-10-04 before level 2 was built; the base params keep their fit window.
+idea_id: bv2-t39-meta-hedge
+title: 'Bv2 на Binance: страховать или нет, решает модель второго уровня по каждой монете и часу (направление
+  рынка → окупится ли страховка за 14 дней)'
+code_ref: qlab.strategies.live.bv2:LiveBv2
+params_fit_from: 2023-06-01
+params_fixed_at: 2025-06-01
+params_fixed_evidence: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Результаты»: «| | обучение
+  2023-06—2025-05 | проверка 2025-06—2026-05 | вперёд 2026-06—09 |» -- the parameters were fitted on 2023-06
+  … 2025-05 and the following year only checked against rules declared before («Дальше подкручивать по
+  проверочному году нельзя»). The coin list BTC/ETH/SOL/AVAX comes from the same research («только монеты
+  HL»). Committed later in frab commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13) with two changes
+  not fitted on the check year: the margin model (execution realism, REPORT.md «Маржа по-честному», compared
+  on the training years) and carry off (REPORT.md «Как читать честно», 5: it duplicates FRAB''s positions).
+  Owner, 2026-10-04: «разделять backtest and forward test».
+
+  Level 2 declared 2026-10-04 before it was built or any run with it; level 1''s feature set was chosen
+  on 2020-04..2023-12, so the forward test from 2025-06 is free of every choice here.
+
+  '
+params:
+  coins:
+  - BTC
+  - ETH
+  - SOL
+  - AVAX
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage:
+    BTC: 3.0
+    ETH: 2.0
+    SOL: 1.5
+    AVAX: 1.5
+  default_leverage: 1.0
+  maint_margin_rate:
+    BTC: 0.0125
+    ETH: 0.02
+    SOL: 0.025
+    AVAX: 0.05
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+  hedge_by:
+    meta: bv2-hedge
+data:
+  source: binance
+  interval: 1h
+  start: '2019-09-08'
+  end: '2026-09-20'
+  instruments:
+  - AVAX
+  - AVAX-SPOT
+  - BTC
+  - BTC-SPOT
+  - ETH
+  - ETH-SPOT
+  - SOL
+  - SOL-SPOT
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+unexpressed_mechanisms: []
+required_instruments:
+- BTC-SPOT
+- ETH-SPOT
+- SOL-SPOT
+- AVAX-SPOT
+- BTC
+- ETH
+- SOL
+- AVAX
+regime_claim:
+  bull: earns
+  bear: beats_market
+sources:
+  costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
+    min_order_usd
+  coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  capital_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  hedge_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  sticky_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  ratchet_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_fraction: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_entry_apr: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  slippage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  min_order_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  margin_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  short_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  default_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  default_maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  margin_buffer: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  hedge_margin_headroom: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  rebalance_at_im_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  mode: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  hedge_by: 'owner 2026-10-04: «так же можно поступить с bv2 — чтобы принимать решение — хеджировать или
+    нет — то есть отдельная модель может это говорить», «да, делай для bv2»; level 1 = predictions btc-returns-logistic;
+    level 2 built by `qlab regimes meta-hedge` (src/qlab/meta_hedge.py), hedge when P(a hedge opened now
+    pays over 14 days) > 0.5, scikit-learn defaults, nothing tuned'

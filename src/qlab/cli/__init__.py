@@ -789,6 +789,57 @@ def regimes_meta_cmd(
                f"them; level 2 called it right on {hit:.0%}")
 
 
+@regimes_app.command("meta-hedge")
+def regimes_meta_hedge_cmd(
+    spec: str = typer.Option("specs/bv2-binance.yaml", help="The Bv2 spec (hourly panel)."),
+    level1: str = typer.Option("btc-returns-logistic", help="Stored level-1 predictions."),
+    name: str = typer.Option("bv2-hedge", help="Name of the stored level-2 decisions."),
+) -> None:
+    """Level 2 for Bv2 (docs/TASKS.md T39, docs/REGIME_DETECT.md): per coin and
+    hour, would a hedge opened now pay over the next 14 days? Learned walking
+    forward; compared with the book's own 14/30-day rule on the same labels."""
+    import pandas as pd
+
+    from qlab import meta_hedge as mh
+    from qlab import meta_label as ml
+    from qlab.pipeline.evaluate import resolve_panel
+    from qlab.pipeline.spec import load_spec
+    from qlab.regime_detect import load_predictions
+    from qlab.registry.db import session_scope
+
+    the_spec = load_spec(Path(spec))
+    with session_scope() as session:
+        panel = resolve_panel(session, the_spec)
+        session.rollback()
+    first = load_predictions(level1)
+    cost = mh.round_trip_cost(dict(the_spec.params))
+    feats, labels, own = {}, {}, {}
+    for coin in the_spec.params["coins"]:
+        perp, funding = panel.prices[coin], panel.funding[coin]
+        feats[coin] = mh.coin_features(perp, funding, first)
+        labels[coin] = mh.hedge_pays(perp, funding, cost)
+        up = (perp / perp.shift(14 * 24) - 1 > 0) & (perp / perp.shift(30 * 24) - 1 > 0)
+        own[coin] = ~up
+    start = max(first.index[0], panel.prices.index[0])
+    decisions = mh.walk_forward(feats, labels, start)
+    path = ml.store(name, decisions, {
+        "spec": spec, "level1": level1, "features": list(next(iter(feats.values())).columns),
+        "horizon_hours": mh.HORIZON_HOURS, "round_trip_cost": cost,
+        "model": "StandardScaler + LogisticRegression (scikit-learn defaults), pooled over coins",
+        "first": decisions.index[0], "last": decisions.index[-1]})
+    typer.echo(f"{path}: {decisions.index[0]:%Y-%m-%d}..{decisions.index[-1]:%Y-%m-%d}, "
+               f"round trip {cost:.2%}")
+    for coin in the_spec.params["coins"]:
+        both = pd.DataFrame({"model": decisions[coin], "own": own[coin],
+                             "pays": labels[coin]}).dropna()
+        pays = both["pays"] == 1.0
+        typer.echo(
+            f"  {coin:<5} hedge pays on {pays.mean():.0%} of hours; hedged: model "
+            f"{both['model'].mean():.0%}, book's rule {both['own'].astype(bool).mean():.0%}; "
+            f"right: model {(both['model'] == pays).mean():.0%}, book's rule "
+            f"{(both['own'].astype(bool) == pays).mean():.0%}")
+
+
 budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
 app.add_typer(budget_app, name="budget")
 
