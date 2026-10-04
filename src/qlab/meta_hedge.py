@@ -73,20 +73,22 @@ def coin_features(perp: pd.Series, funding: pd.Series, level1: pd.DataFrame) -> 
     return frame
 
 
-def hedge_pays(perp: pd.Series, funding: pd.Series, cost: float) -> pd.Series:
+def hedge_pays(perp: pd.Series, funding: pd.Series, cost: float,
+               horizon_hours: int = HORIZON_HOURS) -> pd.Series:
     """Per bar: would a hedge opened at this bar's close and held
     `HORIZON_HOURS` have paid? The short earns -(price change) and receives
     the funding of the bars after it, minus a round trip. NaN until known."""
-    ahead = perp.shift(-HORIZON_HOURS) / perp - 1.0
-    paid_funding = funding.fillna(0.0)[::-1].rolling(HORIZON_HOURS).sum()[::-1].shift(-1)
+    ahead = perp.shift(-horizon_hours) / perp - 1.0
+    paid_funding = funding.fillna(0.0)[::-1].rolling(horizon_hours).sum()[::-1].shift(-1)
     pnl = -ahead + paid_funding - cost
     return (pnl > 0).astype(float).where(ahead.notna())
 
 
-def known_at(labels: pd.Series, as_of: pd.Timestamp) -> pd.Series:
+def known_at(labels: pd.Series, as_of: pd.Timestamp,
+             horizon_hours: int = HORIZON_HOURS) -> pd.Series:
     """Labels known at `as_of`: the close `HORIZON_HOURS` after the bar (the
     bar opening `HORIZON_HOURS` later closes an hour after its open)."""
-    done = labels.index + pd.Timedelta(hours=HORIZON_HOURS + 1)
+    done = labels.index + pd.Timedelta(hours=horizon_hours + 1)
     return labels[(done <= as_of) & labels.notna()]
 
 
@@ -99,23 +101,26 @@ def _model():
 
 
 def walk_forward(features: dict[str, pd.DataFrame], labels: dict[str, pd.Series],
-                 start: pd.Timestamp) -> pd.DataFrame:
+                 start: pd.Timestamp, end: pd.Timestamp | None = None,
+                 horizon_hours: int = HORIZON_HOURS) -> pd.DataFrame:
     """P(the hedge pays) per bar and coin from `start`; one model pooled over
     the coins, refit monthly on labels known `EMBARGO_DAYS` before the month.
     Columns `<coin>` (hedge wish, bool) and `p_<coin>`, plus trained_until."""
     coins = sorted(features)
     clean = {c: features[c].dropna() for c in coins}
     last = max(f.index[-1] for f in clean.values())
+    if end is not None:
+        last = min(last, end)
     months = pd.date_range(start.normalize(), last, freq="MS", tz="UTC")
     if len(months) == 0 or months[0] > start:
         months = months.insert(0, start)
     out = []
     for k, month in enumerate(months):
         until = months[k + 1] if k + 1 < len(months) else last + pd.Timedelta(hours=1)
-        cutoff = month - pd.Timedelta(days=EMBARGO_DAYS)
+        cutoff = month - pd.Timedelta(days=max(EMBARGO_DAYS, horizon_hours / 24))
         xs, ys = [], []
         for c in coins:
-            y = known_at(labels[c], month)
+            y = known_at(labels[c], month, horizon_hours)
             y = y[y.index <= cutoff]
             rows = clean[c].index.intersection(y.index)
             xs.append(clean[c].loc[rows])
