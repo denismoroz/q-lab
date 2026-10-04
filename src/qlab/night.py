@@ -187,7 +187,7 @@ def paper_reconciliation(day: date) -> list[str]:
 
 
 def _pct(v) -> str:
-    return f"{v:+.1%}" if isinstance(v, int | float) else "—"
+    return f"{v:+.1%}" if isinstance(v, int | float) and v == v else "—"
 
 
 def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
@@ -202,8 +202,13 @@ def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
     prefix = "fit_" if split else ""
     days = m.get("forward_days") or 0
     forward_total = "—"
-    if split and days > 0 and isinstance(m.get("ann_return_net"), int | float):
+    if days > 0 and isinstance(m.get("ann_return_net"), int | float):
         forward_total = _pct((1 + m["ann_return_net"]) ** (days / 365.25) - 1)
+    if days > 0 and not split:
+        # The whole judged window is the forward test (a causal selection, or
+        # parameters fixed before the data began): no selection period to show.
+        return ("—", "—", f"{days:.0f}", forward_total,
+                *(_pct(m.get(f"regime_{r}_return")) for r in ("bull", "flat", "bear")))
     sharpe = m.get(f"{prefix}sharpe_net")
     return (_pct(m.get(f"{prefix}ann_return_net")),
             f"{sharpe:.2f}" if isinstance(sharpe, int | float) else "—",

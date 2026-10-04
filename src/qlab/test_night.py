@@ -96,3 +96,13 @@ def test_detectors_are_rebuilt_before_the_watch_list_and_reported(tmp_path, monk
                      search=False)
     assert order == ["detectors"]
     assert "level1 x" in path.read_text(encoding="utf-8")
+
+
+def test_report_with_only_a_forward_test_and_with_a_nan() -> None:
+    from qlab.night import _report_row
+
+    row = _report_row({"ann_return_net": 0.1, "sharpe_net": 1.0, "forward_days": 365.25})
+    assert row[:4] == ("—", "—", "365", "+10.0%")
+    row = _report_row({"ann_return_net": float("nan"), "fit_ann_return_net": 0.05,
+                       "fit_sharpe_net": 0.5, "forward_days": 2.0})
+    assert row[3] == "—"
