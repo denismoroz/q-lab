@@ -1469,3 +1469,34 @@ def test_a_snapshot_built_under_other_panel_rules_is_not_reused(session, tmp_pat
         session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
         end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=INSTRUMENTS,
         include_spot=False, min_daily_volume_usd=None) is None
+
+
+def test_a_fit_window_puts_history_after_it_in_the_forward_test() -> None:
+    """Owner, 2026-10-04: «разделять backtest and forward test». Bv2's
+    parameters were fitted on 2023-06 … 2025-05 and committed in 2026-09: the
+    sixteen months after the fit are a forward test on history."""
+    index = pd.date_range("2020-09-01", "2026-09-20", freq="1D", tz="UTC")
+    split = split_at_fixed_date(index, 0, len(index) - 1, date(2025, 6, 1), date(2023, 6, 1))
+    assert index[split.before[0]].date() == date(2020, 9, 1)
+    assert index[split.before[1]].date() == date(2023, 5, 31)
+    assert index[split.selection[0]].date() == date(2023, 6, 1)
+    assert index[split.selection[1]].date() == date(2025, 5, 31)
+    assert index[split.forward[0]].date() == date(2025, 6, 1)
+    # Without a fit start, everything before the fixed date is selection.
+    plain = split_at_fixed_date(index, 0, len(index) - 1, date(2025, 6, 1))
+    assert plain.before is None and plain.selection[0] == 0
+
+
+def test_a_fit_start_needs_an_end_after_it() -> None:
+    base = dict(idea_id="x", title="x", code_ref="m:C", params={},
+                data={"source": "binance", "interval": "1d", "start": "2020-01-01",
+                      "end": "2026-01-01"},
+                costs={"taker_fee_bps": 1.0, "slippage_bps": 0.0}, min_leg_notional=10.0,
+                unexpressed_mechanisms=[])
+    with pytest.raises(ValueError, match="needs params_fixed_at"):
+        StrategySpec(**base, params_fit_from=date(2023, 6, 1))
+    with pytest.raises(ValueError, match="before params_fixed_at"):
+        StrategySpec(**base, params_fit_from=date(2025, 6, 1), params_fixed_at=date(2023, 6, 1),
+                     params_fixed_evidence="doc")
+    StrategySpec(**base, params_fit_from=date(2023, 6, 1), params_fixed_at=date(2025, 6, 1),
+                 params_fixed_evidence="doc")

@@ -128,9 +128,9 @@ sources:
   regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'
-  params.hedge_by.predictions: 'docs/TASKS.md T39; built by `qlab regimes detect` (src/qlab/regime_detect.py):
+  hedge_by.predictions: 'docs/TASKS.md T39; built by `qlab regimes detect` (src/qlab/regime_detect.py):
     walk-forward logistic regression, scikit-learn defaults, declared 2026-10-04 before its scores were
     seen'
-  params.hedge_by.hedge_when: 'the book''s own semantics with the detector in place of its 14/30-day rule:
+  hedge_by.hedge_when: 'the book''s own semantics with the detector in place of its 14/30-day rule:
     hedge on unless up (funding-rate-arbitrage/src/frab/strategy/b2/book.py, signals_at: `raw_hedge =
     not up`)'

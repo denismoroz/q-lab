@@ -60,6 +60,10 @@ decision is the live book's own:
   there (docs/TASKS.md T36, `qlab.harness.gaps`), both legs are held through
   it, as live; otherwise (an unknown funding rate) the book holds nothing in
   the harness for that bar.
+- **The hedge may come from a regime detector** (`hedge_by`, docs/TASKS.md
+  T39): the book's own wish for the next bar is replaced by the stored
+  predictions; everything else -- sticky state, sizes, fills -- stays frab's.
+  Without `hedge_by` nothing changes.
 - **Signals use the perp's closes,** as the live engine does (it fetches only
   the perp candles), over at most `HISTORY_BARS` of them.
 """
@@ -97,6 +101,32 @@ class LiveBv2Run:
     liquidations: int
 
 
+def _external_hedge(hedge_by: Mapping[str, object], index: pd.DatetimeIndex) -> np.ndarray:
+    """The hedge wish for the bar after each bar, from stored regime
+    predictions (`qlab.regime_detect`, docs/TASKS.md T39): 1.0 when the
+    latest prediction known at the bar's close is one of `hedge_when`, NaN
+    before the first prediction (the book's own rule then applies).
+
+    Predictions are stamped by the daily close they were made at, from data
+    up to it and a model trained on labels known a month earlier; an hourly
+    bar labelled by its open closes an hour later and may use every
+    prediction stamped by then. The look-ahead guard cannot see into the
+    stored file -- the predictions' own causality is tested in
+    `qlab.test_regime_detect`."""
+    from qlab.regime_detect import load_predictions
+
+    unknown = set(hedge_by) - {"predictions", "hedge_when"}
+    if unknown:
+        raise ValueError(f"hedge_by takes predictions and hedge_when, not {sorted(unknown)}")
+    when = list(hedge_by.get("hedge_when") or [])
+    if not when or not set(when) <= {"bull", "flat", "bear"}:
+        raise ValueError(f"hedge_by.hedge_when must list regimes (bull, flat, bear): {when}")
+    predictions = load_predictions(str(hedge_by["predictions"]))
+    wish = predictions["label"].isin(when).astype(float)
+    closes = index + pd.Timedelta(hours=1)
+    return wish.reindex(closes, method="ffill").to_numpy(dtype=float)
+
+
 class LiveBv2:
     """See module docstring. `params` is handed unchanged to
     `B2Params.from_dict`, so frab's own validation applies."""
@@ -108,8 +138,11 @@ class LiveBv2:
         return self.run(panel, params).weights
 
     def run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
-        p = B2Params.from_dict(dict(params))
+        params = dict(params)
+        hedge_by = params.pop("hedge_by", None)
+        p = B2Params.from_dict(params)
         index = panel.prices.index
+        external = _external_hedge(hedge_by, index) if hedge_by else None
         n = len(index)
         columns = panel.prices.columns
         exposure = pd.DataFrame(0.0, index=index, columns=columns)
@@ -167,6 +200,8 @@ class LiveBv2:
                         list(rates[max(0, k - 8) : k + 1]),
                         p,
                     )
+                if external is not None and i0 > 0 and not np.isnan(external[i0 - 1]):
+                    book.hedge_prev = bool(external[i0 - 1])
                 _book.start_book(book, bar_ms=_ms(index[i0]), price=px[i0], params=p)
                 decided[i0] = True
 
@@ -200,6 +235,11 @@ class LiveBv2:
                         params=p,
                         high=float(hi[i]),
                     )
+                    if external is not None and not np.isnan(external[i]):
+                        # The hedge for the next bar comes from the regime
+                        # detector instead of the book's own 14/30-day rule
+                        # (`hedge_by`, docs/REGIME_DETECT.md).
+                        book.hedge_prev = bool(external[i])
                     liquidations += sum(1 for e in events if e.get("kind") == "liquidation")
                     if events:
                         decided[i] = True

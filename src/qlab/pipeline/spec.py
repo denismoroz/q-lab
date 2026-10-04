@@ -210,6 +210,23 @@ class StrategySpec(BaseModel):
     wrote down would look better than one described honestly.
     """
 
+    params_fit_from: date | None = None
+    """The first date of the data the parameters were fitted on, when the
+    source says so (owner, 2026-10-04: «588 дней — 2 года я не буду ждать ...
+    разделять backtest and forward test»).
+
+    `params_fixed_at` is then the END of that data -- the day after the last
+    one the choice saw, NOT the day the code was committed: frab chose Bv2's
+    parameters on 2023-06 … 2025-05 (research/strategy_b_v2/REPORT.md) and
+    committed them in September 2026, and dating the boundary by the commit
+    threw sixteen months of history the choice never saw into the selection
+    period. With this field the window has three parts: data BEFORE the fit
+    (reported as `pre_*`, not judged: an instrument list chosen later may
+    know who survived), the SELECTION period `[params_fit_from,
+    params_fixed_at)`, and the FORWARD test from `params_fixed_at` on --
+    history as well as fresh data. `params_fixed_evidence` must cite both
+    dates."""
+
     params_fixed_evidence: str | None = None
     """Where `params_fixed_at` comes from (a commit, a document, a database
     row). Required whenever the date is given: an undocumented date would
@@ -259,6 +276,18 @@ class StrategySpec(BaseModel):
     def _causal_selection_needs_a_start(self) -> StrategySpec:
         if self.selects_causally and self.params_fixed_at is None:
             raise ValueError("selects_causally needs params_fixed_at: the first causal choice")
+        return self
+
+    @model_validator(mode="after")
+    def _fit_window_is_ordered(self) -> StrategySpec:
+        if self.params_fit_from is None:
+            return self
+        if self.params_fixed_at is None:
+            raise ValueError("params_fit_from needs params_fixed_at: the end of the fitted data")
+        if self.params_fit_from >= self.params_fixed_at:
+            raise ValueError("params_fit_from must be before params_fixed_at")
+        if self.selects_causally:
+            raise ValueError("a causal selection is fitted on nothing: drop params_fit_from")
         return self
 
     @model_validator(mode="after")

@@ -141,3 +141,23 @@ def test_an_hour_without_a_spot_price_keeps_both_legs() -> None:
     result = run_backtest(holed, weights, CostModel(taker_fee_bps=4.5, slippage_bps=0.0),
                           holed.funding)
     assert result.turnover.iloc[gap - 1 : gap + 1].sum() == 0.0  # nothing closed or reopened
+
+
+def test_a_regime_detector_can_drive_the_hedge(monkeypatch) -> None:
+    """docs/TASKS.md T39: `hedge_by` replaces the book's own 14/30-day wish
+    with stored predictions; deep in the rise the own rule leaves the hedge
+    off, a detector saying "bear" turns it on."""
+    import qlab.regime_detect as rd
+
+    panel = _panel()
+    days = pd.date_range(panel.prices.index[0].normalize(), periods=80, freq="1D", tz="UTC")
+    stored = pd.DataFrame({"label": ["bear"] * len(days)}, index=days)
+    monkeypatch.setattr(rd, "load_predictions", lambda name: stored)
+    own = LiveBv2().run(panel, PARAMS).weights
+    driven = LiveBv2().run(panel, {**PARAMS, "hedge_by": {"predictions": "x",
+                                                          "hedge_when": ["bear"]}}).weights
+    up = 24 * 35
+    assert own["BTC"].iloc[up] == 0.0
+    assert driven["BTC"].iloc[up] < 0
+    with pytest.raises(ValueError, match="hedge_when"):
+        LiveBv2().run(panel, {**PARAMS, "hedge_by": {"predictions": "x", "hedge_when": ["up"]}})

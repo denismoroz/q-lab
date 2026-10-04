@@ -10,11 +10,17 @@ idea_id: bv2-binance
 title: 'Bv2 (живой код frab, параметры прода) на Binance 2019–2026: спот и контракт BTC, ETH, SOL, AVAX,
   часы'
 code_ref: qlab.strategies.live.bv2:LiveBv2
-params_fixed_at: 2026-09-13
-params_fixed_evidence: 'frab commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13): the b2 paper engine,
-  margin model and the removal of carry; coins BTC/ETH/SOL/AVAX set there
-
-  '
+params_fit_from: 2023-06-01
+params_fixed_at: 2025-06-01
+params_fixed_evidence: >
+  funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Результаты»: «| | обучение 2023-06—2025-05 | проверка 2025-06—2026-05 | вперёд 2026-06—09 |»
+  -- the parameters were fitted on 2023-06 … 2025-05 and the following year only checked against
+  rules declared before («Дальше подкручивать по проверочному году нельзя»). The coin list
+  BTC/ETH/SOL/AVAX comes from the same research («только монеты HL»). Committed later in frab
+  commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13) with two changes not fitted on the check
+  year: the margin model (execution realism, REPORT.md «Маржа по-честному», compared on the
+  training years) and carry off (REPORT.md «Как читать честно», 5: it duplicates FRAB's positions).
+  Owner, 2026-10-04: «разделять backtest and forward test».
 params:
   coins:
   - BTC

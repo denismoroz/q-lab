@@ -685,6 +685,71 @@ def regimes_build_cmd() -> None:
     typer.echo(f"latest: {labels.index[-1]:%Y-%m-%d} {labels.iloc[-1]}")
 
 
+@regimes_app.command("detect")
+def regimes_detect_cmd(
+    name: str = typer.Option("btc-market-logistic", help="Name of the stored predictions."),
+    start: str = typer.Option("2020-01-01", help="First day to predict (months whose "
+                              "training data lacks a regime are skipped)."),
+    market_spec: str = typer.Option(
+        "specs/trend-binance-cap.yaml",
+        help="A spec whose panel is the whole Binance market (daily, discovered universe): "
+             "breadth and mean funding come from it. Empty: BTC only."),
+) -> None:
+    """Learn the current regime from the past alone, walking forward month by
+    month (docs/TASKS.md T39, docs/REGIME_DETECT.md), store the predictions
+    and compare them, and Bv2's own hedge rule, with the testing labels."""
+    import pandas as pd
+
+    from qlab import regime_detect as rd
+    from qlab.regimes import REGIMES, load, market_closes
+
+    btc = market_closes()
+    regimes = load()
+    if btc is None or regimes is None:
+        typer.echo("error: run `qlab regimes build` first", err=True)
+        raise typer.Exit(code=1)
+    market = funding = tradeable = None
+    if market_spec:
+        from qlab.pipeline.evaluate import resolve_panel
+        from qlab.pipeline.spec import load_spec
+        from qlab.registry.db import session_scope
+
+        with session_scope() as session:
+            panel = resolve_panel(session, load_spec(Path(market_spec)))
+        day = pd.Timedelta(days=1)  # daily panels are stamped by candle open
+        market = panel.prices.set_axis(panel.prices.index + day)
+        funding = panel.funding.set_axis(panel.funding.index + day)
+        tradeable = panel.tradeable.set_axis(panel.tradeable.index + day)
+    feats = rd.features(btc, market, funding, tradeable)
+    predictions = rd.walk_forward(btc, feats, pd.Timestamp(start, tz="UTC"))
+    path = rd.store(name, predictions, {
+        "features": list(feats.columns), "model": "StandardScaler + LogisticRegression "
+        "(scikit-learn defaults)", "embargo_days": rd.EMBARGO_DAYS,
+        "retrain": "monthly, on labels known at the month's start",
+        "market_spec": market_spec or None,
+        "first": predictions.index[0], "last": predictions.index[-1]})
+    typer.echo(f"{path}: {len(predictions)} days, {predictions.index[0]:%Y-%m-%d}.."
+               f"{predictions.index[-1]:%Y-%m-%d}; features: {', '.join(feats.columns)}")
+    acc = rd.accuracy(predictions["label"], regimes.labels)
+    typer.echo(f"against the testing labels: accuracy {acc['accuracy']:.0%} of "
+               f"{acc['days']:.0f} days (a third is chance)")
+    for r in REGIMES:
+        typer.echo(f"  {r:<5} recall {acc[f'{r}_recall']:.0%}, precision "
+                   f"{acc[f'{r}_precision']:.0%}")
+    typer.echo("hedge signals (share of each regime's days hedged; lag into a fall):")
+    window = predictions.index
+    signals = {
+        "Bv2's rule on BTC (14 and 30 days)": rd.bv2_rule(btc).reindex(window),
+        "model: hedge unless bull": predictions["label"] != "bull",
+        "model: hedge on bear": predictions["label"] == "bear",
+    }
+    for label, hedge in signals.items():
+        sc = rd.score_hedge(hedge, regimes.labels)
+        typer.echo(f"  {label:<36} hedged {sc.hedged_share:.0%}: bear {sc.bear_hedged:.0%}, "
+                   f"flat {sc.flat_hedged:.0%}, bull {sc.bull_hedged:.0%}; median lag "
+                   f"{sc.median_lag_days:.0f} days over {sc.stretches} falls")
+
+
 budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
 app.add_typer(budget_app, name="budget")
 

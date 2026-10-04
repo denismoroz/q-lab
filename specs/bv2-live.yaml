@@ -16,9 +16,17 @@ code_ref: "qlab.strategies.live.bv2:LiveBv2"
 
 # When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
 # data before this date is the selection period, from it on the forward test.
-params_fixed_at: 2026-09-13
+params_fit_from: 2023-06-01
+params_fixed_at: 2025-06-01
 params_fixed_evidence: >
-  frab commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13): the b2 paper engine, margin model and the removal of carry; coins BTC/ETH/SOL/AVAX set there
+  funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Результаты»: «| | обучение 2023-06—2025-05 | проверка 2025-06—2026-05 | вперёд 2026-06—09 |»
+  -- the parameters were fitted on 2023-06 … 2025-05 and the following year only checked against
+  rules declared before («Дальше подкручивать по проверочному году нельзя»). The coin list
+  BTC/ETH/SOL/AVAX comes from the same research («только монеты HL»). Committed later in frab
+  commits f2a0e3f, bd470b0, 4b7fced, 58ed2c5 (2026-09-13) with two changes not fitted on the check
+  year: the margin model (execution realism, REPORT.md «Маржа по-честному», compared on the
+  training years) and carry off (REPORT.md «Как читать честно», 5: it duplicates FRAB's positions).
+  Owner, 2026-10-04: «разделять backtest and forward test».
 
 # The production `b2` instance verbatim (frab.db strategies.params_json on
 # 10.8.0.5, id 3, read 2026-10-01). `b2_cold` differs only in

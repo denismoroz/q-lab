@@ -621,31 +621,42 @@ def decide_route(
 # --------------------------------------------------------------------------
 
 SELECTION_NOTE = "selection period"
+PRE_FIT_KEYS = ("ann_return_net", "sharpe_net", "max_dd", "ann_return_net_ex_best_1pct",
+                "fragility_days")
 FORWARD_NOTE = "forward test"
 
 
 @dataclass(frozen=True, slots=True)
 class PeriodSplit:
-    """Row bounds (inclusive) of the judged window's two parts: the SELECTION
-    period, before the spec's `params_fixed_at`, and the FORWARD test, from it
-    on. A part shorter than two bars has no return to measure and is None."""
+    """Row bounds (inclusive) of the judged window's parts: data BEFORE the
+    fit (only with `params_fit_from`), the SELECTION period up to the spec's
+    `params_fixed_at`, and the FORWARD test from it on. A part shorter than
+    two bars has no return to measure and is None."""
 
     selection: tuple[int, int] | None
     forward: tuple[int, int] | None
+    before: tuple[int, int] | None = None
 
 
 def split_at_fixed_date(
-    index: pd.DatetimeIndex, first: int, last: int, params_fixed_at: date | None
+    index: pd.DatetimeIndex, first: int, last: int, params_fixed_at: date | None,
+    params_fit_from: date | None = None,
 ) -> PeriodSplit:
-    """Split rows `first..last` at the first bar on or after `params_fixed_at`.
-    An unknown date (None) makes the whole window the selection period."""
+    """Split rows `first..last` at the first bar on or after `params_fixed_at`
+    (and, when given, at the first bar on or after `params_fit_from`). An
+    unknown date (None) makes the whole window the selection period."""
     if params_fixed_at is None:
         return PeriodSplit(selection=(first, last), forward=None)
-    boundary = pd.Timestamp(params_fixed_at, tz="UTC")
-    k = min(max(int(index.searchsorted(boundary)), first), last + 1)
-    selection = (first, k - 1) if k - 1 > first else None
+
+    def _row(day: date) -> int:
+        return min(max(int(index.searchsorted(pd.Timestamp(day, tz="UTC"))), first), last + 1)
+
+    k = _row(params_fixed_at)
+    k0 = first if params_fit_from is None else min(_row(params_fit_from), k)
+    before = (first, k0 - 1) if k0 - 1 > first else None
+    selection = (k0, k - 1) if k - 1 > k0 else None
     forward = (k, last) if last > k else None
-    return PeriodSplit(selection=selection, forward=forward)
+    return PeriodSplit(selection=selection, forward=forward, before=before)
 
 
 def forward_years_needed(
@@ -1126,7 +1137,7 @@ def evaluate_spec(
 
         split_mode = ruleset.forward_resolution is not None
         split = (
-            split_at_fixed_date(index, first, last, spec.params_fixed_at)
+            split_at_fixed_date(index, first, last, spec.params_fixed_at, spec.params_fit_from)
             if split_mode
             else PeriodSplit(selection=None, forward=(first, last))
         )
@@ -1151,6 +1162,14 @@ def evaluate_spec(
                 metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()})
             elif split.forward is None:
                 selection_metrics = metrics
+            if split.before is not None:
+                # Data the choice did not see, but from before it: reported,
+                # not judged -- an instrument list chosen later may know who
+                # survived (`StrategySpec.params_fit_from`).
+                before_metrics = _measure(*split.before)
+                metrics.update({f"pre_{k}": v for k, v in before_metrics.items()
+                                if k in PRE_FIT_KEYS or k.startswith("regime_")})
+                metrics["pre_days"] = _days(split.before)
             if warmup is not None:
                 metrics["warmup_days"] = _days(warmup)
             metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
