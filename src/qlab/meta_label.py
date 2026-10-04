@@ -73,14 +73,22 @@ def strategy_returns(spec_path: Path, session) -> pd.Series:
     return net.set_axis(net.index + pd.Timedelta(days=1))
 
 
-def features(level1: pd.DataFrame, btc: pd.Series, returns: pd.Series) -> pd.DataFrame:
-    """Per close: level 1's probabilities made at that close, BTC's trailing
-    30-day return (what the simple detector reads), and the strategy's own
-    return and volatility over the 30 days realised by that close."""
+def features(level1: pd.DataFrame, btc: pd.Series, returns: pd.Series,
+             state: pd.Series | None = None) -> pd.DataFrame:
+    """Per close: level 1's probabilities made at that close (or, with
+    `state`, flags of a persistent regime -- `qlab.regime_detect.persistent`),
+    BTC's trailing 30-day return (what the simple detector reads), and the
+    strategy's own return and volatility over the 30 days realised by that
+    close."""
     realised = returns.shift(1)  # the return at close c is realised a day later
-    frame = pd.DataFrame({
-        "p_bull": level1["p_bull"], "p_flat": level1["p_flat"], "p_bear": level1["p_bear"],
-    })
+    if state is None:
+        frame = pd.DataFrame({
+            "p_bull": level1["p_bull"], "p_flat": level1["p_flat"], "p_bear": level1["p_bear"],
+        })
+    else:
+        known = state.dropna()
+        frame = pd.DataFrame({"is_bull": (known == "bull").astype(float),
+                              "is_bear": (known == "bear").astype(float)})
     frame["btc_ret_30"] = (btc / btc.shift(WINDOW_DAYS) - 1.0).reindex(frame.index)
     frame["own_ret_30"] = realised.rolling(WINDOW_DAYS).sum().reindex(frame.index)
     frame["own_vol_30"] = realised.rolling(WINDOW_DAYS).std().reindex(frame.index)

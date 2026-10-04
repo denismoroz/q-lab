@@ -159,6 +159,32 @@ def walk_forward(btc: pd.Series, feats: pd.DataFrame, start: pd.Timestamp,
     return pd.concat(rows)[["p_bull", "p_flat", "p_bear", "label", "trained_until"]]
 
 
+def persistent(proba: pd.DataFrame, penalty: float) -> pd.Series:
+    """A regime that does not flicker (docs/TASKS.md T39; owner, 2026-10-04:
+    «делай устойчивость режима для trend»).
+
+    The statistical jump model's idea (Shu, Yu, Mulvey, Journal of Asset
+    Management 2024, arXiv 2402.05272): a regime path pays each day's cost of
+    its state -- here minus the log of level 1's probability -- plus
+    `penalty` at every change of state. Online, the day's regime is the last
+    state of the cheapest path over the days up to it: the forward recursion
+    D_t(s) = cost_t(s) + min(D_{t-1}(s), min_{s' != s} D_{t-1}(s') + penalty),
+    regime_t = argmin_s D_t(s). It reads only probabilities made up to the
+    day. `penalty` 0 is the most probable regime each day."""
+    states = [f"p_{r}" for r in REGIMES]
+    cost = -np.log(proba[states].clip(lower=1e-9).to_numpy())
+    best = np.zeros(len(states))
+    out = []
+    for row in cost:
+        if np.isnan(row).any():
+            out.append(None)
+            continue
+        switch = best.min() + penalty
+        best = row + np.minimum(best, switch)
+        out.append(REGIMES[int(best.argmin())])
+    return pd.Series(out, index=proba.index, dtype=object)
+
+
 # --- comparison with simple detectors --------------------------------------
 
 def bv2_rule(btc: pd.Series) -> pd.Series:
@@ -237,4 +263,5 @@ def load_predictions(name: str, directory: Path = DEFAULT_DIR) -> pd.DataFrame:
 
 
 __all__ = ["EMBARGO_DAYS", "HedgeScore", "accuracy", "bv2_rule", "features", "known_labels",
+           "persistent",
            "load_predictions", "score_hedge", "store", "walk_forward"]

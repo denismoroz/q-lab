@@ -83,3 +83,18 @@ def test_a_shorter_window_is_known_sooner_and_never_overlaps_its_gap() -> None:
     first = month.where(month >= btc.index[300], btc.index[300])
     assert ((first - pd.to_datetime(base["trained_until"])).dt.days >= 14).all()
     assert rd.return_spans(14) == [3, 7, 14, 28, 42]
+
+
+def test_a_switching_penalty_makes_the_regime_hold_and_reads_only_the_past() -> None:
+    days = pd.date_range("2024-01-01", periods=8, freq="1D", tz="UTC")
+    # Most probable state flickers bull/bear every other day.
+    p_bull = [0.6, 0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.4]
+    proba = pd.DataFrame({"p_bull": p_bull, "p_flat": 0.1,
+                          "p_bear": [0.9 - b for b in p_bull]}, index=days)
+    raw = rd.persistent(proba, 0.0)
+    assert list(raw) == ["bull", "bear"] * 4  # no penalty: the most probable state
+    held = rd.persistent(proba, 2.0)
+    assert set(held) == {"bull"}  # the flicker is not worth a switch
+    changed = proba.copy()
+    changed.iloc[5:] = [0.01, 0.01, 0.98]
+    pd.testing.assert_series_equal(rd.persistent(changed, 2.0).iloc[:5], held.iloc[:5])
