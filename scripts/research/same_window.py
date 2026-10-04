@@ -1,9 +1,11 @@
-"""Bv2 variants judged on one common window (scripts/research): each spec's
+"""Variants judged on one common window (scripts/research): each spec's
 weights are computed on its full panel, as the stand does, and every run is
-measured from the latest first judged bar among them. Reads data, writes
+measured from the latest first judged bar among them (or `--from=DATE`). Reads data, writes
 nothing to the registry (session rolled back)."""
 import sys
 from pathlib import Path
+
+import pandas as pd
 
 from qlab import regimes
 from qlab.harness.costs import CostModel
@@ -18,21 +20,28 @@ from qlab.pipeline.evaluate import (
 from qlab.pipeline.spec import load_spec
 from qlab.registry.db import get_sessionmaker
 
+args = sys.argv[1:]
+earliest = None
+if args and args[0].startswith("--from="):
+    earliest = pd.Timestamp(args.pop(0).split("=", 1)[1], tz="UTC")
 session = get_sessionmaker()()
 runs = {}
 try:
-    for path in sys.argv[1:]:
+    for path in args:
         spec = load_spec(Path(path))
         panel = resolve_panel(session, spec)
-        weights = resolve_strategy(spec.code_ref).run(panel, spec.params)
-        weights = getattr(weights, "weights", weights)
-        cov = complete_book_window(panel, spec.required_instruments)
-        runs[path] = (spec, panel, weights, cov.window)
+        weights = resolve_strategy(spec.code_ref).target_weights(panel, spec.params)
+        window = (0, len(panel.prices.index) - 1)
+        if spec.required_instruments:
+            window = complete_book_window(panel, spec.required_instruments).window
+        runs[path] = (spec, panel, weights, window)
 finally:
     session.rollback()
     session.close()
 
 start = max(panel.prices.index[w[0]] for _, panel, _, w in runs.values())
+if earliest is not None:
+    start = max(start, earliest)
 labels = regimes.load()
 for path, (spec, panel, weights, (lo, hi)) in runs.items():
     lo = int(panel.prices.index.searchsorted(start))
