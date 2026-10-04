@@ -9,6 +9,7 @@ outputs, every time.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -79,7 +80,7 @@ def evaluate(
 ) -> EvaluationResult:
     """Evaluate `ruleset` against `metrics`.
 
-    - A rule whose metric is missing from `metrics` or is `None` gets a
+    - A rule whose metric is missing from `metrics`, `None` or NaN gets a
       verdict of `passed=None` ("unknown") — this is neither a pass nor a
       failure and never triggers a fatal stop.
     - Stages are always processed in the fixed order preflight -> edge ->
@@ -121,6 +122,13 @@ def evaluate(
         stage_has_fatal_failure = False
         for rule in stage_rules:
             raw_value = metrics.get(rule.metric)
+            # NaN is a metric that could not be computed (a forward test of a
+            # day or two has no annual return -- 2026-10-04, a matched-noise
+            # book): it compares False with every threshold and would read as
+            # a failure, and the registry rightly refuses a decided verdict
+            # without a value. It is unknown, like a missing metric.
+            if isinstance(raw_value, float) and math.isnan(raw_value):
+                raw_value = None
 
             if raw_value is None:
                 rows.append(
@@ -133,7 +141,7 @@ def evaluate(
                         comparator=rule.comparator.value,
                         threshold=rule.threshold,
                         passed=None,
-                        note="metric missing or None: verdict unknown",
+                        note="metric missing, None or NaN: verdict unknown",
                     )
                 )
                 unknown_metrics.add(rule.metric)
