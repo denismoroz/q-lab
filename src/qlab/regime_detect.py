@@ -62,6 +62,12 @@ regime window, 7 the shortest return window above."""
 PREFIX = "ml-"
 
 
+def return_spans(window: int = WINDOW_DAYS) -> list[int]:
+    """`RETURN_WINDOWS` scaled to a regime window (7-90 days for 30 days;
+    3-42 for 14)."""
+    return sorted({max(1, round(window * w / WINDOW_DAYS)) for w in RETURN_WINDOWS})
+
+
 def features(btc: pd.Series, market: pd.DataFrame | None = None,
              market_funding: pd.DataFrame | None = None,
              market_tradeable: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -90,12 +96,13 @@ def features(btc: pd.Series, market: pd.DataFrame | None = None,
     return frame
 
 
-def known_labels(btc: pd.Series, as_of: pd.Timestamp) -> pd.Series:
-    """Centered 30-day labels of every day whose label was KNOWN at `as_of`:
-    the close fifteen days after it is at or before `as_of`, and the tercile
-    thresholds come only from those days."""
+def known_labels(btc: pd.Series, as_of: pd.Timestamp, window: int = WINDOW_DAYS) -> pd.Series:
+    """Centered `window`-day labels of every day whose label was KNOWN at
+    `as_of`: the close `window - window // 2` days after it is at or before
+    `as_of`, and the tercile thresholds come only from those days."""
     seen = btc[btc.index <= as_of]
-    around = seen.shift(-HALF) / seen.shift(HALF) - 1.0
+    back = window // 2
+    around = seen.shift(-(window - back)) / seen.shift(back) - 1.0
     around = around.dropna()
     if around.empty:
         return pd.Series(dtype=object)
@@ -115,10 +122,17 @@ def _model():
     return make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
 
 
-def walk_forward(btc: pd.Series, feats: pd.DataFrame, start: pd.Timestamp) -> pd.DataFrame:
+def walk_forward(btc: pd.Series, feats: pd.DataFrame, start: pd.Timestamp,
+                 window: int = WINDOW_DAYS) -> pd.DataFrame:
     """Predicted probability of each regime for every close from `start`,
     each month's model fitted only on what was known at the month's start
-    (module docstring). Columns p_bull, p_flat, p_bear, label, trained_until."""
+    (module docstring). Columns p_bull, p_flat, p_bear, label, trained_until.
+
+    `window` is the regime's span: 30 days by default (the testing
+    description's); a strategy's detector may use a shorter one (owner,
+    2026-10-04: «15 дней это очень много для крипты»; 14 days confirmed on
+    the 2024-01 .. 2026-09 holdout, scripts/research/detector_windows.py). The
+    gap before each month is one window, so adjacent labels never overlap."""
     feats = feats.dropna()
     months = pd.date_range(start.normalize(), feats.index[-1], freq="MS", tz="UTC")
     if len(months) == 0 or months[0] > start:
@@ -126,8 +140,8 @@ def walk_forward(btc: pd.Series, feats: pd.DataFrame, start: pd.Timestamp) -> pd
     rows = []
     for k, month in enumerate(months):
         until = months[k + 1] if k + 1 < len(months) else feats.index[-1] + pd.Timedelta(days=1)
-        labels = known_labels(btc, month)
-        labels = labels[labels.index <= month - pd.Timedelta(days=EMBARGO_DAYS)]
+        labels = known_labels(btc, month, window)
+        labels = labels[labels.index <= month - pd.Timedelta(days=window)]
         train = feats.index.intersection(labels.index)
         if set(labels.loc[train]) != set(REGIMES):
             continue  # not every regime seen yet: no model, no prediction

@@ -24,6 +24,9 @@ from qlab import regime_detect as rd
 from qlab.regimes import market_closes
 
 DEV = (pd.Timestamp("2020-04-01", tz="UTC"), pd.Timestamp("2024-01-01", tz="UTC"))
+HOLDOUT = (pd.Timestamp("2024-01-01", tz="UTC"), pd.Timestamp("2026-12-31", tz="UTC"))
+# Owner, 2026-10-04, after the development table: «делай 14 дней на контроле и в trend».
+CHOICE = 14
 
 
 def centered(closes: pd.Series, window: int) -> pd.Series:
@@ -43,16 +46,16 @@ def features(btc: pd.Series, window: int) -> pd.DataFrame:
     return pd.DataFrame({f"ret_{s}": btc / btc.shift(s) - 1 for s in spans}, index=btc.index)
 
 
-def walk(btc: pd.Series, window: int) -> pd.Series:
+def walk(btc: pd.Series, window: int, span=DEV) -> pd.Series:
     feats = features(btc, window).dropna()
     out = []
-    for month in pd.date_range(DEV[0], DEV[1], freq="MS", tz="UTC"):
+    for month in pd.date_range(span[0], span[1], freq="MS", tz="UTC"):
         nxt = month + pd.offsets.MonthBegin(1)
         seen = btc[btc.index <= month]
         labels = terciles(centered(seen, window))
         labels = labels[labels.index <= month - pd.Timedelta(days=window)]
         rows = feats.index.intersection(labels.index)
-        part = feats[(feats.index >= month) & (feats.index < min(nxt, DEV[1]))]
+        part = feats[(feats.index >= month) & (feats.index < min(nxt, span[1]))]
         if part.empty or labels.loc[rows].nunique() < 3:
             continue
         fit = rd._model().fit(feats.loc[rows], labels.loc[rows])
@@ -90,10 +93,13 @@ def lag(signal: pd.Series, labels: pd.Series, regime: str, window: int) -> tuple
 
 
 def main() -> None:
+    import sys
+
     btc = market_closes()
-    for window in (7, 14, 30):
+    holdout = "--holdout" in sys.argv
+    for window in ((CHOICE, 30) if holdout else (7, 14, 30)):
         labels = terciles(centered(btc, window))
-        pred = walk(btc, window)
+        pred = walk(btc, window, HOLDOUT if holdout else DEV)
         days = pred.index.intersection(labels.index)
         acc = float((pred.loc[days] == labels.loc[days]).mean())
         bs, be = lag(pred, labels, "bear", window)

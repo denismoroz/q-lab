@@ -71,3 +71,15 @@ def test_hedge_score_measures_lag_into_a_fall() -> None:
     assert s.median_lag_days == 2.0
     assert s.bear_hedged == pytest.approx(3 / 5)
     assert s.bull_hedged == 0.0
+
+
+def test_a_shorter_window_is_known_sooner_and_never_overlaps_its_gap() -> None:
+    btc = _btc()
+    as_of = btc.index[400]
+    labels = rd.known_labels(btc, as_of, window=14)
+    assert labels.index.max() == as_of - pd.Timedelta(days=7)
+    base = rd.walk_forward(btc, rd.features(btc), btc.index[300], window=14)
+    month = base.index.to_series().dt.to_period("M").dt.start_time.dt.tz_localize("UTC")
+    first = month.where(month >= btc.index[300], btc.index[300])
+    assert ((first - pd.to_datetime(base["trained_until"])).dt.days >= 14).all()
+    assert rd.return_spans(14) == [3, 7, 14, 28, 42]

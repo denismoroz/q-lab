@@ -697,6 +697,8 @@ def regimes_detect_cmd(
     returns_only: bool = typer.Option(
         False, help="BTC's returns over 7-90 days alone: the set chosen on 2020-04..2023-12 "
                     "and confirmed on 2024-01..2026-09 (scripts/research/detector_features.py)."),
+    window: int = typer.Option(30, help="The regime window in days; returns-only features "
+                                        "are scaled to it (14: returns over 3-42 days)."),
 ) -> None:
     """Learn the current regime from the past alone, walking forward month by
     month (docs/TASKS.md T39, docs/REGIME_DETECT.md), store the predictions
@@ -723,12 +725,18 @@ def regimes_detect_cmd(
         market = panel.prices.set_axis(panel.prices.index + day)
         funding = panel.funding.set_axis(panel.funding.index + day)
         tradeable = panel.tradeable.set_axis(panel.tradeable.index + day)
-    feats = rd.features(btc, market, funding, tradeable)
     if returns_only:
-        feats = feats[[c for c in feats.columns if c.startswith("ret_")]]
-    predictions = rd.walk_forward(btc, feats, pd.Timestamp(start, tz="UTC"))
+        feats = pd.DataFrame({f"ret_{s}": btc / btc.shift(s) - 1.0
+                              for s in rd.return_spans(window)}, index=btc.index)
+    else:
+        if window != 30:
+            typer.echo("error: only the returns-only set is scaled to another window", err=True)
+            raise typer.Exit(code=1)
+        feats = rd.features(btc, market, funding, tradeable)
+    predictions = rd.walk_forward(btc, feats, pd.Timestamp(start, tz="UTC"), window)
     path = rd.store(name, predictions, {
-        "features": list(feats.columns), "model": "StandardScaler + LogisticRegression "
+        "features": list(feats.columns), "window_days": window,
+        "model": "StandardScaler + LogisticRegression "
         "(scikit-learn defaults)", "embargo_days": rd.EMBARGO_DAYS,
         "retrain": "monthly, on labels known at the month's start",
         "market_spec": None if returns_only else (market_spec or None),
