@@ -774,10 +774,12 @@ def regimes_meta_hedge_cmd(
 
 @regimes_app.command("refresh")
 def regimes_refresh_cmd() -> None:
-    """Rebuild everything in night/detectors.yaml, as the nightly run does."""
+    """Rebuild everything in night/detectors.yaml, as the nightly run does:
+    on data extended to the last closed day."""
     from qlab import detector_builds as db
+    from qlab.night import last_closed_day
 
-    for line in db.build_all():
+    for line in db.build_all(last_closed_day()):
         typer.echo(f"{'ok ' if line['ok'] else 'FAILED'} {line['name']}: {line['note']}")
 
 
