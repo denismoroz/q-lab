@@ -69,8 +69,11 @@ def fit_predict(arch: str, x: np.ndarray, y: np.ndarray, x_new: np.ndarray) -> n
     opt = torch.optim.Adam(model.parameters())
     loss_fn = nn.BCEWithLogitsLoss()
     split = int(len(x) * 0.9)
-    xt, yt = torch.tensor(x[:split], dtype=torch.float32), torch.tensor(y[:split], dtype=torch.float32)
-    xv, yv = torch.tensor(x[split:], dtype=torch.float32), torch.tensor(y[split:], dtype=torch.float32)
+    def tensor(a):
+        return torch.tensor(a, dtype=torch.float32)
+
+    xt, yt = tensor(x[:split]), tensor(y[:split])
+    xv, yv = tensor(x[split:]), tensor(y[split:])
     best, best_state, waited = float("inf"), None, 0
     gen = torch.Generator().manual_seed(0)
     for _ in range(EPOCHS):
