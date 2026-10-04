@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -509,6 +510,32 @@ class Review(Base):
     sources: Mapped[list] = mapped_column(JSON, nullable=False)
     accepted: Mapped[list] = mapped_column(JSON, nullable=False)
     rejected: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
+class DetectorTrial(Base):
+    """`detector_trial` -- one variant of a regime detector measured on one
+    period (docs/REGIME_DETECT.md; owner, 2026-10-04: «да, делай оба»).
+
+    Strategies have `trial`; a detector is not a strategy, but choosing the
+    best of many detector variants is the same selection: the count of
+    variants tried, and of looks at the holdout, must be on record. `period`
+    is "development" or "holdout"; `chosen` marks the variant picked on
+    development before its holdout look."""
+
+    __tablename__ = "detector_trial"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    family: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    variant: Mapped[str] = mapped_column(String, nullable=False)
+    period: Mapped[str] = mapped_column(String, nullable=False)
+    data_start: Mapped[date] = mapped_column(Date, nullable=False)
+    data_end: Mapped[date] = mapped_column(Date, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False)
+    script: Mapped[str] = mapped_column(String, nullable=False)
+    code_sha: Mapped[str] = mapped_column(String, nullable=False)
+    chosen: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Dossier(Base):

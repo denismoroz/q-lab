@@ -848,6 +848,32 @@ def regimes_meta_hedge_cmd(
             f"{(both['own'].astype(bool) == pays).mean():.0%}")
 
 
+detectors_app = typer.Typer(help="Regime detectors' own trials (docs/REGIME_DETECT.md).",
+                            no_args_is_help=True)
+app.add_typer(detectors_app, name="detectors")
+
+
+@detectors_app.command("trials")
+def detectors_trials_cmd(family: str = typer.Option("", help="Show this family's rows.")) -> None:
+    """How many detector variants were tried per family, how many times the
+    holdout was looked at, and which variant was chosen -- what a "best of
+    many" detector must be read against."""
+    from qlab import detector_trials as dt
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import DetectorTrial
+
+    with session_scope() as session:
+        for s in dt.summary(session):
+            typer.echo(f"{s.family}: {s.development_variants} variants on development, "
+                       f"{s.holdout_looks} holdout looks; chosen: {', '.join(s.chosen) or '-'}")
+        if family:
+            for r in (session.query(DetectorTrial).filter_by(family=family)
+                      .order_by(DetectorTrial.id)):
+                mark = " *chosen*" if r.chosen else ""
+                typer.echo(f"  [{r.period}] {r.variant}{mark}: " + ", ".join(
+                    f"{k} {v:.3g}" for k, v in r.metrics.items()))
+
+
 budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is_help=True)
 app.add_typer(budget_app, name="budget")
 

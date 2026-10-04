@@ -19,6 +19,10 @@ import numpy as np
 import pandas as pd
 
 from qlab import regime_detect as rd
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
+
 from qlab.regimes import REGIMES, load, market_closes
 
 DEV_START, DEV_END = pd.Timestamp("2020-04-01", tz="UTC"), pd.Timestamp("2024-01-01", tz="UTC")
@@ -164,7 +168,10 @@ def main() -> None:
         names, model = CHOICES[name]
         for label, (n, mdl) in {"chosen": (names, model), "stored": (current, "logistic")}.items():
             pred = walk(btc, frame(n), mdl, DEV_END, HOLDOUT_END)
-            print(f"holdout {label:<7} {mdl:<12} {score(pred, labels)}")
+            sc = score(pred, labels)
+            log("regime-level1", f"features: {'+'.join(n)}, {mdl}", (DEV_END, HOLDOUT_END), sc,
+                "scripts/research/detector_features.py", chosen=label == "chosen")
+            print(f"holdout {label:<7} {mdl:<12} {sc}")
         from qlab.strategies.detectors import direction_terciles
         simple = direction_terciles(btc)
         simple = simple[(simple.index >= DEV_END)]
@@ -176,6 +183,8 @@ def main() -> None:
 
     def run(tag: str, names: list[str], model: str = "logistic") -> None:
         s = score(walk(btc, frame(names), model, DEV_START, DEV_END), labels)
+        log("regime-level1", f"features: {tag}, {model}", (DEV_START, DEV_END), s,
+            "scripts/research/detector_features.py")
         rows.append({"variant": tag, "model": model, **s})
         print(f"{tag:<34} {model:<12} " + " ".join(f"{k} {v:.3f}" for k, v in s.items()),
               flush=True)

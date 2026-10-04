@@ -16,6 +16,9 @@ from pathlib import Path
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
+
 from qlab import meta_hedge as mh
 from qlab.pipeline.evaluate import resolve_panel
 from qlab.pipeline.spec import load_spec
@@ -63,11 +66,15 @@ def main() -> None:
     if "--holdout" in sys.argv:
         horizon = int(sys.argv[sys.argv.index("--holdout") + 1])
         s = score(horizon, "--no-level1" not in sys.argv, HOLDOUT)
+        log("bv2-hedge-level2", f"horizon {horizon // 24}d", HOLDOUT, s,
+            "scripts/research/hedge_horizons.py", chosen=True)
         print(f"holdout {horizon // 24}d: " + " ".join(f"{k} {v:.3f}" for k, v in s.items()))
         return
     for days in (7, 14, 30, 60):
         for use in (True, False):
             s = score(days * 24, use, DEV)
+            log("bv2-hedge-level2", f"horizon {days}d, {'with' if use else 'without'} level 1",
+                DEV, s, "scripts/research/hedge_horizons.py")
             tag = "with level 1" if use else "without"
             print(f"{days:>2}d {tag:<12} " + " ".join(f"{k} {v:.3f}" for k, v in s.items()),
                   flush=True)

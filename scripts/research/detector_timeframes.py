@@ -29,6 +29,7 @@ import pandas as pd
 from qlab.regimes import load, market_closes
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
 from detector_binary import binary_scores, combine  # noqa: E402
 
 from qlab import regime_detect as rd  # noqa: E402
@@ -123,6 +124,11 @@ def main() -> None:
         down = walk(closes, bar, daily_feats, "bear", window)
         su, sd = binary_scores(up, labels, "bull"), binary_scores(down, labels, "bear")
         acc = rd.accuracy(combine(up, down), labels)["accuracy"]
+        log("regime-level1", f"pair trained on {tf}", window,
+            {"up_auc": su["auc"], "up_precision": su["precision"], "up_recall": su["recall"],
+             "down_auc": sd["auc"], "down_precision": sd["precision"],
+             "down_recall": sd["recall"], "acc": acc},
+            "scripts/research/detector_timeframes.py", chosen=tf == CHOICE)
         print(f"trained on {tf:<3} ({len(closes):>6} bars) | UP auc {su['auc']:.3f} prec "
               f"{su['precision']:.2f} rec {su['recall']:.2f} | DOWN auc {sd['auc']:.3f} prec "
               f"{sd['precision']:.2f} rec {sd['recall']:.2f} | both acc {acc:.3f}", flush=True)

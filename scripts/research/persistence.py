@@ -21,10 +21,14 @@ variant is scored on 2024-01 on once with `--holdout VARIANT PENALTY`.
 from __future__ import annotations
 
 import sys
+import sys as _sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+_sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
 
 from qlab import meta_label as ml
 from qlab import regime_detect as rd
@@ -95,6 +99,10 @@ def main() -> None:
         k = sys.argv.index("--holdout")
         kind, penalty = sys.argv[k + 1], float(sys.argv[k + 2])
         r = measure(variant(kind, penalty), HOLDOUT)
+        log("trend-gate-persistence", f"{kind}, penalty {penalty}", HOLDOUT,
+            {"ann_return": r["ann"], "sharpe": r["sharpe"], "max_dd": r["dd"],
+             "in_market": r["in_market"]}, "scripts/research/persistence.py",
+            chosen=(kind, penalty) == CHOICE)
         print(f"holdout {kind} penalty {penalty}: "
               + " ".join(f"{a} {b:.3f}" for a, b in r.items()))
         return
@@ -103,6 +111,9 @@ def main() -> None:
         line = f"penalty {penalty:>3} ({switches(penalty):.0f} changes a year)"
         for kind in ("gate", "two levels"):
             r = measure(variant(kind, penalty), DEV)
+            log("trend-gate-persistence", f"{kind}, penalty {penalty}", DEV,
+                {"ann_return": r["ann"], "sharpe": r["sharpe"], "max_dd": r["dd"],
+                 "changes_per_year": switches(penalty)}, "scripts/research/persistence.py")
             line += (f" | {kind}: ann {r['ann']:+.3f} sharpe {r['sharpe']:.2f} "
                      f"dd {r['dd']:.3f} in {r['in_market']:.0%}")
         print(line, flush=True)

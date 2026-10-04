@@ -17,11 +17,17 @@ Development only (2020-04 .. 2023-12).
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-from qlab import regime_detect as rd
-from qlab.regimes import market_closes
+sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
+
+from qlab import regime_detect as rd  # noqa: E402
+from qlab.regimes import market_closes  # noqa: E402
 
 DEV = (pd.Timestamp("2020-04-01", tz="UTC"), pd.Timestamp("2024-01-01", tz="UTC"))
 HOLDOUT = (pd.Timestamp("2024-01-01", tz="UTC"), pd.Timestamp("2026-12-31", tz="UTC"))
@@ -93,8 +99,6 @@ def lag(signal: pd.Series, labels: pd.Series, regime: str, window: int) -> tuple
 
 
 def main() -> None:
-    import sys
-
     btc = market_closes()
     holdout = "--holdout" in sys.argv
     for window in ((CHOICE, 30) if holdout else (7, 14, 30)):
@@ -108,6 +112,11 @@ def main() -> None:
         run = (lab != lab.shift()).cumsum()
         stretch = lab.groupby(run).size().median()
         top = ceiling(btc, labels, window, days)
+        span = HOLDOUT if holdout else DEV
+        log("regime-level1", f"window {window}d, returns scaled, 3-class logistic", span,
+            {"acc": acc, "ceiling": top, "bear_notice_days": bs, "bear_hold_days": be,
+             "bull_notice_days": us, "bull_hold_days": ue},
+            "scripts/research/detector_windows.py", chosen=holdout and window == CHOICE)
         print(f"window {window:>2}d | acc {acc:.3f} ceiling {top:.3f}"
               f" | typical stretch {stretch:.0f}d | bear noticed after {bs:.0f}d, held {be:.0f}d"
               f" past end | bull noticed after {us:.0f}d, held {ue:.0f}d", flush=True)

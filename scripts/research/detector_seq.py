@@ -28,6 +28,7 @@ import torch
 from torch import nn
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
 from detector_binary import binary_scores, combine  # noqa: E402
 from detector_nets import SEQ, STRIDE, sequence  # noqa: E402
 from detector_timeframes import DEV, HOLDOUT, WINDOW, bar_labels, hourly_btc  # noqa: E402
@@ -132,6 +133,9 @@ def main() -> None:
         down = walk(arch, train_x, hourly, daily_x, "bear", window)
         su, sd = binary_scores(up, labels, "bull"), binary_scores(down, labels, "bear")
         acc = rd.accuracy(combine(up, down), labels)["accuracy"]
+        log("regime-level1", f"1h-trained {arch}", window,
+            {"up_auc": su["auc"], "down_auc": sd["auc"], "acc": acc},
+            "scripts/research/detector_seq.py")
         print(f"{arch:<6} | UP auc {su['auc']:.3f} prec {su['precision']:.2f} rec "
               f"{su['recall']:.2f} | DOWN auc {sd['auc']:.3f} prec {sd['precision']:.2f} rec "
               f"{sd['recall']:.2f} | both acc {acc:.3f}", flush=True)

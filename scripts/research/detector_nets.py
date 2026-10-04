@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
 from detector_binary import binary_scores, combine  # noqa: E402
 from detector_timeframes import (  # noqa: E402
     DEV,
@@ -107,6 +108,9 @@ def main() -> None:
         down = walk(make, train_x, hourly, daily_x, "bear", window)
         su, sd = binary_scores(up, labels, "bull"), binary_scores(down, labels, "bear")
         acc = rd.accuracy(combine(up, down), labels)["accuracy"]
+        log("regime-level1", f"1h-trained {name}", window,
+            {"up_auc": su["auc"], "down_auc": sd["auc"], "acc": acc},
+            "scripts/research/detector_nets.py")
         print(f"{name:<22} | UP auc {su['auc']:.3f} prec {su['precision']:.2f} rec "
               f"{su['recall']:.2f} | DOWN auc {sd['auc']:.3f} prec {sd['precision']:.2f} rec "
               f"{sd['recall']:.2f} | both acc {acc:.3f}", flush=True)

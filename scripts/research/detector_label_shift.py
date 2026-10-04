@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _record import log  # noqa: E402
 from detector_binary import binary_scores, combine  # noqa: E402
 from detector_timeframes import DEV, WINDOW, _model, hourly_btc, scale_free  # noqa: E402
 
@@ -86,6 +87,10 @@ def main() -> None:
         acc = rd.accuracy(pair, labels)["accuracy"]
         bs, be = lag(pair, labels, "bear")
         us, ue = lag(pair, labels, "bull")
+        log("regime-level1", f"training label {WINDOW - future} back {future} ahead", DEV,
+            {"up_auc": su["auc"], "down_auc": sd["auc"], "acc": acc, "bear_notice_days": bs,
+             "bear_hold_days": be, "bull_notice_days": us, "bull_hold_days": ue},
+            "scripts/research/detector_label_shift.py")
         print(f"label: {WINDOW - future} bars back, {future} ahead | UP auc {su['auc']:.3f} | "
               f"DOWN auc {sd['auc']:.3f} | acc {acc:.3f} | bear noticed after {bs:.0f}d, "
               f"held {be:.0f}d past end | bull noticed after {us:.0f}d, held {ue:.0f}d",
