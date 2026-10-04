@@ -694,6 +694,9 @@ def regimes_detect_cmd(
         "specs/trend-binance-cap.yaml",
         help="A spec whose panel is the whole Binance market (daily, discovered universe): "
              "breadth and mean funding come from it. Empty: BTC only."),
+    returns_only: bool = typer.Option(
+        False, help="BTC's returns over 7-90 days alone: the set chosen on 2020-04..2023-12 "
+                    "and confirmed on 2024-01..2026-09 (scripts/research/detector_features.py)."),
 ) -> None:
     """Learn the current regime from the past alone, walking forward month by
     month (docs/TASKS.md T39, docs/REGIME_DETECT.md), store the predictions
@@ -709,7 +712,7 @@ def regimes_detect_cmd(
         typer.echo("error: run `qlab regimes build` first", err=True)
         raise typer.Exit(code=1)
     market = funding = tradeable = None
-    if market_spec:
+    if market_spec and not returns_only:
         from qlab.pipeline.evaluate import resolve_panel
         from qlab.pipeline.spec import load_spec
         from qlab.registry.db import session_scope
@@ -721,12 +724,14 @@ def regimes_detect_cmd(
         funding = panel.funding.set_axis(panel.funding.index + day)
         tradeable = panel.tradeable.set_axis(panel.tradeable.index + day)
     feats = rd.features(btc, market, funding, tradeable)
+    if returns_only:
+        feats = feats[[c for c in feats.columns if c.startswith("ret_")]]
     predictions = rd.walk_forward(btc, feats, pd.Timestamp(start, tz="UTC"))
     path = rd.store(name, predictions, {
         "features": list(feats.columns), "model": "StandardScaler + LogisticRegression "
         "(scikit-learn defaults)", "embargo_days": rd.EMBARGO_DAYS,
         "retrain": "monthly, on labels known at the month's start",
-        "market_spec": market_spec or None,
+        "market_spec": None if returns_only else (market_spec or None),
         "first": predictions.index[0], "last": predictions.index[-1]})
     typer.echo(f"{path}: {len(predictions)} days, {predictions.index[0]:%Y-%m-%d}.."
                f"{predictions.index[-1]:%Y-%m-%d}; features: {', '.join(feats.columns)}")
