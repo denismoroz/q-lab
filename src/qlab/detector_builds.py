@@ -119,8 +119,10 @@ def meta(name: str, *, spec: str, level1_name: str, end: date | None = None) -> 
                  f"today: {'trade' if bool(decisions['trade'].iloc[-1]) else 'cash'}")
 
 
-def meta_hedge(name: str, *, spec: str, level1_name: str, end: date | None = None) -> Built:
-    """Bv2's level 2 (`qlab.meta_hedge`)."""
+def meta_hedge(name: str, *, spec: str, level1_name: str, end: date | None = None,
+               false_alarm_filter: bool = False) -> Built:
+    """Bv2's level 2 (`qlab.meta_hedge`): in place of the book's rule, or with
+    `false_alarm_filter` as a veto on the rule's alarms only."""
     from qlab import meta_hedge as mh
     from qlab import meta_label as ml
     from qlab.night import with_end
@@ -140,14 +142,31 @@ def meta_hedge(name: str, *, spec: str, level1_name: str, end: date | None = Non
     feats = {c: mh.coin_features(panel.prices[c], panel.funding[c], first) for c in coins}
     labels = {c: mh.hedge_pays(panel.prices[c], panel.funding[c], cost) for c in coins}
     start = max(first.index[0], panel.prices.index[0])
-    decisions = mh.walk_forward(feats, labels, start)
+    note = ""
+    if false_alarm_filter:
+        threshold = float(the_spec.params.get("hedge_threshold", 0.0))
+        primary = {c: mh.primary_wish(panel.prices[c], threshold) for c in coins}
+        decisions = mh.walk_forward_filter(feats, labels, primary, start)
+        alarms = vetoed = vetoed_false = 0
+        for c in coins:
+            on = primary[c].reindex(decisions.index) == 1.0
+            veto = on & ~decisions[c]
+            paid = labels[c].reindex(decisions.index)
+            alarms += int(on.sum())
+            vetoed += int(veto.sum())
+            vetoed_false += int((veto & (paid == 0.0)).sum())
+        note = (f"vetoes {vetoed / max(alarms, 1):.0%} of the rule's alarm hours, "
+                f"{vetoed_false / max(vetoed, 1):.0%} of them false alarms; ")
+    else:
+        decisions = mh.walk_forward(feats, labels, start)
     path = ml.store(name, decisions, {
         "spec": spec, "level1": level1_name, "horizon_hours": mh.HORIZON_HOURS,
-        "round_trip_cost": cost, "model": "StandardScaler + LogisticRegression, pooled",
+        "round_trip_cost": cost, "false_alarm_filter": false_alarm_filter,
+        "model": "StandardScaler + LogisticRegression, pooled",
         "first": decisions.index[0], "last": decisions.index[-1]})
     today = ", ".join(f"{c} {'hedge' if bool(decisions[c].iloc[-1]) else 'no hedge'}"
                       for c in coins)
-    return Built(name, path, decisions.index[0], decisions.index[-1], f"latest: {today}")
+    return Built(name, path, decisions.index[0], decisions.index[-1], f"{note}latest: {today}")
 
 
 def build_all(end: date | None = None, config: Path = CONFIG) -> list[dict]:
@@ -181,7 +200,8 @@ def build_all(end: date | None = None, config: Path = CONFIG) -> list[dict]:
             elif kind == "meta":
                 b = meta(e["name"], spec=e["spec"], level1_name=e["level1"], end=end)
             elif kind == "meta-hedge":
-                b = meta_hedge(e["name"], spec=e["spec"], level1_name=e["level1"], end=end)
+                b = meta_hedge(e["name"], spec=e["spec"], level1_name=e["level1"], end=end,
+                               false_alarm_filter=bool(e.get("false_alarm_filter", False)))
             else:
                 raise ValueError(f"unknown build kind {kind!r}")
             out.append({"name": f"{kind} {b.name}", "ok": True,

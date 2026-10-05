@@ -149,5 +149,76 @@ def walk_forward(features: dict[str, pd.DataFrame], labels: dict[str, pd.Series]
     return result
 
 
-__all__ = ["HORIZON_HOURS", "coin_features", "hedge_pays", "known_at", "round_trip_cost",
-           "walk_forward"]
+def primary_wish(perp: pd.Series, threshold: float = 0.0) -> pd.Series:
+    """The book's own hedge wish at each hourly close (frab, book.py
+    `signals_at`): on unless the coin rose over both 14 and 30 days by more
+    than `hedge_threshold`; unknown before 30 days of closes."""
+    up = ((perp / perp.shift(14 * 24) - 1.0 > threshold)
+          & (perp / perp.shift(30 * 24) - 1.0 > threshold))
+    return (~up).astype(float).where(perp.shift(30 * 24).notna())
+
+
+def alarm_hours(primary: pd.Series) -> pd.Series:
+    """How many hours in a row the book's rule has wanted the hedge (0 when
+    it does not): a fresh alarm and a week-old one are different questions."""
+    on = primary.fillna(0.0) > 0
+    run = (~on).cumsum()
+    return on.groupby(run).cumsum().astype(float)
+
+
+def walk_forward_filter(features: dict[str, pd.DataFrame], labels: dict[str, pd.Series],
+                        primary: dict[str, pd.Series], start: pd.Timestamp,
+                        horizon_hours: int = HORIZON_HOURS) -> pd.DataFrame:
+    """Meta-labelling proper (owner, 2026-10-04: «сделай второй уровень для
+    bv2 как фильтр ложных тревог»): the book's rule decides; a model trained
+    ONLY on the hours the rule wanted the hedge learns whether that alarm
+    paid, and vetoes the hedge where it says it will not. It never adds a
+    hedge the rule did not want. Columns `<coin>` (final wish), `p_<coin>`."""
+    coins = sorted(features)
+    feats = {c: features[c].assign(alarm_hours=np.log1p(alarm_hours(primary[c])))
+             for c in coins}
+    on = {c: primary[c].reindex(feats[c].index) == 1.0 for c in coins}
+    clean = {c: feats[c].dropna() for c in coins}
+    last = max(f.index[-1] for f in clean.values())
+    months = pd.date_range(start.normalize(), last, freq="MS", tz="UTC")
+    if len(months) == 0 or months[0] > start:
+        months = months.insert(0, start)
+    out = []
+    for k, month in enumerate(months):
+        until = months[k + 1] if k + 1 < len(months) else last + pd.Timedelta(hours=1)
+        cutoff = month - pd.Timedelta(days=max(EMBARGO_DAYS, horizon_hours / 24))
+        xs, ys = [], []
+        for c in coins:
+            y = known_at(labels[c], month, horizon_hours)
+            y = y[y.index <= cutoff]
+            rows = clean[c].index.intersection(y.index)
+            rows = rows[on[c].reindex(rows).fillna(False).to_numpy()]
+            xs.append(clean[c].loc[rows])
+            ys.append(y.loc[rows])
+        x, y = pd.concat(xs), pd.concat(ys)
+        counts = y.value_counts()
+        if len(counts) < 2 or counts.min() < MIN_CLASS_HOURS:
+            continue
+        model = _model().fit(x.to_numpy(), y.to_numpy())
+        one = list(model.classes_).index(1.0)
+        block = {}
+        for c in coins:
+            target = clean[c][(clean[c].index >= max(month, start)) & (clean[c].index < until)]
+            if not target.empty:
+                block[f"p_{c}"] = pd.Series(model.predict_proba(target.to_numpy())[:, one],
+                                            index=target.index)
+        if block:
+            frame = pd.DataFrame(block)
+            frame["trained_until"] = y.index.max()
+            out.append(frame)
+    if not out:
+        raise ValueError("no month had enough of both outcomes among the rule's alarms")
+    result = pd.concat(out)
+    for c in coins:
+        rule = primary[c].reindex(result.index) == 1.0
+        result[c] = rule & (result[f"p_{c}"] > 0.5)
+    return result
+
+
+__all__ = ["HORIZON_HOURS", "alarm_hours", "coin_features", "hedge_pays", "known_at",
+           "primary_wish", "round_trip_cost", "walk_forward", "walk_forward_filter"]

@@ -10,12 +10,12 @@ from qlab import meta_hedge as mh
 HOURS = pd.date_range("2021-01-01", periods=24 * 200, freq="1h", tz="UTC")
 
 
-def _coin(seed: int):
+def _coin(seed: int, hours: pd.DatetimeIndex = HOURS):
     rng = np.random.default_rng(seed)
-    drift = np.sin(np.arange(len(HOURS)) / 300.0) * 0.0006
-    perp = pd.Series(100 * np.exp(np.cumsum(drift + rng.normal(0, 0.006, len(HOURS)))),
-                     index=HOURS)
-    funding = pd.Series(0.00001, index=HOURS)
+    drift = np.sin(np.arange(len(hours)) / 300.0) * 0.0006
+    perp = pd.Series(100 * np.exp(np.cumsum(drift + rng.normal(0, 0.006, len(hours)))),
+                     index=hours)
+    funding = pd.Series(0.00001, index=hours)
     return perp, funding
 
 
@@ -77,3 +77,35 @@ def test_the_sticky_exit_holds_the_hedge_for_its_hours() -> None:
 
     raw = np.array([np.nan, 1, 0, 0, 0, 1, 0, 0, 0, 0], dtype=float)
     assert _sticky(raw, 3).tolist()[1:] == [1, 1, 1, 0, 1, 1, 1, 0, 0]
+
+
+def test_the_filter_only_vetoes_the_books_alarms_and_reads_the_past() -> None:
+    long = pd.date_range("2021-01-01", periods=24 * 400, freq="1h", tz="UTC")
+    coins = {"A": _coin(5, long), "B": _coin(6, long)}
+    days = pd.date_range("2020-12-01", periods=460, freq="1D", tz="UTC")
+    lvl = pd.DataFrame({"p_bull": 0.3, "p_flat": 0.4, "p_bear": 0.3}, index=days)
+
+    def build(cut=None):
+        feats, labels, primary = {}, {}, {}
+        for name, (perp, funding) in coins.items():
+            p = perp.copy()
+            if cut is not None:
+                p[p.index > cut] *= np.linspace(0.5, 2.0, (p.index > cut).sum())
+            feats[name] = mh.coin_features(p, funding, lvl)
+            labels[name] = mh.hedge_pays(p, funding, 0.0017)
+            primary[name] = mh.primary_wish(p)
+        return mh.walk_forward_filter(feats, labels, primary, long[24 * 200]), primary
+
+    base, primary = build()
+    for c in ("A", "B"):
+        rule = primary[c].reindex(base.index) == 1.0
+        assert not (base[c] & ~rule).any()  # never a hedge the rule did not want
+    cut = long[24 * 300]
+    moved, _ = build(cut)
+    pd.testing.assert_frame_equal(base[base.index <= cut], moved[moved.index <= cut])
+
+
+def test_alarm_hours_count_the_rules_run() -> None:
+    idx = pd.date_range("2025-01-01", periods=6, freq="1h", tz="UTC")
+    primary = pd.Series([0, 1, 1, 1, 0, 1], index=idx, dtype=float)
+    assert mh.alarm_hours(primary).tolist() == [0, 1, 2, 3, 0, 1]

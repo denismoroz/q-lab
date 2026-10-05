@@ -762,13 +762,16 @@ def regimes_meta_hedge_cmd(
     spec: str = typer.Option("specs/bv2-binance.yaml", help="The Bv2 spec (hourly panel)."),
     level1: str = typer.Option("btc-returns-logistic", help="Stored level-1 predictions."),
     name: str = typer.Option("bv2-hedge", help="Name of the stored level-2 decisions."),
+    false_alarm_filter: bool = typer.Option(
+        False, "--filter", help="Veto the book's own alarms only (meta-labelling proper) "
+                                "instead of replacing its rule."),
 ) -> None:
     """Level 2 for Bv2 (docs/TASKS.md T39, docs/REGIME_DETECT.md): per coin and
     hour, would a hedge opened now pay over the next 14 days? Learned walking
     forward (scripts/research/hedge_horizons.py compares it with the book's rule)."""
     from qlab import detector_builds as db
 
-    b = db.meta_hedge(name, spec=spec, level1_name=level1)
+    b = db.meta_hedge(name, spec=spec, level1_name=level1, false_alarm_filter=false_alarm_filter)
     typer.echo(f"{b.path}: {b.first:%Y-%m-%d}..{b.last:%Y-%m-%d}; {b.note}")
 
 
