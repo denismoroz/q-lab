@@ -125,7 +125,7 @@ sources:
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'
   hedge_by: 'owner 2026-10-04: «сделай второй уровень для bv2 как фильтр ложных тревог»; meta-labelling
-    (López de Prado, Advances in Financial Machine Learning): the book''s rule (frab book.py signals_at)
+    (López de Prado, Advances in Financial Machine Learning): the book''s rule (funding-rate-arbitrage/src/frab/strategy/b2/book.py signals_at)
     is the primary model, a model trained only on its alarm hours vetoes those it expects not to pay over
     14 days (P <= 0.5); built by `qlab regimes meta-hedge --filter --name bv2-hedge-filter` (src/qlab/meta_hedge.py
     walk_forward_filter), scikit-learn defaults'
