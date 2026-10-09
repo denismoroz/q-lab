@@ -387,7 +387,126 @@ def bootstrap_time(reference: pd.DataFrame, panel: MarketPanel, *, seed: int) ->
     return pd.DataFrame(result, index=reference.index, columns=reference.columns)
 
 
+def shuffled_among_tradeable(
+    reference: pd.DataFrame, panel: MarketPanel, *, seed: int
+) -> pd.DataFrame:
+    """`shuffled_instruments` for a universe that changes over time.
+
+    One permutation of ALL columns works when every instrument trades for the
+    whole run (a fixed list). On a point-in-time universe it does not: trend
+    by market cap on Binance holds 25 of 885 contracts, a weight moved to a
+    random column mostly lands on one not listed that day and is zeroed, and
+    the book keeps 5-13% of the reference's gross exposure -- about 120
+    books a night were discarded for it (2026-10-09).
+
+    Here each instrument the reference holds is given a random instrument
+    that is TRADEABLE that day, among those the reference itself has held so
+    far (so the book stays among instruments the strategy could take, and
+    knows nothing of what it will hold later). The assignment is kept while
+    the source is held and the target trades, so the book changes hands as
+    often as the reference does; every row keeps the reference's own weights.
+    """
+    rng = np.random.default_rng(seed)
+    values = reference.to_numpy(dtype=float)
+    tradeable = _tradeable_mask(panel)
+    n_rows, n = values.shape
+    priority = rng.random(n)  # fixed for the run: which target is tried first
+    seen = np.zeros(n, dtype=bool)
+    target_of: dict[int, int] = {}
+    used: set[int] = set()
+    result = np.zeros_like(values)
+    for t in range(n_rows):
+        active = np.flatnonzero(np.abs(values[t]) > ZERO_WEIGHT_TOL)
+        seen[active] = True
+        held = set(active.tolist())
+        for a in list(target_of):
+            if a not in held or not tradeable[t, target_of[a]]:
+                used.discard(target_of.pop(a))
+        if active.size == 0:
+            continue
+        free = np.flatnonzero(seen & tradeable[t])
+        free = free[np.argsort(priority[free], kind="stable")]
+        cursor = 0
+        for a in active:
+            a = int(a)
+            if a not in target_of:
+                while cursor < free.size and int(free[cursor]) in used:
+                    cursor += 1
+                if cursor == free.size:
+                    continue  # more held than tradeable-and-seen: this weight is dropped
+                target_of[a] = int(free[cursor])
+                used.add(target_of[a])
+            result[t, target_of[a]] = values[t, a]
+    return pd.DataFrame(result, index=reference.index, columns=reference.columns)
+
+
+def random_weights_at_reference_rate(
+    reference: pd.DataFrame, panel: MarketPanel, *, seed: int
+) -> pd.DataFrame:
+    """`random_weights` that reshuffles as often as the reference trades.
+
+    The plain generator redraws the whole book on every decision row; for a
+    reference that changes its weights a little every day that is a full
+    reshuffle a day -- 8.5 times trend-with-retuning's own turnover, just
+    outside the structural band, so all 50 of its books a night were
+    discarded (2026-10-09). Here the assignment of weights to instruments is
+    redrawn on a decision row only with probability p, the reference's
+    turnover so far over the plain generator's turnover so far (both known
+    at the row), and otherwise kept: the book is still random, at the
+    reference's own trading rate.
+    """
+    rng = np.random.default_rng(seed)
+    values = reference.to_numpy(dtype=float)
+    plain = random_weights(reference, panel, seed=seed).to_numpy(dtype=float)
+    decisions = decision_rows(reference, panel)
+    tradeable = _tradeable_mask(panel)
+
+    def _turnover(v: np.ndarray) -> np.ndarray:
+        prev = np.vstack([np.zeros((1, v.shape[1])), v[:-1]])
+        return np.abs(v - prev).sum(axis=1)
+
+    ref_so_far = np.concatenate([[0.0], np.cumsum(_turnover(values))[:-1]])
+    plain_so_far = np.concatenate([[0.0], np.cumsum(_turnover(plain))[:-1]])
+    draws = rng.random(values.shape[0])
+    target_of: dict[int, int] = {}
+    result = np.zeros_like(values)
+    for t in range(values.shape[0]):
+        support = np.flatnonzero(np.abs(values[t]) > ZERO_WEIGHT_TOL)
+        if support.size == 0:
+            target_of = {}
+            continue
+        p = 1.0 if plain_so_far[t] <= 0 else min(1.0, ref_so_far[t] / plain_so_far[t])
+        redraw = decisions[t] and (not target_of or draws[t] < p)
+        shuffled = rng.permutation(support)  # drawn every row: the stream stays aligned
+        if redraw:
+            target_of = {int(a): int(b) for a, b in zip(support, shuffled, strict=True)}
+        taken: set[int] = set()
+        pending = []
+        for a in support:
+            b = target_of.get(int(a))
+            if b is not None and b not in taken and tradeable[t, b]:
+                taken.add(b)
+                result[t, b] = values[t, int(a)]
+            else:
+                pending.append(int(a))
+        spare = [int(b) for b in support if int(b) not in taken]
+        for a, b in zip(pending, spare, strict=False):
+            target_of[a] = b
+            result[t, b] = values[t, a]
+    result = np.where(tradeable, result, 0.0)
+    return pd.DataFrame(result, index=reference.index, columns=reference.columns)
+
+
 GeneratorFn = Callable[[pd.DataFrame, MarketPanel], pd.DataFrame]
+
+# When a generator's plain book cannot match its reference's shape, the same
+# idea is rebuilt so that it can (docs/NIGHT.md, 2026-10-09). The plain form
+# is tried first and kept wherever it matches, so earlier calibrations and
+# every fixed-list strategy see exactly the books they saw before.
+MATCHED_FALLBACKS: dict[str, GeneratorFn] = {
+    "shuffled_instruments": shuffled_among_tradeable,
+    "random_weights": random_weights_at_reference_rate,
+}
 
 GENERATORS: dict[str, GeneratorFn] = {
     "random_weights": random_weights,
@@ -561,19 +680,28 @@ class NoiseStrategy:
 
         reference_weights = _reference_weights(panel, reference_code_ref, reference_params)
 
-        raw = GENERATORS[generator_name](reference_weights, panel, seed=seed)
-        if neutral:
-            floor = reference_min_position(reference_weights)
-            weights = neutralize(raw, min_position_floor=floor)
-        else:
-            weights = raw
+        reference_shape = compute_shape(reference_weights)
 
-        check_structural_match(compute_shape(weights), compute_shape(reference_weights))
+        def _book(generator: GeneratorFn) -> pd.DataFrame:
+            raw = generator(reference_weights, panel, seed=seed)
+            if not neutral:
+                return raw
+            return neutralize(raw, min_position_floor=reference_min_position(reference_weights))
+
+        weights = _book(GENERATORS[generator_name])
+        try:
+            check_structural_match(compute_shape(weights), reference_shape)
+        except StructuralMismatchError:
+            if generator_name not in MATCHED_FALLBACKS:
+                raise
+            weights = _book(MATCHED_FALLBACKS[generator_name])
+            check_structural_match(compute_shape(weights), reference_shape)
         return weights
 
 
 __all__ = [
     "GENERATORS",
+    "MATCHED_FALLBACKS",
     "STRUCTURAL_BAND",
     "BookShape",
     "GeneratorFn",

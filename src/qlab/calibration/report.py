@@ -21,7 +21,7 @@ import numpy as np
 from qlab.calibration.noise import STRUCTURAL_BAND
 from qlab.calibration.run import GENERATOR_NAMES as _GENERATOR_NAMES
 from qlab.calibration.run import REFERENCE_SPEC_PATH, NoiseTrial
-from qlab.pipeline.evaluate import Evaluation
+from qlab.pipeline.evaluate import NOISE_UNMATCHED_REASON, Evaluation
 from qlab.rules.schema import RuleSet
 
 # Routes `qlab.pipeline.evaluate.decide_route` can return that mean "the
@@ -113,6 +113,11 @@ def summarize_series(trials: list[NoiseTrial]) -> SeriesSummary:
             n_admitted += 1
         elif route == "reject":
             n_rejected += 1
+        elif route == "not-evaluable" and trial.evaluation.routing.reason.startswith(
+                NOISE_UNMATCHED_REASON):
+            # A book discarded for its shape was never run: counted with the
+            # runs that produced nothing, as before it had its own record.
+            n_error += 1
         elif route in ("needs-more-data", "needs-forward", "not-evaluable"):
             # Neither decided anything; both are "not judged", which is what
             # this counter reports.

@@ -628,6 +628,7 @@ def decide_route(
 # Selection period vs forward test (docs/FIT_VS_FORWARD.md)
 # --------------------------------------------------------------------------
 
+NOISE_UNMATCHED_REASON = "noise book does not match its reference's shape: "
 SELECTION_NOTE = "selection period"
 PRE_FIT_KEYS = ("ann_return_net", "sharpe_net", "max_dd", "ann_return_net_ex_best_1pct",
                 "fragility_days")
@@ -1226,6 +1227,22 @@ def evaluate_spec(
         # `docs/REGISTRY.md`'s "trial written for every run" promise
         # requires, not narrowed to the exception types this module happens
         # to know about today.
+        from qlab.calibration.noise import StructuralMismatchError
+
+        if isinstance(exc, StructuralMismatchError):
+            # Not a crash: a random book that does not have its reference's
+            # shape is discarded before it is used for comparison, by design
+            # (qlab.calibration.noise.check_structural_match). Recorded as
+            # not evaluable -- some 170 of these a night read as "error" and
+            # made the trial list look broken (owner, 2026-10-09: «в прогонах
+            # вижу тучу ошибок»).
+            routing = RoutingDecision(route="not-evaluable",
+                                      reason=f"{NOISE_UNMATCHED_REASON}{exc}")
+            trial_id, decision = _record(
+                status=TrialStatus.NOT_EVALUABLE, metrics=None, routing=routing, data_end=None
+            )
+            return Evaluation(trial_id=trial_id, metrics=None, rules_result=None,
+                              routing=routing, error=None, status_decision=decision)
         routing = RoutingDecision(route="error", reason=str(exc))
         trial_id, decision = _record(
             status=TrialStatus.ERROR, metrics=None, routing=routing, data_end=None
@@ -1332,6 +1349,7 @@ __all__ = [
     "FORWARD_NOTE",
     "SELECTION_NOTE",
     "BookCoverage",
+    "NOISE_UNMATCHED_REASON",
     "PeriodSplit",
     "decide_fit_forward_route",
     "forward_years_needed",

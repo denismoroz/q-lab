@@ -261,10 +261,22 @@ def create_app() -> FastAPI:
         session: SessionDep,
         limit: LimitParam = 50,
         offset: OffsetParam = 0,
+        noise: bool = False,
     ) -> dict[str, Any]:
-        """The ledger, newest first. Always paginated on the server."""
+        """The ledger, newest first. Always paginated on the server.
+
+        Without `noise` the random books q-lab compares strategies with are
+        left out: about 1,600 of a night's 1,800 runs are theirs, and a list
+        of them buried the strategies' own runs (owner, 2026-10-09: «в
+        прогонах вижу тучу ошибок»). `noise_trials` says how many were left
+        out."""
         query = session.query(Trial).order_by(Trial.started_at.desc(), Trial.id.desc())
+        noise_spec = session.query(Spec.id).filter(Spec.idea_id.like("noise-%"))
+        noise_trials = session.query(Trial).filter(Trial.spec_id.in_(noise_spec)).count()
+        if not noise:
+            query = query.filter(Trial.spec_id.not_in(noise_spec))
         page = _page(session, query, limit, offset, lambda trial: trial)
+        page["noise_trials"] = noise_trials
 
         trials = page["items"]
         spec_ids = {trial.spec_id for trial in trials}

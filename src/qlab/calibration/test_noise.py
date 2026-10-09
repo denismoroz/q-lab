@@ -466,3 +466,93 @@ def test_warmup_rows_stay_flat_and_cadence_inheritance_is_a_no_op_there(generato
     reference.iloc[:warmup] = 0.0
     noise = GENERATORS[generator_name](reference, panel, seed=17)
     assert (noise.iloc[:warmup].abs().to_numpy() == 0.0).all()
+
+
+# --------------------------------------------------------------------------
+# Matched fallbacks: when a generator's plain book cannot match the reference
+# --------------------------------------------------------------------------
+
+
+def _rotating_universe():
+    """A point-in-time universe like top-25-by-cap on Binance: 60 instruments
+    listed in turn, the reference holding the five newest tradeable ones."""
+    rows, cols, held = 200, 60, 5
+    index = pd.date_range("2024-01-01", periods=rows, freq="1D", tz="UTC")
+    names = [f"C{i:02d}" for i in range(cols)]
+    tradeable = np.zeros((rows, cols), dtype=bool)
+    for j in range(cols):
+        tradeable[j * 3 : j * 3 + 20, j] = True  # each lives 20 days, a new one every 3
+    rng = np.random.default_rng(1)
+    weights = np.zeros((rows, cols))
+    for t in range(rows):
+        live = np.flatnonzero(tradeable[t])
+        take = live[-held:]
+        weights[t, take] = rng.choice([-1.0, 1.0], take.size) * 0.1 * (1 + 0.02 * rng.random())
+
+    def frame(v, dtype=float):
+        return pd.DataFrame(v, index=index, columns=names).astype(dtype)
+
+    panel = MarketPanel(snapshot_id="rot", prices=frame(100.0 + np.zeros((rows, cols))),
+                        funding=frame(np.zeros((rows, cols))), tradeable=frame(tradeable, bool),
+                        meta={})
+    return panel, frame(weights)
+
+
+def test_plain_shuffle_loses_its_book_on_a_rotating_universe_and_the_fallback_keeps_it():
+    from qlab.calibration.noise import shuffled_among_tradeable
+
+    panel, reference = _rotating_universe()
+    ref = compute_shape(reference)
+    plain = compute_shape(GENERATORS["shuffled_instruments"](reference, panel, seed=3))
+    assert plain.gross / ref.gross < STRUCTURAL_BAND[0]  # the defect: weights land on dead columns
+    book = shuffled_among_tradeable(reference, panel, seed=3)
+    validate_weights(panel, book)
+    matched = compute_shape(book)
+    assert matched.gross == pytest.approx(ref.gross)  # every row keeps the reference's weights
+    check_structural_match(matched, ref)
+    assert not book.equals(reference)  # and they sit on other instruments
+
+
+@pytest.mark.parametrize("fallback", ["shuffled_instruments", "random_weights"])
+def test_fallbacks_do_not_use_future_reference_rows(fallback):
+    from qlab.calibration.noise import MATCHED_FALLBACKS
+
+    panel, reference = _rotating_universe()
+    generator = MATCHED_FALLBACKS[fallback]
+    cutoff = len(reference.index) // 2
+    baseline = generator(reference, panel, seed=17)
+    perturbed_reference = reference.copy()
+    later = perturbed_reference.iloc[cutoff + 1 :]
+    perturbed_reference.iloc[cutoff + 1 :] = (later * -13.0).where(later != 0, 0.0)
+    perturbed = generator(perturbed_reference, panel, seed=17)
+    pd.testing.assert_frame_equal(baseline.iloc[: cutoff + 1], perturbed.iloc[: cutoff + 1])
+
+
+def test_random_weights_at_the_reference_rate_trades_far_less_than_a_daily_reshuffle():
+    from qlab.calibration.noise import random_weights_at_reference_rate
+
+    panel = _panel()
+    reference = _reference_weights(panel)
+    plain = compute_shape(GENERATORS["random_weights"](reference, panel, seed=5))
+    book = random_weights_at_reference_rate(reference, panel, seed=5)
+    validate_weights(panel, book)
+    paced = compute_shape(book)
+    assert paced.turnover < plain.turnover
+    assert paced.gross == pytest.approx(compute_shape(reference).gross)
+
+
+def test_noise_strategy_falls_back_only_when_the_plain_book_does_not_match(monkeypatch):
+    import qlab.calibration.noise as noise
+
+    panel, reference = _rotating_universe()
+    monkeypatch.setattr(noise, "_reference_weights", lambda *a, **k: reference)
+    params = {"generator": "shuffled_instruments", "seed": 3, "neutral": False,
+              "reference_code_ref": "x:y", "reference_params": {}}
+    book = noise.NoiseStrategy().target_weights(panel, params)  # no StructuralMismatchError
+    assert compute_shape(book).gross == pytest.approx(compute_shape(reference).gross)
+    # Where the plain book matches, it is the plain book that is returned.
+    fixed = _panel()
+    fixed_reference = _reference_weights(fixed)
+    monkeypatch.setattr(noise, "_reference_weights", lambda *a, **k: fixed_reference)
+    plain = GENERATORS["shuffled_instruments"](fixed_reference, fixed, seed=3)
+    pd.testing.assert_frame_equal(noise.NoiseStrategy().target_weights(fixed, params), plain)

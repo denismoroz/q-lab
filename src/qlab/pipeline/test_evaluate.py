@@ -24,6 +24,7 @@ from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import PANEL_RULES_VERSION
 from qlab.pipeline.evaluate import (
     FORWARD_NOTE,
+    NOISE_UNMATCHED_REASON,
     SELECTION_NOTE,
     PeriodSplit,
     StrategyResolutionError,
@@ -1530,3 +1531,30 @@ def test_a_forward_test_spent_in_cash_is_measured_not_an_error(session, tmp_path
     assert result.error is None
     assert result.metrics["judged_on_forward"] == 1.0
     assert result.metrics["min_capital_usd"] == result.metrics["fit_min_capital_usd"]
+
+
+class UnmatchedNoise:
+    """A noise book discarded for its shape."""
+
+    name = "unmatched-noise"
+
+    def target_weights(self, panel: MarketPanel, params) -> pd.DataFrame:
+        from qlab.calibration.noise import StructuralMismatchError
+
+        raise StructuralMismatchError("gross ratio 0.053 is outside the structural-match band")
+
+
+def test_a_noise_book_of_the_wrong_shape_is_not_evaluable_not_an_error(session, tmp_path) -> None:
+    """Owner, 2026-10-09: «в прогонах вижу тучу ошибок». A random book that
+    does not have its reference's shape is discarded by design; that is not
+    a crash."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:UnmatchedNoise")
+
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
+                           deployable_capital_usd=1000.0)
+
+    assert result.error is None and result.metrics is None
+    assert result.routing.route == "not-evaluable"
+    assert result.routing.reason.startswith(NOISE_UNMATCHED_REASON)
+    assert session.get(Trial, result.trial_id).status.value == "not-evaluable"

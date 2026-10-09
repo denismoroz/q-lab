@@ -22,8 +22,8 @@ export const fetchIdeaPage = (ideaId, resource, { limit, offset }) =>
     `/api/ideas/${encodeURIComponent(ideaId)}/${resource}?limit=${limit}&offset=${offset}`,
   )
 
-export const fetchTrials = ({ limit, offset }) =>
-  getJson(`/api/trials?limit=${limit}&offset=${offset}`)
+export const fetchTrials = ({ limit, offset, noise = false }) =>
+  getJson(`/api/trials?limit=${limit}&offset=${offset}&noise=${noise}`)
 
 export const fetchCards = () => getJson('/api/cards')
 export const fetchCard = (ideaId) => getJson(`/api/cards/${encodeURIComponent(ideaId)}`)
