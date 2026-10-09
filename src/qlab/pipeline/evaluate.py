@@ -1093,7 +1093,14 @@ def evaluate_spec(
                     result.net_return, regime_series, periods_per_year(part_panel.prices.index)
                 ))
                 measured.update(regime_claim_checks(spec.regime_claim, measured))
-            measured["min_capital_usd"] = min_capital_usd(part_weights, spec.min_leg_notional)
+            # The capital a strategy needs is the strategy's, not one part's:
+            # a part in which it held nothing (trend's two levels sat in cash
+            # through their first forward days, 2026-10-06) is a legitimate
+            # stretch, measured with the whole run's book. A book flat
+            # everywhere still raises.
+            flat = not (part_weights.abs() > 0).to_numpy().any()
+            measured["min_capital_usd"] = min_capital_usd(
+                weights if flat else part_weights, spec.min_leg_notional)
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage
             if truncated:

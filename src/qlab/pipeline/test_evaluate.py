@@ -1500,3 +1500,33 @@ def test_a_fit_start_needs_an_end_after_it() -> None:
                      params_fixed_evidence="doc")
     StrategySpec(**base, params_fit_from=date(2023, 6, 1), params_fixed_at=date(2025, 6, 1),
                  params_fixed_evidence="doc")
+
+
+class CashAfter(ToyStrategy):
+    """Holds the toy book until `params["cash_from"]`, then nothing."""
+
+    name = "cash-after"
+
+    def target_weights(self, panel: MarketPanel, params) -> pd.DataFrame:
+        weights = super().target_weights(panel, params)
+        held = weights.index < pd.Timestamp(params["cash_from"], tz="UTC")
+        return weights.mul(pd.Series(held, index=weights.index).astype(float), axis=0)
+
+
+def test_a_forward_test_spent_in_cash_is_measured_not_an_error(session, tmp_path) -> None:
+    """2026-10-06: trend's two levels sat in cash through their first forward
+    days and every night read `error` -- an all-flat part has no smallest
+    leg. The strategy's capital need comes from its whole run."""
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test",
+        code_ref="qlab.pipeline.test_evaluate:CashAfter",
+    )
+    spec = spec.model_copy(update={"params": {"weight": 0.4, "cash_from": "2026-01-06"}})
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0,
+                           check_lookahead=False, check_sources=False)
+
+    assert result.error is None
+    assert result.metrics["judged_on_forward"] == 1.0
+    assert result.metrics["min_capital_usd"] == result.metrics["fit_min_capital_usd"]
