@@ -94,7 +94,14 @@ function FunnelBody({ stats }) {
     }),
   )
 
-  const statusEntries = chartData.map((row) => [row.status, row.name, row.count])
+  // Variants of one strategy share a parent: say how many strategies stand
+  // behind a count when it is fewer than the ideas (30 on the bench were 3).
+  const strategies = stats.strategies_by_status ?? {}
+  const statusEntries = chartData.map((row) => {
+    const n = strategies[row.status]
+    const note = n != null && n < row.count ? ` · стратегий: ${n}` : ''
+    return [row.status, `${row.name}${note}`, row.count]
+  })
   const stageEntries = Object.entries(stats.verdicts_by_stage)
     .sort((a, b) => b[1] - a[1])
     .map(([stage, count]) => [stage, label(VERDICT_STAGE, stage), count])

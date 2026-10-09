@@ -93,7 +93,15 @@ def create_app() -> FastAPI:
     def funnel(session: SessionDep) -> dict[str, Any]:
         """The counts `queries.funnel_stats` computes — no extra aggregation."""
         stats = funnel_stats(session)
+        # How many STRATEGIES stand behind each status's count: variants of
+        # one strategy share a parent (qlab.registry.families), and thirty
+        # bench ideas were three strategies.
+        families: dict[str, set[str]] = {}
+        for idea_id, parent_id, status in session.query(Idea.id, Idea.parent_id, Idea.status):
+            if not idea_id.startswith("noise-"):
+                families.setdefault(status.value, set()).add(parent_id or idea_id)
         return {
+            "strategies_by_status": {k: len(v) for k, v in families.items()},
             "ideas_by_status": stats.ideas_by_status,
             "verdicts_by_stage": stats.verdicts_by_stage,
             "verdicts_by_outcome": stats.verdicts_by_outcome,

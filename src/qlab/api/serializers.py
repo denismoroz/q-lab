@@ -77,6 +77,7 @@ def idea_row_json(idea: Idea, driver: Driver | None = None) -> dict[str, Any]:
         "source_url": idea.source_url,
         "driver_id": idea.driver_id,
         "driver_title": driver.title if driver is not None else None,
+        "parent_id": idea.parent_id,
         "created_at": _iso(idea.created_at),
         "updated_at": _iso(idea.updated_at),
     }

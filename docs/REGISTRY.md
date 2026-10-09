@@ -40,6 +40,7 @@
 | `asset_class` | enum | `crypto-perp`/`crypto-spot`/`defi`/`fx` |
 | `driver_id` | FK? | |
 | `profile` | enum | `carry`/`momentum`/`mean-reversion`/`arb`/`other` |
+| `parent_id` | FK? → `idea` | Стратегия, вариантом которой является идея (2026-10-09). Назначает код (`qlab.registry.families`) по тому, какую стратегию запускает спек идеи, с раскрытием обёрток: варианты trend, Bv2 и XSMOM собраны под своими родителями. Родитель семейства — самый «живой» участник (в бою, затем в бумаге, затем самый старый). Пусто у самого родителя и у идеи без родственников. Тридцать идей на скамейке были тремя стратегиями и их вариантами |
 | `status` | enum | `candidate`→`speccing`→`implemented`→`validated`→`bench`→`paper`→`live`; терминальные: `rejected`, `decayed`, `retired`. Как его двигают прогоны — см. `stage_transition` |
 | `created_at`/`updated_at` | dt | |
 | `notes` | str? | |

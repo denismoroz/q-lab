@@ -252,6 +252,15 @@ class Idea(Base):
         ForeignKey("driver.id"), nullable=True, index=True
     )
     profile: Mapped[Profile] = mapped_column(_enum_column(Profile), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("idea.id"), nullable=True, index=True
+    )
+    """The idea this one is a VARIANT of (owner, 2026-10-09: «на скамейке 30
+    кандидатов — может их как-то сгруппировать по "родительской"
+    стратегии?»): thirty bench ideas were three strategies and their
+    variants. Assigned by code from the strategy the specs run
+    (`qlab.registry.families`); None for a family's own parent and for an
+    idea with no relatives."""
     status: Mapped[IdeaStatus] = mapped_column(
         _enum_column(IdeaStatus), nullable=False, default=IdeaStatus.CANDIDATE, index=True
     )

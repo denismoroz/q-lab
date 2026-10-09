@@ -786,6 +786,32 @@ def regimes_refresh_cmd() -> None:
         typer.echo(f"{'ok ' if line['ok'] else 'FAILED'} {line['name']}: {line['note']}")
 
 
+@app.command("families")
+def families_cmd() -> None:
+    """Group variants under their parent strategy (qlab.registry.families):
+    assign every idea its parent from the strategy its spec runs, and list
+    the families."""
+    from qlab.registry.db import session_scope
+    from qlab.registry.families import assign_parents
+    from qlab.registry.models import Idea
+
+    with session_scope() as session:
+        changed = assign_parents(session)
+        for idea_id, parent in sorted(changed.items()):
+            typer.echo(f"assigned {idea_id} -> {parent}")
+        children: dict[str, list[Idea]] = {}
+        for idea in session.query(Idea).filter(Idea.parent_id.is_not(None)):
+            children.setdefault(idea.parent_id, []).append(idea)
+        for parent_id in sorted(children):
+            parent = session.get(Idea, parent_id)
+            kids = sorted(children[parent_id], key=lambda i: i.id)
+            by_status: dict[str, int] = {}
+            for kid in kids:
+                by_status[kid.status.value] = by_status.get(kid.status.value, 0) + 1
+            typer.echo(f"{parent_id} ({parent.status.value}): {len(kids)} variants -- "
+                       + ", ".join(f"{n} {s}" for s, n in sorted(by_status.items())))
+
+
 detectors_app = typer.Typer(help="Regime detectors' own trials (docs/REGIME_DETECT.md).",
                             no_args_is_help=True)
 app.add_typer(detectors_app, name="detectors")

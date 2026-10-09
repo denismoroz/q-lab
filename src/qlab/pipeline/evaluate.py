@@ -356,7 +356,7 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
             return row
 
     next_version = (existing[0].version + 1) if existing else 1
-    return repo.add_spec(
+    row = repo.add_spec(
         session,
         idea_id=spec.idea_id,
         version=next_version,
@@ -366,6 +366,14 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
         costs_model=costs_model,
         code_ref=spec.code_ref,
     )
+    # A new strategy spec may add a member to a family, or found one
+    # (qlab.registry.families). Noise books have no family and are skipped:
+    # every noise trial writes a spec.
+    from qlab.registry.families import assign_parents, strategy_key
+
+    if strategy_key(spec.code_ref, spec.params) is not None:
+        assign_parents(session)
+    return row
 
 
 def _code_sha() -> str:
