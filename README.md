@@ -29,7 +29,7 @@ uv run uvicorn qlab.api:app --reload --port 8000
 ```bash
 cd web
 npm install     # один раз
-npm run dev     # http://localhost:5173
+npm run dev     # http://localhost:5178
 ```
 
 Прод-сборка фронта — `npm run build` в `web/` (кладётся в `web/dist/`).

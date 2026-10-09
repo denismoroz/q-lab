@@ -270,5 +270,5 @@ options-like instruments», а ограничение владельца сфо�
 
 ```bash
 uv run uvicorn qlab.api:app --reload --port 8000   # API
-cd web && npm run dev                              # http://localhost:5173
+cd web && npm run dev                              # http://localhost:5178
 ```

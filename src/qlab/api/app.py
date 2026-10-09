@@ -31,11 +31,12 @@ from qlab.api.serializers import (
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
 from qlab.registry.queries import funnel_stats
 
-# The dev frontend runs on Vite's default port and proxies /api, so CORS is
+# The dev frontend runs on port 5178 (web/vite.config.js; moved off Vite's
+# default 5173 on 2026-10-09, which other projects use) and proxies /api, so CORS is
 # normally never exercised; it is allowed here only so opening the API
 # directly from a dev page fails loudly on its own terms rather than as an
 # opaque CORS error.
-DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+DEV_ORIGINS = ("http://localhost:5178", "http://127.0.0.1:5178")
 
 MAX_PAGE = 200
 
