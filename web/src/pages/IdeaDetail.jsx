@@ -11,7 +11,7 @@ import {
   SHUTDOWN_CAUSE,
   SOURCE_TYPE,
   TRIAL_ROUTE,
-  TRIAL_ROUTE_HINT,
+  routeHint,
   label,
 } from '../labels.js'
 
@@ -216,10 +216,10 @@ function Outcome({ outcome }) {
     <section className={`rounded border p-4 ${OUTCOME_STYLE[trial.route] ?? 'border-slate-200'}`}>
       <div className="text-xs uppercase tracking-wide text-slate-500">Что говорит q-lab</div>
       <div className="mt-1 text-lg font-semibold text-slate-900">{label(TRIAL_ROUTE, trial.route)}</div>
-      <p className="text-sm text-slate-700">{TRIAL_ROUTE_HINT[trial.route]}</p>
-      <p className="mt-2 text-sm text-slate-800">
-        <span className="text-slate-500">Почему: </span>
-        {trial.route_reason}
+      <p className="text-sm text-slate-700">{routeHint(trial)}</p>
+      <p className="mt-2 text-xs text-slate-500">
+        <span>Как записано в реестре: </span>
+        <span className="font-mono">{trial.route_reason}</span>
       </p>
       {periods.length > 0 && <NumberList title="Данные" numbers={periods} />}
       {numbers.length > 0 && (

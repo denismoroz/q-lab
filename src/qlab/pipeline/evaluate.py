@@ -802,17 +802,25 @@ def _decide_fit_forward(
             if selection is not None
             else []
         )
-        note = (
-            f"; informational on that period, not judged there: {', '.join(informational)} failed"
+        # Said as it is (owner, 2026-10-09, on xsmom-frozen-universe: «что это
+        # значит?»): "shows nothing against it" beside two failed rules read
+        # as a clean bill. What is true is narrower -- no DECISIVE rule
+        # failed; the rules that failed there are shown and do not decide.
+        failed = (
+            f"on the selection period it FAILED {', '.join(informational)} -- shown, not "
+            "decisive there; no decisive rule failed"
             if informational
-            else ""
+            else "no rule failed on the selection period"
+        )
+        waiting = (
+            f"no forward test yet ({when})"
+            if params_fixed_at is not None
+            else "no forward test is possible until params_fixed_at is declared: the date "
+            "the parameters were fixed is unknown, so the whole window is the selection period"
         )
         return RoutingDecision(
             route="needs-forward",
-            reason=(
-                f"no forward test yet ({when}); the selection period shows nothing against "
-                f"it{note}"
-            ),
+            reason=f"{waiting}; {failed}",
             required_capital_usd=metrics.get("min_capital_usd"),
         )
 
@@ -1276,6 +1284,13 @@ def evaluate_spec(
             deployable_capital_usd=deployable_capital_usd,
             params_fixed_at=spec.params_fixed_at,
         )
+        # Facts for whoever reads the run, read by no rule: whether a forward
+        # test can ever start, and how many rules failed on the selection
+        # period (they may not decide there, but they are not "nothing").
+        metrics["fix_date_known"] = 1.0 if spec.params_fixed_at is not None else 0.0
+        if selection_result is not None:
+            metrics["selection_rules_failed"] = float(
+                sum(1 for row in selection_result.rows if row.passed is False))
     else:
         routing = decide_route(rules_result, metrics, deployable_capital_usd)
     if exploratory:

@@ -39,6 +39,12 @@ idea_id: xsmom-frozen-universe
 title: "XSMOM — кросс-секционный моментум-ансамбль на крипто-перпах HL (заморож. 32-монетный универс, снапшот 2026-06-12)"
 code_ref: "qlab.strategies.xsmom:XsmomCrossSectionalMomentum"
 
+# When the parameters and the coin list were last chosen (docs/FIT_VS_FORWARD.md):
+# before it the selection period, from it on the forward test.
+params_fixed_at: 2026-06-18
+params_fixed_evidence: >
+  funding-rate-arbitrage/src/frab/strategy/xsmom/params.py, comment on DEFAULT_XSMOM_UNIVERSE: «snapshot 2026-06-12, originally 34 coins ... HMSTR and TON dropped post-launch (2026-06-18) ... → 32 coins» -- the 32-coin list this spec runs was last changed on 2026-06-18; the signal parameters shipped with the live engine at launch (2026-06-15, research/xsmom_live_recon/AUDIT_2026_09.md: «Окно: 2026-06-15 → 2026-09-12»). Owner, 2026-10-09: a spec without this date waits for a forward test for ever.
+
 params:
   # DEFAULT_XSMOM_UNIVERSE, params.py:13-18 -- the exact 32-coin list, same
   # order as the source (order has no effect on the ranking math, kept

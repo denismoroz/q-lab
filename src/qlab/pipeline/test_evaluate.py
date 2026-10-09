@@ -1558,3 +1558,20 @@ def test_a_noise_book_of_the_wrong_shape_is_not_evaluable_not_an_error(session, 
     assert result.routing.route == "not-evaluable"
     assert result.routing.reason.startswith(NOISE_UNMATCHED_REASON)
     assert session.get(Trial, result.trial_id).status.value == "not-evaluable"
+
+
+def test_failed_informational_rules_are_named_not_called_nothing(session, tmp_path) -> None:
+    """Owner, 2026-10-09, on xsmom-frozen-universe: a page said the selection
+    period "shows nothing against it" beside two failed rules, and promised
+    a forward test that could never start."""
+    spec = _explicit_long(session, tmp_path)  # no params_fixed_at
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.routing.route == "needs-forward"
+    assert "nothing against" not in result.routing.reason
+    assert "FAILED honest_universe" in result.routing.reason
+    assert "until params_fixed_at is declared" in result.routing.reason
+    assert result.metrics["fix_date_known"] == 0.0
+    assert result.metrics["selection_rules_failed"] == 1.0

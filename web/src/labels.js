@@ -144,9 +144,48 @@ export const TRIAL_ROUTE_HINT = {
   'needs-infrastructure':
     'все правила стратегии пройдены; не хватает нашей инфраструктуры — адаптера площадки, данных вперёд или атомарности',
   'needs-forward':
-    'на данных, по которым подбирали параметры, против неё ничего нет — но это и не доказательство; решит проверка на данных после подбора',
+    'решающие правила на периоде подбора не провалены, но это не доказательство: решит проверка на данных после подбора',
   reject: 'проверена честно и не прошла',
   'not-evaluable': 'проверить было нечем: реализация не выражает стратегию или книги не было',
   'needs-more-data': 'правило есть, а метрику посчитать не удалось',
   error: 'код стратегии или стенда упал',
+}
+
+/** What a route means for THIS run, in the owner's words (2026-10-09, on an
+ * idea with two failed rules whose page said "nothing against it"). For
+ * `needs-forward` the generic hint hides three different situations: a
+ * forward test that cannot start because nobody recorded when the parameters
+ * were fixed, one that has not started, and one still too short. */
+export function routeHint(trial) {
+  const generic = TRIAL_ROUTE_HINT[trial.route]
+  if (trial.route !== 'needs-forward') return generic
+  const m = trial.metrics ?? {}
+  const parts = []
+  // Runs recorded before the fact was stored say it only in their reason.
+  const dateUnknown =
+    m.fix_date_known === 0 ||
+    (m.fix_date_known == null && /fixed is unknown/.test(trial.route_reason ?? ''))
+  if (dateUnknown) {
+    parts.push(
+      'Проверка вперёд невозможна: в спеке не записано, когда выбрали параметры и монеты, поэтому вся история считается периодом подбора. Пока дата не указана, идея будет ждать вечно.',
+    )
+  } else if ((m.forward_days ?? 0) > 0) {
+    const need = m.forward_days_needed
+    parts.push(
+      `Проверка вперёд идёт: ${Math.round(m.forward_days)} дн.` +
+        (need != null ? ` из примерно ${Math.round(need)} нужных` : '') +
+        '. Пока её мало, она не решает ни в одну сторону.',
+    )
+  } else {
+    parts.push('Проверки вперёд ещё нет: после фиксации параметров не накопилось данных.')
+  }
+  const failed = m.selection_rules_failed
+  if (failed > 0) {
+    parts.push(
+      `На периоде подбора не пройдено правил: ${failed}. Там они показываются, но не решают — это не «всё чисто».`,
+    )
+  } else if (failed === 0) {
+    parts.push('На периоде подбора все правила пройдены — но на данных подбора так выглядит почти любая стратегия.')
+  }
+  return parts.join(' ')
 }
