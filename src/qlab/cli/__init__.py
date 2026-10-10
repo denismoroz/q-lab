@@ -786,6 +786,38 @@ def regimes_refresh_cmd() -> None:
         typer.echo(f"{'ok ' if line['ok'] else 'FAILED'} {line['name']}: {line['note']}")
 
 
+@app.command("retire")
+def retire_cmd(
+    ideas: list[str] = typer.Argument(..., metavar="IDEA..."),  # noqa: B008 - typer's own idiom
+    reason: str = typer.Option(..., "--reason", help="Why -- the owner's decision, as given."),
+) -> None:
+    """Withdraw ideas by the owner's decision: status `retired`, with the
+    reason in the funnel ledger (`stage_transition`). For an idea that was
+    never a candidate -- a control measurement -- or that is superseded;
+    `rejected` stays what a run decides, `decayed` what a real shutdown does.
+    A retired idea is production-owned: no later run moves it."""
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea, IdeaStatus
+
+    if not reason.strip():
+        typer.echo("error: a retirement needs a stated reason", err=True)
+        raise typer.Exit(code=1)
+    with session_scope() as session:
+        missing = [i for i in ideas if session.get(Idea, i) is None]
+        if missing:
+            typer.echo(f"error: no such idea: {', '.join(missing)}", err=True)
+            raise typer.Exit(code=1)
+        for idea_id in ideas:
+            was = session.get(Idea, idea_id).status
+            if was == IdeaStatus.RETIRED:
+                typer.echo(f"{idea_id}: already retired")
+                continue
+            repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.RETIRED,
+                            reason=reason)
+            typer.echo(f"{idea_id}: {was.value} -> retired")
+
+
 @app.command("families")
 def families_cmd() -> None:
     """Group variants under their parent strategy (qlab.registry.families):

@@ -204,3 +204,34 @@ def test_funnel_shutdown_cause_breakdown_with_decayed_idea(cli_db, tmp_path):
     assert result.exit_code == 0, result.output
     assert "decayed ideas by shutdown cause:" in result.output
     assert "false-discovery" in result.output
+
+
+def test_retire_needs_a_reason_and_writes_the_transition(cli_db):
+    """Owner, 2026-10-10: «да, переводи все три» -- control measurements
+    leave the bench by a recorded decision, never silently."""
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import (
+        AssetClass,
+        Idea,
+        IdeaStatus,
+        Profile,
+        SourceType,
+        StageTransition,
+    )
+
+    runner.invoke(app, ["init-db"])
+    with session_scope() as session:
+        repo.upsert_idea(session, id="control-a", title="control", source_type=SourceType.INTERNAL,
+                         asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+    assert runner.invoke(app, ["retire", "control-a"]).exit_code != 0  # no reason given
+    assert runner.invoke(app, ["retire", "nope", "--reason", "x"]).exit_code == 1
+    result = runner.invoke(app, ["retire", "control-a", "--reason", "a control, done its job"])
+    assert result.exit_code == 0, result.output
+    with session_scope() as session:
+        assert session.get(Idea, "control-a").status == IdeaStatus.RETIRED
+        row = session.query(StageTransition).filter_by(idea_id="control-a").order_by(
+            StageTransition.id.desc()).first()
+        assert row.to_status == IdeaStatus.RETIRED and row.reason == "a control, done its job"
+    again = runner.invoke(app, ["retire", "control-a", "--reason", "again"])
+    assert "already retired" in again.output
