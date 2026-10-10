@@ -121,6 +121,26 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
     return result
 
 
+def unwatched_bench(watch: list[str], spec_dir: Path = Path("specs")) -> list[str]:
+    """Bench ideas no spec on the watch list belongs to. Their forward tests
+    never grow, so "waiting for a forward test" would be for ever: on
+    2026-10-10 seventeen of twenty-eight bench ideas were finished
+    experiments and controls nobody followed. The report names them so the
+    owner either follows or retires each (`qlab retire`)."""
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea, IdeaStatus
+
+    watched = set()
+    for path in watch:
+        try:
+            watched.add(load_spec(Path(path)).idea_id)
+        except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
+            continue
+    with session_scope() as session:
+        bench = [i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.BENCH)]
+    return sorted(i for i in bench if i not in watched)
+
+
 def graveyard_specs(spec_dir: Path = Path("specs")) -> list[Path]:
     """Spec files of ideas whose status is rejected -- what the weekly
     regime sweep re-runs."""
@@ -240,6 +260,10 @@ def write_report(day: date, state: dict) -> Path:
             lines.append(f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
                          + " | ".join(_report_row(m)) + " |")
         lines.append("")
+    if idle := state.get("unwatched_bench"):
+        lines += ["## На скамейке, но не в списке наблюдения", "",
+                  "Проверка вперёд у этих идей не растёт: либо добавить в `night/watchlist.yaml`, "
+                  "либо вывести (`qlab retire`).", "", *[f"- {i}" for i in idle], ""]
     if built := state.get("detectors"):
         lines += ["## Определители режима (пересобраны до списка наблюдения)", ""]
         lines += [f"- {'ок' if b['ok'] else '**сбой**'} — {b['name']}: {b['note']}" for b in built]
@@ -324,6 +348,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         state["detectors"] = build_all(end) if CONFIG.is_file() else []
         save_state(day, state)
     watch = yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
+    state["unwatched_bench"] = unwatched_bench(watch)
     sweep = graveyard if graveyard is not None else day.weekday() == 6
     queue = [("watch", Path(p)) for p in watch]
     if sweep:

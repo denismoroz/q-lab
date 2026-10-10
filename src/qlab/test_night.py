@@ -106,3 +106,31 @@ def test_report_with_only_a_forward_test_and_with_a_nan() -> None:
     row = _report_row({"ann_return_net": float("nan"), "fit_ann_return_net": 0.05,
                        "fit_sharpe_net": 0.5, "forward_days": 2.0})
     assert row[3] == "—"
+
+
+def test_bench_ideas_nobody_follows_are_named(tmp_path, monkeypatch) -> None:
+    """2026-10-10: seventeen bench ideas were finished experiments whose
+    forward tests could never grow. The report says which ideas wait in vain."""
+    import qlab.registry.db as db_module
+    from qlab import night
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Base, IdeaStatus, Profile, SourceType
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "q.db"))
+    db_module._engine = None
+    db_module._SessionLocal = None
+    Base.metadata.create_all(db_module.get_engine())
+    with session_scope() as session:
+        for idea_id in ("followed", "forgotten"):
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+            repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.BENCH)
+
+    class _Spec:
+        idea_id = "followed"
+
+    monkeypatch.setattr(night, "load_spec", lambda path: _Spec())
+    assert night.unwatched_bench(["specs/followed.yaml"]) == ["forgotten"]
+    db_module._engine = None
+    db_module._SessionLocal = None

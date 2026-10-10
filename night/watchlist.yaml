@@ -15,3 +15,8 @@ specs:
   # T39: trend's two levels, the best so far (docs/REGIME_DETECT.md); its
   # level-2 decisions are rebuilt first (night/detectors.yaml)
   - specs/research/t39/trend-t39-meta.yaml
+  # Added 2026-10-10: on the bench but not followed, so their forward tests
+  # never grew (owner: «пройди по всем стратегиям на скамейке ...»).
+  - specs/trend-retune-monthly.yaml                   # passed every rule; waits for capital
+  - specs/research/trend/trend-research-gate-hl.yaml  # the simple gate on the venue production trades
+  - specs/research/bv2/bv2-research-headroom.yaml     # the configuration production's b2_cold runs

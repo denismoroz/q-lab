@@ -2,22 +2,18 @@
 # list (src/qlab/detector_builds.py, docs/REGIME_DETECT.md). Level 1 first:
 # level 2 reads level 1's file. Names are the files specs read
 # (`predictions:<name>`, `meta:<name>`, `hedge_by: {meta: <name>}`).
+#
+# Only what a strategy on the watch list reads is rebuilt. On 2026-10-10 the
+# experiments that read the others were retired (their trials stay on record):
+# btc-market-logistic, btc-returns-14d, btc-returns-persist8,
+# trend-binance-cap-14d, bv2-hedge, bv2-hedge-filter. Their files stay in
+# data/regimes as built; `qlab regimes detect / meta / meta-hedge` rebuilds any
+# of them on demand.
 regimes: true            # BTC daily closes and the 30-day testing labels
 
 level1:
   - {name: btc-returns-logistic, returns_only: true, window: 30}   # the favourite
-  - {name: btc-returns-14d, returns_only: true, window: 14}
-  - {name: btc-market-logistic, returns_only: false}                # first T39 specs
-
-persistent:
-  - {name: btc-returns-persist8, from: btc-returns-logistic, penalty: 8}
 
 level2:
   - {kind: meta, name: trend-binance-cap, spec: specs/trend-binance-cap.yaml,
-     level1: btc-returns-logistic}
-  - {kind: meta, name: trend-binance-cap-14d, spec: specs/trend-binance-cap.yaml,
-     level1: btc-returns-14d}
-  - {kind: meta-hedge, name: bv2-hedge, spec: specs/bv2-binance.yaml,
-     level1: btc-returns-logistic}
-  - {kind: meta-hedge, name: bv2-hedge-filter, spec: specs/bv2-binance.yaml,
-     level1: btc-returns-logistic, false_alarm_filter: true}
+     level1: btc-returns-logistic}                                  # trend-t39-meta
