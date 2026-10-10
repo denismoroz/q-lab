@@ -9,7 +9,9 @@ LOG="data/night/logs/$(date -u +%Y-%m-%d).log"
 mkdir -p data/night/logs
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
-  uv run qlab night run
+  # caffeinate -i: the Mac must not fall back asleep mid-run. On 2026-10-10 it
+  # dozed between short wakes and two hours of work took until midday.
+  caffeinate -i uv run qlab night run
   rc=$?
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $rc)"
 } >> "$LOG" 2>&1
