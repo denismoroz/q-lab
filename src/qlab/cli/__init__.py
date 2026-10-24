@@ -1211,6 +1211,49 @@ def review_cmd(
     typer.echo(f"blocking until declared or answered: {len(blocking)}")
 
 
+@app.command("hedge-timing")
+def hedge_timing_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
+    start: str = typer.Option(..., "--from", help="Judge from this date (YYYY-MM-DD)"),
+    data_start: str | None = typer.Option(
+        None, "--data-start", help="Start the book here instead of the spec's data start "
+        "(a fresh book: its positions are sized at creation and do not compound)"),
+    books: int = typer.Option(200, "--books"),
+) -> None:
+    """Does the book choose WHEN to hedge better than chance? Its own spot,
+    its own hedges shifted in time (docs/HEDGE_TIMING.md). A measurement:
+    nothing is written to the registry and nothing is decided."""
+    from datetime import date as _date
+
+    import numpy as np
+    import pandas as pd
+
+    from qlab.harness.costs import CostModel
+    from qlab.hedge_timing import hedge_timing_test
+    from qlab.night import last_closed_day, with_end
+    from qlab.pipeline.evaluate import resolve_panel, resolve_strategy
+
+    spec = with_end(load_spec(spec_path), last_closed_day())
+    if data_start:
+        spec = spec.model_copy(update={"data": spec.data.model_copy(
+            update={"start": _date.fromisoformat(data_start)})})
+    with session_scope() as session:
+        panel = resolve_panel(session, spec)
+    weights = resolve_strategy(spec.code_ref).target_weights(panel, spec.params)
+    costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
+                      slippage_bps=spec.costs.slippage_bps)
+    r = hedge_timing_test(panel, weights, costs, pd.Timestamp(start, tz="UTC"), n=books)
+    shifted = np.array(r.shifted)
+    typer.echo(f"{spec.idea_id} from {start} ({r.days:.0f} days), hedged {r.hedged_share:.0%} "
+               f"of the time")
+    typer.echo(f"  the book:            {r.own:+.1%} a year")
+    typer.echo(f"  hedges shifted:      median {np.median(shifted):+.1%}, 5%..95% "
+               f"{np.quantile(shifted, 0.05):+.1%}..{np.quantile(shifted, 0.95):+.1%}; "
+               f"the book beats {r.percentile:.0%} of {len(shifted)}")
+    typer.echo(f"  spot only:           {r.spot_only:+.1%}")
+    typer.echo(f"  spot always hedged:  {r.always_hedged:+.1%}")
+
+
 @app.command("calibrate-planted")
 def calibrate_planted_cmd(
     reference: Path = typer.Option(  # noqa: B008
@@ -1265,7 +1308,7 @@ def calibrate_planted_cmd(
     for days in sorted(window, reverse=True):
         starts[f"last {days}d"] = max(active.idxmax(), end - pd.Timedelta(days=days))
 
-    built = noise_books(panel, weights, costs, books)
+    built = noise_books(panel, weights, costs, books, held=spec.noise_universe == "held")
     typer.echo(f"reference: {spec.idea_id} ({reference}); rules {ruleset.version}; "
                f"noise books {len(built)} of {books} requested")
     results = planted_outcomes(

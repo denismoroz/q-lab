@@ -39,7 +39,12 @@ from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
 from qlab.harness.costs import CostModel
 from qlab.harness.gaps import holdable_gaps
 from qlab.harness.lookahead import lookahead_violation
-from qlab.harness.metrics import compute_metrics, min_capital_usd, periods_per_year
+from qlab.harness.metrics import (
+    compute_metrics,
+    hold_benchmark,
+    min_capital_usd,
+    periods_per_year,
+)
 from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, validate_weights
 from qlab.pipeline.sources import require_sources
@@ -1168,6 +1173,7 @@ def evaluate_spec(
                 part_weights = weights.iloc[lo : hi + 1]
             result = run_backtest(part_panel, part_weights, costs, part_panel.funding)
             measured = compute_metrics(result)
+            measured.update(hold_benchmark(part_panel.prices, part_weights))
             # How the result splits across BTC's bull / flat / bear days
             # (docs/REGIMES.md): a description, read by no rule.
             regime_series = _regimes()
@@ -1241,6 +1247,17 @@ def evaluate_spec(
         if judged is None:  # the whole window is shorter than two bars
             judged = (first, last)
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None)
+        if spec.measure_hedge_timing:
+            # Does the book pick WHEN to hedge better than chance, on the
+            # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.
+            from qlab.hedge_timing import hedge_timing_test
+
+            timing = hedge_timing_test(panel, weights, costs, index[judged[0]])
+            metrics.update({"hedge_timing_percentile": timing.percentile,
+                            "hedge_timing_shifted_median": float(statistics.median(timing.shifted)),
+                            "spot_only_ann_return": timing.spot_only,
+                            "always_hedged_ann_return": timing.always_hedged,
+                            "hedged_share": timing.hedged_share})
         if judged != (0, len(index) - 1):
             range_start = index[judged[0]].date()
             range_end = index[judged[1]].date()

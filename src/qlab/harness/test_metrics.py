@@ -357,3 +357,30 @@ def test_effective_profitable_days_is_zero_without_a_profitable_day() -> None:
 def test_effective_profitable_days_share_rejects_an_empty_series() -> None:
     with pytest.raises(ValueError, match="empty"):
         effective_profitable_days_share(pd.Series(dtype=float))
+
+
+def test_best_one_percent_of_days_not_hours_on_intraday_bars() -> None:
+    """2026-10-24: on hourly bars the metric dropped the best 1% of HOURS,
+    against its own docstring; a steady book lost a hundred hours of
+    gains instead of a few days."""
+    from qlab.harness.metrics import ann_return_net_ex_best_1pct
+
+    hours = pd.date_range("2026-01-01", periods=24 * 400, freq="1h", tz="UTC")
+    rng = np.random.default_rng(0)
+    hourly = pd.Series(rng.normal(0.00002, 0.004, len(hours)), index=hours)
+    daily = (1.0 + hourly).resample("1D").prod() - 1.0
+    assert ann_return_net_ex_best_1pct(hourly) == pytest.approx(
+        ann_return_net_ex_best_1pct(daily))
+
+
+def test_hold_benchmark_counts_a_coin_once_and_ignores_unheld_ones() -> None:
+    from qlab.harness.metrics import hold_benchmark
+
+    idx = pd.date_range("2026-01-01", periods=400, freq="1D", tz="UTC")
+    up = pd.Series(np.linspace(100, 200, len(idx)), index=idx)
+    prices = pd.DataFrame({"A": up, "A-SPOT": up, "B": up * 0 + 50})
+    weights = pd.DataFrame({"A": -0.5, "A-SPOT": 0.5, "B": 0.0}, index=idx)
+    alone = hold_benchmark(prices[["A-SPOT"]], weights[["A-SPOT"]])
+    assert hold_benchmark(prices, weights) == alone
+    assert alone["hold_ann_return"] > 0.5
+    assert hold_benchmark(prices, weights * 0) == {}

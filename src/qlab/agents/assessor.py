@@ -62,6 +62,17 @@ Look especially at: whether the period is long enough for the rule that decided;
 market regime separately (does the strategy do what it claims in bull/flat/bear?); what
 related variants and the paper book show; what single fact would change your view.
 
+Compare before you conclude:
+- hold_ann_return / hold_ann_return_ex_best_1pct are holding the same coins over the same
+  days. A return or a "without the best 1% of days" figure means little until set beside
+  them: crypto earns in few days, so holding it also collapses without its best days.
+- noise_* and regime_*_noise_percentile rank the strategy against random books that are
+  half long and half short, so they never lose with the market: a book that holds spot
+  looks worse than them in falls by construction. Do not read that as bad timing.
+- hedge_timing_percentile, when present, is the direct test of timing: the strategy's own
+  spot with its own hedges shifted in time (same amount of hedging, random moments);
+  spot_only_ann_return and always_hedged_ann_return are the two plain alternatives.
+
 Every claim MUST carry evidence:
 - "fact": a key copied exactly from FACTS, and "value": the number there; or
 - "quote": text copied VERBATIM from CONTEXT.

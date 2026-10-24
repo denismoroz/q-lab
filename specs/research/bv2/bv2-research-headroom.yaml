@@ -54,6 +54,16 @@ costs:
 min_leg_notional: 10.0
 simultaneous_legs: 2
 
+# Random books for the noise bar trade only the coins this book holds
+# (StrategySpec.noise_universe): the coin list is fixed, the question is the
+# book's decisions on it. With the whole panel, a random book on strategy-b-v2
+# moved its weights onto Hyperliquid memecoins and made +212% a year
+# (docs/HEDGE_TIMING.md, 2026-10-24).
+noise_universe: held
+
+# Whether the book picks WHEN to hedge better than chance (docs/HEDGE_TIMING.md).
+measure_hedge_timing: true
+
 unexpressed_mechanisms: []
 
 required_instruments: [BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX]

@@ -429,3 +429,12 @@ def test_noise_spec_does_not_inherit_the_reference_unexpressed_mechanisms():
         series="dollar_neutral", generator=next(iter(GENERATORS)), seed=0, reference=reference
     )
     assert spec.unexpressed_mechanisms == []
+
+
+def test_noise_does_not_repeat_the_references_hedge_timing() -> None:
+    from qlab.calibration.run import build_noise_spec, load_reference_spec
+
+    reference = load_reference_spec().model_copy(update={"measure_hedge_timing": True})
+    noise = build_noise_spec(series="dollar_neutral", generator="random_signs", seed=1,
+                             reference=reference)
+    assert noise.measure_hedge_timing is False

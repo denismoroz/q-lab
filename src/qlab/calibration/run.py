@@ -145,12 +145,17 @@ def build_noise_spec(
             # noise must be judged on the same complete-book stretch as the
             # reference, or the percentile compares two different windows.
             "unexpressed_mechanisms": [],
+            # A measurement of the reference's own decisions, not of noise.
+            "measure_hedge_timing": False,
             "params": {
                 "generator": generator,
                 "seed": seed,
                 "neutral": series == "dollar_neutral",
                 "reference_code_ref": reference.code_ref,
                 "reference_params": dict(reference.params),
+                # Only when set, so the noise specs of every other strategy
+                # keep their identity.
+                **({"universe": "held"} if reference.noise_universe == "held" else {}),
             },
         }
     )

@@ -46,6 +46,7 @@ same accrual, same universe (docs/TASKS.md T16's own requirement).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -628,6 +629,20 @@ def _reference_weights(panel: MarketPanel, code_ref: str, params: Mapping[str, o
     return _REFERENCE_CACHE[key]
 
 
+def held_only(generator: GeneratorFn, reference: pd.DataFrame, panel: MarketPanel,
+              seed: int) -> pd.DataFrame:
+    """`generator` run on the instruments `reference` ever holds, the rest
+    left at zero (`StrategySpec.noise_universe == "held"`)."""
+    cols = [c for c in reference.columns if reference[c].abs().sum() > 0]
+    narrow = dataclasses.replace(
+        panel, prices=panel.prices[cols], funding=panel.funding[cols],
+        tradeable=panel.tradeable[cols],
+        volume=None if panel.volume is None else panel.volume.reindex(columns=cols),
+        high=None if panel.high is None else panel.high.reindex(columns=cols))
+    raw = generator(reference[cols], narrow, seed=seed)
+    return raw.reindex(columns=reference.columns, fill_value=0.0)
+
+
 class NoiseStrategy:
     """A `qlab.harness.strategy.Strategy` whose weights are noise, built
     from a real reference strategy's own weights (docs/TASKS.md, T16).
@@ -650,6 +665,9 @@ class NoiseStrategy:
         reference_params: the `params` mapping to run the reference strategy
             with -- transcribed verbatim from the reference's own spec file,
             never invented here.
+
+    Optional: `universe: "held"` -- the generator sees only the instruments
+    the reference ever holds (`StrategySpec.noise_universe`).
 
     Raises (from `target_weights`):
         KeyError: a required `params` key is missing.
@@ -682,8 +700,11 @@ class NoiseStrategy:
 
         reference_shape = compute_shape(reference_weights)
 
+        held = params.get("universe") == "held"
+
         def _book(generator: GeneratorFn) -> pd.DataFrame:
-            raw = generator(reference_weights, panel, seed=seed)
+            raw = (held_only(generator, reference_weights, panel, seed) if held
+                   else generator(reference_weights, panel, seed=seed))
             if not neutral:
                 return raw
             return neutralize(raw, min_position_floor=reference_min_position(reference_weights))
@@ -701,6 +722,7 @@ class NoiseStrategy:
 
 __all__ = [
     "GENERATORS",
+    "held_only",
     "MATCHED_FALLBACKS",
     "STRUCTURAL_BAND",
     "BookShape",

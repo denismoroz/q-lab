@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -163,6 +164,22 @@ class StrategySpec(BaseModel):
     own `idea_id` with an empty list here (the same move T19 asks for with
     "соседний кандидат").
     """
+
+    noise_universe: Literal["panel", "held"] = "panel"
+    """Which instruments this strategy's random books may trade
+    (`qlab.calibration.noise.NoiseStrategy`). "panel" (default): any in the
+    panel -- right when choosing instruments is part of the strategy (trend,
+    XSMOM). "held": only those the strategy itself ever holds -- right when
+    the instrument list is fixed and the question is the strategy's decisions
+    on it. Measured 2026-10-24 on strategy-b-v2: with "panel" a random book
+    put Bv2's weights on memecoins of Hyperliquid's 237 columns and made
+    +212% a year, a different market from BTC/ETH/SOL/AVAX."""
+
+    measure_hedge_timing: bool = False
+    """Also measure whether the book picks WHEN to hedge better than chance
+    (`qlab.hedge_timing`): its own spot, its own hedges shifted in time, 200
+    books on the judged part. For spot-plus-hedge books (Bv2); off by default
+    because each noise book would repeat it."""
 
     required_instruments: list[str] | None = None
     """Instruments (panel column names) the strategy needs ALL of at once to

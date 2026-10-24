@@ -43,6 +43,7 @@ from qlab.calibration.noise import (
     StructuralMismatchError,
     check_structural_match,
     compute_shape,
+    held_only,
     neutralize,
     reference_min_position,
 )
@@ -92,7 +93,8 @@ class PlantedOutcome:
 
 
 def noise_books(
-    panel: MarketPanel, reference: pd.DataFrame, costs: CostModel, n: int, seed_offset: int = 0
+    panel: MarketPanel, reference: pd.DataFrame, costs: CostModel, n: int, seed_offset: int = 0,
+    held: bool = False,
 ) -> list[NoiseBook]:
     """The dollar-neutral noise series of T16 for `reference`'s shape.
     A draw that fails the structural match is skipped, as an ERROR noise
@@ -103,8 +105,9 @@ def noise_books(
     for i in range(n):
         generator = GENERATOR_NAMES[i % len(GENERATOR_NAMES)]
         seed = seed_offset + i
-        weights = neutralize(GENERATORS[generator](reference, panel, seed=seed),
-                             min_position_floor=floor)
+        raw = (held_only(GENERATORS[generator], reference, panel, seed) if held
+               else GENERATORS[generator](reference, panel, seed=seed))
+        weights = neutralize(raw, min_position_floor=floor)
         try:
             check_structural_match(compute_shape(weights), ref_shape)
         except StructuralMismatchError:
