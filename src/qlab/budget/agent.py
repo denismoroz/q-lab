@@ -78,8 +78,12 @@ def run_agent(
             "run_agent needs a CandidateBudget, or ExplicitNoBudget(reason) to refuse one "
             f"explicitly; got {type(budget).__name__}"
         )
+    # No MCP servers: no q-lab agent uses one, and the user's servers' tool
+    # definitions otherwise ride along in every call -- ~140k tokens measured
+    # 2026-10-24 on a one-word probe, ~1.3k without them.
     args = [_claude_bin(), "-p", prompt, "--output-format", "stream-json", "--verbose",
-            "--model", model, "--max-turns", str(max_turns), *extra_args]
+            "--model", model, "--max-turns", str(max_turns), "--strict-mcp-config",
+            *extra_args]
     if isinstance(budget, CandidateBudget):
         budget.check()
         from qlab.budget.guard import usd_per_token

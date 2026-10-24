@@ -82,6 +82,10 @@ export default function IdeaDetail() {
         {ideaQuery.data && (
           <>
             <Outcome outcome={ideaQuery.data.latest_outcome} />
+            <Assessment
+              assessment={ideaQuery.data.assessment}
+              latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
+            />
             <Header idea={ideaQuery.data} />
           </>
         )}
@@ -236,6 +240,65 @@ function Outcome({ outcome }) {
         {outcome.unrouted_trials
           ? ` · ещё ${outcome.unrouted_trials} прогонов до 2026-10-01 без записанного исхода; их числа ниже — история, а не вывод`
           : ''}
+      </p>
+    </section>
+  )
+}
+
+// docs/ASSESSOR.md: the assessor agent's second opinion. The verdict stays
+// the code's; every number in a claim was checked against the run by code.
+const ASSESSMENT_VIEW = {
+  agree: 'согласен с вердиктом',
+  too_harsh: 'считает вердикт слишком строгим',
+  too_lenient: 'считает вердикт слишком мягким',
+  unsure: 'не уверен',
+}
+
+function Assessment({ assessment, latestTrialId }) {
+  if (!assessment) return null
+  const a = assessment
+  const stale = latestTrialId != null && a.trial_id !== latestTrialId
+  return (
+    <section
+      className={`rounded border p-4 ${a.disputes ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}
+    >
+      <div className="text-xs uppercase tracking-wide text-slate-500">Второе мнение агента</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">
+        {ASSESSMENT_VIEW[a.view] ?? a.view}
+      </div>
+      {a.disputes && (
+        <p className="text-sm font-medium text-amber-800">
+          Агент спорит с вердиктом. Вердикт не меняется — решать вам.
+        </p>
+      )}
+      <p className="mt-2 text-sm text-slate-700">{a.summary}</p>
+      {a.claims.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+          {a.claims.map((c, i) => (
+            <li key={i}>
+              {c.text}{' '}
+              <span className="font-mono text-xs text-slate-400">
+                [{c.fact ? `${c.fact} = ${Number(c.value).toPrecision(3)}` : `«${c.quote}»`}]
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {a.checks.length > 0 && (
+        <>
+          <div className="mt-3 text-xs uppercase tracking-wide text-slate-500">что решило бы вопрос</div>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
+            {a.checks.map((c, i) => (
+              <li key={i}>{c}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="mt-3 text-xs text-slate-500">
+        прогон #{a.trial_id}
+        {stale ? ' (не последний — мнение о прошлом прогоне)' : ''}, {a.at.slice(0, 10)}, модель{' '}
+        {a.model}. Числа в утверждениях сверены кодом с прогоном
+        {a.rejected_claims ? `; не сошлись и отброшены: ${a.rejected_claims}` : ''}.
       </p>
     </section>
   )

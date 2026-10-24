@@ -45,11 +45,11 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     day = date(2026, 10, 3)
     try:
         night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                  detectors=False)
+                  detectors=False, assess=False)
     except KeyboardInterrupt:
         pass
     report = night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                       detectors=False)
+                       detectors=False, assess=False)
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
@@ -93,7 +93,7 @@ def test_detectors_are_rebuilt_before_the_watch_list_and_reported(tmp_path, monk
     monkeypatch.setattr(night, "WATCHLIST", watch)
     monkeypatch.setattr(night, "_token_lines", lambda day: "")
     path = night.run(date(2026, 10, 4), graveyard=False, paper=False, implement=False,
-                     search=False)
+                     search=False, assess=False)
     assert order == ["detectors"]
     assert "level1 x" in path.read_text(encoding="utf-8")
 
@@ -134,3 +134,30 @@ def test_bench_ideas_nobody_follows_are_named(tmp_path, monkeypatch) -> None:
     assert night.unwatched_bench(["specs/followed.yaml"]) == ["forgotten"]
     db_module._engine = None
     db_module._SessionLocal = None
+
+
+def test_a_second_opinion_where_the_verdict_changed_or_money_is_at_stake() -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from qlab.registry import repo
+    from qlab.registry.models import AssetClass, Base, IdeaStatus, Profile, SourceType
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for idea, status in (("paper", IdeaStatus.PAPER), ("bench", IdeaStatus.BENCH),
+                         ("moved", IdeaStatus.BENCH)):
+        repo.upsert_idea(session, id=idea, title=idea, source_type=SourceType.INTERNAL,
+                         asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                         status=status)
+    results = [
+        {"kind": "watch", "name": "paper", "trial_id": 1, "route": "needs-forward",
+         "previous_route": "needs-forward"},
+        {"kind": "watch", "name": "bench", "trial_id": 2, "route": "needs-forward",
+         "previous_route": "needs-forward"},
+        {"kind": "watch", "name": "moved", "trial_id": 3, "route": "reject",
+         "previous_route": "needs-forward"},
+        {"kind": "watch", "name": "moved", "trial_id": None, "error": "boom"},
+    ]
+    assert [r["name"] for r in night.worth_assessing(session, results)] == ["paper", "moved"]

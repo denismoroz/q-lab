@@ -652,6 +652,9 @@ def night_run_cmd(
                                 help="Stage 3: venue watcher and the scout's draft (tokens)"),
     detectors: bool = typer.Option(True, "--detectors/--no-detectors",
                                    help="Rebuild night/detectors.yaml before the watch list"),
+    assess: bool = typer.Option(True, "--assess/--no-assess",
+                                help="The assessor's second opinion on changed verdicts and on "
+                                "paper/live ideas (tokens)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -662,7 +665,7 @@ def night_run_cmd(
     from qlab.night import run
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
-               implement=implement, search=search, detectors=detectors,
+               implement=implement, search=search, detectors=detectors, assess=assess,
                noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
@@ -1079,6 +1082,73 @@ def implement_cmd(
                    f"({result.routing.reason})")
 
 
+def _interactive_night_budget(session):
+    """Tonight's budget for an agent called by hand: the latest usage reading
+    if it is fresh, a new probe otherwise (docs/BUDGET.md)."""
+    from datetime import UTC, datetime, timedelta
+
+    from qlab.budget import NightBudget, probe
+    from qlab.budget.usage import UsageReading, Window
+    from qlab.registry.models import TokenSpend
+
+    last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
+            .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+    now = datetime.now(UTC)
+    # A reading older than the five-hour window's own length describes a
+    # window that is gone; take a fresh one first.
+    fresh = last is not None and last.at.replace(tzinfo=UTC) > now - timedelta(hours=5)
+    if fresh:
+        reading = UsageReading("allowed", None,
+                               Window(last.seven_day_util,
+                                      last.seven_day_resets_at.replace(tzinfo=UTC)))
+    else:
+        reading = probe(session).report.reading
+    return NightBudget.open(session, reading, now=now)
+
+
+@app.command("assess")
+def assess_cmd(
+    idea_id: str = typer.Argument(..., metavar="IDEA"),
+    trial_id: int | None = typer.Option(None, "--trial", help="Default: the idea's latest run"),
+    model: str = typer.Option("opus", "--model"),
+) -> None:
+    """Have the assessor agent give a second opinion on a run's verdict
+    (docs/ASSESSOR.md). The verdict is never changed; claims whose numbers do
+    not match the run are discarded; a dispute is the owner's to settle."""
+    from sqlalchemy import select
+
+    from qlab.agents.assessor import build_brief, latest_paper_lines, run_assessment
+    from qlab.budget import Stage
+    from qlab.registry.models import Spec, Trial
+
+    with session_scope() as session:
+        if trial_id is None:
+            trial_id = session.execute(
+                select(Trial.id).join(Spec, Trial.spec_id == Spec.id)
+                .where(Spec.idea_id == idea_id, Trial.metrics.is_not(None))
+                .order_by(Trial.id.desc()).limit(1)).scalar()
+            if trial_id is None:
+                raise typer.BadParameter(f"no run with metrics for {idea_id!r}")
+        brief = build_brief(session, trial_id, paper=latest_paper_lines())
+        night = _interactive_night_budget(session)
+        candidate = night.stage(Stage.RECHECK, candidates=1).candidate(brief.idea_id)
+        outcome = run_assessment(brief=brief, budget=candidate, session=session, model=model)
+        spent = candidate.spent_tokens
+
+    typer.echo(f"assessed {brief.idea_id}, trial {brief.trial_id}: {outcome.view}"
+               f"{' (DISPUTES the verdict)' if outcome.dispute else ''}; {spent:,} tokens")
+    typer.echo(outcome.summary)
+    typer.echo(f"claims accepted {len(outcome.accepted)}:")
+    for c in outcome.accepted:
+        evidence = f"{c.fact} = {c.value:g}" if c.fact else f'"{c.quote[:120]}"'
+        typer.echo(f"  - {c.text}  [{evidence}]")
+    typer.echo(f"claims rejected {len(outcome.rejected)} (evidence did not check out):")
+    for c, why in outcome.rejected:
+        typer.echo(f"  - {getattr(c, 'text', str(c))[:100]} -- {why}")
+    for check in outcome.checks:
+        typer.echo(f"  would settle it: {check}")
+
+
 @app.command("review")
 def review_cmd(
     spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
@@ -1093,15 +1163,11 @@ def review_cmd(
     (docs/REVIEWER.md). Runs through the budget guard; findings without
     verified evidence are discarded; accepted blocking findings make the spec
     not evaluable until declared or answered."""
-    from datetime import UTC, datetime, timedelta
-
     import yaml
 
     from qlab.agents.reviewer import code_files, run_review, unanswered_blocking
-    from qlab.budget import NightBudget, Stage, probe
-    from qlab.budget.usage import UsageReading, Window
+    from qlab.budget import Stage
     from qlab.pipeline.sources import QLAB_ROOT
-    from qlab.registry.models import TokenSpend
 
     spec = load_spec(spec_path)
     raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
@@ -1118,19 +1184,7 @@ def review_cmd(
     code = code_files(spec)
 
     with session_scope() as session:
-        last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
-                .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
-        now = datetime.now(UTC)
-        # A reading older than the five-hour window's own length describes a
-        # window that is gone; take a fresh one first.
-        fresh = last is not None and last.at.replace(tzinfo=UTC) > now - timedelta(hours=5)
-        if fresh:
-            reading = UsageReading("allowed", None,
-                                   Window(last.seven_day_util,
-                                          last.seven_day_resets_at.replace(tzinfo=UTC)))
-        else:
-            reading = probe(session).report.reading
-        night = NightBudget.open(session, reading, now=now)
+        night = _interactive_night_budget(session)
         candidate = night.stage(Stage.IMPLEMENT, candidates=1).candidate(spec.idea_id)
         outcome = run_review(spec=spec, spec_text=spec_text, sources=texts, code=code,
                              budget=candidate, session=session, model=model)

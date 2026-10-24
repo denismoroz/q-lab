@@ -521,6 +521,27 @@ class Review(Base):
     rejected: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
+class Assessment(Base):
+    """`assessment` -- the assessor agent's second opinion on one trial's
+    verdict (qlab.agents.assessor, docs/ASSESSOR.md). The verdict stays the
+    code's; `view` other than "agree" with at least one verified claim is a
+    dispute the owner settles. Claims whose numbers did not match the trial's
+    facts are kept in `rejected`, with the reason."""
+
+    __tablename__ = "assessment"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    trial_id: Mapped[int] = mapped_column(ForeignKey("trial.id"), nullable=False, index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    view: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    accepted: Mapped[list] = mapped_column(JSON, nullable=False)
+    rejected: Mapped[list] = mapped_column(JSON, nullable=False)
+    checks: Mapped[list] = mapped_column(JSON, nullable=False)
+
+
 class DetectorTrial(Base):
     """`detector_trial` -- one variant of a regime detector measured on one
     period (docs/REGIME_DETECT.md; owner, 2026-10-04: «да, делай оба»).

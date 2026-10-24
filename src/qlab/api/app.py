@@ -176,7 +176,23 @@ def create_app() -> FastAPI:
         detail = idea_detail_json(idea, driver)
         detail["counts"] = counts
         detail["latest_outcome"] = _latest_outcome(session, spec_ids)
+        detail["assessment"] = _latest_assessment(session, idea_id)
         return detail
+
+    def _latest_assessment(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """The assessor agent's latest second opinion (docs/ASSESSOR.md). The
+        verdict above stays the code's; a dispute is the owner's to settle."""
+        from qlab.agents.assessor import contested
+        from qlab.registry.models import Assessment
+
+        row = (session.query(Assessment).filter(Assessment.idea_id == idea_id)
+               .order_by(Assessment.id.desc()).first())
+        if row is None:
+            return None
+        return {"id": row.id, "trial_id": row.trial_id, "at": row.at.isoformat(),
+                "model": row.model, "view": row.view, "summary": row.summary,
+                "disputes": contested(row.view, row.accepted), "claims": row.accepted,
+                "rejected_claims": len(row.rejected), "checks": row.checks}
 
     @app.get("/api/ideas/{idea_id}/specs")
     def idea_specs(

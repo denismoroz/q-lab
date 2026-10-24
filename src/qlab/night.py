@@ -270,6 +270,20 @@ def write_report(day: date, state: dict) -> Path:
         lines.append("")
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
+    if assessed := state.get("assessed"):
+        views = {"agree": "согласен", "too_harsh": "вердикт слишком строгий",
+                 "too_lenient": "вердикт слишком мягкий", "unsure": "не уверен"}
+        lines += ["## Второе мнение агента", "",
+                  "Вердикты не меняются; где агент спорит — решать владельцу.", ""]
+        for e in assessed:
+            if e.get("stopped"):
+                lines.append(f"- {e['idea']} (прогон {e['trial']}): остановлено — {e['stopped']}")
+                continue
+            flag = " — **спорит с вердиктом**" if e.get("disputes") else ""
+            lines.append(f"- **{e['idea']}** (прогон {e['trial']}): "
+                         f"{views.get(e['view'], e['view'])}{flag}; {e.get('tokens', 0):,} "
+                         f"токенов. {e.get('summary', '')}")
+        lines.append("")
     if implemented := state.get("implemented"):
         lines += ["## Реализация карточек агентом", ""]
         for e in implemented:
@@ -331,6 +345,7 @@ def _token_lines(day: date) -> str:
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
+        assess: bool = True,
         noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -368,12 +383,73 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if paper and "paper" not in state:
         state["paper"] = paper_reconciliation(day)
         save_state(day, state)
+    if assess:
+        assess_stage(day, state)
     if implement:
         implement_stage(day, state, noise_trials=noise_trials,
                         deployable_capital_usd=deployable_capital_usd)
     if search:
         search_stage(day, state)
     return write_report(day, state)
+
+
+def worth_assessing(session, results: list[dict]) -> list[dict]:
+    """Watched runs worth a second opinion (docs/ASSESSOR.md): the verdict
+    changed, or the idea is on paper or live -- where a wrong verdict costs
+    something. Runs already assessed are skipped."""
+    from qlab.registry.models import Assessment, Idea, IdeaStatus
+
+    out = []
+    for r in results:
+        if r.get("error") or not r.get("trial_id") or r.get("kind") != "watch":
+            continue
+        idea = session.get(Idea, r["name"])
+        changed = bool(r.get("previous_route")) and r["previous_route"] != r.get("route")
+        stake = idea is not None and idea.status in (IdeaStatus.PAPER, IdeaStatus.LIVE)
+        done = session.query(Assessment.id).filter(
+            Assessment.trial_id == r["trial_id"]).first() is not None
+        if (changed or stake) and not done:
+            out.append(r)
+    return out
+
+
+def assess_stage(day: date, state: dict) -> None:
+    """The assessor's second opinions, in the recheck stage (CLAUDE.md order:
+    the health of strategies already running comes first). The verdicts stay
+    the code's; a stop keeps the rest for the next night."""
+    from qlab.agents.assessor import build_brief, run_assessment
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.registry.db import session_scope
+
+    out = state.setdefault("assessed", [])
+    with session_scope() as session:
+        todo = [r for r in worth_assessing(session, state.get("results", []))
+                if f"assess:{r['trial_id']}" not in state["done"]]
+        if not todo:
+            return
+        night_budget = NightBudget.open(session, probe(session).report.reading)
+        stage = night_budget.stage(Stage.RECHECK, candidates=len(todo))
+        for r in todo:
+            entry = {"idea": r["name"], "trial": r["trial_id"]}
+            try:
+                budget = stage.candidate(r["name"])
+                outcome = run_assessment(brief=build_brief(session, r["trial_id"],
+                                                           paper=state.get("paper")),
+                                         budget=budget, session=session)
+                entry.update(view=outcome.view, disputes=outcome.dispute,
+                             summary=outcome.summary, tokens=budget.spent_tokens)
+                state["done"][f"assess:{r['trial_id']}"] = datetime.now(UTC).isoformat()
+            except NightExhausted as stop:
+                entry["stopped"] = f"night budget: {stop}"
+                out.append(entry)
+                break
+            except BudgetExhausted as stop:
+                entry["stopped"] = f"candidate budget: {stop}"
+            out.append(entry)
+            session.commit()
+            save_state(day, state)
+        session.commit()
+    save_state(day, state)
 
 
 def search_stage(day: date, state: dict) -> None:
