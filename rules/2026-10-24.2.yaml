@@ -1,0 +1,29 @@
+# The noise bar decides only where it can tell a good strategy from luck.
+#
+# Measured 2026-10-24 (`qlab calibrate-planted --reference specs/bv2-live.yaml
+# --rules 2026-10-24.1 --window 169`): on strategy-b-v2's shape and 170 days,
+# random books with a known edge of +20% a year over random passed the 99%
+# noise bar 2.0% of the time, empty books 1.3%. The bar rejected good and
+# empty alike. Owner, 2026-10-24: «шарп отличный... % тоже. в paper - тоже мы
+# в плюсе - а стенд берет и режет...»; on the proposal to judge only where the
+# bar can tell: «спасибо. делай».
+#
+# Each run's own noise books are asked first: a book of their shape whose true
+# return is `good_return` a year -- how often would it pass the bar on this
+# same window (`qlab.calibration.percentile.noise_power`)? Below `min_power`
+# a failure only of `wait` rules (`shape_aware_edge`) routes `needs-forward`
+# ("too early to tell"), at any length. A pass stands: empty books still pass
+# 1% of the time, as calibrated. No threshold of any rule changes.
+
+version: "2026-10-24.2"
+based_on: "2026-10-24.1"
+
+noise_power:
+  good_return: 0.07
+  min_power: 0.80
+  rationale: >
+    good_return: the lower end of "good" on the owner's scale,
+    seed/preregistration/2026-09-21-paper-bv2-trend.yaml: «15%+ - отлично.
+    7-10 - хорошо. выше 4% - приемлимо.» min_power: the conventional 80%
+    power already used by forward_resolution in rules 2026-10-02.1 -- the bar
+    can tell when a good strategy passes it at least eight times in ten.

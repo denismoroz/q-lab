@@ -100,6 +100,27 @@ def noise_percentile(candidate_value: float, noise_values: Sequence[float]) -> f
     return float(np.mean(arr < candidate_value))
 
 
+def noise_power(noise_returns: Sequence[float], good_return: float,
+                threshold: float) -> float | None:
+    """How often a book of the noise books' shape whose true annual return is
+    `good_return` would pass the noise bar (`threshold` percentile) on this
+    same window (rules 2026-10-24.2, `qlab.rules.schema.NoisePower`).
+
+    Each noise book in turn stands for such a book: shifted so the books'
+    mean return is `good_return` -- the edge is added to a random book of the
+    same shape, as `qlab.calibration.planted` adds it to daily returns, here
+    to the annual return the bar ranks -- and ranked against the other books
+    as they are. None with fewer than two books: no rank exists.
+    """
+    arr = np.asarray(noise_returns, dtype=float)
+    if len(arr) < 2:
+        return None
+    shifted = arr + (good_return - float(arr.mean()))
+    passes = [noise_percentile(float(shifted[i]), np.delete(arr, i).tolist()) >= threshold
+              for i in range(len(arr))]
+    return float(np.mean(passes))
+
+
 def _usable_metric_values(
     noise_trials: Sequence[NoiseTrial], *, series: str, metric: str
 ) -> list[float]:
@@ -189,4 +210,5 @@ __all__ = [
     "ShapeAwarePercentiles",
     "compute_shape_aware_percentiles",
     "noise_percentile",
+    "noise_power",
 ]

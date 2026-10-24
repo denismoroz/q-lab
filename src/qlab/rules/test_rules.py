@@ -771,3 +771,12 @@ def test_the_third_replaces_the_sharpe_resolution() -> None:
     assert ruleset.regime_coverage_days == 30
     assert ruleset.splits_fit_forward
     assert load("2026-10-03.1", rules_dir=DEFAULT_RULES_DIR).holdout_share is None
+
+
+def test_the_noise_bar_waits_where_it_cannot_tell() -> None:
+    """2026-10-24.2: the owner's "good" (7% a year) and the conventional 80%
+    power; the third and regime coverage are inherited."""
+    ruleset = load("2026-10-24.2", rules_dir=DEFAULT_RULES_DIR)
+    assert ruleset.noise_power is not None
+    assert (ruleset.noise_power.good_return, ruleset.noise_power.min_power) == (0.07, 0.8)
+    assert ruleset.holdout_share is not None and ruleset.regime_coverage_days == 30

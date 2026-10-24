@@ -49,8 +49,10 @@ from sqlalchemy.orm import Session
 from qlab.calibration.percentile import (
     CANONICAL_SERIES,
     ShapeAwarePercentiles,
+    _usable_metric_values,
     compute_shape_aware_percentiles,
     noise_percentile,
+    noise_power,
 )
 from qlab.calibration.run import NoiseTrial, run_noise_series
 from qlab.pipeline.evaluate import (
@@ -161,6 +163,16 @@ def evaluate_spec_with_shape_aware_bar(
             extra["noise_return_percentile"] = percentiles.return_percentile
         if percentiles.sharpe_percentile is not None:
             extra["noise_sharpe_percentile"] = percentiles.sharpe_percentile
+        # Can the bar tell a good strategy from luck on this window at all
+        # (rules 2026-10-24.2)? Asked of the same noise books it ranks against.
+        bar = next((r.threshold for r in ruleset.rules
+                    if r.metric == "noise_return_percentile"), None)
+        if ruleset.noise_power is not None and bar is not None:
+            power = noise_power(
+                _usable_metric_values(noise_trials, series=series, metric="ann_return_net"),
+                ruleset.noise_power.good_return, bar)
+            if power is not None:
+                extra["noise_power"] = power
         # Inside each market regime too (docs/REGIMES.md): the candidate's
         # return on those days against the same noise books' on the same days.
         for key, value in base_metrics.items():

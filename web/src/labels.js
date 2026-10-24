@@ -194,6 +194,13 @@ export function routeHint(trial) {
   } else {
     parts.push('Проверки вперёд ещё нет: после фиксации параметров не накопилось данных.')
   }
+  if (/noise bar/.test(trial.route_reason ?? '') && m.noise_power != null) {
+    // Rules 2026-10-24.2: the bar cannot tell a good strategy from luck here.
+    parts.push(
+      `Сравнение со случайными книгами на этом отрезке ничего не решает: стратегия той же формы, которая на самом деле зарабатывает 7% в год, обогнала бы 99% случайных книг лишь в ${Math.round(m.noise_power * 100)}% случаев. ` +
+        'Поэтому проигрыш случайным книгам здесь — «рано судить», а не отказ. Решение будет, когда сравнение начнёт различать (хорошая стратегия проходит хотя бы 8 раз из 10).',
+    )
+  }
   const failed = m.selection_rules_failed
   if (failed > 0) {
     parts.push(

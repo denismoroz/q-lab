@@ -125,6 +125,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
                             else ruleset.forward_resolution or base.forward_resolution),
         holdout_share=(None if ruleset.forward_resolution is not None
                        else ruleset.holdout_share or base.holdout_share),
+        noise_power=ruleset.noise_power or base.noise_power,
         regime_coverage_days=(ruleset.regime_coverage_days
                               if ruleset.regime_coverage_days is not None
                               else base.regime_coverage_days),

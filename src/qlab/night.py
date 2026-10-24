@@ -38,8 +38,8 @@ PROD = "dis@10.8.0.5"
 PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's state
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
-               "forward_days", "forward_days_needed", "fit_window_days", "fit_ann_return_net",
-               "fit_sharpe_net", "fit_max_dd", "selection_days")
+               "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
+               "fit_ann_return_net", "fit_sharpe_net", "fit_max_dd", "selection_days")
 
 
 @dataclass

@@ -737,6 +737,41 @@ def decide_fit_forward_route(
     )
 
 
+def _powerless(ruleset: RuleSet, metrics: dict[str, float]) -> bool:
+    """The noise bar cannot tell a good strategy from luck on this run
+    (rules 2026-10-24.2): a book of its shape truly earning `good_return`
+    would pass it less often than `min_power`, or that was not measured."""
+    setting = ruleset.noise_power
+    if setting is None:
+        return False
+    power = metrics.get("noise_power")
+    return power is None or power != power or power < setting.min_power
+
+
+def _power_note(ruleset: RuleSet, metrics: dict[str, float]) -> str:
+    """The bar's measured power, appended to a reason when it is too weak."""
+    if not _powerless(ruleset, metrics):
+        return ""
+    setting = ruleset.noise_power
+    power = metrics.get("noise_power")
+    if power is None or power != power:
+        return "; the noise bar's power on this window was not measured"
+    return (f"; and on this window the noise bar would pass a strategy of this shape truly "
+            f"earning {setting.good_return:.0%} a year only {power:.0%} of the time "
+            f"(it decides from {setting.min_power:.0%})")
+
+
+def _too_weak_to_tell(ruleset: RuleSet, metrics: dict[str, float], failed: list,
+                      days: float) -> RoutingDecision:
+    """A failure only of `wait` rules where the noise bar cannot tell."""
+    return RoutingDecision(
+        route="needs-forward",
+        reason=(f"too early to tell: {days:,.0f} days fail only "
+                f"{', '.join(r.rule_id for r in failed)}" + _power_note(ruleset, metrics)),
+        required_capital_usd=metrics.get("min_capital_usd"),
+    )
+
+
 def _holdout_length(holdout: HoldoutShare, metrics: dict[str, float]) -> str:
     """How long the forward test must be under `holdout_share`, in words."""
     needed, fit = metrics.get("forward_days_needed"), metrics.get("fit_window_days")
@@ -852,7 +887,8 @@ def _decide_fit_forward(
         )
         days = metrics.get("forward_days", 0.0)
         needed = metrics.get("forward_days_needed")
-        if failed and waits and needed is not None and days < needed:
+        short = needed is not None and days < needed
+        if failed and waits and short:
             how_long = (
                 _holdout_length(holdout, metrics)
                 if holdout is not None
@@ -864,9 +900,12 @@ def _decide_fit_forward(
                 reason=(
                     f"forward test too short to tell: {days:,.0f} days fail only "
                     f"{', '.join(r.rule_id for r in failed)}; {how_long}"
+                    + _power_note(ruleset, metrics)
                 ),
                 required_capital_usd=metrics.get("min_capital_usd"),
             )
+        if failed and waits and _powerless(ruleset, metrics):
+            return _too_weak_to_tell(ruleset, metrics, failed, days)
         return routing
 
     days = metrics.get("forward_days", 0.0)
@@ -885,10 +924,19 @@ def _decide_fit_forward(
             reason=(
                 f"forward test too short to tell either way: {days:,.0f} days; {how_long}; "
                 f"so far it would route {routing.route} ({routing.reason})"
+                + (_power_note(ruleset, metrics) if routing.route == "reject" else "")
             ),
             required_capital_usd=metrics.get("min_capital_usd"),
         )
     if routing.route == "reject":
+        failed = [r for r in forward.rows if r.passed is False]
+        waits = all(
+            (rule := by_id.get(r.rule_id)) is not None
+            and rule.on_short_forward == ShortForwardUse.WAIT
+            for r in failed
+        )
+        if failed and waits and _powerless(ruleset, metrics):
+            return _too_weak_to_tell(ruleset, metrics, failed, days)
         return RoutingDecision(
             route="reject", reason=f"forward test failed over {days:,.0f} days: {routing.reason}"
         )

@@ -9,6 +9,7 @@ pipeline runs.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from qlab.calibration.percentile import (
@@ -156,3 +157,13 @@ def test_candidate_missing_its_own_metric_returns_none() -> None:
 
     assert percentiles.return_percentile is None
     assert percentiles.sharpe_percentile is None
+
+
+def test_noise_power_is_how_often_a_good_book_of_this_shape_passes() -> None:
+    from qlab.calibration.percentile import noise_power
+
+    tight = [0.0, 0.001, -0.001, 0.002, -0.002] * 40  # a narrow spread: 7% stands out
+    assert noise_power(tight, 0.07, 0.99) == 1.0
+    wide = list(np.linspace(-1.0, 1.0, 200))  # a wide one: 7% is lost in it
+    assert noise_power(wide, 0.07, 0.99) < 0.1
+    assert noise_power([0.1], 0.07, 0.99) is None

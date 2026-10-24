@@ -63,6 +63,7 @@ from qlab.rules.schema import (
     FitPeriodUse,
     ForwardResolution,
     HoldoutShare,
+    NoisePower,
     Rule,
     RuleKind,
     RuleSet,
@@ -1635,3 +1636,51 @@ def test_the_holdout_is_measured_against_the_declared_fitting_window(session, tm
 def test_a_ruleset_has_one_forward_length_rule() -> None:
     with pytest.raises(ValueError, match="not both"):
         RuleSet(version="2026-01-01.1", forward_resolution=RESOLUTION, holdout_share=HOLDOUT)
+
+
+# --------------------------------------------------------------------------
+# The noise bar decides only where it can tell (rules 2026-10-24.2)
+# --------------------------------------------------------------------------
+
+POWER = NoisePower(good_return=0.07, min_power=0.8, rationale="test")
+NOISE_BAR = Rule(id="shape_aware_edge", stage=Stage.EDGE, metric="noise_return_percentile",
+                 comparator=Comparator.GE, threshold=0.99, fatal=True,
+                 fit_period=FitPeriodUse.INFORMATIONAL, on_short_forward=ShortForwardUse.WAIT)
+
+
+def test_a_noise_bar_that_cannot_tell_does_not_reject() -> None:
+    """Owner, 2026-10-24: «шарп отличный... а стенд берет и режет» -- on
+    strategy-b-v2's 170 days a book truly earning 7% a year passed the bar 1%
+    of the time; its failure there is too early, not a rejection."""
+    ruleset = RuleSet(version="2026-01-01.1", rules=[NET_EDGE, NOISE_BAR],
+                      holdout_share=HOLDOUT, noise_power=POWER)
+    selection = _rows(("net_edge", True))
+    failing_bar = _rows(("net_edge", True), ("shape_aware_edge", False))
+    base = {"fit_sharpe_net": 1.0, "fit_window_days": 100.0, "forward_days_needed": 50.0,
+            "forward_days": 400.0, "min_capital_usd": 10.0}
+    kwargs = dict(ruleset=ruleset, selection=selection, forward=failing_bar,
+                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 6, 1))
+
+    weak = decide_fit_forward_route(**kwargs, metrics={**base, "noise_power": 0.01})
+    assert weak.route == "needs-forward"
+    assert "only 1% of the time" in weak.reason
+    assert decide_fit_forward_route(**kwargs, metrics={**base, "noise_power": 0.9}).route \
+        == "reject"
+    # Unmeasured power cannot show the bar can tell.
+    assert decide_fit_forward_route(**kwargs, metrics=base).route == "needs-forward"
+    # A failure of a rule that does not wait still rejects.
+    lost = _rows(("net_edge", False), ("shape_aware_edge", False))
+    assert decide_fit_forward_route(**{**kwargs, "forward": lost},
+                                    metrics={**base, "noise_power": 0.01}).route == "reject"
+
+
+def test_with_no_selection_period_a_powerless_bar_waits_too() -> None:
+    ruleset = RuleSet(version="2026-01-01.1", rules=[NET_EDGE, NOISE_BAR],
+                      holdout_share=HOLDOUT, noise_power=POWER)
+    failing_bar = _rows(("net_edge", True), ("shape_aware_edge", False))
+    routing = decide_fit_forward_route(
+        ruleset=ruleset, selection=None, forward=failing_bar, deployable_capital_usd=1000.0,
+        params_fixed_at=date(2025, 6, 1),
+        metrics={"forward_days": 400.0, "noise_power": 0.03, "min_capital_usd": 10.0})
+    assert routing.route == "needs-forward"
+    assert routing.reason.startswith("too early to tell: 400 days fail only shape_aware_edge")

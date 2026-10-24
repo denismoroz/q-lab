@@ -198,6 +198,7 @@ function Outcome({ outcome }) {
     ['Шарп после комиссий', sharpe(m.sharpe_net)],
     ['худшая просадка', pct(m.max_dd)],
     ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
+    ['хорошая стратегия (+7% в год) обогнала бы шум', pct(m.noise_power)],
     ['книга была полной', pct(m.book_coverage)],
   ].filter(([, v]) => v !== null)
   const fitNumbers = [

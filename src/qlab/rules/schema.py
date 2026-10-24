@@ -176,6 +176,25 @@ class HoldoutShare(BaseModel):
         return float(math.ceil(round(fit_days * self.share / (1.0 - self.share), 6)))
 
 
+class NoisePower(BaseModel):
+    """When the noise bar can tell a good strategy from luck on THIS run
+    (docs/FIT_VS_FORWARD.md), from 2026-10-24.2.
+
+    Measured 2026-10-24 on strategy-b-v2's shape and 170 days: books with a
+    known +20% a year over random passed the 99% noise bar 2% of the time,
+    empty books 1.3% -- the bar rejected good and empty alike. So the run's
+    own noise books are asked first: a book of their shape whose true return
+    is `good_return` a year, how often does it pass? Below `min_power` a
+    failure of a `wait` rule is too early to tell, not a rejection.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    good_return: float
+    min_power: float = Field(gt=0.0, lt=1.0)
+    rationale: str
+
+
 class Rule(BaseModel):
     """A single screening rule."""
 
@@ -263,6 +282,9 @@ class RuleSet(BaseModel):
     """From 2026-10-24.1, replacing `forward_resolution`: how long a forward
     test must be, as a share of the data, rather than the years it takes to
     resolve a Sharpe."""
+    noise_power: NoisePower | None = None
+    """From 2026-10-24.2: a `wait` rule's failure counts only where the noise
+    bar can tell a good strategy from luck."""
     regime_coverage_days: int | None = None
     """From 2026-10-02.3: a forward test decides only once it has seen every
     market regime (`qlab.regimes`) for at least this many days; otherwise it
