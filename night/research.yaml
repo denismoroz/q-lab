@@ -23,6 +23,7 @@ strategies:
     docs:
       - cards/strategy-b-v2.yaml
       - docs/HEDGE_TIMING.md
+      - docs/BV2_SIGNAL_SEARCH_REVIEW.md
       - docs/RETUNE.md
       - docs/FIT_VS_FORWARD.md
   trend:
