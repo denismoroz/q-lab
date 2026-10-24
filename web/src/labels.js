@@ -171,11 +171,26 @@ export function routeHint(trial) {
     )
   } else if ((m.forward_days ?? 0) > 0) {
     const need = m.forward_days_needed
-    parts.push(
-      `Проверка вперёд идёт: ${Math.round(m.forward_days)} дн.` +
-        (need != null ? ` из примерно ${Math.round(need)} нужных` : '') +
-        '. Пока её мало, она не решает ни в одну сторону.',
-    )
+    const regimes = /has not seen every market regime/.test(trial.route_reason ?? '')
+    if (regimes && (need == null || m.forward_days >= need)) {
+      // Long enough, but some market regime is missing from it.
+      parts.push(
+        `Проверка вперёд идёт: ${Math.round(m.forward_days)} дн. — длины хватает, но в ней ещё не было каждого состояния рынка (рост, боковик, падение) хотя бы по 30 дней.`,
+      )
+    } else if (need != null && m.fit_window_days != null) {
+      // Rules 2026-10-24.1: a third of the data (owner: «поделить 2/3 и 1/3»).
+      parts.push(
+        `Проверка вперёд идёт: ${Math.round(m.forward_days)} дн. из ${Math.round(need)} нужных. ` +
+          `Нужна треть данных: параметры подбирали на ${Math.round(m.fit_window_days)} дн., ` +
+          'проверка вперёд должна быть хотя бы вдвое короче. Пока не набралось, она не решает ни в одну сторону.',
+      )
+    } else {
+      parts.push(
+        `Проверка вперёд идёт: ${Math.round(m.forward_days)} дн.` +
+          (need != null ? ` из примерно ${Math.round(need)} нужных` : '') +
+          '. Пока её мало, она не решает ни в одну сторону.',
+      )
+    }
   } else {
     parts.push('Проверки вперёд ещё нет: после фиксации параметров не накопилось данных.')
   }

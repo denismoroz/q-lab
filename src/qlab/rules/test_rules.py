@@ -759,3 +759,15 @@ def test_short_forward_wait_marks_only_the_noise_bar() -> None:
     waits = {r.id for r in ruleset.rules if r.on_short_forward == ShortForwardUse.WAIT}
     assert waits == {"shape_aware_edge"}
     assert ruleset.forward_resolution is not None  # inherited from 2026-10-02.1
+
+
+def test_the_third_replaces_the_sharpe_resolution() -> None:
+    """2026-10-24.1: the forward test decides at a third of the data; the
+    inherited `forward_resolution` is dropped, regime coverage is kept."""
+    ruleset = load("2026-10-24.1", rules_dir=DEFAULT_RULES_DIR)
+    assert ruleset.forward_resolution is None
+    assert ruleset.holdout_share is not None
+    assert ruleset.holdout_share.days_needed(731.0) == 366.0
+    assert ruleset.regime_coverage_days == 30
+    assert ruleset.splits_fit_forward
+    assert load("2026-10-03.1", rules_dir=DEFAULT_RULES_DIR).holdout_share is None

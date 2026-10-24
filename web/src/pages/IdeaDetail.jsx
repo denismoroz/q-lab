@@ -207,7 +207,8 @@ function Outcome({ outcome }) {
   ].filter(([, v]) => v !== null)
   const periods = split
     ? [
-        ['период подбора', days(m.selection_days)],
+        ['окно подбора параметров', days(m.fit_window_days)],
+        ['период подбора в этих данных', days(m.selection_days)],
         ['проверка вперёд', days(m.forward_days)],
         ['нужно для вывода', days(m.forward_days_needed)],
       ].filter(([, v]) => v !== null)

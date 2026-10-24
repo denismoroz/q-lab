@@ -1287,6 +1287,7 @@ def calibrate_cmd(
     # false-admission rate.
     reference_spec = reference_spec.model_copy(
         update={
+            "params_fit_from": None,
             "params_fixed_at": reference_spec.data.start,
             "params_fixed_evidence": "calibration noise has no fitted parameters",
         }

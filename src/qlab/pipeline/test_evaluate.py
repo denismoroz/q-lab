@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -61,6 +62,7 @@ from qlab.rules.schema import (
     Comparator,
     FitPeriodUse,
     ForwardResolution,
+    HoldoutShare,
     Rule,
     RuleKind,
     RuleSet,
@@ -1575,3 +1577,61 @@ def test_failed_informational_rules_are_named_not_called_nothing(session, tmp_pa
     assert "until params_fixed_at is declared" in result.routing.reason
     assert result.metrics["fix_date_known"] == 0.0
     assert result.metrics["selection_rules_failed"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# A third of the data as the forward test (rules 2026-10-24.1)
+# --------------------------------------------------------------------------
+
+HOLDOUT = HoldoutShare(share=1 / 3, rationale="test")
+
+
+def _holdout_ruleset(rules: list[Rule]) -> RuleSet:
+    return RuleSet(version="2026-01-01.1", rules=rules, holdout_share=HOLDOUT)
+
+
+def test_a_forward_test_a_third_of_the_data_decides() -> None:
+    """Owner, 2026-10-24: «поделить 2/3 и 1/3 ... оставшуюся 1/3 для прогона
+    вперед» -- 731 days of fitting need 366 forward, not the years a Sharpe
+    takes to resolve."""
+    ruleset = _holdout_ruleset([NET_EDGE])
+    passing = _rows(("net_edge", True))
+    failing = _rows(("net_edge", False))
+    base = {"fit_sharpe_net": 0.5, "fit_window_days": 731.0,
+            "forward_days_needed": HOLDOUT.days_needed(731.0), "min_capital_usd": 10.0}
+    kwargs = dict(ruleset=ruleset, selection=passing, deployable_capital_usd=1000.0,
+                  params_fixed_at=date(2025, 6, 1))
+
+    early = decide_fit_forward_route(**kwargs, forward=passing,
+                                     metrics={**base, "forward_days": 169.0})
+    assert early.route == "needs-forward"
+    assert "366 days, 33% of fitting plus forward (731 days of fitting)" in early.reason
+    assert decide_fit_forward_route(**kwargs, forward=passing,
+                                    metrics={**base, "forward_days": 366.0}).route == "paper"
+    assert decide_fit_forward_route(**kwargs, forward=failing,
+                                    metrics={**base, "forward_days": 366.0}).route == "reject"
+
+
+def test_the_holdout_is_measured_against_the_declared_fitting_window(session, tmp_path) -> None:
+    """A declared fitting window counts in full even where the run's data does
+    not cover it; without one, the run's own data before the fix date."""
+    ruleset = _holdout_ruleset([CAPITAL_FIT_GENEROUS])
+    kwargs = dict(session=session, ruleset=ruleset, deployable_capital_usd=1000.0,
+                  check_lookahead=False, check_sources=False)
+
+    declared = _explicit_long(session, tmp_path, params_fit_from=date(2025, 12, 1),
+                              params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test")
+    result = evaluate_spec(declared, **kwargs)
+    assert result.metrics["fit_window_days"] == 36.0
+    assert result.metrics["forward_days_needed"] == pytest.approx(18.0)
+
+    own = declared.model_copy(update={"params_fit_from": None})
+    result = evaluate_spec(own, **kwargs)
+    assert result.metrics["fit_window_days"] == pytest.approx(result.metrics["selection_days"])
+    assert result.metrics["forward_days_needed"] == math.ceil(
+        result.metrics["selection_days"] / 2)
+
+
+def test_a_ruleset_has_one_forward_length_rule() -> None:
+    with pytest.raises(ValueError, match="not both"):
+        RuleSet(version="2026-01-01.1", forward_resolution=RESOLUTION, holdout_share=HOLDOUT)

@@ -55,6 +55,7 @@ from qlab.rules.engine import evaluate as evaluate_rules
 from qlab.rules.schema import (
     FitPeriodUse,
     ForwardResolution,
+    HoldoutShare,
     RuleKind,
     RuleSet,
     ShortForwardUse,
@@ -736,6 +737,15 @@ def decide_fit_forward_route(
     )
 
 
+def _holdout_length(holdout: HoldoutShare, metrics: dict[str, float]) -> str:
+    """How long the forward test must be under `holdout_share`, in words."""
+    needed, fit = metrics.get("forward_days_needed"), metrics.get("fit_window_days")
+    if needed is None or fit is None:
+        return "the fitting window is unknown, so its share cannot be measured"
+    return (f"it decides at {needed:,.0f} days, {holdout.share:.0%} of fitting plus forward "
+            f"({fit:,.0f} days of fitting)")
+
+
 def _decide_fit_forward(
     *,
     ruleset: RuleSet,
@@ -754,15 +764,18 @@ def _decide_fit_forward(
     2. No forward test -> `needs-forward`: a selection-period pass proves
        nothing, whatever the informational rules said.
     3. A forward test is judged by every rule (`decide_route`). While it is
-       shorter than `forward_years_needed` of the selection-period Sharpe it
-       decides nothing in EITHER direction -> `needs-forward`, with what it
-       would route so far in the reason: 18 days of trend once read +446% a
-       year, passed every rule and would have gone to `paper`. Once long
-       enough, its route stands. With no selection period (parameters fixed
-       before the data began) the forward route stands as is.
+       shorter than the ruleset asks -- `holdout_share` of fitting plus
+       forward (from 2026-10-24.1), or before that `forward_years_needed` of
+       the selection-period Sharpe -- it decides nothing in EITHER direction
+       -> `needs-forward`, with what it would route so far in the reason: 18
+       days of trend once read +446% a year, passed every rule and would have
+       gone to `paper`. Once long enough, its route stands. With no selection
+       period (parameters fixed before the data began) the forward route
+       stands as is.
     """
-    assert ruleset.forward_resolution is not None
+    assert ruleset.splits_fit_forward
     by_id = {rule.id: rule for rule in ruleset.rules}
+    holdout = ruleset.holdout_share
 
     def _conclusive(row) -> bool:
         rule = by_id.get(row.rule_id)
@@ -840,13 +853,17 @@ def _decide_fit_forward(
         days = metrics.get("forward_days", 0.0)
         needed = metrics.get("forward_days_needed")
         if failed and waits and needed is not None and days < needed:
+            how_long = (
+                _holdout_length(holdout, metrics)
+                if holdout is not None
+                else f"telling a Sharpe of {metrics.get('sharpe_net', float('nan')):.2f} "
+                f"from zero takes about {needed:,.0f} days"
+            )
             return RoutingDecision(
                 route="needs-forward",
                 reason=(
                     f"forward test too short to tell: {days:,.0f} days fail only "
-                    f"{', '.join(r.rule_id for r in failed)}; telling a Sharpe of "
-                    f"{metrics.get('sharpe_net', float('nan')):.2f} from zero takes about "
-                    f"{needed:,.0f} days"
+                    f"{', '.join(r.rule_id for r in failed)}; {how_long}"
                 ),
                 required_capital_usd=metrics.get("min_capital_usd"),
             )
@@ -856,12 +873,13 @@ def _decide_fit_forward(
     needed = metrics.get("forward_days_needed")
     if needed is None or days < needed:
         sharpe = metrics.get("fit_sharpe_net")
-        how_long = (
-            f"telling a selection-period Sharpe of {sharpe:.2f} from zero takes about "
-            f"{needed:,.0f} days"
-            if needed is not None and sharpe is not None
-            else "the selection period shows no positive Sharpe for it to resolve"
-        )
+        if holdout is not None:
+            how_long = _holdout_length(holdout, metrics)
+        elif needed is not None and sharpe is not None:
+            how_long = (f"telling a selection-period Sharpe of {sharpe:.2f} from zero takes "
+                        f"about {needed:,.0f} days")
+        else:
+            how_long = "the selection period shows no positive Sharpe for it to resolve"
         return RoutingDecision(
             route="needs-forward",
             reason=(
@@ -1159,7 +1177,7 @@ def evaluate_spec(
             span = index[part[1]] - index[part[0]] + (bar or pd.Timedelta(0))
             return span / pd.Timedelta(days=1)
 
-        split_mode = ruleset.forward_resolution is not None
+        split_mode = ruleset.splits_fit_forward
         split = (
             split_at_fixed_date(index, first, last, spec.params_fixed_at, spec.params_fit_from)
             if split_mode
@@ -1199,7 +1217,22 @@ def evaluate_spec(
             metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
             metrics["selection_days"] = _days(split.selection) if split.selection else 0.0
             metrics["forward_days"] = _days(split.forward) if split.forward else 0.0
-            if split.forward is not None:
+            if split.forward is not None and ruleset.holdout_share is not None:
+                # The forward test must be a share of the fitting window plus
+                # itself (rules 2026-10-24.1): the window the spec declares,
+                # else the run's own data before the fix date. A causal
+                # chooser has none -- every day after its first choice is
+                # forward -- and waits only for regime coverage.
+                fit_days = (
+                    float((spec.params_fixed_at - spec.params_fit_from).days)
+                    if spec.params_fit_from is not None and spec.params_fixed_at is not None
+                    and not spec.selects_causally
+                    else metrics["selection_days"] or None
+                )
+                if fit_days is not None:
+                    metrics["fit_window_days"] = fit_days
+                    metrics["forward_days_needed"] = ruleset.holdout_share.days_needed(fit_days)
+            elif split.forward is not None:
                 # The claim a forward test must resolve: the selection period's
                 # Sharpe, or with no selection period the forward test's own.
                 claim = (selection_metrics or metrics).get("sharpe_net")

@@ -120,7 +120,11 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
         based_on=ruleset.based_on,
         rules=list(merged_rules.values()),
         retired=list(merged_retired.values()),
-        forward_resolution=ruleset.forward_resolution or base.forward_resolution,
+        # A version that sets one forward-length rule replaces the other.
+        forward_resolution=(None if ruleset.holdout_share is not None
+                            else ruleset.forward_resolution or base.forward_resolution),
+        holdout_share=(None if ruleset.forward_resolution is not None
+                       else ruleset.holdout_share or base.holdout_share),
         regime_coverage_days=(ruleset.regime_coverage_days
                               if ruleset.regime_coverage_days is not None
                               else base.regime_coverage_days),

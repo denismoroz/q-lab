@@ -1,0 +1,40 @@
+# A forward test decides once it is a third of the data, not once it could
+# resolve a Sharpe on its own.
+#
+# Owner, 2026-10-24, on strategy-b-v2 waiting for 1,202 forward days: «3 года
+# я не могу вот ждать ну совсем чтобы оценить стратегию - с этим нужно
+# что-то делать. и это применимо не только вот к этой стратегии а ко всем.
+# ... данные которые доступны для стратегии поделить 2/3 и 1/3. первую часть
+# использовать для тестирования подбора а оставшуюся 1/3 для прогона вперед -
+# чтобы стратегия не видела эти данные - это поможет понять как она себя
+# ведет».
+#
+# What changes: `forward_resolution` (2026-10-02.1) asked a forward test to
+# tell the selection-period Sharpe S from zero on its own, ((1.645 + 0.842) /
+# S)^2 years -- six years at S = 1, nineteen at S = 0.57. No rule passed on a
+# third of the data can do that, and none is claimed: a pass on the third is
+# "held up on data its parameters never saw", not "proven". The guard against
+# a short lucky stretch is what is judged on that third -- `shape_aware_edge`
+# (beats 99% of random books of the same shape over the same days) and
+# `regime_coverage_days` (every market regime seen for 30 days; the 18 days
+# of trend that once read +446% a year fail it). No threshold of any rule
+# changes.
+#
+# The share is measured against the fitting window the spec declares
+# (`params_fit_from` .. `params_fixed_at`), or, without `params_fit_from`, the
+# run's own data before `params_fixed_at`. A strategy that chooses its
+# parameters causally (`selects_causally`) has no fitting window: every day
+# after its first choice is forward, and only regime coverage gates it. A spec
+# without `params_fixed_at` still has no forward test: which part of history
+# its author never looked at is a fact about the author, not a share the
+# framework can pick.
+
+version: "2026-10-24.1"
+based_on: "2026-10-03.1"
+
+holdout_share:
+  share: 0.3333333333333333
+  rationale: >
+    Owner, 2026-10-24: «поделить 2/3 и 1/3 ... оставшуюся 1/3 для прогона
+    вперед». The forward test is long enough to decide once it is a third of
+    the fitting window plus itself, i.e. half as long as the fitting window.

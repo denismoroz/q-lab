@@ -7,6 +7,7 @@ no evaluation logic (that lives in :mod:`qlab.rules.engine`).
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date
 from enum import StrEnum
@@ -150,6 +151,31 @@ class ForwardResolution(BaseModel):
     rationale: str
 
 
+class HoldoutShare(BaseModel):
+    """When a forward test is long enough to decide (docs/FIT_VS_FORWARD.md),
+    from 2026-10-24.1 in place of `ForwardResolution`.
+
+    Owner, 2026-10-24: «данные которые доступны для стратегии поделить 2/3 и
+    1/3. первую часть использовать для тестирования подбора а оставшуюся 1/3
+    для прогона вперед». The forward test decides once it is at least `share`
+    of the parameters' fitting window plus itself. Telling a Sharpe of 1 from
+    zero instead takes about six years of forward data alone; the luck guard
+    is the rules judged on that third (`shape_aware_edge`, regime coverage),
+    not its length.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    share: float = Field(gt=0.0, lt=1.0)
+    rationale: str
+
+    def days_needed(self, fit_days: float) -> float:
+        """Whole forward days for the forward test to be at least `share` of
+        fit plus forward (rounded to 1e-6 first: a third written as a float
+        must not turn 731 / 2 into 365.49999...)."""
+        return float(math.ceil(round(fit_days * self.share / (1.0 - self.share), 6)))
+
+
 class Rule(BaseModel):
     """A single screening rule."""
 
@@ -233,6 +259,10 @@ class RuleSet(BaseModel):
     rules: list[Rule] = Field(default_factory=list)
     retired: list[RetiredRule] = Field(default_factory=list)
     forward_resolution: ForwardResolution | None = None
+    holdout_share: HoldoutShare | None = None
+    """From 2026-10-24.1, replacing `forward_resolution`: how long a forward
+    test must be, as a share of the data, rather than the years it takes to
+    resolve a Sharpe."""
     regime_coverage_days: int | None = None
     """From 2026-10-02.3: a forward test decides only once it has seen every
     market regime (`qlab.regimes`) for at least this many days; otherwise it
@@ -262,6 +292,17 @@ class RuleSet(BaseModel):
                 raise ValueError(f"duplicate rule id {rule.id!r} in ruleset {self.version}")
             seen.add(rule.id)
         return self
+
+    @model_validator(mode="after")
+    def _one_forward_length_rule(self) -> RuleSet:
+        if self.forward_resolution is not None and self.holdout_share is not None:
+            raise ValueError("a ruleset sets forward_resolution or holdout_share, not both")
+        return self
+
+    @property
+    def splits_fit_forward(self) -> bool:
+        """The ruleset judges a forward test apart from the selection period."""
+        return self.forward_resolution is not None or self.holdout_share is not None
 
     def version_key(self) -> tuple[date, int]:
         """Sort key for this ruleset's version (date, sequence-number)."""
