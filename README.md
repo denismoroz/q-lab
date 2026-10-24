@@ -21,15 +21,15 @@ uv run qlab --help
 карточки — из `QLAB_CARDS`, по умолчанию `cards/`):
 
 ```bash
-uv run uvicorn qlab.api:app --reload --port 8000
+uv run uvicorn qlab.api:app --reload --port 8890
 ```
 
-Фронт (dev-сервер проксирует `/api` на `127.0.0.1:8000`):
+Фронт (dev-сервер проксирует `/api` на `127.0.0.1:8890`):
 
 ```bash
 cd web
 npm install     # один раз
-npm run dev     # http://localhost:5178
+npm run dev     # http://localhost:5890
 ```
 
 Прод-сборка фронта — `npm run build` в `web/` (кладётся в `web/dist/`).

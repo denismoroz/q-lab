@@ -269,6 +269,6 @@ options-like instruments», а ограничение владельца сфо�
 ## Консоль
 
 ```bash
-uv run uvicorn qlab.api:app --reload --port 8000   # API
-cd web && npm run dev                              # http://localhost:5178
+uv run uvicorn qlab.api:app --reload --port 8890   # API
+cd web && npm run dev                              # http://localhost:5890
 ```

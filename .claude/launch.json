@@ -9,7 +9,7 @@
         "dev"
       ],
       "cwd": "web",
-      "port": 5178
+      "port": 5890
     },
     {
       "name": "api",
@@ -20,9 +20,9 @@
         "qlab.api:app",
         "--reload",
         "--port",
-        "8000"
+        "8890"
       ],
-      "port": 8000
+      "port": 8890
     }
   ]
 }
