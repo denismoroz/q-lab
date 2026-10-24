@@ -1,0 +1,45 @@
+# The researcher, weekly, on the strategies trading on paper or live money
+# (qlab.agents.researcher, docs/NIGHT.md).
+#
+# Owner, 2026-10-24: «мне не нравится вердикт агента - просто ждать - нужно
+# думать как улучшить стратегию - это задача фреймворка»; on running the
+# researcher in the night for paper and live strategies -- «делай все три по
+# порядку». It runs on the night's weekly day (the graveyard sweep's Sunday)
+# inside the night's token budget, writes a memo and at most
+# `max_experiments` experiment specs per strategy, and the stand runs them.
+# Each memo of a strategy is handed to the next week's run, so it builds on
+# what was tried instead of repeating it.
+
+max_experiments: 2
+focus: "мне не нравится вердикт агента - просто ждать - нужно думать как улучшить стратегию - это задача фреймворка"
+
+strategies:
+  bv2:
+    ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune]
+    specs:
+      - specs/bv2-live.yaml
+      - specs/bv2-binance.yaml
+      - specs/research/bv2/bv2-research-headroom-retune.yaml
+    docs:
+      - cards/strategy-b-v2.yaml
+      - docs/HEDGE_TIMING.md
+      - docs/RETUNE.md
+      - docs/FIT_VS_FORWARD.md
+  trend:
+    ideas: [trend-tsmom-crypto, trend-live, trend-retune-monthly, trend-binance-cap, trend-t39-meta]
+    specs:
+      - specs/trend-live.yaml
+      - specs/trend-retune-monthly.yaml
+      - specs/trend-binance-cap.yaml
+      - specs/research/t39/trend-t39-meta.yaml
+    docs:
+      - docs/RETUNE.md
+      - docs/REGIME_DETECT.md
+      - docs/FIT_VS_FORWARD.md
+  frab:
+    ideas: [frab]
+    specs:
+      - specs/frab-live.yaml
+    docs:
+      - docs/FRAB_LIVE.md
+      - docs/FIT_VS_FORWARD.md

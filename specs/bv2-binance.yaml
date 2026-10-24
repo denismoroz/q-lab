@@ -58,7 +58,17 @@ params:
 data:
   source: binance
   interval: 1h
-  start: '2019-09-08'
+  # A fresh book at the start of the fitting window, as production creates
+  # one: frab sizes each coin's position in dollars once, at creation, and
+  # does not compound (book.py CoinBook.new; the ratchet sells growth above
+  # 1.5x). Started in 2019 the book held ~15% of its equity in the market by
+  # 2025 and its percentages were diluted fourfold -- the "+2.0% forward" read
+  # as decay by the researcher and the assessor (docs/HEDGE_TIMING.md,
+  # 2026-10-24). 788 hours before 2023-06-01 (the live engine's
+  # HISTORY_BARS + WARMUP_BARS, qlab.strategies.live.bv2) so the book starts
+  # by the window's first day. The 2019-2023 run is recorded in
+  # docs/FIT_VS_FORWARD.md (trial 19811).
+  start: '2023-04-28'
   end: '2026-09-20'
   instruments:
   - AVAX

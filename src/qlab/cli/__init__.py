@@ -652,6 +652,9 @@ def night_run_cmd(
                                 help="Stage 3: venue watcher and the scout's draft (tokens)"),
     detectors: bool = typer.Option(True, "--detectors/--no-detectors",
                                    help="Rebuild night/detectors.yaml before the watch list"),
+    research: bool | None = typer.Option(
+        None, "--research/--no-research",
+        help="The researcher on night/research.yaml (tokens; default: the weekly day)"),
     assess: bool = typer.Option(True, "--assess/--no-assess",
                                 help="The assessor's second opinion on changed verdicts and on "
                                 "paper/live ideas (tokens)"),
@@ -666,6 +669,7 @@ def night_run_cmd(
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
+               research=research,
                noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 

@@ -8,6 +8,7 @@ specs:
   - specs/trend-retune-weekly.yaml
   - specs/trend-retune-daily.yaml
   - specs/bv2-live.yaml
+  - specs/frab-live.yaml                               # live money, through frab's own decisions (docs/FRAB_LIVE.md)
   # Binance, the long-history checks
   - specs/trend-binance-cap.yaml
   - specs/trend-binance-cap-gated.yaml

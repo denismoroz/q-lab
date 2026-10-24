@@ -270,6 +270,17 @@ def write_report(day: date, state: dict) -> Path:
         lines.append("")
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
+    if studied := state.get("research"):
+        lines += ["## Исследователь (раз в неделю)", ""]
+        for e in studied:
+            if e.get("stopped"):
+                lines.append(f"- {e['strategy']}: остановлено — {e['stopped']}")
+                continue
+            lines.append(f"- **{e['strategy']}**: записка `{e.get('memo')}`, экспериментов "
+                         f"{len(e.get('specs') or [])}, {e.get('tokens', 0):,} токенов")
+            lines += [f"    - не принято: {p}" for p in e.get("problems") or []]
+            lines += [f"    - {line}" for line in e.get("stand") or [] if line.startswith("- ")]
+        lines.append("")
     if assessed := state.get("assessed"):
         views = {"agree": "согласен", "too_harsh": "вердикт слишком строгий",
                  "too_lenient": "вердикт слишком мягкий", "unsure": "не уверен"}
@@ -345,7 +356,7 @@ def _token_lines(day: date) -> str:
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
-        assess: bool = True,
+        assess: bool = True, research: bool | None = None,
         noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -385,6 +396,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         save_state(day, state)
     if assess:
         assess_stage(day, state)
+    if research if research is not None else sweep:
+        research_stage(day, state, noise_trials=noise_trials)
     if implement:
         implement_stage(day, state, noise_trials=noise_trials,
                         deployable_capital_usd=deployable_capital_usd)
@@ -450,6 +463,69 @@ def assess_stage(day: date, state: dict) -> None:
             save_state(day, state)
         session.commit()
     save_state(day, state)
+
+
+RESEARCH = Path("night/research.yaml")
+
+
+def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | None:
+    """The strategy's newest research memo, handed to its next run."""
+    memos = sorted(memo_dir.glob(f"{name}-*.md"))
+    return memos[-1] if memos else None
+
+
+def research_stage(day: date, state: dict, *, noise_trials: int,
+                   config: Path = RESEARCH) -> None:
+    """The researcher on each strategy of `night/research.yaml`, weekly, in
+    the implement stage's budget (CLAUDE.md order: after rechecks, before the
+    search for new ideas); the stand then runs its experiments. A stop keeps
+    the rest for the next night that runs the stage."""
+    from qlab.agents.researcher import research, run_experiments
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.registry.db import session_scope
+
+    if not config.is_file():
+        return
+    plan = yaml.safe_load(config.read_text(encoding="utf-8"))
+    out = state.setdefault("research", [])
+    todo = {name: e for name, e in (plan.get("strategies") or {}).items()
+            if f"research:{name}" not in state["done"]}
+    if not todo:
+        return
+    with session_scope() as session:
+        stage = NightBudget.open(session, probe(session).report.reading).stage(
+            Stage.IMPLEMENT, candidates=len(todo))
+        for name, e in todo.items():
+            entry = {"strategy": name}
+            docs = [Path(d) for d in e.get("docs") or [] if Path(d).is_file()]
+            if (memo := latest_memo(name)) is not None:
+                docs.append(memo)
+            try:
+                budget = stage.candidate(None)
+                outcome = research(name, idea_ids=list(e["ideas"]),
+                                   specs=[Path(p) for p in e["specs"]], docs=docs,
+                                   budget=budget, session=session,
+                                   max_experiments=int(plan.get("max_experiments", 2)),
+                                   focus=plan.get("focus"))
+                session.commit()
+                entry.update(memo=str(outcome.memo or ""), specs=[str(p) for p in outcome.specs],
+                             problems=outcome.problems, tokens=budget.spent_tokens)
+                state["done"][f"research:{name}"] = datetime.now(UTC).isoformat()
+            except NightExhausted as stop:
+                entry["stopped"] = f"night budget: {stop}"
+                out.append(entry)
+                break
+            except BudgetExhausted as stop:
+                entry["stopped"] = f"candidate budget: {stop}"
+            out.append(entry)
+            save_state(day, state)
+    save_state(day, state)
+    # The stand runs the experiments, each in its own transactions.
+    for entry in out:
+        if entry.get("memo") and entry.get("specs") and "stand" not in entry:
+            entry["stand"] = run_experiments(Path(entry["memo"]), [Path(p) for p in entry["specs"]],
+                                             name=entry["strategy"], noise_trials=noise_trials)
+            save_state(day, state)
 
 
 def search_stage(day: date, state: dict) -> None:

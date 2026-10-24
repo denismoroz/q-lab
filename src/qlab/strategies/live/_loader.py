@@ -18,7 +18,7 @@ orders.
 Two independent guards enforce this:
 
   1. `import_frab` only imports modules on `ALLOWED_MODULES` below — a
-     fixed allowlist of the seven pure modules verified (by hand, importing
+     fixed allowlist of pure modules, each verified (by hand, importing
      each one in q-lab's own venv) to depend on nothing beyond stdlib and
      frab's own params/constants. Anything else raises `FrabImportError`
      with a message explaining why, rather than importing it.
@@ -72,6 +72,11 @@ ALLOWED_MODULES: frozenset[str] = frozenset(
         "frab.strategy.xsmom.evaluators.signal",
         "frab.strategy.xsmom.params",
         "frab.constants",
+        # Added 2026-10-24 for FRAB (qlab.strategies.live.frab): imports only
+        # enum; its package frab.engine has an empty __init__ (checked). The
+        # params module frab.strategy.two_phase.params is NOT allowed: its
+        # package __init__ imports the strategy, the database and the exchange.
+        "frab.engine.two_phase_signals",
     }
 )
 

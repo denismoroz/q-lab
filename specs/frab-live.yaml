@@ -1,0 +1,95 @@
+# FRAB through frab's own two-phase decision functions
+# (qlab.strategies.live.frab), not the transcription. Written 2026-10-24,
+# committed before its first run. Owner, 2026-10-24: «а почему
+# http://localhost:5890/ideas/frab - пустой»; «делай все три по порядку».
+#
+# The transcription (specs/frab.yaml) is not evaluable: it leaves out the
+# two-phase breakeven machine and the negative-funding stop. This spec calls
+# frab.engine.two_phase_signals with the state the live states keep, so
+# nothing is declared unexpressed; what the stand does differently from the
+# live engine (fills at the hour's close, today's universe, no failed legs, no
+# margin watchdog) is listed in the module docstring.
+
+idea_id: frab
+title: "FRAB — живая стратегия на деньгах: спот против короткого контракта, двухфазный безубыток (живые решения frab)"
+code_ref: "qlab.strategies.live.frab:LiveFrab"
+
+# The decision rule as it trades now was last changed on 2026-10-10 (frab
+# a0f5b5e: phase 2 exits only once the funding given back covers the round
+# trip's fees). Everything after that date is the forward test.
+params_fixed_at: 2026-10-10
+params_fixed_evidence: >
+  funding-rate-arbitrage commit a0f5b5e (2026-10-10), «fix(two-phase): выход из POST только когда
+  отданный фандинг покрыл комиссии круга» -- the last change to the decision functions
+  (two_phase_signals.decide_post_breakeven, phase2_giveback_fee_mult = 1.0). Earlier changes:
+  9e17c8a (2026-06-08) the phase-1 negative hard-stop, 444a9a7 (2026-06-01) HYPE and PURR added.
+  The live params_json values (signal window 8, four slots, budget 90, patience 24) differ from
+  the code defaults; when they were set is not recorded, and they were known by 2026-10-10.
+
+# The live instance verbatim (frab.db strategies.params_json, id 1, read-only
+# 2026-10-24, seed/prod_params/2026-10-24-two_phase.json) plus the coin
+# registry's active, validated coins and their leverage
+# (seed/prod_params/2026-10-24-coin_registry_active.csv). TwoPhaseParams
+# ignores the row's `coins`, `position_size_usdc`, `perp_leverage` and
+# `equity_baseline_ms`, so they are left out. `phase2_giveback_fee_mult` is
+# not in the row: the live engine uses TwoPhaseParams' default.
+params:
+  entry_threshold_apr: 0.1
+  phase2_exit_threshold: -0.1
+  base_min_hold_hours: 24
+  cap_min_hold_hours: 720
+  safety_mult: 5
+  signal_window_hours: 8
+  concurrency_cap: 4
+  budget_cap_usdc: 90
+  margin_buffer_factor: 3
+  phase1_negative_patience: 24
+  phase1_breakeven_cap_hours: 720
+  neg_stop_threshold_apr: -0.15
+  neg_stop_patience_hours: 6
+  phase2_giveback_fee_mult: 1.0
+  universe: [AVAX, BTC, ETH, HYPE, PURR, SOL]
+  leverage: {AVAX: 3, BTC: 40, ETH: 25, HYPE: 10, PURR: 3, SOL: 20}
+
+data:
+  source: hyperliquid
+  interval: "1h"   # the live engine decides on hourly ticks
+  include_spot: true
+  start: 2025-01-01
+  end: 2026-10-23
+
+# Same blended rate as specs/bv2-live.yaml: both legs open and close
+# together, so a turnover pays the spot and the perp taker in equal parts.
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+# The coin list is the registry's, not FRAB's own choice to test: random books
+# for the noise bar trade the same coins (docs/HEDGE_TIMING.md).
+noise_universe: held
+
+sources:
+  "entry_threshold_apr": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase2_exit_threshold": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "base_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "cap_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "safety_mult": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "signal_window_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "concurrency_cap": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "budget_cap_usdc": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "margin_buffer_factor": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase1_negative_patience": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase1_breakeven_cap_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "neg_stop_threshold_apr": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "neg_stop_patience_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase2_giveback_fee_mult": "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py (TwoPhaseParams default; not in the live params_json)"
+  "universe": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only)"
+  "leverage": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only)"
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params.min_order_usd: HL's own minimum order)"

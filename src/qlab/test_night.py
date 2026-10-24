@@ -161,3 +161,20 @@ def test_a_second_opinion_where_the_verdict_changed_or_money_is_at_stake() -> No
         {"kind": "watch", "name": "moved", "trial_id": None, "error": "boom"},
     ]
     assert [r["name"] for r in night.worth_assessing(session, results)] == ["paper", "moved"]
+
+
+def test_the_weekly_researcher_builds_on_its_last_memo(tmp_path, monkeypatch) -> None:
+    memos = tmp_path / "research"
+    memos.mkdir()
+    for day in ("2026-10-03", "2026-10-24"):
+        (memos / f"bv2-{day}.md").write_text("memo")
+    (memos / "trend-2026-10-03.md").write_text("memo")
+    assert night.latest_memo("bv2", memos) == memos / "bv2-2026-10-24.md"
+    assert night.latest_memo("frab", memos) is None
+
+
+def test_no_research_config_no_research(tmp_path) -> None:
+    state = {"done": {}}
+    night.research_stage(date(2026, 10, 25), state, noise_trials=1,
+                         config=tmp_path / "missing.yaml")
+    assert "research" not in state
