@@ -177,6 +177,14 @@ def create_app() -> FastAPI:
         detail["counts"] = counts
         detail["latest_outcome"] = _latest_outcome(session, spec_ids)
         detail["assessment"] = _latest_assessment(session, idea_id)
+        # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
+        # карточку описание метода как хеджирование включается»).
+        card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
+        detail["how_it_works"] = None if card is None else {
+            "plain_summary": card["plain_summary"],
+            "signal": card["parts"]["signal"]["fields"],
+            "sizing": card["parts"]["sizing"]["fields"],
+        }
         return detail
 
     def _latest_assessment(session: Session, idea_id: str) -> dict[str, Any] | None:

@@ -86,6 +86,7 @@ export default function IdeaDetail() {
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
             />
+            <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
             <Header idea={ideaQuery.data} />
           </>
         )}
@@ -241,6 +242,34 @@ function Outcome({ outcome }) {
           ? ` · ещё ${outcome.unrouted_trials} прогонов до 2026-10-01 без записанного исхода; их числа ниже — история, а не вывод`
           : ''}
       </p>
+    </section>
+  )
+}
+
+// From the idea's card (cards/<idea_id>.yaml): what the strategy does, in
+// plain words, and the exact rule for entering and leaving.
+function HowItWorks({ how, ideaId }) {
+  if (!how) return null
+  const rows = [
+    ['когда входит', how.signal?.entry],
+    ['когда выходит', how.signal?.exit],
+    ['сколько', how.sizing?.rule],
+  ].filter(([, v]) => v)
+  return (
+    <section className="rounded border border-slate-200 p-4">
+      <div className="text-xs uppercase tracking-wide text-slate-500">Как работает стратегия</div>
+      <p className="mt-2 text-sm text-slate-700">{how.plain_summary}</p>
+      <dl className="mt-3 space-y-2 text-sm">
+        {rows.map(([k, v]) => (
+          <div key={k}>
+            <dt className="text-xs uppercase tracking-wide text-slate-500">{k}</dt>
+            <dd className="text-slate-700">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <Link className="mt-3 inline-block text-xs text-sky-700 hover:underline" to={`/cards/${ideaId}`}>
+        вся карточка: источники, защита, как умрёт →
+      </Link>
     </section>
   )
 }
