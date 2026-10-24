@@ -101,6 +101,15 @@ Write two kinds of files and nothing else:
    code that already exists (wrappers such as qlab.strategies.regime_gate:RegimeGate and
    qlab.strategies.retune:Retune, or existing parameters); you cannot write strategy code.
    Write no spec if nothing is worth a trial.
+   A NEW FIXED parameter value chosen today has no forward test until data after today
+   accumulates. To test a parameter idea on history at once, offer it as a grid to
+   qlab.strategies.retune:Retune with `selects_causally: true` (docs/RETUNE.md): the wrapper
+   picks among the grid using only the past, so every day after its first choice is a
+   forward test. Prefer that form for parameter ideas. For such a spec params_fixed_at is NOT
+   today but the date of the wrapper's FIRST choice -- the start of the data where the whole
+   book exists, plus the inner strategy's warm-up, plus one whole re-tuning period -- as in
+   specs/trend-retune-monthly.yaml; its params_fixed_evidence says that arithmetic and that
+   the grid was declared {today}. With today's date the whole history would be warm-up.
 
 {focus}Reply with one line: the memo path and the experiment spec paths."""
 

@@ -1,0 +1,105 @@
+# Researcher's experiment (docs/research/bv2-2026-10-24.md, hypothesis 1): let code, not people,
+# choose between the two margin-pool settings production already runs, using only the past.
+#
+# Copy of specs/research/bv2/bv2-research-headroom.yaml wrapped in Retune. The fixed-value
+# version of this idea (trial 71489) has 20 forward days and needs 743; a causal choice is
+# judged on history from its first choice instead (docs/RETUNE.md). The grid holds only the
+# two values the production instances run: b2 (1.0) and b2_cold (1.5). Nothing else changes.
+
+idea_id: bv2-research-headroom-retune
+title: "Bv2 как на проде, запас пула маржи 1.0 или 1.5 выбирает код раз в месяц по прошлому (эксперимент исследователя 1)"
+code_ref: qlab.strategies.retune:Retune
+
+params_fixed_at: 2026-06-01
+params_fixed_evidence: >
+  The wrapper's first causal choice (qlab.strategies.retune, docs/FIT_VS_FORWARD.md "Стратегии,
+  которые выбирают параметры сами"): the whole four-coin book exists on Hyperliquid from
+  2026-05-06 (UAVAX spot listed then, specs/bv2-live.yaml), and a candidate is eligible after
+  one whole monthly re-tuning period -- the first choice is made at the 2026-06-01 refit
+  (stand trial 72494: 5 refits with a choice, June to October). Warm-up arithmetic, not a
+  result. The grid was declared by the researcher on 2026-10-24: the margin-pool headroom that
+  production runs in two instances (1.0 in b2, 1.5 in b2_cold); both instances' paper results
+  were known then, so the grid itself stays in-sample. The date was first written as
+  2026-10-24, which made the whole history warm-up (trial 72494); corrected by the
+  instruction fix of 2026-10-24.
+
+selects_causally: true
+
+params:
+  inner_code_ref: qlab.strategies.live.bv2:LiveBv2
+  base_params:
+    coins: [BTC, ETH, SOL, AVAX]
+    capital_usd: 257.0
+    spot_share: 0.5
+    hedge_threshold: 0.0
+    sticky_exit_hours: 12
+    ratchet_threshold: 0.5
+    carry_enabled: false
+    carry_fraction: 0.6
+    carry_entry_apr: 0.1
+    carry_exit_hours: 24
+    slippage: 0.0005
+    min_order_usd: 10.0
+    margin_enabled: true
+    short_leverage: {BTC: 3.0, ETH: 2.0, SOL: 1.5, AVAX: 1.5}
+    default_leverage: 1.0
+    maint_margin_rate: {BTC: 0.0125, ETH: 0.02, SOL: 0.025, AVAX: 0.05}
+    default_maint_margin_rate: 0.05
+    margin_buffer: 0.1
+    rebalance_at_im_share: 0.5
+    mode: paper
+  # THE ONLY CHANGE against bv2-research-headroom: the headroom becomes a two-value grid.
+  grid:
+    headroom:
+      b2:
+        hedge_margin_headroom: 1.0
+      b2_cold:
+        hedge_margin_headroom: 1.5
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 5.25
+    slippage_bps: 0.9
+
+data:
+  source: hyperliquid
+  interval: "1h"
+  include_spot: true
+  start: 2025-01-01
+  end: 2026-10-24
+
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+noise_universe: held
+
+measure_hedge_timing: true
+
+unexpressed_mechanisms: []
+
+required_instruments: [BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX]
+
+regime_claim:
+  bull: earns
+  bear: beats_market
+
+sources:
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"
+  "base_params": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), as in specs/research/bv2/bv2-research-headroom.yaml"
+  "grid.headroom.b2": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export, instance b2)"
+  "grid.headroom.b2_cold": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export, instance b2_cold)"
+  "refit_every": "владелец 2026-10-02: «раз в неделю/день или месяц» (docs/RETUNE.md); monthly because the hedge rule itself looks 14-30 days back"
+  "window": "docs/RETUNE.md (expanding window: no number introduced)"
+  "objective": "docs/RETUNE.md (Sharpe after costs)"
+  "score_costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; the spec's own costs (docs/RETUNE.md: scores use the spec's costs), spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py"
+  "score_costs.slippage_bps": "derived: 4.4 - 3.5; the spec's own costs (docs/RETUNE.md), funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "inner_code_ref": "src/qlab/strategies/live/bv2.py"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
