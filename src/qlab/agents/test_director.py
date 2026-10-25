@@ -148,7 +148,7 @@ def _idea(session, idea_id, *, notes, route=None, failed=(), status=IdeaStatus.B
                            route_reason="fails with Sharpe 1.2345 and return 0.4321")
     repo.add_verdicts(session, [{
         "idea_id": idea_id, "trial_id": trial.id, "spec_id": spec.id, "stage": "edge",
-        "rule_id": rule, "rules_version": "t", "metric": "m", "value": 1.2345,
+        "rule_id": rule, "rules_version": "2026-10-24.2", "metric": "m", "value": 1.2345,
         "comparator": ">=", "threshold": 2.0, "passed": passed,
         "data_range_start": date(2019, 9, 8), "data_range_end": date(2026, 10, 24)}
         for rule, passed in [*[(r, False) for r in failed], ("a_rule_that_passed", True)]])
@@ -209,7 +209,10 @@ def test_verdicts_are_aggregated_by_family_and_by_failed_rule(session, root) -> 
 
     momentum = _section(evidence, "generator / momentum")
     assert "ideas: 2" in momentum and "route of the latest trial: reject 2" in momentum
-    assert "venue_supported 2, net_edge_positive 1" in momentum
+    # venue_supported is a fact about OUR setup (kind: infrastructure): counted apart
+    # from the strategy rules, so it never reads as the reason an idea failed.
+    assert "rules failed by the latest trial: net_edge_positive 1" in momentum
+    assert "never a reason to close a direction): venue_supported 2" in momentum
     assert "status today: rejected 2" in momentum
     reversal = _section(evidence, "generator / reversal")  # the mechanism came from the note
     assert "ideas: 2" in reversal and "never evaluated: 1" in reversal

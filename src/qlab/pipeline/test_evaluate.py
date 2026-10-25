@@ -193,6 +193,7 @@ def _register_snapshot(
     universe_complete: bool,
     tradeable: pd.DataFrame | None = None,
     end: date | None = None,
+    source: str = SOURCE,
 ) -> None:
     """Write a snapshot's parquet + manifest to disk and register its
     `data_snapshot` row directly -- the same shape `build_snapshot` would
@@ -208,7 +209,7 @@ def _register_snapshot(
         frame.to_parquet(snap_dir / f"{name}.parquet", engine="pyarrow", index=True)
 
     manifest = {
-        "source": SOURCE,
+        "source": source,
         "instruments": sorted(instruments),
         "start": pd.Timestamp(START, tz="UTC").isoformat(),
         "end": pd.Timestamp(end, tz="UTC").isoformat(),
@@ -221,7 +222,7 @@ def _register_snapshot(
     repo.add_data_snapshot(
         session,
         id=snapshot_id,
-        source=SOURCE,
+        source=source,
         instruments=dict.fromkeys(sorted(instruments), True),
         range_start=START,
         range_end=end,
@@ -691,6 +692,62 @@ def test_frab_like_multileg_spec_passes_atomic_execution_via_recovery(session, t
     assert result.error is None
     assert result.metrics["atomic_execution"] == 1.0
     assert result.routing.route == "paper"
+
+
+def test_failed_venue_supported_names_the_venue_and_the_instruments(session, tmp_path) -> None:
+    """A Binance-data spec fails `venue_supported` because `venues/binance.yaml` records no
+    order adapter of ours -- not because of the strategy and not because of access. The
+    verdict row and the route must say so: which venue, what is missing, which
+    instruments the book held (the 2026-10-25 generator ideas read as a bare
+    `venue_supported = 0`)."""
+    _register_snapshot(
+        session, tmp_path, snapshot_id="snap-binance", instruments=INSTRUMENTS,
+        universe_complete=True, source="binance",
+    )
+    spec = _make_spec(
+        params={"weight": 0.4},
+        data={"source": "binance", "interval": INTERVAL, "start": START, "end": END,
+              "instruments": None},
+    )
+    venue_rule = Rule(
+        id="venue_supported", stage=Stage.PREFLIGHT, kind=RuleKind.INFRASTRUCTURE,
+        metric="venue_supported", comparator=Comparator.EQ, threshold=1, fatal=True,
+    )
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, venue_rule])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert result.metrics["venue_supported"] == 0.0
+    # Every strategy rule passed: an infrastructure fact never rejects.
+    assert result.routing.route == "needs-infrastructure"
+    assert "venue binance has no order-placing adapter" in result.routing.reason
+    assert INSTRUMENTS[0] in result.routing.reason
+    row = (session.query(Verdict)
+           .filter(Verdict.trial_id == result.trial_id, Verdict.rule_id == "venue_supported")
+           .one())
+    assert row.passed is False
+    assert "venues/binance.yaml execution_adapter: false" in row.note
+    assert "not about access" in row.note
+
+
+def test_passed_venue_supported_has_no_venue_explanation(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    venue_rule = Rule(
+        id="venue_supported", stage=Stage.PREFLIGHT, kind=RuleKind.INFRASTRUCTURE,
+        metric="venue_supported", comparator=Comparator.EQ, threshold=1, fatal=True,
+    )
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, venue_rule])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.routing.route == "paper"
+    assert "adapter" not in result.routing.reason
+    row = (session.query(Verdict)
+           .filter(Verdict.trial_id == result.trial_id, Verdict.rule_id == "venue_supported")
+           .one())
+    assert row.note is None
 
 
 def test_venue_metrics_absent_when_venue_unconfigured(session, tmp_path) -> None:

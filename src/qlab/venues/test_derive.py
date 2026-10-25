@@ -14,6 +14,7 @@ from qlab.venues.derive import (
     atomic_execution,
     data_forward_available,
     derive_venue_metrics,
+    explain_venue_failures,
     venue_supported,
 )
 
@@ -195,3 +196,36 @@ def test_derive_venue_metrics_single_leg_on_unconfigured_venue() -> None:
         None, snapshot_source="ghost", venue_id="ghost", simultaneous_legs=1
     )
     assert metrics == {"atomic_execution": 1.0}
+
+
+# ---- explain_venue_failures -----------------------------------------------------------
+
+
+def test_explanation_names_venue_adapter_fact_and_held_instruments() -> None:
+    reasons = explain_venue_failures(
+        BINANCE_LIKE, venue_id="binance", instruments=["BTC", "ETH", "SOL"]
+    )
+
+    text = reasons["venue_supported"]
+    assert "venue binance has no order-placing adapter" in text
+    assert "venues/binance.yaml execution_adapter: false" in text
+    assert "not about access" in text
+    assert "the book held 3 instrument(s): BTC, ETH, SOL" in text
+
+
+def test_explanation_truncates_a_long_instrument_list() -> None:
+    names = [f"C{i}" for i in range(20)]
+
+    text = explain_venue_failures(BINANCE_LIKE, venue_id="binance", instruments=names)[
+        "venue_supported"
+    ]
+
+    assert "the book held 20 instrument(s): C0, C1" in text
+    assert "and 12 more" in text
+    assert "C19" not in text
+
+
+def test_explanation_is_empty_for_a_pass_or_an_unknown() -> None:
+    assert explain_venue_failures(HYPERLIQUID_LIKE, venue_id="hyperliquid") == {}
+    assert explain_venue_failures(BARE_VENUE, venue_id="bare") == {}
+    assert explain_venue_failures(None, venue_id="nowhere") == {}

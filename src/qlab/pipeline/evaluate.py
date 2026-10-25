@@ -66,7 +66,7 @@ from qlab.rules.schema import (
     ShortForwardUse,
 )
 from qlab.venues.config import load_venue
-from qlab.venues.derive import derive_venue_metrics
+from qlab.venues.derive import derive_venue_metrics, explain_venue_failures
 
 Route = Literal[
     "reject",
@@ -1422,6 +1422,16 @@ def evaluate_spec(
                 sum(1 for row in selection_result.rows if row.passed is False))
     else:
         routing = decide_route(rules_result, metrics, deployable_capital_usd)
+    # A failed venue fact says WHICH venue and what is missing, so the verdict
+    # row and the route never read as a bare `venue_supported = 0` (the first
+    # two generated ideas were read that way, 2026-10-25).
+    held = [str(c) for c in weights.columns[(weights.abs() > 0).any(axis=0)]]
+    venue_reasons = explain_venue_failures(
+        load_venue(spec.data.source), venue_id=spec.data.source, instruments=held
+    )
+    if "venue_supported" in venue_reasons:
+        why = venue_reasons["venue_supported"]
+        routing = dataclasses.replace(routing, reason=f"{routing.reason} [venue_supported: {why}]")
     if exploratory:
         # Computed in full on the owner's say-so, but not a decision: keep the
         # rules' answer visible and the route where the reasons put it.
@@ -1440,6 +1450,9 @@ def evaluate_spec(
 
     decided_at = datetime.now(UTC)
 
+    def _venue_note(row) -> str | None:
+        return venue_reasons.get(row.metric) if row.passed is False else None
+
     def _verdict_rows(result: EvaluationResult, start: date, end: date, period: str | None):
         return [
             {
@@ -1457,7 +1470,7 @@ def evaluate_spec(
                 "data_range_start": start,
                 "data_range_end": end,
                 "decided_at": decided_at,
-                "note": "; ".join(n for n in (period, row.note) if n) or None,
+                "note": "; ".join(n for n in (period, row.note, _venue_note(row)) if n) or None,
                 "source": TrialSource.QLAB,
             }
             for row in result.rows

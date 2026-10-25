@@ -91,6 +91,9 @@ class DirectionStats:
     statuses: Counter = field(default_factory=Counter)
     routes: Counter = field(default_factory=Counter)
     failed_rules: Counter = field(default_factory=Counter)
+    #: Rules of kind `infrastructure` (venue_supported ...): a fact about OUR setup, not
+    #: about the idea, so kept apart from `failed_rules` (rules 2026-10-01.1).
+    failed_infrastructure: Counter = field(default_factory=Counter)
     survivors: list[str] = field(default_factory=list)
 
 
@@ -135,6 +138,22 @@ def agent_ideas(session: Session) -> dict:
     return ideas
 
 
+def _infrastructure_rule_ids(versions: set[str]) -> set[tuple[str, str]]:
+    """`(rules_version, rule_id)` of every rule of kind `infrastructure` in the given
+    versions. A version whose file cannot be loaded contributes nothing: its failed
+    rules then count as strategy rules, the stricter reading."""
+    from qlab.rules import RuleKind, load
+
+    found: set[tuple[str, str]] = set()
+    for version in versions:
+        try:
+            ruleset = load(version)
+        except (FileNotFoundError, ValueError):
+            continue
+        found.update((version, r.id) for r in ruleset.rules if r.kind == RuleKind.INFRASTRUCTURE)
+    return found
+
+
 def direction_stats(session: Session, *, root: Path, plan: dict, config: dirs.DirectorConfig,
                     now: datetime) -> list[DirectionStats]:
     """Every agent-created idea, aggregated by direction: generator ideas by
@@ -146,12 +165,15 @@ def direction_stats(session: Session, *, root: Path, plan: dict, config: dirs.Di
     ideas = agent_ideas(session)
     latest = latest_routed_trials(session, list(ideas))
     failed: dict[int, list[str]] = {}
+    failed_infra: dict[int, list[str]] = {}
     if latest:
-        rows = (session.query(Verdict.trial_id, Verdict.rule_id)
+        rows = (session.query(Verdict.trial_id, Verdict.rule_id, Verdict.rules_version)
                 .filter(Verdict.trial_id.in_([t for t, _ in latest.values()]),
                         Verdict.passed.is_(False)).all())
-        for trial_id, rule_id in rows:
-            failed.setdefault(trial_id, []).append(rule_id)
+        infrastructure = _infrastructure_rule_ids({version for _, _, version in rows})
+        for trial_id, rule_id, version in rows:
+            target = failed_infra if (version, rule_id) in infrastructure else failed
+            target.setdefault(trial_id, []).append(rule_id)
 
     stats: dict[str, DirectionStats] = {}
     recent = now - timedelta(days=RECENT_DAYS)
@@ -176,6 +198,7 @@ def direction_stats(session: Session, *, root: Path, plan: dict, config: dirs.Di
         trial_id, route = latest[idea_id]
         row.routes[route] += 1
         row.failed_rules.update(sorted(set(failed.get(trial_id, []))))
+        row.failed_infrastructure.update(sorted(set(failed_infra.get(trial_id, []))))
         if idea.status in SURVIVOR_STATUSES or route == "paper":
             row.survivors.append(idea_id)
     return sorted(stats.values(), key=lambda s: s.direction)
@@ -368,7 +391,9 @@ def build_evidence(session: Session, *, root: Path, config: dirs.DirectorConfig,
               "Every idea an agent created, by the direction it belongs to: generator ideas by "
               "the mechanism family of their spec's `# mechanism:` header, researcher "
               "experiments by their strategy. Route = where the idea's LATEST routed trial sent "
-              "it; failed rules = rule ids that trial failed (an idea counts once per rule); "
+              "it; failed rules = strategy rule ids that trial failed (an idea counts once per "
+              "rule); infrastructure facts = failed rules of kind `infrastructure` "
+              "(venue_supported: no order adapter of ours on the data venue), counted apart; "
               "status = the idea's status today.", ""]
     if not stats:
         lines += ["no agent-created idea in the registry", ""]
@@ -379,6 +404,8 @@ def build_evidence(session: Session, *, root: Path, config: dirs.DirectorConfig,
                   f"- status today: {_counts(row.statuses)}",
                   f"- route of the latest trial: {_counts(row.routes)}",
                   f"- rules failed by the latest trial: {_counts(row.failed_rules)}",
+                  "- infrastructure facts failed (about our setup, not about the idea; "
+                  f"never a reason to close a direction): {_counts(row.failed_infrastructure)}",
                   f"- survivors: {', '.join(row.survivors) or 'none'}", ""]
 
     lines += ["## Catalogue coverage", "",
