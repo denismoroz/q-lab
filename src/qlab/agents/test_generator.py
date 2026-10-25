@@ -591,3 +591,22 @@ def test_a_formula_may_set_only_min_history_days(repo) -> None:
     text = text.replace("rebalance_days: 7\n", "rebalance_days: 14\n")
     _, problems = _check(repo, text)
     assert any("rebalance_days" in p and "only" in p and "min_history_days" in p for p in problems)
+
+
+
+
+def test_values_of_a_parameter_come_from_all_its_rows(repo) -> None:
+    # The real catalogue gives rebalance_days per source (7 from one paper, 14 from
+    # another); keyed by param only the last row survived (first real run, 2026-10-25).
+    row = "| rebalance_days | 7 | [Author 2020](https://example.org/a) |"
+    catalogue = repo / "docs" / "MECHANISMS.md"
+    text = catalogue.read_text(encoding="utf-8")
+    assert row in text
+    catalogue.write_text(text.replace(
+        row, "| rebalance_days | 14 | [Other 2021](https://example.org/b) |\n" + row, 1),
+        encoding="utf-8")
+    spec = _spec_text().replace("rebalance_days: 7\n", "rebalance_days: 14\n")
+    _, problems = _check(repo, spec)
+    assert not any("rebalance_days" in p for p in problems)
+    _, problems = _check(repo, _spec_text())  # 7, from the other row, still allowed
+    assert not any("rebalance_days" in p for p in problems)

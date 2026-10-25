@@ -255,8 +255,17 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
     from qlab.pipeline.sources import _DERIVED, _numbers, covering_key
 
     problems: list[str] = []
-    rows = {r.param: r for r in mechanism.params} if mechanism else {}
-    mechanism_values = tuple(v for r in rows.values() for v in r.values)
+    # A parameter can have several rows -- one per source (Liu-Tsyvinski-Wu
+    # re-sort weekly, Begušić-Kostanjčar every two weeks): its values are those
+    # of all its rows. Keyed by param alone, only the last row survived and the
+    # first real run rejected values the catalogue gives (2026-10-25).
+    values: dict[str, list[float]] = {}
+    texts: dict[str, list[str]] = {}
+    for r in (mechanism.params if mechanism else ()):
+        values.setdefault(r.param, []).extend(r.values)
+        if r.values:
+            texts.setdefault(r.param, []).append(r.values_text)
+    mechanism_values = tuple(v for vs in values.values() for v in vs)
     name = mechanism.id if mechanism else "?"
     for path, value in _param_leaves("", spec.params):
         numbers = _numbers(value)
@@ -282,14 +291,13 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
                             "from the catalogue only")
         if mechanism is None:
             continue  # reported once, at the missing mechanism
-        row = rows.get(path)
-        allowed = (*(row.values if row else ()), *FRAMEWORK_VALUES.get(path, ()))
+        allowed = (*values.get(path, ()), *FRAMEWORK_VALUES.get(path, ()))
         off = [n for n in numbers if not _in(n, allowed)]
         if off and not allowed:
             problems.append(f"{path} = {value!r}: the catalogue gives no value for {path} in "
                             f"{name}")
         elif off:
-            given = row.values_text if row and row.values else ""
+            given = "; ".join(texts.get(path, []))
             if path in FRAMEWORK_VALUES:
                 framework = [f"{v:g}" for v in FRAMEWORK_VALUES[path]]
                 given = ", ".join(filter(None, [given, *framework]))
@@ -411,7 +419,10 @@ Shape of each spec (comments allowed; the first line is mandatory):
     end: {data_end}
   costs, min_leg_notional, simultaneous_legs   (copied from {reference})
   noise_universe: panel
-  unexpressed_mechanisms: []
+  unexpressed_mechanisms: [...]   REQUIRED, non-empty, whenever the mechanism's «Чего блоки не
+                                  выражают» lists anything (e.g. the paper weights by market
+                                  cap and you use equal weights): one short item per gap,
+                                  in plain words. A spec without it is rejected.
   params_fixed_at / params_fixed_evidence   (see below)
   sources: ...
 
