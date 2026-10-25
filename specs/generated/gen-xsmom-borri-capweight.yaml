@@ -1,0 +1,50 @@
+# mechanism: crypto-xs-momentum
+idea_id: gen-xsmom-borri-capweight
+title: 'Недельное продолжение движения монет на Binance: пятая часть лучших против пятой части худших, веса по рыночной стоимости'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: momentum
+    lookback_days: 14
+  portfolio:
+    block: long_short_quantile
+    quantiles: 5
+  sizing:
+    block: cap_weight
+    gross: 1.0
+  rebalance_days: 7
+  min_history_days: 30
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-10-24'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+noise_universe: panel
+unexpressed_mechanisms: []
+differs_from_source:
+- The paper's prices are composite across many venues (CoinGecko), not Binance USDT perpetuals.
+- The paper keeps only coins with at least 30 daily observations as a whole-sample filter, not as an admission rule on each date; the block applies it on each date.
+- Market-cap weights come from weekly CoinMarketCap snapshots of the 200 largest coins, so a coin outside them gets weight 0, unlike the paper's full coin list.
+- The paper's sample includes coins that disappeared from the market; the Binance panel holds only contracts the archive lists.
+params_fixed_at: '2025-09-07'
+params_fixed_evidence: Borri, Liu, Tsyvinski, Wu 2026 (docs/MECHANISMS.md, mechanism crypto-xs-momentum) use CoinGecko data from 2013-12-31 to 2025-09-06; the day after the latest sample end among the sources of every number here is 2025-09-07.
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, blocks: universe: all (Borri, Liu, Tsyvinski, Wu 2026)'
+  signal: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, blocks: signal: momentum'
+  signal.lookback_days: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, row signal.lookback_days: 14 (CMOM, two past weeks; Borri, Liu, Tsyvinski, Wu 2026)'
+  portfolio: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, blocks: portfolio: long_short_quantile'
+  portfolio.quantiles: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, row portfolio.quantiles: 5 (quintiles by the two past weeks; Borri, Liu, Tsyvinski, Wu 2026)'
+  sizing: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, unexpressed gap (2): the paper weights coins by market capitalization (Borri, Liu, Tsyvinski, Wu 2026, value-weighted), expressed by the cap_weight block'
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, row rebalance_days: 7 (Borri, Liu, Tsyvinski, Wu 2026)'
+  min_history_days: 'docs/MECHANISMS.md, mechanism crypto-xs-momentum, row min_history_days: 30 (Borri, Liu, Tsyvinski, Wu 2026)'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'
