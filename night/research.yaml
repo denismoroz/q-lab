@@ -40,6 +40,10 @@ strategies:
       # 2026-10-25, the owner on what Bv2 was meant to be (frab's earlier basket results and
       # what they lack: docs/BV2_BASKETS.md).
       - "основная идея это стратегии было - взять 10 самых ликвидных монет на рынке положить их в холодный кошелек и хеджировать через HL по необходимости. добавляя новые средства в монеты. можно ли использовать leverage для хеджирования?"
+      # 2026-10-25, after the FRAB margin review (docs/BV2_MARGIN.md): the owner chose two
+      # directions out of it -- one margin pool for all coins, and top-ups from the cold
+      # wallet on demand -- with «давай».
+      - "еще - можно ли трюк с FRAB с плечем и страховкой использовать на Bv2?"
     specs:
       - specs/bv2-live.yaml
       - specs/bv2-binance.yaml
@@ -51,6 +55,7 @@ strategies:
       - docs/RETUNE.md
       - docs/FIT_VS_FORWARD.md
       - docs/BV2_BASKETS.md
+      - docs/BV2_MARGIN.md
   trend:
     ideas: [trend-tsmom-crypto, trend-live, trend-retune-weekly, trend-research-skip-flat]
     # The owner's own ideas, verbatim. Context: the paper trend book at $3000 executed 281
