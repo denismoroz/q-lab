@@ -29,6 +29,14 @@ focus: "я предлагаю статус ждет проверку впере�
 strategies:
   bv2:
     ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune]
+    # The owner's own ideas for this strategy, verbatim (qlab.night.owner_ideas_focus).
+    # Context the researcher should read for this one: the hedge rule today decides on
+    # 14- and 30-day returns once an hour and lifts the hedge after 12 hours in a row of
+    # "not needed" (cards/strategy-b-v2.yaml); the timing test says Bv2 picks WHEN to hedge
+    # better than chance (docs/HEDGE_TIMING.md); frab's own search over 45 hedge signals
+    # is reviewed in docs/BV2_SIGNAL_SEARCH_REVIEW.md.
+    owner_ideas:
+      - "закинь идею для researcher подумать о том как включать/отключать хеджирование почаще. может использовать более мелкий тайфрейм как основной"
     specs:
       - specs/bv2-live.yaml
       - specs/bv2-binance.yaml

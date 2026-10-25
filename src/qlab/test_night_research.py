@@ -339,3 +339,15 @@ def test_the_instructions_frame_the_work_on_the_owners_terms() -> None:
     assert "DROP: <idea_id>" in text and "CUT DATE" in text and "preliminary" in text
     assert "data.source: binance" in text
     assert "Never set params_fixed_at to 2026-10-26" in text
+
+
+def test_the_owners_ideas_reach_the_researcher_verbatim() -> None:
+    # Owner, 2026-10-25: «закинь идею для researcher подумать о том как включать/отключать
+    # хеджирование почаще».
+    from qlab import night
+
+    assert night.owner_ideas_focus(None) is None and night.owner_ideas_focus([]) is None
+    text = night.owner_ideas_focus(["включать/отключать хеджирование почаще"])
+    assert "«включать/отключать хеджирование почаще»" in text and "hypothesis" in text
+    plan = night.load_research_plan()
+    assert any("хеджирование почаще" in i for i in plan["strategies"]["bv2"]["owner_ideas"])

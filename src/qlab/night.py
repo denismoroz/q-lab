@@ -611,6 +611,17 @@ def variant_slots(session, strategy: dict, limits: Path = LIMITS) -> tuple[int, 
     return max(0, cap - len(variants)), cap, variants
 
 
+def owner_ideas_focus(ideas: list[str] | None) -> str | None:
+    """The owner's own ideas for one strategy (night/research.yaml
+    `owner_ideas`), verbatim, for the researcher to work through."""
+    if not ideas:
+        return None
+    lines = "\n".join(f"- «{idea}»" for idea in ideas)
+    return ("The owner's own ideas for this strategy, verbatim -- treat each as a hypothesis "
+            "to test with an experiment spec (judged on data the fix did not see), or say in "
+            f"the memo why it cannot be tested yet:\n{lines}")
+
+
 def full_strategy_focus(name: str, cap: int, variants: list[str]) -> str:
     """The researcher's instruction when the strategy has no free variant place."""
     return (f"The strategy `{name}` already has {len(variants)} active variants and the lab keeps "
@@ -700,6 +711,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                    max_experiments=min(int(plan.get("max_experiments", 2)), free),
                                    focus="\n\n".join(filter(None, [
                                        plan.get("focus"),
+                                       owner_ideas_focus(e.get("owner_ideas")),
                                        full_strategy_focus(name, cap, variants)
                                        if free == 0 else None])))
                 session.commit()
