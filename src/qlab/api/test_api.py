@@ -677,3 +677,20 @@ def test_idea_detail_carries_the_decay_check_or_null(client, session_factory, mo
     (nights / "2026-10-25.json").write_text(json.dumps(
         {"decay": {"lines": [], "results": [dict(detail, idea_id="omega")]}}), encoding="utf-8")
     assert client.get("/api/ideas/omega").json()["decay"]["book"] == "b2"
+
+
+def test_allocation_endpoint_returns_the_latest_saved_proposal_or_null(client, monkeypatch,
+                                                                       tmp_path):
+    import json
+
+    from qlab import pool_allocation
+
+    monkeypatch.setattr(pool_allocation, "NIGHT_DIR", tmp_path)
+    assert client.get("/api/allocation").json()["proposal"] is None
+    state = {"allocation": {"lines": ["x"], "proposal": {"capital": 3000.0, "lines": []},
+                            "snapshot": {}, "changes": []}}
+    (tmp_path / "2026-10-25.json").write_text(json.dumps(state), encoding="utf-8")
+
+    body = client.get("/api/allocation").json()
+
+    assert body["at"] == "2026-10-25" and body["proposal"]["capital"] == 3000.0

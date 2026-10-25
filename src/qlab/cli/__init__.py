@@ -1733,4 +1733,31 @@ def funnel_cmd() -> None:
     typer.echo(f"total: {total_ideas} ideas, {total_verdicts} verdicts")
 
 
+
+@app.command("pool-allocation")
+def pool_allocation_cmd(
+    paper_root: Path = typer.Option(  # noqa: B008
+        Path("data/paper"), "--paper-root", help="The night's exports of the production host"),
+    night_dir: Path = typer.Option(  # noqa: B008
+        Path("data/night"), "--night-dir", help="Saved nights (decay results, replay lines)"),
+    config: Path = typer.Option(  # noqa: B008
+        Path("night/allocation.yaml"), "--config", help="The allocation config"),
+) -> None:
+    """Print the capital-split PROPOSAL (qlab.pool_allocation, night/allocation.yaml): how the
+    deployable capital could be shared between the strategies. Code proposes, the owner
+    decides: nothing is moved, changed or written."""
+    from datetime import date as _date
+
+    from qlab import pool_allocation as pool
+
+    today = _date.today()
+    with session_scope() as session:
+        results, rules = pool.night_signals(session, None, night_dir=night_dir, root=paper_root)
+        out = pool.run_allocation(session, today, today, config=pool.load_config(config),
+                                  root=paper_root, decay_results=results, paper_rules=rules,
+                                  night_dir=night_dir)
+    typer.echo(f"## {pool.SECTION_TITLE}\n")
+    typer.echo("\n".join(out["lines"]))
+
+
 __all__ = ["app"]

@@ -1,0 +1,102 @@
+# How the owner's deployable capital is split between strategies (qlab.pool_allocation).
+# CODE PROPOSES, THE OWNER DECIDES: nothing here moves money, changes a status or writes to
+# production. The proposal is a section of the morning report and `GET /api/allocation`.
+#
+# Preregistered before any allocation was computed on real data:
+# seed/preregistration/2026-10-25-capital-allocation.yaml (the commit that first contains it
+# is the timestamp). Changing the method or a parameter below is a NEW version of this file,
+# not an edit: bump `version`, and say in the commit why.
+version: "2026-10-25.1"
+preregistration: seed/preregistration/2026-10-25-capital-allocation.yaml
+
+# The method. `inverse_volatility` is the only method this version knows; the loader refuses
+# any other value rather than silently falling back.
+method: inverse_volatility
+method_rationale: >
+  The pool is a handful of strategies (night/limits.yaml: at most 6) with histories of weeks.
+  Anything that needs expected returns or a correlation matrix has to estimate far more numbers
+  than such a history can carry: DeMiguel, Garlappi and Uppal (2009) find that none of 14
+  optimising models beat the naive 1/N rule out of sample on seven datasets because estimation
+  error outweighs the gain, and that the estimation window needed is of the order of 3000
+  months for 25 assets. So (a) expected returns are not used at all -- weeks of returns cannot
+  tell a profitable strategy from luck either (seed/preregistration/2026-09-21-paper-bv2-trend.yaml,
+  PREDICTION 0) -- and (b) no correlation matrix is estimated. What is left is the simplest
+  step above 1/N that the sources support: weight each strategy by the inverse of its own
+  volatility, the "simple risk parity" of Asness, Frazzini and Pedersen (2012), which in their
+  words "does not rely on covariance estimates". It needs one number per strategy. It is also
+  the equal-risk-contribution portfolio of Maillard, Roncalli and Teiletche (2010) when all
+  pairwise correlations are equal, so it is the owner's own wording of the milestone
+  (docs/PLAN.md M6, "Risk-parity по драйверам") taken at its cheapest. Plain 1/N is shown next
+  to it in the report, as the comparison. The strategies here differ in volatility by a large
+  factor, which is the case where 1/N hands almost all the risk to the noisiest one.
+sources:
+  - id: asness_frazzini_pedersen_2012
+    citation: >
+      Asness, C., Frazzini, A., Pedersen, L. (2012), "Leverage Aversion and Risk Parity",
+      Financial Analysts Journal 68(1), 47-59, DOI 10.2469/faj.v68.n1.1. Section "Risk parity":
+      the portfolio weight of each asset class is set equal to the inverse of its volatility;
+      the construction does not rely on covariance estimates. (Read in the paper's text,
+      2026-10-25. Their volatility window, three years of monthly returns, is NOT used here:
+      this pool has weeks, see `volatility.window`.)
+  - id: demiguel_garlappi_uppal_2009
+    citation: >
+      DeMiguel, V., Garlappi, L., Uppal, R. (2009), "Optimal Versus Naive Diversification: How
+      Inefficient Is the 1/N Portfolio Strategy?", Review of Financial Studies 22(5), 1915-1953,
+      DOI 10.1093/rfs/hhm075. (Abstract and summary read 2026-10-25; the paper has critics --
+      Kritzman, Page and Turkington (2010) report large gains from optimisation on longer
+      histories -- which is why this file keeps to a method needing one number per strategy.)
+  - id: maillard_roncalli_teiletche_2010
+    citation: >
+      Maillard, S., Roncalli, T., Teiletche, J. (2010), "The Properties of Equally Weighted Risk
+      Contribution Portfolios", Journal of Portfolio Management 36(4), 60-70. The result used:
+      with a constant pairwise correlation the equal-risk-contribution weights are proportional
+      to 1/volatility. (Taken from secondary summaries of the paper, 2026-10-25; the property is
+      also checked by a test in qlab/test_pool_allocation.py.)
+
+volatility:
+  measure: >
+    sample standard deviation (ddof 1) of the strategy's daily returns, where a day's value is
+    the last equity of the UTC day and only complete days count. Returns are on the strategy's
+    OWN money (`strategy_capital_usd`, night/paper_books.yaml), never on an exchange account's
+    balance (owner, 2026-10-25: «нужно ставить различие - деньги на счету и деньги доступные
+    для стратегии»).
+  window: >
+    the strategy's whole evidence window. No look-back length is chosen: each strategy has
+    only the weeks it has, and a chosen length would be a number from nowhere.
+
+# The fewest complete days of returns behind a volatility. The owner's own minimum, «как минимум
+# 4-6 недель в paper» (2026-10-25), applied to the evidence as qlab.paper_rule applies it to the
+# replay's correlation (MIN_REPLAY_DAYS = 4 weeks); a test pins the two together. For scale, the
+# relative standard error of a sample standard deviation is about 1/sqrt(2(n-1)): 14% at n=28.
+min_evidence_days: 28
+
+# What a strategy with fewer days is given.
+# live  -> hold_current: real money already deployed is not moved on weeks of evidence
+#          (the same reason as the owner's 4-6 week rule); it stays at its present
+#          strategy_capital_usd and is subtracted from the pool before the rest is split.
+# other -> no_weight: a paper or stand strategy with too few days gets zero and the report says
+#          when it will have enough.
+short_evidence:
+  live: hold_current
+  other: no_weight
+
+# The money for strategies, in USD. THE OWNER CONFIRMS THIS. 3000 is the number the night already
+# runs on (qlab.night.run, `deployable_capital_usd`, since 2026-10-03) and the capital of the
+# trend paper books; no owner statement of "the deployable capital is $3000" was found. The
+# figures the owner has stated: «уверенности нет на размещение более 1к» (rules/2026-09-20.2.yaml,
+# 2026-09-20), the capital $5-15k (docs/PLAN.md, "Границы"), the horizon «100-120к». The report
+# shows the split at each of `capital_ladder_usd` as well, so the answer to "what if it is
+# 1000 / 5000 / 15000" is in front of the owner.
+deployable_capital_usd: 3000
+capital_ladder_usd: [1000, 5000, 15000]
+
+# What the proposal does when the decay detector flags a strategy (night/decay.yaml,
+# `alert_percentile`; null today, so no flag exists).
+#   report_only -> the flag is shown beside the strategy, weights are not touched.
+#   exclude     -> a flagged strategy gets zero and the rest is re-split.
+# THE OWNER CHOOSES; until then report_only.
+on_decay_alert: report_only
+
+# Where the number of strategies is capped: night/limits.yaml, `max_active_strategies`
+# (owner, 2026-10-25: «давай увеличим число до 6»). Read from there at run time, not copied here.
+limits_file: night/limits.yaml

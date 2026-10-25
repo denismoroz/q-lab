@@ -1,0 +1,155 @@
+# PRE-REGISTRATION of the capital-allocation proposal (T55, part 2) -- written before any
+# allocation, volatility, correlation or return of a real strategy was computed. The git commit
+# that first contains this file is the proof. Editing a prediction afterwards destroys it: a
+# wrong prediction is recorded as wrong in a separate outcome file, as the earlier ones were
+# (2026-10-02-outcome-*.yaml).
+#
+# What was looked at before writing this: the list of the night's export files, their row
+# counts and first rows, the registry's strategy tree and statuses, the stand's measured minimum
+# capital per idea (`min_capital_usd` of the latest trial), night/paper_books.yaml and the
+# decay detector's code. NO return, volatility, correlation or weight was computed from any book.
+
+registered_at: 2026-10-25
+registered_by: sonnet (T55 part 2)
+config: night/allocation.yaml            # version 2026-10-25.1
+results_read_before_registration: false
+owner_requirement: >
+  docs/PLAN.md, M6: «Risk-parity по драйверам, ёмкость как ограничение, явный порог замены
+  больше ошибки оценки плюс издержек переключения.» and the goal «пул из 5–7 работающих
+  стратегий с заменой для выдыхающейся». Owner, 2026-10-25: «нужно ставить различие - деньги
+  на счету и деньги доступные для стратегии».
+
+# ---------------------------------------------------------------------------
+# What the proposal is -- and is not
+# ---------------------------------------------------------------------------
+# It is a calculation shown in the morning report. It moves no money, changes no status and
+# writes nothing to production (q-lab places no orders, ever). It says nothing about whether a
+# strategy is profitable: PREDICTION 0 of 2026-09-21-paper-bv2-trend.yaml stands -- returns over
+# weeks are noise about profitability -- so NO expected return enters the weights, and no
+# prediction below is about returns.
+
+method:
+  name: inverse_volatility
+  weight: "w_i = (1/sigma_i) / sum_j (1/sigma_j), over the strategies that get a weight"
+  sigma: "sample std (ddof 1) of a strategy's daily returns on ITS OWN strategy money"
+  why_this_one: >
+    Simplest method the sources support for a short, noisy history. Expected returns and the
+    correlation matrix are not estimated; one number per strategy is. Sources (verified, see
+    night/allocation.yaml): Asness-Frazzini-Pedersen (2012) for the construction,
+    DeMiguel-Garlappi-Uppal (2009) for the reason not to estimate more,
+    Maillard-Roncalli-Teiletche (2010) for what it equals (equal risk contribution when all
+    correlations are equal). 1/N is computed beside it as the comparison, never as the proposal.
+  not_used: [expected returns, correlation matrix, shrinkage, mean-variance optimisation]
+  correlations: >
+    Reported over the COMMON window of the strategies in the proposal, with the window's length
+    and n, and refused below the minimum days. Reported only; they do not enter the weights.
+
+parameters:
+  min_evidence_days: 28
+  min_evidence_days_source: >
+    The owner's «как минимум 4-6 недель в paper» (2026-10-25), four weeks, as qlab.paper_rule
+    already applies it to the replay's correlation (MIN_REPLAY_DAYS). Not a statistical
+    optimum: at n=28 the relative standard error of a sample std is about 14%
+    (1/sqrt(2(n-1)) for roughly normal returns).
+  deployable_capital_usd: 3000
+  deployable_capital_source: >
+    NOT an owner statement. It is the number the night runs on (qlab.night.run, since
+    2026-10-03) and the trend paper books' capital. The owner's stated figures: «не более 1к»
+    (2026-09-20), $5-15k, horizon «100-120к». The report shows the split at 1000, 5000 and
+    15000 as well. NEEDS THE OWNER'S CONFIRMATION.
+  max_strategies: "night/limits.yaml max_active_strategies (6), read at run time"
+
+# ---------------------------------------------------------------------------
+# Inputs: whose money and what counts as evidence
+# ---------------------------------------------------------------------------
+inputs:
+  unit: >
+    One strategy = one root of the registry's parent chain (qlab.registry.strategies), so
+    Bv2's three books are ONE strategy (owner, 2026-10-25: «должна быть 1 стратегия - просто
+    вариация»). The variant that stands for it is the one with the longest realised window;
+    a tie goes to the root idea. No performance enters the choice.
+  money: >
+    Every series is a book's equity on its own `strategy_capital_usd` (night/paper_books.yaml).
+    A live book must be built by qlab.strategy_pnl (equity_from: strategy_pnl); the exchange
+    account's total equity is never a series, and a percent is never taken on it.
+  evidence_kinds:
+    live: "a real-money book, realised part only (from `realised_from`)"
+    paper: "a paper book's export, realised part only (from `realised_from`)"
+    stand_forward: >
+      the stand's run of a strategy with no book, from the spec's params_fixed_at to the last
+      closed day -- the part the parameters were not fitted on
+    in_sample: "the fit period: NEVER a weight; the strategy is listed with that reason"
+  realised_only: "rows before a book's `realised_from` are history the book replayed at launch"
+  one_variant_series_only: "variants are not pooled; the other books are listed"
+
+constraints:
+  minimum_capital: >
+    A strategy whose allocation would be below its measured `min_capital_usd` (latest evaluated
+    trial of the representative idea: smallest leg / smallest weight, venue minimum order $10)
+    gets zero with the plain reason; the rest is re-split. The strategy dropped first is the one
+    with the lowest allocation-to-minimum ratio. The report states the total capital at which a
+    dropped strategy would fit.
+  strategy_count: "at most max_active_strategies in the pool; more eligible than that -> no proposal, the owner picks"
+  short_evidence_live: "held at present strategy_capital_usd, subtracted from the pool first"
+  unknown_minimum: "no weight, with the reason"
+  capacity_ceilings: >
+    NOT encoded: no per-strategy capacity figure exists in the registry or the docs except trend's
+    (docs/T27_LIQUIDITY.md). Linear scaling is assumed: a strategy's return per dollar is the
+    same at the proposed size as at its own book's size. Both are listed as the owner's decisions.
+
+# ---------------------------------------------------------------------------
+# Re-split triggers: existing signals only, no new threshold
+# ---------------------------------------------------------------------------
+triggers:
+  events:
+  - event: "a strategy's evidence reaches min_evidence_days"
+  - event: "a strategy passes the paper rule (qlab.paper_rule `ready`)"
+  - event: "a new strategy enters the pool (a survivor, or a book appears)"
+  - event: "a strategy leaves it (a terminal status, or its series stops)"
+  - event: "the decay detector flags a strategy (needs the owner's alert_percentile; null today)"
+  not_triggers: "weights drifting by themselves; the proposal is recomputed every night but only these events are called a re-split"
+needs_the_owners_decision:
+  - what: deployable capital figure
+    options: [1000, 3000, 5000, 15000]
+  - what: capacity ceiling per strategy
+    options: ["none (as proposed)", "a ceiling the owner names per strategy", "a ceiling from a liquidity measurement (docs/T27_LIQUIDITY.md, trend only today)"]
+  - what: decay alert threshold and what the allocation does on it
+    options: ["alert_percentile in night/decay.yaml, on_decay_alert report_only", "same, on_decay_alert exclude"]
+  - what: how often to re-split
+    options: ["on events only (as proposed)", "calendar (e.g. monthly)", "a band on weight change (needs a number from the owner)"]
+  - what: more strategies eligible than the cap
+    options: ["raise max_active_strategies", "the owner names which to keep"]
+
+# ---------------------------------------------------------------------------
+# Falsifiable, checkable in four weeks
+# ---------------------------------------------------------------------------
+# The premise of inverse-volatility weighting is that a strategy's recent volatility is a fair
+# guide to its next weeks'. That is checkable fast, unlike returns.
+predictions:
+  - id: volatility_persists
+    statement: >
+      For each strategy that had a weight, the daily std over the 28 days after the proposal,
+      divided by the std the weight was computed from, lies within 1 +/- 2*sqrt(1/(2(n1-1)) +
+      1/(2(n2-1))) -- twice the sampling error of the ratio of two sample stds, n1 and n2 the
+      days behind each (about +/-35% for n1=41, n2=28).
+    why: >
+      The band is arithmetic, not a judgement of what is acceptable: it is what sampling noise
+      alone allows if volatility did not change.
+    applies_to: every strategy with a weight in the first proposal
+    if_missed: >
+      That strategy's volatility is not stable on this horizon, so its weight was an estimate of
+      a moving thing. Recorded as a finding about the method; the weights are not "corrected"
+      after the fact, and the owner decides whether to widen the estimate or drop the method.
+    checked_by: a separate outcome file, as 2026-10-02-outcome-*.yaml
+  - id: risk_shares_closer_than_equal
+    statement: >
+      On the same 28 days, the spread (max share / min share) of w_i * sigma_realised_i
+      under the proposal is no larger than under 1/N, for the strategies that had a weight.
+    why: "that is what the method is for"
+    if_missed: "the method did not do what it exists to do on this pool; record, do not tune"
+
+invariants:
+  - "no weight is given to a strategy whose only evidence is in_sample (tested)"
+  - "a series on account money is refused (tested)"
+  - "the weights of the strategies that share the pool sum to the pool (tested)"
+  - "the proposal writes nothing to the registry and no status, and calls no agent"

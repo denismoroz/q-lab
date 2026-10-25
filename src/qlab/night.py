@@ -401,6 +401,10 @@ def write_report(day: date, state: dict) -> Path:
         from qlab.decay import SECTION_TITLE
 
         lines += [f"## {SECTION_TITLE}", "", *decayed["lines"], ""]
+    if split := state.get("allocation"):
+        from qlab.pool_allocation import SECTION_TITLE as ALLOCATION_TITLE
+
+        lines += [f"## {ALLOCATION_TITLE}", "", *split["lines"], ""]
     if directed := state.get("director"):
         lines += ["## Руководитель исследований", "", *_director_lines(directed), ""]
     if studied := state.get("research"):
@@ -635,6 +639,13 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if (decay if decay is not None else paper) and "decay" not in state:
         # After the watch list: the stand's panels are cached by then.
         decay_stage(day, end, state)
+        save_state(day, state)
+    if "decay" in state and "allocation" not in state:
+        # The capital split is a proposal for the owner (qlab.pool_allocation): it reads the
+        # decay results and the paper rule's states and moves nothing.
+        from qlab.pool_allocation import night_stage
+
+        night_stage(day, end, state)
         save_state(day, state)
     if assess:
         assess_stage(day, state)
