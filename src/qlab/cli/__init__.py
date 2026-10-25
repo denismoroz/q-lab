@@ -694,6 +694,9 @@ def night_run_cmd(
         None, "--director/--no-director",
         help="The research director (tokens; default: every cadence_days nights in "
         "night/director.yaml, not on a night with --no-research; --director forces it)"),
+    waiting: bool = typer.Option(
+        True, "--waiting/--no-waiting",
+        help="Re-run the ideas waiting for data that are not on the watch list (no tokens)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -706,7 +709,7 @@ def night_run_cmd(
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               director=director, noise_trials=noise_trials)
+               director=director, waiting=waiting, noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
 

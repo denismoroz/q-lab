@@ -390,6 +390,12 @@ def write_report(day: date, state: dict) -> Path:
             lines.append(f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
                          + " | ".join(_report_row(m)) + " |")
         lines.append("")
+    if state.get("waiting") or state.get("waiting_notes"):
+        from qlab.waiting import SECTION_TITLE as WAITING_TITLE
+        from qlab.waiting import report_lines as waiting_lines
+
+        lines += [f"## {WAITING_TITLE}", "",
+                  *waiting_lines(state.get("waiting") or [], state.get("waiting_notes")), ""]
     if idle := state.get("unwatched_bench"):
         lines += ["## На скамейке, но не в списке наблюдения", "",
                   "Проверка вперёд у этих идей не растёт: либо добавить в `night/watchlist.yaml`, "
@@ -599,8 +605,8 @@ def _token_lines(day: date) -> str:
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
-        decay: bool | None = None, director: bool | None = None, noise_trials: int = 200,
-        deployable_capital_usd: float = 3000.0) -> Path:
+        decay: bool | None = None, director: bool | None = None, waiting: bool = True,
+        noise_trials: int = 200, deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -637,6 +643,15 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         state["results"].append(asdict(result))
         if result.error is None:  # a failed item is tried again on the next run
             state["done"][key] = datetime.now(UTC).isoformat()
+        save_state(day, state)
+    if waiting:
+        # Recheck too: ideas waiting for data that are not on the watch list (qlab.waiting).
+        from qlab.waiting import followed_ideas, waiting_stage
+
+        waiting_stage(day, end, state, watch=watch, noise_trials=noise_trials,
+                      deployable_capital_usd=deployable_capital_usd)
+        followed = followed_ideas(state.get("waiting"))
+        state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
         save_state(day, state)
     if paper and "paper" not in state:
         state["paper"] = paper_reconciliation(day)

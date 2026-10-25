@@ -217,7 +217,7 @@ def test_the_director_runs_before_the_researcher_and_not_on_a_night_without_rese
     monkeypatch.setattr(night, "director_stage", lambda *a, **kw: order.append("director"))
     monkeypatch.setattr(night, "research_stage", lambda *a, **kw: order.append("research"))
     flags = dict(graveyard=False, paper=False, implement=False, search=False, detectors=False,
-                 assess=False)
+                 assess=False, waiting=False)
     night.run(DAY, research=True, **flags)
     assert order == ["director", "research"]
     order.clear()
