@@ -70,9 +70,11 @@ Read these first, they define what you write:
 
 Data the stand can give you (spec `data.source`): "hyperliquid" (perps, and spot with
 include_spot), "hyperliquid-xyz" (HIP-3 stocks, indices, commodities), "binance" (USDT
-perps since 2019, spot by explicit instrument list); intervals 1d, 4h, 1h. Prices are
-closes, funding is per bar, volume is base units, `high` is the bar's high. There is no
-order book, no liquidation feed, no options, no outcome markets, no external stock prices.
+perps since 2019, spot by explicit instrument list), "aster" (USDT perps since 2021-09,
+explicit instrument list only, funding settled every 1/2/4/8 hours depending on the symbol,
+no spot); intervals 1d, 4h, 1h. Prices are closes, funding is per bar,
+volume is base units, `high` is the bar's high. There is no order book, no liquidation feed,
+no options, no outcome markets, no external stock prices.
 
 Rules:
 - Never invent a number. Parameters come from the card; cite "{card_path}" for them (the

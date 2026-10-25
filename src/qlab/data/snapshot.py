@@ -71,6 +71,7 @@ from sqlalchemy.orm import Session
 from qlab.data.panel import MarketPanel
 from qlab.data.recorder import DEFAULT_STORE_DIR as DEFAULT_RECORDED_DIR
 from qlab.data.recorder import load_recorded_history
+from qlab.data.sources import aster as aster_source
 from qlab.data.sources import binance as binance_source
 from qlab.data.sources import hyperliquid as hyperliquid_source
 from qlab.data.sources.base import (
@@ -192,6 +193,16 @@ _SOURCES = {
         # Spot by explicit list only (Bv2 on Binance's history); no spot
         # discovery is wired for Binance.
         "fetch_spot": binance_source.fetch_spot_universe,
+    },
+    # Aster: USDT perpetuals, explicit instrument lists only -- the venue
+    # cannot list its delisted contracts, so `describe_universe` is None and
+    # a snapshot is never `universe_complete` (see the source's docstring).
+    # No spot keys: no spot markets are wired.
+    aster_source.VENUE: {
+        "fetch": aster_source.fetch_universe,
+        "funding_native_interval": aster_source.FUNDING_NATIVE_INTERVAL,
+        "discover_universe": aster_source.discover_universe,
+        "describe_universe": aster_source.describe_universe,
     },
 }
 

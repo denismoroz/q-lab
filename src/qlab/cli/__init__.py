@@ -257,7 +257,7 @@ def graveyard_ripe_cmd(
 
 @data_app.command("fetch")
 def data_fetch_cmd(
-    source: str = typer.Option(..., "--source", help="hyperliquid or binance"),
+    source: str = typer.Option(..., "--source", help="hyperliquid, binance or aster"),
     instruments: str | None = typer.Option(
         None,
         "--instruments",
@@ -320,7 +320,7 @@ def data_fetch_cmd(
 
 @data_app.command("universe")
 def data_universe_cmd(
-    source: str = typer.Option(..., "--source", help="hyperliquid or binance"),
+    source: str = typer.Option(..., "--source", help="hyperliquid, binance or aster"),
 ) -> None:
     """Print a source's full point-in-time universe (survivors + delisted),
     if its free API exposes one -- the list `data fetch` uses by default.

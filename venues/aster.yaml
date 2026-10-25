@@ -1,0 +1,49 @@
+# Venue capability facts for Aster USDT-margined perpetual futures -- q-lab
+# task T51 (docs/TASKS.md). See venues/hyperliquid.yaml for the field-by-field
+# format and rationale, and src/qlab/venues/derive.py for how these facts
+# become preflight metrics. All facts below were read on 2026-10-25.
+#
+# Facts that have no field in the schema (VenueConfig forbids extra keys) are
+# recorded here as comments, with their source:
+#   - Funding interval: per symbol, 8 hours by default. GET
+#     https://fapi.asterdex.com/fapi/v1/fundingInfo on 2026-10-25 returned
+#     798 records: 361 at 4 hours, 331 at 8, 103 at 1, 3 at 2; cap/floor +-2%
+#     for 752 of them. Formula and the right to change an interval:
+#     https://docs.asterdex.com/trading/perpetuals/fees-and-specs/funding-rate.md
+#     ("Aster reserves the right to adjust the funding rate floor, cap, and
+#     the funding interval").
+#   - Fees (perpetual, "Crypto - General"): maker 0, taker 0.04% (varies by VIP
+#     tier); "Group B" crypto pairs taker 0.1%; RWA pairs taker 1.25 bps from
+#     2026-09-07; maker 0 everywhere.
+#     https://docs.asterdex.com/trading/perpetuals/fees-and-specs/fees.md
+#   - API: https://github.com/asterdex/api-docs (V1 futures, public market data
+#     needs no key); base URL https://fapi.asterdex.com.
+#   - Access: docs/VENUES.md section 3.2 (Belarus is not named in the terms;
+#     the owner's rule of 2026-10-25 makes the venue available).
+
+id: aster
+title: "Aster USDT-margined perpetual futures"
+
+# execution_adapter -- no order-placing integration with Aster exists in this
+# repo or in funding-rate-arbitrage (its exchanges/ tree holds a hyperliquid
+# package only; src/qlab/data/sources/aster.py fetches market data only).
+execution_adapter: false
+
+# min_leg_notional_usd -- Aster's own MIN_NOTIONAL filter, read from the public
+# exchangeInfo on 2026-10-25: {"filterType": "MIN_NOTIONAL", "notional": "5"}
+# for BTCUSDT, ETHUSDT, SOLUSDT (all 643 symbols carry "5").
+#   https://fapi.asterdex.com/fapi/v1/exchangeInfo
+min_leg_notional_usd: 5.0
+
+# free_public_data -- klines and fundingRate need no key (V1 futures API docs
+# above). The universe is NOT survivorship-free (delisted contracts are not
+# listed); that is the separate `point_in_time_universe` / `honest_universe`
+# question, answered by the snapshot's universe_complete flag, not by this field.
+free_public_data: true
+
+# supports_atomic_multileg -- unknown: no execution adapter has been built or
+# exercised on Aster, and its API documentation was read for market data only.
+supports_atomic_multileg: null
+
+# uncovered_leg_recovery -- unknown, for the same reason.
+uncovered_leg_recovery: null
