@@ -201,3 +201,17 @@ def test_the_price_per_token_is_the_calling_models_own(session) -> None:
     assert usd_per_token(session, "opus") == pytest.approx(1e-5)
     assert usd_per_token(session, "haiku") == pytest.approx(1e-6)
     assert usd_per_token(session, "sonnet") == pytest.approx(1e-5)  # unknown: the highest seen
+
+
+def test_calibration_ignores_calls_before_the_plan_change(session, fake_claude) -> None:
+    # Owner, 2026-10-25: «я перешел на тариф Max» -- Pro-window readings would make
+    # the guard far too cautious.
+    from datetime import UTC, datetime
+
+    for week in (0.20, 0.20):
+        fake_claude(_events(week, 40_000))
+        run_agent(ExplicitNoBudget("test"), "x", session=session, agent="a", model="haiku",
+                  max_turns=1)
+    later = datetime(2999, 1, 1, tzinfo=UTC)
+    assert calibrate(session, since=later).source == "prior"
+    assert calibrate(session, since=None).source == "ledger (1 pairs)"

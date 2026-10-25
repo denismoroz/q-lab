@@ -95,8 +95,18 @@ class Calibration:
     source: str  # "prior" or "ledger (N pairs)"
 
 
-def _calls(session: Session) -> list[TokenSpend]:
-    return session.query(TokenSpend).order_by(TokenSpend.at, TokenSpend.id).all()
+PLAN_SINCE = datetime(2026, 10, 25, tzinfo=UTC)
+"""The subscription plan the windows belong to changed on this day (owner,
+2026-10-25: «я перешел на тариф Max - токенов должно хватать»). A percent of a
+Max window is many more tokens than a percent of a Pro window, so calls before
+it would calibrate the guard far too cautiously; only calls since count."""
+
+
+def _calls(session: Session, since: datetime | None = None) -> list[TokenSpend]:
+    query = session.query(TokenSpend)
+    if since is not None:
+        query = query.filter(TokenSpend.at >= since)
+    return query.order_by(TokenSpend.at, TokenSpend.id).all()
 
 
 def _total(row: TokenSpend) -> int:
@@ -129,13 +139,13 @@ def usd_per_token(session: Session, model: str | None) -> float:
     return max(every) if every else USD_PER_TOKEN_PRIOR
 
 
-def calibrate(session: Session) -> Calibration:
+def calibrate(session: Session, since: datetime | None = PLAN_SINCE) -> Calibration:
     """Weekly utilization per token, from consecutive calls in the same weekly
     window: (sum of utilization gained + one reading's resolution) / tokens
     spent -- an upper bound, so the estimate starts cautious and tightens as
     tokens accumulate. Utilization gained between two calls also counts the
     owner's own use in between, which can only make it more cautious."""
-    rows = [r for r in _calls(session) if _total(r) > 0]
+    rows = [r for r in _calls(session, since) if _total(r) > 0]
     usd = sum(r.usd_est or 0.0 for r in rows)
     tokens = sum(_total(r) for r in rows)
     usd_per_token = usd / tokens if usd > 0 and tokens > 0 else USD_PER_TOKEN_PRIOR
