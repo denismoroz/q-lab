@@ -1475,6 +1475,43 @@ def test_a_snapshot_built_under_other_panel_rules_is_not_reused(session, tmp_pat
         include_spot=False, min_daily_volume_usd=None) is None
 
 
+def test_spot_priced_at_the_perp_and_at_its_own_market_are_different_requests(
+        session, tmp_path) -> None:
+    """A snapshot is reused only for the spot-price convention it was built
+    under; one with no such key (built before the option) was priced at the perp."""
+    _register_snapshot(session, tmp_path, snapshot_id="snap-spot", instruments=INSTRUMENTS,
+                       universe_complete=False)
+    manifest_path = tmp_path / "snap-spot" / "manifest.json"
+
+    def find(spot_prices: str) -> str | None:
+        return _find_matching_snapshot(
+            session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+            end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=INSTRUMENTS,
+            include_spot=False, min_daily_volume_usd=None, spot_prices=spot_prices)
+
+    assert find("perp") == "snap-spot" and find("own") is None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["spot_prices"] = "own"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert find("own") == "snap-spot" and find("perp") is None
+
+
+def test_the_default_spot_price_is_not_written_into_the_spec_row(session) -> None:
+    """Spec rows recorded before the option existed must still match, or every
+    idea would grow a new version on its next run."""
+    from qlab.pipeline.evaluate import _get_or_create_spec_row
+
+    perp = _make_spec()
+    assert perp.data.spot_prices == "perp"
+    row = _get_or_create_spec_row(session, perp)
+    assert "spot_prices" not in row.data_requirements
+    assert _get_or_create_spec_row(session, perp).id == row.id
+
+    own = _make_spec(data={**perp.data.model_dump(), "include_spot": True, "spot_prices": "own"})
+    own_row = _get_or_create_spec_row(session, own)
+    assert own_row.id != row.id and own_row.data_requirements["spot_prices"] == "own"
+
+
 def test_a_fit_window_puts_history_after_it_in_the_forward_test() -> None:
     """Owner, 2026-10-04: «разделять backtest and forward test». Bv2's
     parameters were fitted on 2023-06 … 2025-05 and committed in 2026-09: the

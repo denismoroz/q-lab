@@ -191,6 +191,7 @@ def _find_matching_snapshot(
     instruments: list[str] | None,
     include_spot: bool,
     min_daily_volume_usd: float | None,
+    spot_prices: str = "perp",
 ) -> str | None:
     """Find a `data_snapshot` already on disk that answers this exact data
     request, without ever hitting the network.
@@ -266,6 +267,11 @@ def _find_matching_snapshot(
         # safe direction.
         if manifest.get("min_daily_volume_usd") != min_daily_volume_usd:
             continue
+        # Spot columns priced at their perp and at their own market answer
+        # different requests; a snapshot built before the option existed (no
+        # key) was priced at the perp.
+        if manifest.get("spot_prices", "perp") != spot_prices:
+            continue
         if wanted_instruments is None:
             # A discovered-universe request is answered by a discovered build:
             # complete, or incomplete ONLY because the venue erased delisted
@@ -315,6 +321,7 @@ def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         instruments=data_block.instruments,
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
+        spot_prices=data_block.spot_prices,
     )
     if existing_id is not None:
         return load_snapshot(existing_id, session=session)
@@ -327,6 +334,7 @@ def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         data_block.interval,
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
+        spot_prices=data_block.spot_prices,
         session=session,
     )
 
@@ -345,6 +353,7 @@ def resolve_cached_panel(session: Session, data: StrategySpec) -> MarketPanel | 
         instruments=data_block.instruments,
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
+        spot_prices=data_block.spot_prices,
     )
     return None if existing_id is None else load_snapshot(existing_id, session=session)
 
@@ -362,6 +371,10 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     from its data interval should say so in `params` instead.
     """
     data_requirements = spec.data.model_dump(mode="json")
+    if data_requirements.get("spot_prices") == "perp":
+        # The default is not written, so the spec rows recorded before the
+        # option existed still match and no idea grows a new version for it.
+        del data_requirements["spot_prices"]
     costs_model = spec.costs.model_dump(mode="json")
 
     existing = (

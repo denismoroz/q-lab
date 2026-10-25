@@ -48,6 +48,17 @@ class SpecData(BaseModel):
     defaults to off because spot doubles the fetch and most strategies never
     touch it, and because a panel should carry only what the spec asked for.
     """
+    spot_prices: Literal["perp", "own"] = "perp"
+    """What a spot column's price is (`qlab.data.snapshot.SPOT_PRICES`).
+
+    ``perp`` (the default, the owner's decision of 2026-10-02): the spot leg is
+    marked at its perp's price, so the spot-perp gap (basis) never enters a
+    return -- FRAB's stand Sharpe in the tens is that bookkeeping, not an edge
+    (docs/FRAB_LIVE.md). ``own``: the spot market's own closes (Hyperliquid
+    spot candles, Binance spot klines), NaN where unknown, never the perp's
+    price. The default keeps every recorded verdict as it was; ``own`` is a
+    separate run of the same idea, not a replacement.
+    """
     start: date
     end: date
     instruments: list[str] | None = None
@@ -83,6 +94,17 @@ class SpecData(BaseModel):
         if value is not None and value <= 0:
             raise ValueError(f"min_daily_volume_usd must be > 0 when given, got {value}")
         return value
+
+    @model_validator(mode="after")
+    def _own_spot_prices_need_spot_columns(self) -> SpecData:
+        if self.spot_prices == "own" and not self.include_spot and not any(
+            name.endswith("-SPOT") for name in (self.instruments or [])
+        ):
+            raise ValueError(
+                "spot_prices: own prices spot columns, but the spec asks for none: "
+                "set include_spot: true or name '-SPOT' instruments"
+            )
+        return self
 
 
 class SpecCosts(BaseModel):

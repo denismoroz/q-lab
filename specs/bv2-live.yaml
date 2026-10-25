@@ -6,8 +6,9 @@
 # book, which carries all of them, so nothing is declared unexpressed. What
 # the harness accounts differently from the book -- liquidation at the bar's
 # close instead of at the liquidation level, the spec's costs instead of
-# frab's own fees, the spot leg on the real spot column instead of the perp
-# price -- is a gap of bookkeeping, not of decisions, and the book's own
+# frab's own fees, the spot leg marked at the perp price (data.spot_prices
+# perp, the default; `own` marks it at the spot's own trades -- docs/BV2_LIVE.md,
+# «Цена спота: своя или контракта») -- is a gap of bookkeeping, not of decisions, and the book's own
 # equity is compared against the harness afterwards (docs/BV2_LIVE.md).
 
 idea_id: strategy-b-v2

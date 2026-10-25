@@ -17,8 +17,12 @@ missing data -- and held in between (see `run`). Each coin has its own
 `CoinBook` with `capital / len(coins)`, exactly as the live engine runs them.
 After every bar is stepped, a coin's exposures are
 
-    spot column  (`<COIN>-SPOT`):  +units_spot * P  (+ carry_units * P)
+    spot column  (`<COIN>-SPOT`):  +units_spot * S  (+ carry_units * S)
     perp column  (`<COIN>`):        -short_size * P  (- carry_units * P)
+
+where P is the perp's price and S the price the spot leg is valued at: P by
+default, the spot's own last close under `data.spot_prices: own`
+(`qlab.strategies.live._marks`).
 
 and every exposure is divided by the TOTAL equity of all books at that bar
 (a coin whose book has not started yet holds its share as cash). The harness
@@ -39,7 +43,11 @@ decision is the live book's own:
 - **Fees.** The book charges frab's own taker fees on its fills; the harness
   charges the spec's costs on weight changes.
 - **Spot price.** The live paper book values spot at the perp price, and so
-  does the panel (spot legs are marked at their own perp, 2026-10-02).
+  does the panel by default (spot legs are marked at their own perp,
+  2026-10-02). Under `data.spot_prices: own` the panel carries the spot's own
+  closes and the weights value the spot leg at them, so the spot-perp gap
+  enters the harness's returns; the book itself, and `book_equity`, stay on
+  the perp's price (frab's code has one price per coin).
 
 ## Rules this driver keeps
 
@@ -80,6 +88,7 @@ from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.gaps import holdable_gaps
 from qlab.harness.panel import MarketPanel
 from qlab.strategies.live._loader import import_frab
+from qlab.strategies.live._marks import spot_marks
 
 _book = import_frab("frab.strategy.b2.book")
 _params_module = import_frab("frab.strategy.b2.params")
@@ -205,6 +214,7 @@ class LiveBv2:
                 if col not in columns:
                     raise ValueError(f"Bv2 needs column {col!r}; this panel has none")
             px = panel.prices[perp].to_numpy(dtype=float)
+            spot_px = spot_marks(panel, perp, spot)
             fr = panel.funding[perp].to_numpy(dtype=float)
             hi = panel.high[perp].to_numpy(dtype=float)
             ok = (
@@ -289,6 +299,9 @@ class LiveBv2:
                     if events:
                         decided[i] = True
                     price = float(px[i])
+                    # The spot leg's own value per unit; NaN only before the
+                    # spot's first print, which `ok` excludes.
+                    spot_price = float(spot_px[i])
                     # The carry sleeve holds spot long and perp short in equal
                     # units: `carry_units` with the margin model, the fixed
                     # `carry_target` notional without it (book.py, step 5).
@@ -298,7 +311,7 @@ class LiveBv2:
                         carry = book.carry_units
                     else:
                         carry = book.carry_target / price
-                    exposure.iat[i, columns.get_loc(spot)] = (book.units_spot + carry) * price
+                    exposure.iat[i, columns.get_loc(spot)] = (book.units_spot + carry) * spot_price
                     exposure.iat[i, columns.get_loc(perp)] = -(book.hedge_units() + carry) * price
                     last_equity = book.equity(price)
                     coin_equity[i] = last_equity

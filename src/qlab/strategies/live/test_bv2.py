@@ -161,3 +161,66 @@ def test_a_regime_detector_can_drive_the_hedge(monkeypatch) -> None:
     assert driven["BTC"].iloc[up] < 0
     with pytest.raises(ValueError, match="hedge_when"):
         LiveBv2().run(panel, {**PARAMS, "hedge_by": {"predictions": "x", "hedge_when": ["up"]}})
+
+
+def _with_spot_prices(panel: MarketPanel, mode: str | None) -> MarketPanel:
+    meta = dict(panel.meta)
+    if mode is not None:
+        meta["spot_prices"] = mode
+    return MarketPanel(snapshot_id=f"bv2-{mode}", prices=panel.prices, funding=panel.funding,
+                       tradeable=panel.tradeable, meta=meta, high=panel.high)
+
+
+def test_by_default_the_spot_leg_is_valued_at_the_perp_whatever_the_spot_column_says() -> None:
+    panel = _panel()
+    at_perp = panel.prices.copy()
+    at_perp["BTC-SPOT"] = at_perp["BTC"]
+    same = MarketPanel(snapshot_id="bv2", prices=at_perp, funding=panel.funding,
+                       tradeable=panel.tradeable, meta=panel.meta, high=panel.high)
+    for mode in (None, "perp"):
+        weights = LiveBv2().target_weights(_with_spot_prices(panel, mode), PARAMS)
+        pd.testing.assert_frame_equal(weights, LiveBv2().target_weights(same, PARAMS))
+
+
+def test_own_spot_prices_value_the_spot_leg_at_the_spots_price() -> None:
+    panel = _panel()  # the spot trades at 1.0005 times the perp
+    by_perp = LiveBv2().run(_with_spot_prices(panel, None), PARAMS)
+    own = LiveBv2().run(_with_spot_prices(panel, "own"), PARAMS)
+    assert (by_perp.weights["BTC-SPOT"] > 0).any()
+    np.testing.assert_allclose(own.weights["BTC-SPOT"], by_perp.weights["BTC-SPOT"] * 1.0005)
+    pd.testing.assert_series_equal(own.weights["BTC"], by_perp.weights["BTC"])
+    # The book is frab's code on one price per coin: its own account is unchanged.
+    pd.testing.assert_series_equal(own.book_equity, by_perp.book_equity)
+
+
+def test_own_spot_hour_without_a_print_keeps_both_legs_and_marks_nothing_at_the_perp() -> None:
+    """A bar the spot printed nothing on stays NaN in the panel (the perp's price
+    is not put there); the book waits and the harness holds both legs across it
+    and re-marks the spot at its next print."""
+    from qlab.harness.costs import CostModel
+    from qlab.harness.run import run_backtest
+
+    panel = _panel()
+    gap = len(panel.prices) - 48  # deep in the fall: the hedge is on
+    prices, tradeable = panel.prices.copy(), panel.tradeable.copy()
+    prices.iloc[gap, 1] = np.nan
+    tradeable.iloc[gap, 1] = False
+    holed = MarketPanel(snapshot_id="bv2", prices=prices, funding=panel.funding,
+                        tradeable=tradeable, meta={**panel.meta, "spot_prices": "own"},
+                        high=panel.high)
+    weights = LiveBv2().run(holed, PARAMS).weights
+    validate_weights(holed, weights)
+    assert np.isnan(holed.prices["BTC-SPOT"].iloc[gap])
+    assert weights["BTC"].iloc[gap] == weights["BTC"].iloc[gap - 1] < 0  # the hedge stays
+    result = run_backtest(holed, weights, CostModel(taker_fee_bps=4.5, slippage_bps=0.0),
+                          holed.funding)
+    assert result.turnover.iloc[gap - 1 : gap + 1].sum() == 0.0  # nothing closed or reopened
+
+
+def test_own_spot_prices_pass_the_look_ahead_guard() -> None:
+    from qlab.harness.lookahead import lookahead_violation
+
+    panel = _with_spot_prices(_panel(), "own")
+    weights = LiveBv2().target_weights(panel, PARAMS)
+    assert weights.abs().to_numpy().sum() > 0
+    assert lookahead_violation(LiveBv2(), panel, PARAMS, weights) is None

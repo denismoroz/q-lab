@@ -68,3 +68,84 @@ def test_decisions_do_not_see_the_future() -> None:
                       "C": np.zeros(len(HOURS))})
     moved = LiveFrab().run(changed, PARAMS).weights
     pd.testing.assert_frame_equal(base[base.index <= cut], moved[moved.index <= cut])
+
+
+def _own_panel(rates: dict[str, np.ndarray], basis: float = 1.02,
+               spot_gap: tuple[str, slice] | None = None) -> MarketPanel:
+    """A panel whose perps drift upward and whose spots trade at `basis` times
+    their perp, under `spot_prices: own`; `spot_gap` blanks one spot's prints."""
+    cols = [c for coin in rates for c in (coin, f"{coin}-SPOT")]
+    drift = 100.0 * (1.0 + 0.001 * np.arange(len(HOURS)))
+    prices = pd.DataFrame({c: drift * (basis if c.endswith("-SPOT") else 1.0) for c in cols},
+                          index=HOURS)
+    tradeable = pd.DataFrame(True, index=HOURS, columns=cols)
+    if spot_gap is not None:
+        coin, rows = spot_gap
+        prices.iloc[rows, prices.columns.get_loc(f"{coin}-SPOT")] = np.nan
+        tradeable.iloc[rows, tradeable.columns.get_loc(f"{coin}-SPOT")] = False
+    funding = pd.DataFrame(0.0, index=HOURS, columns=cols)
+    for coin, r in rates.items():
+        funding[coin] = r
+    return MarketPanel(snapshot_id="own", prices=prices, funding=funding, tradeable=tradeable,
+                       meta={"spot_prices": "own"})
+
+
+def _flat_rates(n: int) -> dict[str, np.ndarray]:
+    return {"A": np.full(n, 0.0001), "B": np.zeros(n), "C": np.zeros(n)}
+
+
+def test_the_spot_leg_is_bought_and_valued_at_the_spots_own_price() -> None:
+    panel = _own_panel(_flat_rates(len(HOURS)), basis=1.02)
+    w = LiveFrab().run(panel, PARAMS).weights
+    validate_weights(panel, w)
+    first = w.index[7]
+    p = FrabParams.from_dict(PARAMS)
+    # The slot is spent on the spot leg: its notional is the sized amount, and
+    # the short in the same units is worth 1/1.02 of it.
+    assert np.isclose(w.loc[first, "A-SPOT"] * p.budget_cap_usdc, size_for(p, 10))
+    assert np.isclose(w.loc[first, "A"], -w.loc[first, "A-SPOT"] / 1.02)
+
+
+def test_by_default_a_spot_column_with_another_price_is_not_read() -> None:
+    n = len(HOURS)
+    panel = _own_panel(_flat_rates(n), basis=1.02)
+    by_default = MarketPanel(snapshot_id="d", prices=panel.prices, funding=panel.funding,
+                             tradeable=panel.tradeable, meta={})
+    marked_at_perp = _own_panel(_flat_rates(n), basis=1.0)
+    marked_at_perp = MarketPanel(snapshot_id="p", prices=marked_at_perp.prices,
+                                 funding=panel.funding, tradeable=panel.tradeable, meta={})
+    a = LiveFrab().run(by_default, PARAMS).weights
+    b = LiveFrab().run(marked_at_perp, PARAMS).weights
+    pd.testing.assert_frame_equal(a, b)
+    assert (a["A-SPOT"] == -a["A"]).all()
+
+
+def test_a_spot_with_no_print_is_valued_at_its_last_print_not_at_the_perp() -> None:
+    """While A's spot printed nothing, B opens; the book is re-read then, and
+    A's spot leg is worth its last close, not the perp's price of that bar."""
+    n = len(HOURS)
+    rates = _flat_rates(n)
+    rates["B"] = np.where(np.arange(n) >= 30, 0.0001, 0.0)
+    gap = slice(24, 40)
+    panel = _own_panel(rates, basis=1.02, spot_gap=("A", gap))
+    run = LiveFrab().run(panel, PARAMS)
+    [pos_a] = [q for q in run.positions if q.coin == "A"]
+    [pos_b] = [q for q in run.positions if q.coin == "B"]
+    assert gap.start <= pos_b.opened < gap.stop  # B opens while A's spot is silent
+    w = run.weights
+    last_print = panel.prices["A-SPOT"].iloc[gap.start - 1]
+    perp_now = panel.prices["A"].iloc[pos_b.opened]
+    assert np.isclose(w.iloc[pos_b.opened]["A-SPOT"] * 90, pos_a.units * last_print)
+    assert not np.isclose(w.iloc[pos_b.opened]["A-SPOT"] * 90, pos_a.units * perp_now)
+
+
+def test_own_spot_prices_pass_the_look_ahead_guard() -> None:
+    from qlab.harness.lookahead import lookahead_violation
+
+    n = len(HOURS)
+    r = np.where((np.arange(n) // 100) % 2 == 0, 0.0002, -0.0002)
+    panel = _own_panel({"A": r, "B": r[::-1].copy(), "C": np.zeros(n)},
+                       spot_gap=("A", slice(300, 320)))
+    weights = LiveFrab().target_weights(panel, PARAMS)
+    assert weights.abs().to_numpy().sum() > 0
+    assert lookahead_violation(LiveFrab(), panel, PARAMS, weights) is None

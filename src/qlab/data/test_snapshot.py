@@ -987,3 +987,87 @@ class TestSpotThatIsAnotherAsset:
         perp = pd.Series([100.0, 101.0, 102.0, 103.0], index=idx)
         assert snap.spot_is_another_asset(perp * 0.99, perp) is None
         assert snap.spot_is_another_asset(perp * 0.40, perp) == pytest.approx(0.40)
+
+
+class TestSpotPrices:
+    """`spot_prices`: a spot column is priced at its perp (the default, the
+    owner's decision of 2026-10-02) or at the spot market's own closes."""
+
+    def _histories(self):
+        idx = pd.date_range("2026-06-17 22:00", periods=5, freq="1h", tz="UTC")
+        perp = pd.Series([6.7587, 6.7562, 6.7661, 6.7000, 6.7100], index=idx)
+        # Prints on bars 0, 1 and 4 only: bars 2 and 3 had no trade at all.
+        spot_raw = pd.Series([6.7500, 6.7400, 6.6900], index=idx[[0, 1, 4]])
+        import dataclasses
+
+        spot = dataclasses.replace(
+            _hist("AVAX-SPOT", idx, is_delisted=False, prices=spot_raw, has_funding=False),
+            first_seen=idx[0],
+            trade_count=pd.Series([3, 1, 2], index=idx[[0, 1, 4]], dtype="int64"),
+            volume=pd.Series([10.0, 1.0, 5.0], index=idx[[0, 1, 4]]),
+        )
+        return idx, perp, spot_raw, {"AVAX": _hist("AVAX", idx, False, prices=perp),
+                                     "AVAX-SPOT": spot}
+
+    def test_default_marks_the_spot_at_its_perp(self):
+        idx, perp, _raw, histories = self._histories()
+        prices, *_ = snap._build_frames_from_histories(histories, idx, pd.Timedelta(hours=1))
+        priced = [0, 1, 4]
+        pd.testing.assert_series_equal(prices["AVAX-SPOT"].iloc[priced], perp.iloc[priced],
+                                       check_names=False)
+
+    def test_own_keeps_the_spot_closes_and_leaves_the_rest_unknown(self):
+        idx, perp, raw, histories = self._histories()
+        prices, _f, tradeable, volume = snap._build_frames_from_histories(
+            histories, idx, pd.Timedelta(hours=1), spot_prices="own")
+        spot = prices["AVAX-SPOT"]
+        assert list(spot.iloc[[0, 1, 4]]) == list(raw)
+        # Unknown stays unknown: no perp price, no carried price, in the panel.
+        assert spot.iloc[[2, 3]].isna().all()
+        assert not spot.isin(perp.iloc[[2, 3]]).any()
+        assert not tradeable["AVAX-SPOT"].iloc[[2, 3]].any()
+        # The perp column is the perp's own either way.
+        pd.testing.assert_series_equal(prices["AVAX"], perp, check_names=False)
+        assert list(volume["AVAX-SPOT"].dropna()) == [10.0, 1.0, 5.0]
+
+    def test_own_still_drops_a_token_that_is_another_asset(self):
+        idx = pd.date_range("2026-01-01", periods=6, freq="1h", tz="UTC")
+        perp = pd.Series(np.linspace(100.0, 101.0, 6), index=idx)
+        impostor = pd.Series(np.linspace(0.40, 0.41, 6), index=idx)  # 0.4x of its perp
+        histories = {"MON": _hist("MON", idx, False, prices=perp),
+                     "MON-SPOT": _hist("MON-SPOT", idx, False, prices=impostor,
+                                       has_funding=False)}
+        prices, _f, tradeable, _v = snap._build_frames_from_histories(
+            histories, idx, pd.Timedelta(hours=1), spot_prices="own")
+        assert prices["MON-SPOT"].isna().all()
+        assert not tradeable["MON-SPOT"].any()
+
+    def test_the_default_leaves_the_manifest_and_so_every_old_snapshot_id_alone(self):
+        args = ("hyperliquid", ["A"], pd.Timestamp("2026-01-01", tz="UTC"),
+                pd.Timestamp("2026-01-02", tz="UTC"), "1h", False, [], None)
+        assert "spot_prices" not in snap._canonical_manifest(*args)
+        assert snap._canonical_manifest(*args, "own")["spot_prices"] == "own"
+
+    def test_a_built_snapshot_remembers_how_it_priced_its_spot(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        def build(**kwargs):
+            return snap.build_snapshot(
+                "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+                include_spot=True, snapshots_dir=tmp_path, session=session, **kwargs)
+
+        default, own = build(), build(spot_prices="own")
+        assert default.meta["spot_prices"] == "perp" and own.meta["spot_prices"] == "own"
+        assert default.snapshot_id != own.snapshot_id
+        assert snap.load_snapshot(own.snapshot_id, session=session).meta["spot_prices"] == "own"
+        assert snap.load_snapshot(default.snapshot_id, session=session).meta[
+            "spot_prices"] == "perp"
+        # An old manifest has no key at all and reads as the default.
+        manifest = tmp_path / default.snapshot_id / "manifest.json"
+        assert "spot_prices" not in manifest.read_text(encoding="utf-8")
+
+    def test_an_unknown_choice_is_refused(self, session, patched_source_with_spot, tmp_path):
+        with pytest.raises(ValueError, match="spot_prices must be one of"):
+            snap.build_snapshot("hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+                                include_spot=True, spot_prices="mid",
+                                snapshots_dir=tmp_path, session=session)

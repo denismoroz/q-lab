@@ -45,7 +45,9 @@ exactly those, with the state the live states keep in `state_data`:
 ## How weights are read
 
 As for Bv2 (`qlab.strategies.live.bv2`): a position holds units; its spot
-column is +units x price and its perp column -units x price, divided by the
+column is +units x the spot's price and its perp column -units x the perp's
+price (the same price by default; under `data.spot_prices: own` the spot's own
+last close, `qlab.strategies.live._marks`), divided by the
 strategy's committed budget (`budget_cap_usdc`, the capital the live engine
 sizes from; it does not compound). Weights are read only on bars where a
 position opens or closes and held in between, so the harness books the
@@ -63,6 +65,7 @@ import pandas as pd
 from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.panel import MarketPanel
 from qlab.strategies.live._loader import import_frab
+from qlab.strategies.live._marks import spot_marks
 
 _signals = import_frab("frab.engine.two_phase_signals")
 _constants = import_frab("frab.constants")
@@ -165,9 +168,12 @@ class LiveFrab:
         if missing:
             raise ValueError(f"FRAB's universe needs perp and spot columns; missing: {missing}")
         px = {c: panel.prices[c].to_numpy(dtype=float) for c in coins}
+        # What the spot leg is worth per unit: the perp's price by default, the
+        # spot's own last close under `data.spot_prices: own` (`_marks`).
+        sp = {c: spot_marks(panel, c, f"{c}{SPOT_COLUMN_SUFFIX}") for c in coins}
         rates = {c: panel.funding[c].to_numpy(dtype=float) for c in coins}
         ok = {c: (panel.tradeable[c] & panel.tradeable[f"{c}{SPOT_COLUMN_SUFFIX}"]).to_numpy(bool)
-                 & ~np.isnan(px[c]) for c in coins}
+                 & ~np.isnan(px[c]) & ~np.isnan(sp[c]) for c in coins}
 
         exposure = np.zeros((n, len(columns)))
         col = {c: (columns.get_loc(c), columns.get_loc(f"{c}{SPOT_COLUMN_SUFFIX}")) for c in coins}
@@ -233,7 +239,7 @@ class LiveFrab:
                 for c, s in wanted[:slots]:
                     size = size_for(p, leverage[c])
                     open_[c] = _Position(
-                        coin=c, opened=i, units=size / px[c][i], size_usdc=size,
+                        coin=c, opened=i, units=size / sp[c][i], size_usdc=size,
                         min_hold=_signals.compute_position_min_hold(
                             entry_signal_annual=s, safety_mult=p.safety_mult,
                             base_min_hold_hours=p.base_min_hold_hours,
@@ -243,7 +249,8 @@ class LiveFrab:
             for c, pos in open_.items():
                 j_perp, j_spot = col[c]
                 price = px[c][i] if not np.isnan(px[c][i]) else px[c][pos.opened]
-                exposure[i, j_spot] = pos.units * price
+                spot_price = sp[c][i] if not np.isnan(sp[c][i]) else sp[c][pos.opened]
+                exposure[i, j_spot] = pos.units * spot_price
                 exposure[i, j_perp] = -pos.units * price
 
         read = pd.DataFrame(exposure / p.budget_cap_usdc, index=index, columns=columns)

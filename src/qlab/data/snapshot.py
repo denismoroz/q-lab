@@ -104,6 +104,18 @@ reaches a run whose request did not change. Bump it with every such change.
   it is when the position can be held through it (docs/TASKS.md T36,
   `qlab.harness.gaps`)."""
 
+SPOT_PRICES = ("perp", "own")
+"""What a spot column's price is (`StrategySpec.data.spot_prices`):
+
+- ``perp`` (the default, the owner's decision of 2026-10-02): the spot leg is
+  marked at its own perp's price, so the spot-perp gap (basis) never enters a
+  return. The spot's own data still decides WHEN the column exists.
+- ``own``: the spot market's own closes (Hyperliquid spot candles, Binance
+  spot klines), NaN on a bar where the spot printed nothing or the print was
+  flagged as corrupt. Never filled with the perp's price. A held position is
+  carried across such a bar by `qlab.harness.gaps` and re-marked at the next
+  print, so a thin token's sparse prints are the basis a holder would see."""
+
 SPOT_PERP_PARITY_TOLERANCE = 0.03
 """frab, src/frab/coin_discovery.py: «Maximum allowed deviation between the
 spot mid and the perp mid for a token to be considered 1:1 with the perp ...
@@ -221,8 +233,9 @@ def _canonical_manifest(
     universe_complete: bool,
     no_funding_instruments: list[str],
     min_daily_volume_usd: float | None,
+    spot_prices: str = "perp",
 ) -> dict:
-    return {
+    manifest = {
         "source": source,
         "instruments": instruments,
         "start": start.isoformat(),
@@ -246,6 +259,11 @@ def _canonical_manifest(
         "min_daily_volume_usd": min_daily_volume_usd,
         "panel_rules": PANEL_RULES_VERSION,
     }
+    # Written only when it is not the default, so every snapshot built under
+    # the default keeps the id it always had.
+    if spot_prices != "perp":
+        manifest["spot_prices"] = spot_prices
+    return manifest
 
 
 def _manifest_bytes(manifest: dict) -> bytes:
@@ -267,9 +285,14 @@ def _build_frames_from_histories(
     funding_native_interval: pd.Timedelta,
     *,
     min_daily_volume_usd: float | None = None,
+    spot_prices: str = "perp",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble and return ``(prices, funding, tradeable, volume)`` from raw
     per-instrument histories.
+
+    ``spot_prices`` says what a spot column's price is (`SPOT_PRICES`):
+    ``"perp"`` (the default) marks it at its perp's price, ``"own"`` keeps the
+    spot market's own closes, NaN where it printed none -- never the perp's.
 
     ``min_daily_volume_usd`` (docs/TASKS.md, T27, gap 2), when given, adds a
     POINT-IN-TIME liquidity exclusion on top of the existing listing/
@@ -357,7 +380,8 @@ def _build_frames_from_histories(
             volume_cols[coin] = volume_cols[coin].where(~bad_price)
             tradeable &= ~bad_price
 
-        # Spot legs are MARKED AT THEIR OWN PERP (owner's decision 2026-10-02),
+        # By default (`spot_prices="perp"`) spot legs are MARKED AT THEIR OWN PERP
+        # (owner's decision 2026-10-02),
         # the convention frab's live and paper engines use. A thin spot token's
         # own prints are no mark for a holder: zero-trade candles repeat a
         # days-old trade, and real trades land far from the market (AVAX spot
@@ -379,7 +403,10 @@ def _build_frames_from_histories(
                 price_cols[coin] = price_cols[coin].where(pd.Series(False, index=full_index))
                 volume_cols[coin] = volume_cols[coin].where(pd.Series(False, index=full_index))
                 tradeable &= False
-            price_cols[coin] = perp_price.where(price_cols[coin].notna())
+            if spot_prices == "perp":
+                price_cols[coin] = perp_price.where(price_cols[coin].notna())
+            # "own": the column keeps the spot's own closes (bad prints were
+            # NaN'd above), and a bar without one stays NaN.
             tradeable &= perp_price.notna()
 
         tradeable_cols[coin] = tradeable
@@ -591,6 +618,7 @@ def build_snapshot(
     *,
     include_spot: bool = False,
     min_daily_volume_usd: float | None = None,
+    spot_prices: str = "perp",
     snapshots_dir: Path | str = DEFAULT_SNAPSHOTS_DIR,
     session: Session | None = None,
     recorded_dir: Path = DEFAULT_RECORDED_DIR,
@@ -632,6 +660,12 @@ def build_snapshot(
     source cannot discover a full universe from its free API (Binance) —
     there is no honest way to fetch "everything" there, so the caller must
     pass an explicit list and accept ``universe_complete=False``.
+
+    ``spot_prices`` (`SPOT_PRICES`) is what a spot column's price is:
+    ``"perp"`` (default) marks it at its perp's price, ``"own"`` keeps the spot
+    market's own closes, NaN where it printed none (docs/FRAB_LIVE.md, «Цена
+    спота: своя или контракта»). It is part of the manifest only when it is
+    not the default, so no existing snapshot changes its id.
 
     ``include_spot=True`` additionally discovers and fetches the source's
     spot markets (``<COIN>-SPOT`` columns, see
@@ -678,6 +712,8 @@ def build_snapshot(
         )
     if min_daily_volume_usd is not None and min_daily_volume_usd <= 0:
         raise ValueError(f"min_daily_volume_usd must be > 0, got {min_daily_volume_usd}")
+    if spot_prices not in SPOT_PRICES:
+        raise ValueError(f"spot_prices must be one of {SPOT_PRICES}, got {spot_prices!r}")
 
     start_ts = _to_utc_timestamp(start)
     end_ts = _to_utc_timestamp(end)
@@ -839,6 +875,7 @@ def build_snapshot(
         full_index,
         source_spec["funding_native_interval"],
         min_daily_volume_usd=min_daily_volume_usd,
+        spot_prices=spot_prices,
     )
 
     no_funding_instruments = sorted(
@@ -854,6 +891,7 @@ def build_snapshot(
         universe_complete,
         no_funding_instruments,
         min_daily_volume_usd,
+        spot_prices,
     )
     if delisted_without_history:
         manifest["delisted_without_history"] = delisted_without_history
@@ -945,6 +983,7 @@ def build_snapshot(
         "universe_complete": universe_complete,
         "no_funding_instruments": no_funding_instruments,
         "min_daily_volume_usd": min_daily_volume_usd,
+        "spot_prices": spot_prices,
         "delisted_without_history": delisted_without_history,
         "history_truncated": history_truncated,
     }
@@ -1014,6 +1053,8 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             # -- None correctly reads as "no liquidity filter was ever
             # applied", not a data-loss error.
             "min_daily_volume_usd": manifest.get("min_daily_volume_usd"),
+            # Absent from every snapshot built under the default.
+            "spot_prices": manifest.get("spot_prices", "perp"),
             # Absent from every snapshot that had no such instruments.
             "delisted_without_history": manifest.get("delisted_without_history", []),
             "history_truncated": manifest.get("history_truncated", {}),
@@ -1034,4 +1075,10 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
         return _load(sess)
 
 
-__all__ = ["build_snapshot", "load_snapshot", "describe_universe", "DEFAULT_SNAPSHOTS_DIR"]
+__all__ = [
+    "DEFAULT_SNAPSHOTS_DIR",
+    "SPOT_PRICES",
+    "build_snapshot",
+    "describe_universe",
+    "load_snapshot",
+]

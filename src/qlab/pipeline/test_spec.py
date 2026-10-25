@@ -70,6 +70,24 @@ def test_min_daily_volume_usd_rejects_non_positive() -> None:
         StrategySpec.model_validate(_spec_dict(data=data))
 
 
+def test_spot_prices_default_to_the_perp() -> None:
+    assert StrategySpec.model_validate(_spec_dict()).data.spot_prices == "perp"
+
+
+def test_own_spot_prices_need_spot_columns_and_a_known_choice() -> None:
+    data = dict(_BASE["data"])  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="asks for none"):
+        StrategySpec.model_validate(_spec_dict(data={**data, "spot_prices": "own"}))
+    own = StrategySpec.model_validate(
+        _spec_dict(data={**data, "spot_prices": "own", "include_spot": True}))
+    assert own.data.spot_prices == "own"
+    listed = StrategySpec.model_validate(
+        _spec_dict(data={**data, "spot_prices": "own", "instruments": ["BTC", "BTC-SPOT"]}))
+    assert listed.data.spot_prices == "own"
+    with pytest.raises(ValidationError):
+        StrategySpec.model_validate(_spec_dict(data={**data, "spot_prices": "mid"}))
+
+
 def test_missing_costs_fails_validation() -> None:
     raw = _spec_dict()
     del raw["costs"]
