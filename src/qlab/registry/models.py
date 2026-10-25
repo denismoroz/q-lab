@@ -542,6 +542,30 @@ class Assessment(Base):
     checks: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
+class ResearchNote(Base):
+    """`research_note` -- one researcher memo about one strategy's idea
+    (qlab.agents.researcher, docs/RESEARCHER.md), kept in the registry so the
+    console shows it on the idea page and it can be analysed later. A memo
+    covering several ideas has one row per idea. `experiments` is a list of
+    {"idea_id", "trial_id", "route", "spec"} parsed from the memo's stand
+    section, which code wrote; `tokens` and `model` are null for memos
+    imported from files."""
+
+    __tablename__ = "research_note"
+    __table_args__ = (UniqueConstraint("idea_id", "memo_path", name="uq_research_note_idea_memo"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    memo_path: Mapped[str] = mapped_column(String, nullable=False)
+    memo: Mapped[str] = mapped_column(String, nullable=False)
+    experiments: Mapped[list] = mapped_column(JSON, nullable=False)
+    problems: Mapped[list] = mapped_column(JSON, nullable=False)
+    tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 class DetectorTrial(Base):
     """`detector_trial` -- one variant of a regime detector measured on one
     period (docs/REGIME_DETECT.md; owner, 2026-10-04: «да, делай оба»).

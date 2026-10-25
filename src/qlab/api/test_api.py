@@ -484,3 +484,35 @@ def test_idea_detail_leads_with_the_latest_routed_trial(client, session_factory)
     assert outcome["trial"]["route"] == "not-evaluable"
     assert outcome["trial"]["route_reason"] == "implementation does not express: X"
     assert outcome["unrouted_trials"] == 3
+
+
+def test_idea_detail_carries_the_latest_five_research_notes_newest_first(client, session_factory):
+    from qlab.registry.models import ResearchNote
+
+    session = session_factory()
+    for day in range(1, 8):
+        session.add(ResearchNote(
+            idea_id="alpha", name="alpha", at=datetime(2026, 10, day, tzinfo=UTC),
+            memo_path=f"docs/research/alpha-2026-10-0{day}.md", memo=f"memo {day}",
+            experiments=[{"idea_id": "alpha-x", "trial_id": day, "route": "reject", "spec": None}],
+            problems=["a problem"], tokens=day * 100, model="opus"))
+    session.add(ResearchNote(idea_id="omega", name="omega", at=datetime(2026, 10, 9, tzinfo=UTC),
+                             memo_path="docs/research/omega-2026-10-09.md", memo="other",
+                             experiments=[], problems=[]))
+    session.commit()
+    session.close()
+
+    notes = client.get("/api/ideas/alpha").json()["research_notes"]
+
+    assert [n["memo"] for n in notes] == [f"memo {d}" for d in (7, 6, 5, 4, 3)]
+    first = notes[0]
+    assert first["at"].startswith("2026-10-07")
+    assert first["memo_path"] == "docs/research/alpha-2026-10-07.md"
+    assert first["experiments"] == [
+        {"idea_id": "alpha-x", "trial_id": 7, "route": "reject", "spec": None}]
+    assert first["problems"] == ["a problem"] and first["tokens"] == 700
+    assert [n["memo"] for n in client.get("/api/ideas/omega").json()["research_notes"]] == ["other"]
+
+
+def test_idea_detail_without_research_notes_has_an_empty_list(client):
+    assert client.get("/api/ideas/alpha").json()["research_notes"] == []

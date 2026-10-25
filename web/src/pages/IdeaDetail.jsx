@@ -10,6 +10,7 @@ import {
   PROFILE,
   SHUTDOWN_CAUSE,
   SOURCE_TYPE,
+  RESEARCH_NOTES,
   TRIAL_ROUTE,
   routeHint,
   label,
@@ -87,6 +88,7 @@ export default function IdeaDetail() {
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
             />
             <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
+            <ResearchNotes notes={ideaQuery.data.research_notes} />
             <Header idea={ideaQuery.data} />
           </>
         )}
@@ -329,6 +331,85 @@ function Assessment({ assessment, latestTrialId }) {
         {a.model}. Числа в утверждениях сверены кодом с прогоном
         {a.rejected_claims ? `; не сошлись и отброшены: ${a.rejected_claims}` : ''}.
       </p>
+    </section>
+  )
+}
+
+// docs/RESEARCHER.md: the researcher agent's memos about this strategy and the
+// checks the stand ran on its proposals. The memo is shown as plain wrapped
+// text, folded away until asked for.
+function ExperimentRow({ e }) {
+  const L = RESEARCH_NOTES
+  const route = e.route === 'error' ? L.error : e.route === 'not-run' ? L.notRun : label(TRIAL_ROUTE, e.route)
+  return (
+    <li>
+      {e.idea_id && e.trial_id != null ? (
+        <Link className="font-mono text-sky-700 hover:underline" to={`/ideas/${e.idea_id}`}>
+          {e.idea_id}
+        </Link>
+      ) : (
+        <span className="font-mono text-slate-700">{e.idea_id ?? e.spec}</span>
+      )}
+      {' — '}
+      {route}
+      {e.trial_id != null && <span className="text-xs text-slate-400">, {L.run} #{e.trial_id}</span>}
+    </li>
+  )
+}
+
+function ResearchNote({ note }) {
+  const L = RESEARCH_NOTES
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border-t border-slate-200 pt-3 first:border-t-0 first:pt-0">
+      <div className="text-sm font-medium text-slate-900">{note.at.slice(0, 10)}</div>
+      <div className="mt-2 text-xs uppercase tracking-wide text-slate-500">{L.experiments}</div>
+      {note.experiments.length > 0 ? (
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
+          {note.experiments.map((e, i) => (
+            <ExperimentRow key={i} e={e} />
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-sm text-slate-500">{L.noExperiments}</p>
+      )}
+      {note.problems.length > 0 && (
+        <>
+          <div className="mt-3 text-xs uppercase tracking-wide text-slate-500">{L.problems}</div>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-800">
+            {note.problems.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <button
+        type="button"
+        className="mt-3 text-xs text-sky-700 hover:underline"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? L.hideMemo : L.showMemo}
+      </button>
+      {open && (
+        <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-slate-50 p-3 text-xs text-slate-800">
+          {note.memo}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function ResearchNotes({ notes }) {
+  if (!notes || notes.length === 0) return null
+  return (
+    <section className="space-y-3 rounded border border-slate-200 p-4">
+      <div>
+        <div className="text-xs uppercase tracking-wide text-slate-500">{RESEARCH_NOTES.title}</div>
+        <p className="mt-1 text-sm text-slate-600">{RESEARCH_NOTES.subtitle}</p>
+      </div>
+      {notes.map((n) => (
+        <ResearchNote key={n.memo_path} note={n} />
+      ))}
     </section>
   )
 }

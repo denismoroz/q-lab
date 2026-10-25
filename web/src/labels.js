@@ -123,6 +123,21 @@ export const CARD_FIELD = {
   graveyard_matches: 'совпадения с кладбищем',
 }
 
+// The researcher's memos on the idea page (docs/RESEARCHER.md).
+export const RESEARCH_NOTES = {
+  title: 'Что предлагает исследователь',
+  subtitle:
+    'Записка агента-исследователя о стратегии и проверки, которые код прогнал на стенде. Агент только предлагает: решения принимает владелец.',
+  experiments: 'проверки на стенде',
+  noExperiments: 'проверок в этой записке нет',
+  run: 'прогон',
+  problems: 'замечания к записке',
+  showMemo: 'показать записку целиком',
+  hideMemo: 'скрыть записку',
+  error: 'прогон упал',
+  notRun: 'не запущена',
+}
+
 export const label = (dictionary, value) =>
   value == null ? null : (dictionary[value] ?? value)
 

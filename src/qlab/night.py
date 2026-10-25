@@ -520,12 +520,41 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
             out.append(entry)
             save_state(day, state)
     save_state(day, state)
-    # The stand runs the experiments, each in its own transactions.
+    # The stand runs the experiments, each in its own transactions; then the
+    # finished memo goes into the registry, one note per idea of the strategy.
     for entry in out:
         if entry.get("memo") and entry.get("specs") and "stand" not in entry:
             entry["stand"] = run_experiments(Path(entry["memo"]), [Path(p) for p in entry["specs"]],
                                              name=entry["strategy"], noise_trials=noise_trials)
             save_state(day, state)
+        if entry.get("memo") and "noted" not in entry:
+            record_research_note(entry, plan)
+            save_state(day, state)
+
+
+def record_research_note(entry: dict, plan: dict) -> None:
+    """Store one strategy's finished memo as research notes (registry). A
+    failure is written into the entry for the report, not raised: the memo
+    file is already safe on disk and the night goes on."""
+    from qlab.agents.researcher import MODEL
+    from qlab.registry.db import session_scope
+    from qlab.registry.research_notes import spec_index, upsert_research_notes
+
+    strategy = (plan.get("strategies") or {}).get(entry["strategy"])
+    if strategy is None:
+        entry["noted"] = 0
+        return
+    try:
+        with session_scope() as session:
+            notes = upsert_research_notes(
+                session, name=entry["strategy"], idea_ids=strategy["ideas"],
+                memo_path=entry["memo"], problems=entry.get("problems") or [],
+                tokens=entry.get("tokens"), model=MODEL,
+                specs=spec_index(extra=entry.get("specs") or []))
+        entry["noted"] = len(notes)
+    except Exception as exc:  # noqa: BLE001 - the report says so, the night goes on
+        entry["noted"] = 0
+        entry["note_error"] = f"{type(exc).__name__}: {exc}"
 
 
 def search_stage(day: date, state: dict) -> None:

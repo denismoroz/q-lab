@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
         detail["counts"] = counts
         detail["latest_outcome"] = _latest_outcome(session, spec_ids)
         detail["assessment"] = _latest_assessment(session, idea_id)
+        detail["research_notes"] = _research_notes(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -201,6 +202,17 @@ def create_app() -> FastAPI:
                 "model": row.model, "view": row.view, "summary": row.summary,
                 "disputes": contested(row.view, row.accepted), "claims": row.accepted,
                 "rejected_claims": len(row.rejected), "checks": row.checks}
+
+    def _research_notes(session: Session, idea_id: str) -> list[dict[str, Any]]:
+        """The researcher's latest memos about this idea, newest first (the
+        idea's own notes, not its parent's)."""
+        from qlab.registry.models import ResearchNote
+
+        rows = (session.query(ResearchNote).filter(ResearchNote.idea_id == idea_id)
+                .order_by(ResearchNote.at.desc(), ResearchNote.id.desc()).limit(5).all())
+        return [{"at": r.at.isoformat(), "name": r.name, "memo_path": r.memo_path,
+                 "memo": r.memo, "experiments": r.experiments, "problems": r.problems,
+                 "tokens": r.tokens} for r in rows]
 
     @app.get("/api/ideas/{idea_id}/specs")
     def idea_specs(

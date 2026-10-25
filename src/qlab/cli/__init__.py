@@ -1030,6 +1030,39 @@ def research_cmd(
                                          noise_trials=noise_trials)))
 
 
+research_notes_app = typer.Typer(help="The researcher's memos in the registry.",
+                                 no_args_is_help=True)
+app.add_typer(research_notes_app, name="research-notes")
+
+
+@research_notes_app.command("import")
+def research_notes_import_cmd(
+    memo_dir: Path = typer.Option(Path("docs/research"), "--memo-dir",  # noqa: B008
+                                  help="Directory of <strategy>-<date>.md memos"),
+    config: Path = typer.Option(Path("night/research.yaml"), "--config",  # noqa: B008
+                                help="Maps each strategy name to its idea ids"),
+    spec_dir: Path = typer.Option(Path("specs/research"), "--spec-dir",  # noqa: B008
+                                  help="Where the researcher's experiment specs live"),
+) -> None:
+    """Import every memo file into the registry, one note per idea of the
+    memo's strategy. Strategies missing from the config are skipped with a
+    note. Idempotent: running it again changes nothing."""
+    import yaml
+
+    from qlab.registry.research_notes import import_memos
+
+    plan = yaml.safe_load(config.read_text(encoding="utf-8"))
+    strategies = {name: e["ideas"] for name, e in (plan.get("strategies") or {}).items()}
+    with session_scope() as session:
+        report = import_memos(session, strategies=strategies, memo_dir=memo_dir,
+                              spec_dir=spec_dir)
+    for line in report.imported:
+        typer.echo(f"imported {line}")
+    for line in report.skipped:
+        typer.echo(f"skipped {line}")
+    typer.echo(f"total: {len(report.imported)} memos imported, {len(report.skipped)} skipped")
+
+
 @app.command("implement")
 def implement_cmd(
     card: Path = typer.Argument(..., metavar="CARD"),  # noqa: B008

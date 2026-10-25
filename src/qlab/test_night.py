@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import qlab.night as night
 from qlab.night import ItemResult, last_closed_day, with_end
@@ -178,3 +179,84 @@ def test_no_research_config_no_research(tmp_path) -> None:
     night.research_stage(date(2026, 10, 25), state, noise_trials=1,
                          config=tmp_path / "missing.yaml")
     assert "research" not in state
+
+
+def test_research_stage_stores_each_memo_as_notes_for_the_strategys_ideas(
+        tmp_path, monkeypatch) -> None:
+    import qlab.agents.researcher as researcher
+    import qlab.budget as budget_module
+    import qlab.registry.db as db_module
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Base, Profile, ResearchNote, SourceType
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    Base.metadata.create_all(db_module.get_engine())
+    with session_scope() as session:
+        for idea_id in ("frab", "frab-2"):
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+    config = tmp_path / "research.yaml"
+    config.write_text("max_experiments: 1\nstrategies:\n  frab:\n    ideas: [frab, frab-2]\n"
+                      "    specs: [specs/frab-live.yaml]\n", encoding="utf-8")
+
+    class _Budget:
+        spent_tokens = 4321
+
+    class _Stage:
+        def candidate(self, _name):
+            return _Budget()
+
+    class _NightBudget:
+        @staticmethod
+        def open(_session, _reading):
+            return _NightBudget()
+
+        def stage(self, _stage, candidates):
+            return _Stage()
+
+    class _Reading:
+        class report:  # noqa: N801 - mimics the probe's result shape
+            reading = None
+
+    def fake_research(name, **_kw):
+        memo = tmp_path / "docs" / "research" / f"{name}-2026-10-25.md"
+        memo.parent.mkdir(parents=True)
+        memo.write_text("The memo.\n", encoding="utf-8")
+        return researcher.ResearchOutcome(
+            memo=Path("docs/research") / memo.name,
+            specs=[Path("specs/research/frab/frab-exp.yaml")], problems=["one problem"])
+
+    def fake_run_experiments(memo, spec_paths, *, name, noise_trials):
+        lines = ["", "## Эксперименты на стенде (записано кодом, не исследователем)", "",
+                 "- `frab-exp` (прогон 99): needs-forward — fine"]
+        with memo.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        return lines
+
+    monkeypatch.setattr(researcher, "research", fake_research)
+    monkeypatch.setattr(researcher, "run_experiments", fake_run_experiments)
+    monkeypatch.setattr(budget_module, "NightBudget", _NightBudget)
+    monkeypatch.setattr(budget_module, "probe", lambda _session: _Reading)
+
+    state = {"done": {}}
+    night.research_stage(date(2026, 10, 25), state, noise_trials=1, config=config)
+    night.research_stage(date(2026, 10, 25), state, noise_trials=1, config=config)
+
+    assert state["research"][0]["noted"] == 2
+    with session_scope() as session:
+        rows = session.query(ResearchNote).order_by(ResearchNote.idea_id).all()
+        assert [r.idea_id for r in rows] == ["frab", "frab-2"]
+        row = rows[0]
+        assert row.name == "frab" and row.memo_path == "docs/research/frab-2026-10-25.md"
+        assert "The memo." in row.memo and "прогон 99" in row.memo
+        assert row.experiments == [{"idea_id": "frab-exp", "trial_id": 99,
+                                    "route": "needs-forward",
+                                    "spec": "specs/research/frab/frab-exp.yaml"}]
+        assert (row.problems, row.tokens, row.model) == (["one problem"], 4321, "opus")
+    db_module._engine = None
+    db_module._SessionLocal = None

@@ -235,3 +235,36 @@ def test_retire_needs_a_reason_and_writes_the_transition(cli_db):
         assert row.to_status == IdeaStatus.RETIRED and row.reason == "a control, done its job"
     again = runner.invoke(app, ["retire", "control-a", "--reason", "again"])
     assert "already retired" in again.output
+
+
+def test_research_notes_import_is_idempotent_and_reports_skipped_strategies(cli_db, tmp_path):
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Profile, ResearchNote, SourceType
+
+    runner.invoke(app, ["init-db"])
+    with session_scope() as session:
+        for idea_id in ("frab", "bv2-a"):
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+    memos = tmp_path / "research"
+    memos.mkdir()
+    (memos / "frab-2026-10-25.md").write_text(
+        "memo\n\n## Эксперименты на стенде\n\n- `frab-x` (прогон 7): reject — bad\n",
+        encoding="utf-8")
+    (memos / "ghost-2026-10-01.md").write_text("memo", encoding="utf-8")
+    config = tmp_path / "research.yaml"
+    config.write_text("strategies:\n  frab:\n    ideas: [frab]\n  bv2:\n    ideas: [bv2-a]\n",
+                      encoding="utf-8")
+    args = ["research-notes", "import", "--memo-dir", str(memos), "--config", str(config),
+            "--spec-dir", str(tmp_path / "specs")]
+
+    for _ in range(2):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+    assert "imported frab-2026-10-25.md: 1 ideas" in result.output
+    assert "skipped ghost-2026-10-01.md" in result.output
+    assert "1 memos imported, 1 skipped" in result.output
+    with session_scope() as session:
+        row = session.query(ResearchNote).one()
+        assert row.idea_id == "frab" and row.experiments[0]["trial_id"] == 7
