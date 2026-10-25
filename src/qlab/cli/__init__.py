@@ -1120,6 +1120,7 @@ def generate_cmd(
         generate,
         result_line,
         run_generated,
+        second_stage_lines,
     )
 
     if dry_run:
@@ -1160,6 +1161,59 @@ def generate_cmd(
         return
     for result in run_generated(outcome.accepted, noise_trials=noise_trials):
         typer.echo(result_line(result))
+        for line in second_stage_lines(result):
+            typer.echo(f"    {line}")
+
+
+@app.command("stage2")
+def stage2_cmd(
+    spec_path: Path = typer.Argument(  # noqa: B008
+        ..., metavar="SPEC", help="A stage 1 spec, e.g. specs/generated/gen-....yaml"),
+    measure: bool = typer.Option(
+        False, "--measure",
+        help="Run the second stage although stage 1 did not survive: a measurement of the "
+             "mechanism on Hyperliquid, the idea's status is not touched"),
+    stage1_route: str | None = typer.Option(
+        None, "--stage1-route",
+        help="Stage 1's route (default: the idea's latest in the registry)"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+    capital: float = typer.Option(3000.0, "--capital"),
+) -> None:
+    """The second stage of a generated idea's evaluation (docs/TWO_STAGE.md, T45): the same
+    mechanism with the same parameter values built on Hyperliquid and judged there, forward
+    from the date the parameters were fixed. Code only: no agent, no tokens. Without --measure
+    it is what the night does after a stage 1 survivor, and it moves the idea's status by both
+    stages together."""
+    from dataclasses import asdict
+
+    from qlab.pipeline.stage2 import report_lines, run_stage2
+    from qlab.registry.stages import latest_routed
+
+    try:
+        spec = load_spec(spec_path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: invalid spec: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    trial_id = None
+    with session_scope() as session:
+        found = latest_routed(session, spec.idea_id)
+        if found is not None:
+            trial_id = found[0].id
+            stage1_route = stage1_route or found[0].route.value
+    if stage1_route is None:
+        typer.echo("error: the idea has no stage 1 run in the registry: pass --stage1-route",
+                   err=True)
+        raise typer.Exit(code=1)
+    result = run_stage2(spec, stage1_route=stage1_route, stage1_trial_id=trial_id,
+                        noise_trials=noise_trials, deployable_capital_usd=capital,
+                        measure=measure)
+    for line in report_lines({"route": stage1_route}, asdict(result)):
+        typer.echo(line)
+    if result.status in ("evaluated", "not-evaluable"):
+        typer.echo(f"stage 2 trial {result.trial_id}: {result.route} -- {result.reason}")
+    if result.error:
+        typer.echo(f"error: {result.error}", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command("director")

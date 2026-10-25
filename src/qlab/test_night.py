@@ -123,10 +123,13 @@ def test_bench_ideas_nobody_follows_are_named(tmp_path, monkeypatch) -> None:
     db_module._SessionLocal = None
     Base.metadata.create_all(db_module.get_engine())
     with session_scope() as session:
-        for idea_id in ("followed", "forgotten"):
+        for idea_id in ("followed", "forgotten", "forgotten-hl"):
             repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
-                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                             notes="Second stage of forgotten (docs/TWO_STAGE.md)"
+                             if idea_id == "forgotten-hl" else None)
             repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.BENCH)
+        session.get(repo.Idea, "forgotten-hl").parent_id = "forgotten"
 
     class _Spec:
         idea_id = "followed"
@@ -402,6 +405,73 @@ def test_generator_stage_runs_once_resumes_and_reports(tmp_path, monkeypatch) ->
     assert "принято стратегий: 1, не принято: 1" in report
     assert "не принято `specs/generated/gen-b.yaml`: code_ref is wrong" in report
     assert "`gen-a` (механизм m1, прогон 9): needs-forward" in report
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_generator_stage_retries_only_the_second_stage_and_reports_both(
+        tmp_path, monkeypatch) -> None:
+    """Stage 2 (the same mechanism on Hyperliquid) is code, in the same stage as stage 1.
+    When only it failed, a restart runs it again -- not the stage 1 trial and its 200
+    noise books a second time -- and the report puts the two stages side by side."""
+    import qlab.registry.db as db_module
+
+    generator, _, config, _ = _generator_env(tmp_path, monkeypatch)
+    calls = {"stand": 0, "second": 0}
+
+    def fake_generate(*, budget, session, catalogue_path, max_specs, data_end,
+                      registry_idea_ids):
+        item = generator.GeneratedSpec(
+            path=Path("specs/generated/gen-a.yaml"),
+            spec=night.load_spec(Path("specs/generated/gen-a.yaml")), mechanism="m1")
+        return generator.GenerateOutcome(accepted=[item], reply="ok")
+
+    def fake_stand(item, *, noise_trials, deployable_capital_usd):
+        calls["stand"] += 1
+        return generator.GeneratedResult(
+            idea_id="gen-a", mechanism="m1", spec_path=str(item.path), trial_id=9, route="paper",
+            metrics={"ann_return_net": 0.1, "sharpe_net": 0.8, "max_dd": -0.1,
+                     "noise_return_percentile": 0.9},
+            stage2={"status": "error", "error": "ConnectionError: hyperliquid is unreachable",
+                    "stage1_route": "paper"})
+
+    def fake_second(item, result, *, noise_trials, deployable_capital_usd):
+        calls["second"] += 1
+        result.stage2 = {
+            "status": "evaluated", "stage1_route": "paper", "route": "reject", "trial_id": 10,
+            "reason": "fails on the selection period: capital_fit", "venue": "hyperliquid",
+            "metrics": {"ann_return_net": -0.2, "sharpe_net": -0.5, "max_dd": -0.4,
+                        "noise_return_percentile": 0.1},
+            "judged_from": "2025-01-30", "needed_coins": 5, "data_end": "2026-10-24",
+            "combined_route": "reject", "parent_status": "rejected"}
+
+    monkeypatch.setattr(generator, "generate", fake_generate)
+    monkeypatch.setattr(generator, "run_generated_one", fake_stand)
+    monkeypatch.setattr(generator, "run_second_stage", fake_second)
+
+    wednesday = date(2026, 10, 21)
+    state = {"done": {}}
+    night.generate_stage(wednesday, state, noise_trials=3, config=config)
+    assert calls == {"stand": 1, "second": 0}
+    assert "generate:run:gen-a" not in state["done"]  # stage 2 failed: not finished
+
+    night.generate_stage(wednesday, state, noise_trials=3, config=config)  # a restart
+    assert calls == {"stand": 1, "second": 1}  # stage 1 was not run again
+    assert "generate:run:gen-a" in state["done"]
+    [result] = state["generate"]["results"]
+    assert result["stage2"]["trial_id"] == 10 and result["route"] == "paper"
+
+    night.generate_stage(wednesday, state, noise_trials=3, config=config)
+    assert calls == {"stand": 1, "second": 1}  # nothing left to do
+
+    night.save_state(wednesday, state)
+    monkeypatch.setattr(night, "WATCHLIST", tmp_path / "watch.yaml")
+    (tmp_path / "watch.yaml").write_text("specs: []\n")
+    report = night.write_report(wednesday, state).read_text(encoding="utf-8")
+    assert "`gen-a` (механизм m1, прогон 9): paper" in report
+    assert "второй этап, Hyperliquid (тот же механизм и те же числа" in report
+    assert "прогон 10: отвергнута" in report
+    assert "итог по двум этапам: отвергнута на втором этапе" in report
     db_module._engine = None
     db_module._SessionLocal = None
 

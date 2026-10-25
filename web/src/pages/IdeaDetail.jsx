@@ -84,6 +84,7 @@ export default function IdeaDetail() {
         {ideaQuery.data && (
           <>
             <Outcome outcome={ideaQuery.data.latest_outcome} />
+            <TwoStages stages={ideaQuery.data.two_stage} />
             <Assessment
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
@@ -260,6 +261,93 @@ function Outcome({ outcome }) {
           : ''}
       </p>
     </section>
+  )
+}
+
+// docs/TWO_STAGE.md (T45): an idea the generator wrote is judged twice -- on
+// Binance's long history, then as the same mechanism on Hyperliquid -- and needs
+// both. The two runs side by side; the sentence below them is a reading of the
+// stored routes, not a new verdict.
+const STAGE_VENUE = { binance: 'Binance', hyperliquid: 'Hyperliquid' }
+const STAGE_PASSED = ['paper', 'shelf', 'needs-infrastructure']
+
+function twoStageSentence(stages) {
+  const r1 = stages.stage1?.trial?.route
+  const r2 = stages.stage2?.trial?.route
+  if (!stages.stage2) {
+    return 'Второй этап ещё не проводился: его запускает ночной конвейер для тех, кто прошёл первый.'
+  }
+  if (r2 === 'reject') {
+    const end = stages.stage2.data_range?.end
+    return `Отвергнута на втором этапе${end ? `: на данных Hyperliquid по ${end}` : ''}. Воскресить можно только на данных, которых тогда не было.`
+  }
+  if (r1 && STAGE_PASSED.includes(r1) && ['paper', 'shelf'].includes(r2)) {
+    return 'Прошла оба этапа. Дальше решает владелец.'
+  }
+  return 'Оба этапа вместе пока не решают: идея ждёт. Пройти надо обоим.'
+}
+
+function StageColumn({ title, hint, stage, ideaId }) {
+  const trial = stage?.trial
+  const m = trial?.metrics ?? {}
+  const sharpe = typeof m.sharpe_net === 'number' ? m.sharpe_net.toFixed(2) : null
+  const rows = [
+    ['доходность в год после комиссий', pct(m.ann_return_net)],
+    ['Шарп после комиссий', sharpe],
+    ['худшая просадка', pct(m.max_dd)],
+    ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
+    ['проверка вперёд, дней', typeof m.forward_days === 'number' ? Math.round(m.forward_days) : null],
+  ].filter(([, v]) => v !== null)
+  return (
+    <div className="rounded border border-slate-200 p-3">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{title}</div>
+      <p className="text-xs text-slate-500">{hint}</p>
+      {!trial ? (
+        <p className="mt-2 text-sm text-slate-500">прогона ещё нет</p>
+      ) : (
+        <>
+          <div className="mt-1 text-base font-semibold text-slate-900">
+            {label(TRIAL_ROUTE, trial.route)}
+          </div>
+          {rows.length > 0 && <NumberList title={null} numbers={rows} />}
+          <p className="mt-2 break-words font-mono text-xs text-slate-500">{trial.route_reason}</p>
+          <p className="mt-2 text-xs text-slate-500">
+            данные: {STAGE_VENUE[stage.venue] ?? stage.venue}
+            {stage.data_range ? `, ${stage.data_range.start} — ${stage.data_range.end}` : ''} · прогон #
+            {trial.id} ·{' '}
+            <Link className="text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${ideaId}`}>
+              {ideaId}
+            </Link>
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+function TwoStages({ stages }) {
+  if (!stages) return null
+  return (
+    <Panel
+      title="Два этапа проверки"
+      subtitle="Идею проверяют дважды: на длинной истории Binance и тем же механизмом, с теми же числами, на Hyperliquid, где идёт бумажная и боевая торговля. Нужно пройти оба."
+    >
+      <div className="grid gap-3 md:grid-cols-2">
+        <StageColumn
+          title="Этап 1 — длинная история Binance"
+          hint="спека как записана; контракты Binance с 2019 года, в том числе снятые с торгов"
+          stage={stages.stage1}
+          ideaId={stages.parent_id}
+        />
+        <StageColumn
+          title="Этап 2 — Hyperliquid"
+          hint="те же блоки и числа, монеты и комиссии Hyperliquid; проверка вперёд на данных после даты фиксации параметров; код без агента"
+          stage={stages.stage2}
+          ideaId={stages.child_id}
+        />
+      </div>
+      <p className="mt-3 text-sm font-medium text-slate-800">{twoStageSentence(stages)}</p>
+    </Panel>
   )
 }
 

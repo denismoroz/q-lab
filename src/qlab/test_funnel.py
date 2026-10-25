@@ -80,6 +80,22 @@ def test_each_agent_leaves_its_own_mark_on_the_ideas_it_creates() -> None:
     assert funnel.idea_source("frab", None) is None
 
 
+def test_the_second_stage_of_a_generated_idea_is_not_a_new_idea(session) -> None:
+    """`gen-x-hl` holds the second look at `gen-x` (docs/TWO_STAGE.md): counting it would
+    make every survivor two ideas and two survivors."""
+    assert funnel.idea_source(
+        "gen-x-hl", "Second stage of gen-x (docs/TWO_STAGE.md): the same mechanism") is None
+    _idea(session, "gen-x", notes="Generated from docs/MECHANISMS.md (m1)",
+          status=IdeaStatus.VALIDATED, routes=[TrialRoute.PAPER])
+    _idea(session, "gen-x-hl", notes="Second stage of gen-x (docs/TWO_STAGE.md): same",
+          status=IdeaStatus.VALIDATED, routes=[TrialRoute.PAPER])
+    period = funnel.period_funnel(session, NOW - timedelta(days=7), NOW, label="w",
+                                  night_dir=NO_NIGHTS)
+    row = {r.source: r for r in period.by_source}["generator"]
+    assert (row.created, row.evaluated, row.survivors) == (1, 1, 1)
+    assert row.survivor_ids == ["gen-x"]
+
+
 def test_counts_by_source_evaluation_routes_and_survivors(session) -> None:
     _idea(session, "gen-a", notes="Generated from docs/MECHANISMS.md (m1)",
           routes=[TrialRoute.REJECT])
