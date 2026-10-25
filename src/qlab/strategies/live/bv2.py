@@ -341,7 +341,6 @@ class _Driver:
         self.deposit_bar = (None if deposit_every is None
                             else period_starts(self.index, deposit_every))
         self.pool = _book.MarginPool() if getattr(p, "shared_margin", False) else None
-        self.pool_highs: dict[str, float] = {}
 
         externals = (_external_hedge(hedge_by, self.index, self.coins, int(p.sticky_exit_hours))
                      if hedge_by else None)
@@ -516,6 +515,8 @@ class _Driver:
     def _count(self, events: list[dict], i: int, coin: str | None = None) -> None:
         for e in events:
             self.counts[e["kind"]] += 1
+            if e.get("limited_by_margin"):
+                self.counts["hedge_limited"] += 1  # opened smaller than the spot: margin ran short
             if e["kind"] == "liquidation":
                 self.liquidations += 1
                 self.log.append({"time": self.index[i], "kind": "liquidation",

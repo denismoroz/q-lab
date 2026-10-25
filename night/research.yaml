@@ -28,7 +28,8 @@ focus: "я предлагаю статус ждет проверку впере�
 
 strategies:
   bv2:
-    ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune]
+    ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune,
+            bv2-m-cold4, bv2-m-top10, bv2-m-top10-h05-pool-d6, bv2-m-top10-deposits]
     # The owner's own ideas for this strategy, verbatim (qlab.night.owner_ideas_focus).
     # Context the researcher should read for this one: the hedge rule today decides on
     # 14- and 30-day returns once an hour and lifts the hedge after 12 hours in a row of
@@ -48,6 +49,16 @@ strategies:
       - specs/bv2-live.yaml
       - specs/bv2-binance.yaml
       - specs/research/bv2/bv2-research-headroom-retune.yaml
+      # 2026-10-25: the stand can now express the owner's ideas above (a coin list re-chosen
+      # from data before each rebalance, one margin pool for all coins, top-ups that arrive
+      # late, new money paid in); these four are the measurements that exist, the rest of the
+      # grid is in specs/bv2-owner-ideas/ and the tables in docs/BV2_BASKETS.md and
+      # docs/BV2_MARGIN.md. They are sensitivity measurements, not verdicts: the real
+      # experiments, with fit and forward kept apart, are the researcher's to declare.
+      - specs/bv2-owner-ideas/bv2-m-cold4.yaml
+      - specs/bv2-owner-ideas/bv2-m-top10.yaml
+      - specs/bv2-owner-ideas/bv2-m-top10-h05-pool-d6.yaml
+      - specs/bv2-owner-ideas/bv2-m-top10-deposits.yaml
     docs:
       - cards/strategy-b-v2.yaml
       - docs/HEDGE_TIMING.md
