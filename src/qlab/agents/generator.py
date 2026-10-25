@@ -104,13 +104,26 @@ _LABEL_LINE = re.compile(r"^\*\*([^*]+?)\s*:?\*\*\s*:?\s*(.*)$")
 _NUMBER = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?")
 
 
+_PARENS = re.compile(r"\([^()]*\)")
+_LEADING_VALUES = re.compile(r"\s*-?\d+(?:\.\d+)?%?(?:\s*,\s*-?\d+(?:\.\d+)?%?)*")
+
+
 def cell_numbers(text: str) -> tuple[float, ...]:
-    """Every number written in a table cell; `5%` also yields 0.05."""
+    """The values a table cell gives: the comma-separated numbers it opens
+    with; `5%` also yields 0.05. Notes in parentheses and anything after the
+    first word are commentary, not values -- "28 (4 недели)" is 28, not 4, and
+    "365 (12 месяцев); другие сроки таблицы 2" is 365 only."""
+    plain = text
+    while (stripped := _PARENS.sub("", plain)) != plain:
+        plain = stripped
+    lead = _LEADING_VALUES.match(plain)
+    if lead is None:
+        return ()
     out: list[float] = []
-    for match in _NUMBER.finditer(text):
+    for match in _NUMBER.finditer(lead.group()):
         value = float(match.group())
         out.append(value)
-        if text[match.end():match.end() + 1] == "%":
+        if lead.group()[match.end():match.end() + 1] == "%":
             out.append(value / 100)
     return tuple(dict.fromkeys(out))
 

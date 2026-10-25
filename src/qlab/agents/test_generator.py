@@ -192,7 +192,7 @@ def test_the_real_catalogue_parses_when_it_exists() -> None:
 
 def test_cell_numbers() -> None:
     assert gen.cell_numbers("7, 14, 28") == (7.0, 14.0, 28.0)
-    assert gen.cell_numbers("12-1 и 0.5") == (12.0, 1.0, 0.5)
+    assert gen.cell_numbers("12-1 и 0.5") == (12.0,)  # values lead the cell; the rest is a note
     assert gen.cell_numbers("нет чисел") == ()
 
 
@@ -446,3 +446,20 @@ def test_latest_binance_end_reads_the_registry(session) -> None:
                                  fetched_at=datetime.now(UTC), path="x", rows=1))
     session.flush()
     assert gen.latest_binance_end(session) == date(2026, 10, 24)
+
+
+def test_cell_values_ignore_notes_in_parentheses_and_trailing_text():
+    # The real catalogue's cells: a note in parentheses or after the values is
+    # commentary; reading its numbers would let a spec use 4 or 26 days.
+    from qlab.agents.generator import cell_numbers
+
+    assert cell_numbers("7 (1 неделя), 14 (2 недели), 21 (3 недели), 28 (4 недели) — значимо; "
+                        "56 (8 недель), 700 (100 недель)") == (7.0, 14.0, 21.0, 28.0)
+    assert cell_numbers("182 (26 недель: монета должна существовать не менее T = 26 weeks)") \
+        == (182.0,)
+    assert cell_numbers("365 (12 месяцев; месяц = 30.4 дня не применяем — указан год); другие "
+                        "сроки таблицы 2 (один, три, шесть)") == (365.0,)
+    assert cell_numbers("7 (доходность на следующей неделе, таблица 14, панель B, столбец 1; "
+                        "таблица 15), 1 (доходность на следующий день)") == (7.0, 1.0)
+    assert cell_numbers("— (источники окна не задают)") == ()
+    assert cell_numbers("5%") == (5.0, 0.05)
