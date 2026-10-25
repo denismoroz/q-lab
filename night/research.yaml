@@ -77,11 +77,17 @@ strategies:
       - docs/FIT_VS_FORWARD.md
   frab:
     ideas: [frab]
+    # 2026-10-25: the owner asked for DEXes where FRAB could run. The researcher has no web
+    # access, so the survey was made interactively (docs/FRAB_VENUES.md: access under the
+    # owner's venue rule, spot-perp overlap, funding, fees, data and execution APIs).
+    owner_ideas:
+      - "resercher нужно дать задание поискать Dex где можно запускать frab"
     specs:
       - specs/frab-live.yaml
     docs:
       - docs/FRAB_LIVE.md
       - docs/FIT_VS_FORWARD.md
+      - docs/FRAB_VENUES.md
   # Owner, 2026-10-25: «четвёртая — XSMOM». Cross-sectional momentum: the strategy that
   # caused q-lab to exist (docs/XSMOM_T21.md). Its three specs are the honest discovered
   # universe, the same with the live book's 20 legs, and the frozen 32-coin list; all on
