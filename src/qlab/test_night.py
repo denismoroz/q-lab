@@ -652,3 +652,82 @@ def test_generator_stage_waits_when_no_place_is_free(tmp_path, monkeypatch) -> N
     night.generate_stage(date(2026, 10, 28), state, noise_trials=3, config=config)
     assert calls["agent"] == 0
     assert "gen-busy" in state["generate"]["skipped"]
+
+
+def test_the_report_carries_the_agents_funnel_and_the_paper_rule(tmp_path, monkeypatch) -> None:
+    """2026-10-25: the owner wants to see whether the agents' loop works (ideas
+    found, how far they got, tokens per survivor) and how long each paper
+    book has run against the 4-6 weeks rule."""
+    import pandas as pd
+
+    import qlab.registry.db as db_module
+    from qlab import funnel, paper_check, paper_rule
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import (
+        AssetClass,
+        Base,
+        IdeaStatus,
+        Profile,
+        SourceType,
+        TokenSpend,
+        TrialRoute,
+        TrialStatus,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    monkeypatch.setattr(funnel, "NIGHT_DIR", tmp_path / "no-nights")
+    Base.metadata.create_all(db_module.get_engine())
+    day = date(2026, 10, 20)
+    with session_scope() as session:
+        idea = repo.upsert_idea(
+            session, id="x-research-a", title="x", source_type=SourceType.INTERNAL,
+            asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+            status=IdeaStatus.VALIDATED, notes="Declared by the researcher (x).")
+        idea.created_at = datetime(2026, 10, 19, 5, tzinfo=UTC)
+        spec = repo.add_spec(session, idea_id="x-research-a", version=1, params={},
+                             data_requirements={}, rebalance="1d", costs_model={}, code_ref="a:b")
+        repo.add_data_snapshot(session, id="snap", source="hyperliquid", instruments={},
+                               range_start=date(2025, 1, 1), range_end=date(2026, 10, 18),
+                               path="x", rows=1)
+        repo.add_trial(session, spec_id=spec.id, config_hash="h", code_sha="x", params={},
+                       status=TrialStatus.OK, route=TrialRoute.PAPER, snapshot_id="snap")
+        session.add(TokenSpend(at=datetime(2026, 10, 20, 3, tzinfo=UTC), stage="implement",
+                               agent="researcher", tokens_in=400_000, tokens_out=100_000,
+                               usd_est=0.0))
+
+    books = tmp_path / "books.yaml"
+    books.write_text(
+        "books:\n  x-research-a:\n    book: trend\n    label: Тренд\n"
+        "    paper_file: trend_equity.csv\n    strategy_id: 5\n    sum_coins: false\n"
+        "    replay_block: trend\n", encoding="utf-8")
+    monkeypatch.setattr(paper_check, "BOOKS", books)
+    export = tmp_path / "paper" / "2026-10-20"
+    export.mkdir(parents=True)
+    start_ms = int(datetime(2026, 9, 14, tzinfo=UTC).timestamp() * 1000)
+    ts = [start_ms + h * 3_600_000 for h in range(24 * 36 + 1)]
+    pd.DataFrame({"strategy_id": 5, "ts_ms": ts, "equity": 3000.0}).to_csv(
+        export / "trend_equity.csv", index=False)
+    monkeypatch.setattr(paper_rule, "PAPER_DIR", tmp_path / "paper")
+
+    state = {"done": {}, "paper": ["**trend**", "    paper  2999.29 -> 2963.24 (-1.20%)",
+                                   "    replay 2999.29 -> 2962.79 (-1.22%)",
+                                   "    daily return correlation 0.9998 (n=41)"]}
+    report = night.write_report(day, state).read_text(encoding="utf-8")
+
+    assert "## Воронка агентов" in report
+    assert "Агенты придумали идей: 1 (генератор 0, исследователь 1, реализатор 0)" in report
+    assert "Дошли до владельца (прошли все правила и ждут его решения): 1 (`x-research-a`)" \
+        in report
+    assert "цена одного выжившего — 500,000 токенов" in report
+    assert "**Правило владельца: бумага не меньше 4–6 недель**" in report
+    assert ("Тренд: на бумаге 5 недель из минимум 4–6 (с 14.09.2026); повтор бумаги на стенде "
+            "сошёлся; по правилу владельца книга готова к решению "
+            "(бумага не судит о доходности — судит стенд)") in report
+    db_module._engine = None
+    db_module._SessionLocal = None

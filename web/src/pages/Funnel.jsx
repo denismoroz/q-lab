@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { fetchFunnel } from '../api.js'
+import AgentFunnel from '../components/AgentFunnel.jsx'
 import { Panel, QueryState } from '../components/ui.jsx'
 import { VerdictLegend } from '../components/Verdict.jsx'
 import {
@@ -116,6 +117,8 @@ function FunnelBody({ stats }) {
 
   return (
     <div className="space-y-6">
+      <AgentFunnel />
+
       <Panel
         title="Что решил q-lab"
         subtitle="Идеи по исходу их последнего прогона. Только собственные прогоны q-lab: импорт старого фреймворка и решения владельца сюда не входят."

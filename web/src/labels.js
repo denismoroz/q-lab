@@ -138,6 +138,41 @@ export const RESEARCH_NOTES = {
   notRun: 'не запущена',
 }
 
+// The agents' funnel (qlab.funnel): who put ideas into the registry, in the
+// owner's words. The scout writes draft cards, not ideas.
+export const AGENT_SOURCE = {
+  generator: 'генератор',
+  researcher: 'исследователь',
+  implementer: 'реализатор',
+  scout: 'разведчик',
+}
+
+export const AGENT_SOURCE_HINT = {
+  generator: 'берёт опубликованные механизмы из каталога и пишет по ним новые стратегии (раз в неделю)',
+  researcher: 'правит настройки живых стратегий и проверяет каждую правку на стенде',
+  implementer: 'превращает принятую владельцем карточку в стратегию, которую можно прогнать',
+  scout: 'читает события площадок и пишет черновик карточки; идеей в реестре черновик становится, только когда владелец его принял',
+}
+
+export const AGENT_NAME = {
+  ...AGENT_SOURCE,
+  assessor: 'второе мнение',
+  reviewer: 'проверяющий',
+}
+
+export const AGENT_STAGE = {
+  recheck: 'перепроверка',
+  implement: 'реализация и прогон',
+  search: 'поиск нового',
+}
+
+export const AGENT_PERIOD = {
+  'last-7-days': 'За последние 7 дней',
+  'since-agents-started': 'С начала работы агентов (с 03.10.2026)',
+}
+
+export const NO_SURVIVORS = 'выживших пока нет'
+
 export const label = (dictionary, value) =>
   value == null ? null : (dictionary[value] ?? value)
 

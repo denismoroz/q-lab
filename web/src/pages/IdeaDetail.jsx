@@ -89,6 +89,7 @@ export default function IdeaDetail() {
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
             />
             <PaperCheck check={ideaQuery.data.paper_check} />
+            <PaperRule rule={ideaQuery.data.paper_rule} />
             <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
             <ResearchNotes notes={ideaQuery.data.research_notes} />
             <Header idea={ideaQuery.data} />
@@ -302,6 +303,53 @@ function PaperCheck({ check }) {
       </p>
     </section>
   )
+}
+
+// 2026-10-25, owner: «как минимум 4-6 недель в paper». How long the idea's paper
+// book has run, and whether the stand's replay of it matched (qlab.paper_rule).
+// Nothing here changes a status: paper does not judge profitability, the stand does.
+function PaperRule({ rule }) {
+  if (!rule) return null
+  const replay = {
+    match: 'повтор бумаги на стенде сошёлся',
+    mismatch: 'повтор бумаги на стенде не сошёлся',
+    unknown: 'повтор бумаги на стенде не посчитан',
+  }[rule.replay]
+  const tone = rule.ready ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200'
+  return (
+    <section className={`rounded border p-4 ${tone}`}>
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        Правило владельца: бумага не меньше {rule.min_weeks}–{rule.max_weeks} недель
+      </div>
+      <p className="mt-1 text-sm font-medium text-slate-800">
+        На бумаге {rule.whole_weeks} {weeksWord(rule.whole_weeks)} из минимум {rule.min_weeks}–
+        {rule.max_weeks} (с {dayText(rule.first)})
+      </p>
+      <p className="mt-1 text-sm text-slate-700">{replay}</p>
+      {rule.ready ? (
+        <p className="mt-2 text-sm font-medium text-emerald-800">
+          По правилу владельца книга готова к решению (бумага не судит о доходности — судит стенд).
+        </p>
+      ) : rule.weeks >= rule.min_weeks ? (
+        <p className="mt-2 text-sm text-amber-800">
+          Срок вышел, но книга не готова к решению, пока повтор на стенде не сойдётся.
+        </p>
+      ) : (
+        <p className="mt-2 text-sm text-slate-600">До решения ещё рано.</p>
+      )}
+      <p className="mt-3 text-xs text-slate-500">
+        Бумажная торговля нужна не для оценки доходности, а чтобы проверить, что стратегия на
+        живых данных ведёт себя так, как её повторяет стенд. Книга «{rule.book}», последняя
+        строка выгрузки — {dayText(rule.last)}. Статус идеи это правило не меняет.
+      </p>
+    </section>
+  )
+}
+
+function weeksWord(n) {
+  if (n % 10 === 1 && n % 100 !== 11) return 'неделя'
+  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'недели'
+  return 'недель'
 }
 
 // From the idea's card (cards/<idea_id>.yaml): what the strategy does, in

@@ -285,7 +285,8 @@ def write_report(day: date, state: dict) -> Path:
         lines += [f"- {'ок' if b['ok'] else '**сбой**'} — {b['name']}: {b['note']}" for b in built]
         lines.append("")
     if kind_lines := state.get("paper"):
-        lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
+        lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, "",
+                  *_paper_rule_lines(kind_lines), ""]
     if studied := state.get("research"):
         lines += ["## Исследователь", ""]
         for e in studied:
@@ -372,10 +373,44 @@ def write_report(day: date, state: dict) -> Path:
                   + (f" ({sc.get('tokens', 0):,} токенов)" if sc.get("tokens") else "")]
         lines += [f"- проверка не пройдена: {p}" for p in sc.get("problems") or []]
         lines.append("")
+    lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     lines += ["## Токены", "", _token_lines(day), ""]
     path = REPORT_DIR / f"{day.isoformat()}.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def _paper_rule_lines(replay_lines: list[str]) -> list[str]:
+    """How long each paper book has run against the owner's 4-6 weeks rule
+    (qlab.paper_rule). A failure is a report line, not a failed night."""
+    from qlab.paper_rule import RULE_TITLE, report_lines
+    from qlab.registry.db import session_scope
+
+    try:
+        with session_scope() as session:
+            return report_lines(session, replay_lines=replay_lines)
+    except Exception as exc:  # noqa: BLE001
+        return [f"**{RULE_TITLE}** не посчитано: {type(exc).__name__}: {exc}"]
+
+
+def _funnel_lines(day: date) -> list[str]:
+    """The agents' funnel and the price of one survivor, counted up to the end
+    of the report's day (qlab.funnel)."""
+    from qlab.funnel import agent_funnel, report_lines
+    from qlab.registry.db import session_scope
+
+    until = min(datetime.now(UTC),
+                datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=UTC))
+    try:
+        with session_scope() as session:
+            funnel = agent_funnel(session, until)
+    except Exception as exc:  # noqa: BLE001
+        return [f"Воронка не посчитана: {type(exc).__name__}: {exc}"]
+    lines = ["Что агенты нашли сами и сколько это стоило. «Выживший» — идея, прошедшая все "
+             "правила стенда и ждущая решения владельца.", ""]
+    for period in funnel.periods:
+        lines += [*report_lines(period), ""]
+    return lines[:-1]
 
 
 def _token_lines(day: date) -> str:

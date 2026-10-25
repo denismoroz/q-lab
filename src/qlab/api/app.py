@@ -112,6 +112,14 @@ def create_app() -> FastAPI:
             "calibration_ideas": stats.calibration_ideas,
         }
 
+    @app.get("/api/agent-funnel")
+    def agent_funnel_route(session: SessionDep) -> dict[str, Any]:
+        """Does the agents' loop work: ideas they created, how far each got,
+        and the tokens per survivor (qlab.funnel; counted from the registry)."""
+        from qlab.funnel import agent_funnel
+
+        return agent_funnel(session).to_dict()
+
     # ------------------------------------------------------------------
     # 2. Registry and graveyard
     # ------------------------------------------------------------------
@@ -180,6 +188,7 @@ def create_app() -> FastAPI:
         detail["assessment"] = _latest_assessment(session, idea_id)
         detail["research_notes"] = _research_notes(session, idea_id)
         detail["paper_check"] = _paper_check(session, idea_id)
+        detail["paper_rule"] = _paper_rule(session, idea_id)
         detail["strategy"] = strategy_view(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
@@ -225,6 +234,14 @@ def create_app() -> FastAPI:
             if row.stand_window_end else None,
             "note": row.note,
         }
+
+    def _paper_rule(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """The owner's paper rule for the idea's paper book (qlab.paper_rule:
+        at least 4-6 weeks); null for ideas with no paper book."""
+        from qlab.paper_rule import paper_rule_for_idea
+
+        rule = paper_rule_for_idea(session, idea_id)
+        return None if rule is None else rule.to_dict()
 
     def _research_notes(session: Session, idea_id: str) -> list[dict[str, Any]]:
         """The researcher's latest memos about this idea, newest first (the

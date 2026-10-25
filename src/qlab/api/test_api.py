@@ -556,3 +556,87 @@ def test_idea_detail_carries_the_latest_paper_check_or_null(client, session_fact
     assert check["stand_return"] == -0.024 and check["replay_return"] is None
     assert check["window_start"] == "2026-10-03" and check["stand_window_end"] == "2026-10-24"
     assert client.get("/api/ideas/omega").json()["paper_check"] is None
+
+
+def test_agent_funnel_with_no_agent_ideas_has_no_price_of_a_survivor(client, monkeypatch, tmp_path):
+    from qlab import funnel
+
+    monkeypatch.setattr(funnel, "NIGHT_DIR", tmp_path / "no-nights")
+
+    body = client.get("/api/agent-funnel").json()
+
+    assert [p["label"] for p in body["periods"]] == ["last-7-days", "since-agents-started"]
+    for period in body["periods"]:
+        # `alpha` was not created by an agent: it is not in the agents' funnel.
+        assert period["created"] == 0 and period["survivors"] == 0
+        assert period["tokens_per_survivor"] is None
+        assert [row["source"] for row in period["by_source"]] == [
+            "generator", "researcher", "implementer", "scout"]
+
+
+def test_agent_funnel_counts_agent_ideas_survivors_and_the_price(
+        client, session_factory, monkeypatch, tmp_path):
+    from qlab import funnel
+    from qlab.registry.models import TokenSpend, TrialRoute
+
+    monkeypatch.setattr(funnel, "NIGHT_DIR", tmp_path / "no-nights")
+    session = session_factory()
+    idea = repo.upsert_idea(
+        session, id="bv2-research-x", title="x", source_type=SourceType.INTERNAL,
+        asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+        status=IdeaStatus.VALIDATED, notes="Declared by the researcher (bv2).")
+    spec = repo.add_spec(session, idea_id=idea.id, version=1, params={}, data_requirements={},
+                         rebalance="1d", costs_model={}, code_ref="a:b")
+    repo.add_trial(session, spec_id=spec.id, config_hash="r", code_sha="x", params={},
+                   status=TrialStatus.OK, route=TrialRoute.PAPER, snapshot_id="snap-1")
+    now = datetime.now(UTC)
+    session.add(TokenSpend(at=now, stage="implement", agent="researcher", tokens_in=300,
+                           tokens_out=200, usd_est=0.0))
+    session.commit()
+    session.close()
+
+    body = client.get("/api/agent-funnel").json()
+
+    # Created just now: inside both periods.
+    for period in body["periods"]:
+        researcher = next(r for r in period["by_source"] if r["source"] == "researcher")
+        assert (researcher["created"], researcher["evaluated"]) == (1, 1)
+        assert researcher["routes"] == {"paper": 1}
+        assert period["survivor_ids"] == ["bv2-research-x"]
+        assert period["tokens_total"] == 500 and period["tokens_per_survivor"] == 500
+        assert period["tokens_by_stage"] == {"implement": 500}
+
+
+def test_idea_detail_carries_the_paper_rule_or_null(client, monkeypatch, tmp_path):
+    import json
+
+    import pandas as pd
+
+    from qlab import paper_check, paper_rule
+
+    books = tmp_path / "books.yaml"
+    books.write_text(
+        "books:\n  alpha:\n    book: trend\n    label: Тренд\n    paper_file: trend_equity.csv\n"
+        "    strategy_id: 5\n    sum_coins: false\n    replay_block: trend\n", encoding="utf-8")
+    export = tmp_path / "paper" / "2026-10-25"
+    export.mkdir(parents=True)
+    first = int(datetime(2026, 9, 14, tzinfo=UTC).timestamp() * 1000)
+    ts = [first + h * 3_600_000 for h in range(24 * 30 + 1)]
+    pd.DataFrame({"strategy_id": 5, "ts_ms": ts, "equity": 3000.0}).to_csv(
+        export / "trend_equity.csv", index=False)
+    nights = tmp_path / "nights"
+    nights.mkdir()
+    lines = ["**trend**", "    paper  1.0 -> 1.0 (-1.20%)", "    replay 1.0 -> 1.0 (-1.22%)",
+             "    daily return correlation 0.9998 (n=41)"]
+    (nights / "2026-10-25.json").write_text(json.dumps({"paper": lines}), encoding="utf-8")
+    monkeypatch.setattr(paper_check, "BOOKS", books)
+    monkeypatch.setattr(paper_rule, "PAPER_DIR", tmp_path / "paper")
+    monkeypatch.setattr(paper_rule, "NIGHT_DIR", nights)
+
+    rule = client.get("/api/ideas/alpha").json()["paper_rule"]
+
+    assert rule["whole_weeks"] == 4 and rule["min_weeks"] == 4 and rule["max_weeks"] == 6
+    assert rule["replay"] == "match" and rule["ready"] is True
+    assert rule["text"].startswith("Тренд: на бумаге 4 недели из минимум 4–6")
+    assert "бумага не судит о доходности — судит стенд" in rule["text"]
+    assert client.get("/api/ideas/omega").json()["paper_rule"] is None
