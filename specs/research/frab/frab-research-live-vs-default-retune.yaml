@@ -1,0 +1,102 @@
+# Researcher's experiment (docs/research/frab-2026-10-25.md, hypothesis 1): let code, not people,
+# choose between the settings production runs and frab's own code defaults, using only the past.
+#
+# Copy of specs/frab-live.yaml wrapped in Retune. The live row differs from TwoPhaseParams'
+# defaults in three values (signal window 8 vs 12, four slots vs three, phase-1 patience 24 vs 72),
+# and when they were set is not recorded. The grid holds exactly those two sources' values;
+# nothing else changes. Scored on return after costs: Sharpe here is an accounting artifact
+# (both legs priced at the perp, docs/FRAB_LIVE.md).
+
+idea_id: frab-research-live-vs-default-retune
+title: "FRAB: окно сигнала, число мест и терпение первой фазы — как на проде или как в коде frab — выбирает код раз в месяц по прошлому (эксперимент исследователя 1)"
+code_ref: qlab.strategies.retune:Retune
+
+params_fixed_at: 2026-05-01
+params_fixed_evidence: >
+  The wrapper's first causal choice (qlab.strategies.retune, docs/RETUNE.md): the stand's
+  Hyperliquid data for the whole six-coin book starts 2026-03-08 (docs/FRAB_LIVE.md, run 72896:
+  216 fitting days before 2026-10-10); the inner strategy's warm-up is at most 12 hourly funding
+  ticks; the first whole monthly period is April 2026, so a candidate is eligible and the first
+  choice is made at the 2026-05-01 refit. Warm-up arithmetic, not a result. The grid was declared
+  by the researcher on 2026-10-25: the live params_json values against TwoPhaseParams' defaults;
+  the live configuration's stand result (trial 74303) was known then, so the grid itself stays
+  in-sample.
+
+selects_causally: true
+
+params:
+  inner_code_ref: qlab.strategies.live.frab:LiveFrab
+  base_params:
+    entry_threshold_apr: 0.1
+    phase2_exit_threshold: -0.1
+    base_min_hold_hours: 24
+    cap_min_hold_hours: 720
+    safety_mult: 5
+    budget_cap_usdc: 90
+    margin_buffer_factor: 3
+    phase1_breakeven_cap_hours: 720
+    neg_stop_threshold_apr: -0.15
+    neg_stop_patience_hours: 6
+    phase2_giveback_fee_mult: 1.0
+    universe: [AVAX, BTC, ETH, HYPE, PURR, SOL]
+    leverage: {AVAX: 3, BTC: 40, ETH: 25, HYPE: 10, PURR: 3, SOL: 20}
+  # THE ONLY CHANGE against specs/frab-live.yaml: the three values where the live row and the
+  # code defaults disagree become a 2 x 2 x 2 grid (8 candidates).
+  grid:
+    signal:
+      live:
+        signal_window_hours: 8
+      default:
+        signal_window_hours: 12
+    slots:
+      live:
+        concurrency_cap: 4
+      default:
+        concurrency_cap: 3
+    patience:
+      live:
+        phase1_negative_patience: 24
+      default:
+        phase1_negative_patience: 72
+  refit_every: M
+  window: expanding
+  objective: total_return_net
+  score_costs:
+    taker_fee_bps: 5.25
+    slippage_bps: 0.9
+
+data:
+  source: hyperliquid
+  interval: "1h"
+  include_spot: true
+  start: 2025-01-01
+  end: 2026-10-23
+
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+noise_universe: held
+
+sources:
+  "inner_code_ref": "src/qlab/strategies/live/frab.py"
+  "base_params": "specs/frab-live.yaml: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only) and seed/prod_params/2026-10-24-coin_registry_active.csv; phase2_giveback_fee_mult from funding-rate-arbitrage/src/frab/strategy/two_phase/params.py"
+  "grid.signal.live": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only), signal_window_hours"
+  "grid.signal.default": "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py line 26, TwoPhaseParams default signal_window_hours = 12"
+  "grid.slots.live": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only), concurrency_cap"
+  "grid.slots.default": "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py line 27, TwoPhaseParams default concurrency_cap = 3"
+  "grid.patience.live": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only), phase1_negative_patience"
+  "grid.patience.default": "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py line 32, TwoPhaseParams default phase1_negative_patience = 72"
+  "refit_every": "владелец 2026-10-02: «раз в неделю/день или месяц» (docs/RETUNE.md); monthly because the minimum hold reaches 720 hours (cap_min_hold_hours)"
+  "window": "docs/RETUNE.md (expanding window: no number introduced)"
+  "objective": "docs/RETUNE.md («доходность после комиссий»); Sharpe is not used: docs/FRAB_LIVE.md, «Шарп выходит в десятки — это свойство учёта»"
+  "score_costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; the spec's own costs (docs/RETUNE.md), spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py"
+  "score_costs.slippage_bps": "derived: 4.4 - 3.5; the spec's own costs (docs/RETUNE.md), funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params.min_order_usd: HL's own minimum order)"
