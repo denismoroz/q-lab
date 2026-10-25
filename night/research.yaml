@@ -49,6 +49,15 @@ strategies:
       - docs/FIT_VS_FORWARD.md
   trend:
     ideas: [trend-tsmom-crypto, trend-live, trend-retune-monthly, trend-binance-cap, trend-t39-meta]
+    # The owner's own ideas, verbatim. Context: the paper trend book at $3000 executed 281
+    # trades and skipped 701 adjustments under Hyperliquid's $10 minimum order
+    # (data/paper/2026-10-25-afternoon/qx_trend_books.csv, `skipped_min_order`); the stand's
+    # min_capital_usd for trend-retune-weekly is ~$8122. Hypotheses the owner agreed to
+    # (2026-10-25, «да. добавляй»): fewer coins with bigger shares, or trade an adjustment
+    # only when it clears the minimum order / rebalance less often -- each a variant that
+    # must be judged on data the fix did not see.
+    owner_ideas:
+      - "еще я не совсем понимаю почему нужна такая огромная книга на 10к. можно же покупать монеты по-чуть чуть..."
     specs:
       - specs/trend-live.yaml
       - specs/trend-retune-monthly.yaml
