@@ -113,7 +113,8 @@ def test_two_days_of_live_hours_say_so_plainly_and_are_not_a_match() -> None:
 
     figures = parse_replay_lines(lines)["book 8"]
 
-    assert f"daily return correlation not computed: n=2 complete UTC days, at least {MIN_REPLAY_DAYS} needed" in \
+    assert ("daily return correlation not computed: n=2 complete UTC days, "
+            f"at least {MIN_REPLAY_DAYS} needed") in \
         [ln.strip() for ln in lines]
     assert figures.paper is not None and figures.replay is not None  # the totals are shown
     assert figures.correlation is None
@@ -433,7 +434,8 @@ def test_the_night_replays_the_retuned_books_from_the_mapping(tmp_path, monkeypa
     books = tmp_path / "books.yaml"
     books.write_text(
         "books:\n"
-        "  bv2-research-headroom-retune:\n    book: b2_retune\n    paper_file: b2_equity.csv\n    strategy_capital_usd: 257\n"
+        "  bv2-research-headroom-retune:\n    book: b2_retune\n    paper_file: b2_equity.csv\n"
+        "    strategy_capital_usd: 257\n"
         "    strategy_id: 8\n    sum_coins: true\n    replay_file: replay_b2_retune.csv\n"
         "    replay_block: 'book 8'\n    realised_from: 2026-10-25T14:00:00+00:00\n"
         "  trend-retune-weekly:\n    book: trend_retune_3k\n"
@@ -473,7 +475,8 @@ def test_a_failing_export_costs_only_that_books_replay(tmp_path, monkeypatch) ->
 
     books = tmp_path / "books.yaml"
     books.write_text(
-        "books:\n  trend-retune-weekly:\n    book: trend_retune_3k\n    strategy_id: 6\n    strategy_capital_usd: 3000\n"
+        "books:\n  trend-retune-weekly:\n    book: trend_retune_3k\n    strategy_id: 6\n"
+        "    strategy_capital_usd: 3000\n"
         "    replay_block: trend_retune_3k\n")
     monkeypatch.setattr(paper_check, "BOOKS", books)
 
@@ -492,7 +495,8 @@ def test_a_mapping_without_the_retuned_books_adds_no_replay(tmp_path, monkeypatc
     from qlab import night, paper_check
 
     books = tmp_path / "books.yaml"
-    books.write_text("books:\n  other:\n    book: b2\n    strategy_id: 3\n    strategy_capital_usd: 257\n")
+    books.write_text("books:\n  other:\n    book: b2\n    strategy_id: 3\n"
+                     "    strategy_capital_usd: 257\n")
     monkeypatch.setattr(paper_check, "BOOKS", books)
     monkeypatch.setattr(night, "_ssh_query", lambda *a, **kw: pytest.fail("nothing to export"))
 
