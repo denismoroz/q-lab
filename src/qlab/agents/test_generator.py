@@ -399,9 +399,16 @@ def test_costs_must_be_the_reference_specs(repo) -> None:
 def test_a_mechanism_the_blocks_do_not_fully_express_must_say_so(repo) -> None:
     _, problems = _check(repo, _spec_text(mechanism="tsmom-seasonal"))
     assert any("do not express the whole mechanism" in p for p in problems)
-    declared = _spec_text(mechanism="tsmom-seasonal", unexpressed='["seasonal correction"]')
+    # Differences from the paper go to differs_from_source, which does not block
+    # the stand; unexpressed_mechanisms would make the run not evaluable.
+    declared = _spec_text(mechanism="tsmom-seasonal").replace(
+        "unexpressed_mechanisms: []", "unexpressed_mechanisms: []\ndiffers_from_source: ["
+        "\"seasonal correction\"]")
     _, problems = _check(repo, declared)
     assert not any("do not express" in p for p in problems)
+    misplaced = _spec_text(mechanism="tsmom-seasonal", unexpressed='["seasonal correction"]')
+    _, problems = _check(repo, misplaced)
+    assert any("unexpressed_mechanisms must stay empty" in p for p in problems)
 
 
 def test_duplicates_of_the_registry_and_of_existing_specs_are_rejected(repo) -> None:
@@ -457,10 +464,6 @@ cp "{payload}/good.yaml" specs/generated/gen-good.yaml
 cp "{payload}/ref.yaml" specs/generated/gen-badref.yaml
 cp "{payload}/extra.yaml" specs/generated/gen-extra.yaml
 echo tampered > specs/generated/gen-old.yaml
-mkdir -p specs/generated/nested
-cp "{payload}/good.yaml" specs/generated/nested/gen-nested.yaml
-echo stray > STRAY.txt
-echo stray > docs/MECHANISMS.new
 """)
     outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END,
                            max_specs=1, registry_idea_ids=["something-else"])
@@ -470,13 +473,9 @@ echo stray > docs/MECHANISMS.new
     rejected = {r.path: r.problems for r in outcome.rejected}
     assert any("code_ref" in p for p in rejected["specs/generated/gen-badref.yaml"])
     assert any("more than 1 specs" in p for ps in rejected.values() for p in ps)
-    # Everything outside specs/generated/ is gone; an edited existing spec is restored.
-    assert not (repo / "STRAY.txt").exists() and not (repo / "docs/MECHANISMS.new").exists()
-    assert not (repo / "specs/generated/nested/gen-nested.yaml").exists()
+    # An edited existing spec is restored.
     assert old.read_text(encoding="utf-8") == _spec_text(idea_id="gen-old", lookback=14)
-    assert "STRAY.txt" in outcome.reverted
     assert any("gen-old.yaml" in r for r in outcome.reverted)
-    assert any("wrote outside its places" in p for p in outcome.problems)
     # The agent runs on sonnet with read-only tools plus Write, through the guard.
     args = args_file.read_text()
     assert "--model sonnet" in args and "Read,Glob,Grep,Write" in args
@@ -610,3 +609,26 @@ def test_values_of_a_parameter_come_from_all_its_rows(repo) -> None:
     assert not any("rebalance_days" in p for p in problems)
     _, problems = _check(repo, _spec_text())  # 7, from the other row, still allowed
     assert not any("rebalance_days" in p for p in problems)
+
+
+
+def test_a_change_outside_its_place_stops_the_run_and_is_not_reverted(
+        repo, session, tmp_path, monkeypatch) -> None:
+    # 2026-10-25: reverting "outside" changes destroyed another agent's uncommitted
+    # docs/VENUES.md; whose change it is cannot be told, so nothing runs instead.
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "good.yaml").write_text(_spec_text(idea_id="gen-good"), encoding="utf-8")
+    _fake_claude(tmp_path, monkeypatch, f"""
+mkdir -p specs/generated
+cp "{payload}/good.yaml" specs/generated/gen-good.yaml
+echo stray > STRAY.txt
+mkdir -p specs/generated/nested
+cp "{payload}/good.yaml" specs/generated/nested/gen-nested.yaml
+""")
+    outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END)
+
+    assert outcome.accepted == []
+    assert (repo / "STRAY.txt").exists()  # someone else's work would survive
+    assert any("changed during the run" in p and "STRAY.txt" in p for p in outcome.problems)
+    assert all("outside its place" in r.problems[0] for r in outcome.rejected)

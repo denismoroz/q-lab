@@ -165,6 +165,17 @@ class StrategySpec(BaseModel):
     "соседний кандидат").
     """
 
+    differs_from_source: list[str] = Field(default_factory=list)
+    """How a strategy built "after" a published source differs from what the
+    source did (market-cap weights vs equal weights, composite prices vs one
+    venue, ...). Recorded and shown, never routed on: unlike
+    `unexpressed_mechanisms`, this idea IS the strategy its code runs -- a
+    composed strategy inspired by the paper (qlab.agents.generator) -- so the
+    differences describe how far its verdict is from the paper's claim, not a
+    gap that makes the run about some other strategy. Added 2026-10-25, when
+    the generator's first ideas listed their differences as unexpressed
+    mechanisms and the stand, by design, refused to evaluate them."""
+
     noise_universe: Literal["panel", "held"] = "panel"
     """Which instruments this strategy's random books may trade
     (`qlab.calibration.noise.NoiseStrategy`). "panel" (default): any in the

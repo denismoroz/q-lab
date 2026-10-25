@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from qlab.agents.implementer import _changed_paths, _revert
+from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.pipeline.sources import QLAB_ROOT
 
@@ -359,9 +359,12 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
         ref = load_spec(_abs(reference))
         if (spec.costs != ref.costs or spec.min_leg_notional != ref.min_leg_notional):
             problems.append(f"costs and min_leg_notional must be copied from {reference}")
-    if mechanism is not None and not mechanism.fully_expressed and not spec.unexpressed_mechanisms:
+    if mechanism is not None and not mechanism.fully_expressed and not spec.differs_from_source:
         problems.append("the catalogue says the blocks do not express the whole mechanism "
-                        f"({mechanism.unexpressed[:120]!r}) but unexpressed_mechanisms is empty")
+                        f"({mechanism.unexpressed[:120]!r}) but differs_from_source is empty")
+    if spec.unexpressed_mechanisms:
+        problems.append("unexpressed_mechanisms must stay empty: a generated idea is the composed "
+                        "strategy itself; differences from the paper go to differs_from_source")
 
     key = (spec.code_ref, json.dumps(spec.params, sort_keys=True, default=str))
     if (other := (other_params or {}).get(key)) is not None and other != spec.idea_id:
@@ -419,10 +422,11 @@ Shape of each spec (comments allowed; the first line is mandatory):
     end: {data_end}
   costs, min_leg_notional, simultaneous_legs   (copied from {reference})
   noise_universe: panel
-  unexpressed_mechanisms: [...]   REQUIRED, non-empty, whenever the mechanism's «Чего блоки не
+  unexpressed_mechanisms: []      always empty: your idea IS the composed strategy
+  differs_from_source: [...]      REQUIRED, non-empty, whenever the mechanism's «Чего блоки не
                                   выражают» lists anything (e.g. the paper weights by market
-                                  cap and you use equal weights): one short item per gap,
-                                  in plain words. A spec without it is rejected.
+                                  cap and you use equal weights): one short item per
+                                  difference, in plain words. A spec without it is rejected.
   params_fixed_at / params_fixed_evidence   (see below)
   sources: ...
 
@@ -569,22 +573,34 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
             f"the agent stopped before finishing (exit {result.exit_code}; its spending cap or "
             "turn limit): what it wrote may be incomplete")
 
-    # Guard 1: only new files directly under specs/generated/.
+    # Guard 1: only new files directly under specs/generated/. A change anywhere
+    # else is NOT reverted: it cannot be told apart from someone else's work done
+    # while the agent ran (2026-10-25: this guard reverted another agent's
+    # uncommitted docs/VENUES.md). Instead nothing of this run is run, and the
+    # report names the paths for a person to look at.
     candidates: list[Path] = []
+    outside: list[str] = []
     edited = {str(p.relative_to(QLAB_ROOT)) for p in originals}  # restored below, never run
     for path in sorted(set(_changed_paths()) - before - edited):
         rest = path[len(f"{spec_dir}/"):] if path.startswith(f"{spec_dir}/") else ""
         if rest and "/" not in rest and rest.endswith(".yaml"):
             candidates.append(Path(path))
         else:
-            _revert(path)
-            outcome.reverted.append(path)
+            outside.append(path)
     for path, content in originals.items():
         if not path.is_file() or path.read_bytes() != content:
             path.write_bytes(content)
             outcome.reverted.append(f"{path.relative_to(QLAB_ROOT)} (an existing spec; restored)")
     if outcome.reverted:
-        outcome.problems.append(f"wrote outside its places (reverted): {outcome.reverted}")
+        outcome.problems.append(f"edited existing specs (restored): {outcome.reverted}")
+    if outside:
+        outcome.problems.append(
+            f"files outside {spec_dir}/ changed during the run (not reverted -- maybe someone "
+            f"else's work; check them): {outside}; nothing of this run is evaluated")
+        for path in candidates:
+            outcome.rejected.append(
+                Rejected(str(path), ["the run changed files outside its place"]))
+        return outcome
 
     # Guards 2-4, per spec.
     seen = {(ref, params): idea for idea, (ref, params) in existing.items() if ref}
