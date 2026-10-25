@@ -88,5 +88,5 @@ def strategy_view(session: Session, idea_id: str) -> dict:
             "active_variants": active_variants(session, idea_id) if root == idea_id else []}
 
 
-__all__ = ["ACTIVE_STATUSES", "active_branches", "active_variants", "strategy_root", "strategy_view",
-           "would_make_cycle"]
+__all__ = ["ACTIVE_STATUSES", "active_branches", "active_variants", "strategy_root",
+           "strategy_view", "would_make_cycle"]
