@@ -186,6 +186,7 @@ def paper_reconciliation(day: date) -> list[str]:
                    folder / "trend_events.csv")
     except (subprocess.SubprocessError, OSError) as exc:
         return [f"export from the production host failed: {exc}"]
+    lines += _export_live_books(folder)
     runs = {
         "Bv2 (book 3 = b2, sized as created with carry on; book 4 = b2_cold)": [
             "scripts/replay_bv2_paper.py", "--paper", str(folder / "b2_equity.csv"),
@@ -207,6 +208,25 @@ def paper_reconciliation(day: date) -> list[str]:
     return lines + _paper_check_lines(day, folder)
 
 
+def _export_live_books(folder: Path) -> list[str]:
+    """The hourly equity of the live-money books (night/paper_books.yaml,
+    `live_books`), read-only, for the decay detector (qlab.decay). A failure is
+    a report line: it must not stop the paper books' reconciliation."""
+    from qlab.decay import live_exports
+
+    try:
+        queries = live_exports()
+    except (OSError, KeyError, ValueError) as exc:
+        return [f"live books not exported: {type(exc).__name__}: {exc}"]
+    lines: list[str] = []
+    for filename, sql in queries:
+        try:
+            _ssh_query(sql, folder / filename)
+        except (subprocess.SubprocessError, OSError) as exc:
+            lines.append(f"export of {filename} from the production host failed: {exc}")
+    return lines
+
+
 def _paper_check_lines(day: date, folder: Path) -> list[str]:
     """Each paper book against the stand's forward test over the SAME window
     (qlab.paper_check, night/paper_books.yaml); one row per idea in the
@@ -220,6 +240,26 @@ def _paper_check_lines(day: date, folder: Path) -> list[str]:
     except Exception as exc:  # noqa: BLE001 - the reconciliation above already succeeded
         return [f"**Бумага и стенд за один отрезок** не посчитаны: {type(exc).__name__}: {exc}"]
     return ["**Бумага и стенд за один отрезок**", *[f"    {ln}" for ln in checks]]
+
+
+def decay_stage(day: date, end: date, state: dict) -> None:
+    """Where every running book's realised results fall among the same-length
+    windows of its own stand history (qlab.decay). Reads the night's export and
+    the stand's cached panels, writes no trial. A failure is a report line, not a
+    failed night."""
+    from qlab.decay import run_decay, save_results
+    from qlab.registry.db import session_scope
+
+    try:
+        with session_scope() as session:
+            results, lines = run_decay(session, day, end)
+            saved = save_results(session, results, day)
+        if results and not saved:
+            lines.append("В реестр не записано: таблицы `decay_check` ещё нет "
+                         "(миграция не применена); результат лежит в состоянии ночи.")
+        state["decay"] = {"lines": lines, "results": [r.to_dict() for r in results]}
+    except Exception as exc:  # noqa: BLE001
+        state["decay"] = {"lines": [f"не посчитано: {type(exc).__name__}: {exc}"], "results": []}
 
 
 def _pct(v) -> str:
@@ -287,6 +327,10 @@ def write_report(day: date, state: dict) -> Path:
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, "",
                   *_paper_rule_lines(kind_lines), ""]
+    if decayed := state.get("decay"):
+        from qlab.decay import SECTION_TITLE
+
+        lines += [f"## {SECTION_TITLE}", "", *decayed["lines"], ""]
     if studied := state.get("research"):
         lines += ["## Исследователь", ""]
         for e in studied:
@@ -435,10 +479,11 @@ def _token_lines(day: date) -> str:
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
-        noise_trials: int = 200,
+        decay: bool | None = None, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
-    defaults to Sundays (weekly)."""
+    defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
+    follows `paper` unless given: it reads the paper books' export."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
@@ -471,6 +516,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         save_state(day, state)
     if paper and "paper" not in state:
         state["paper"] = paper_reconciliation(day)
+        save_state(day, state)
+    if (decay if decay is not None else paper) and "decay" not in state:
+        # After the watch list: the stand's panels are cached by then.
+        decay_stage(day, end, state)
         save_state(day, state)
     if assess:
         assess_stage(day, state)
@@ -1000,6 +1049,6 @@ def _ensure_idea(spec: StrategySpec, card: str) -> None:
                              notes=f"Implemented by the implementer agent from {card}.")
 
 
-__all__ = ["ItemResult", "evaluate_item", "generate_due", "generate_stage", "graveyard_specs",
-           "last_closed_day",
+__all__ = ["ItemResult", "decay_stage", "evaluate_item", "generate_due", "generate_stage",
+           "graveyard_specs", "last_closed_day",
            "paper_reconciliation", "run", "with_end", "write_report"]

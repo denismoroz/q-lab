@@ -640,3 +640,39 @@ def test_idea_detail_carries_the_paper_rule_or_null(client, monkeypatch, tmp_pat
     assert rule["text"].startswith("Тренд: на бумаге 4 недели из минимум 4–6")
     assert "бумага не судит о доходности — судит стенд" in rule["text"]
     assert client.get("/api/ideas/omega").json()["paper_rule"] is None
+
+
+def test_idea_detail_carries_the_decay_check_or_null(client, session_factory, monkeypatch,
+                                                     tmp_path):
+    import json
+
+    from qlab import decay
+    from qlab.registry.models import DecayCheck
+
+    monkeypatch.setattr(decay, "NIGHT_DIR", tmp_path / "nights")
+    assert client.get("/api/ideas/alpha").json()["decay"] is None
+
+    detail = {"idea_id": "alpha", "book": "b2", "window_days": 42, "alert": None,
+              "ret": {"realised": 0.04, "stand": {"p10": -0.03, "p50": -0.01, "p90": 0.09},
+                      "percentile": 73.0}}
+    session = session_factory()
+    for day in (24, 25):
+        session.add(DecayCheck(
+            idea_id="alpha", book="b2", at=date(2026, 10, day), window_start=date(2026, 9, 13),
+            window_end=date(2026, 10, day), realised_return=0.04, return_percentile=73.0,
+            detail=dict(detail, window_days=day)))
+    session.commit()
+    session.close()
+
+    found = client.get("/api/ideas/alpha").json()["decay"]
+
+    assert found["at"] == "2026-10-25" and found["window_days"] == 25
+    assert found["ret"]["percentile"] == 73.0 and found["alert"] is None
+    assert client.get("/api/ideas/omega").json()["decay"] is None
+
+    # No table row: the newest night's state still answers.
+    nights = tmp_path / "nights"
+    nights.mkdir()
+    (nights / "2026-10-25.json").write_text(json.dumps(
+        {"decay": {"lines": [], "results": [dict(detail, idea_id="omega")]}}), encoding="utf-8")
+    assert client.get("/api/ideas/omega").json()["decay"]["book"] == "b2"

@@ -129,6 +129,31 @@ def import_graveyard_cmd(
     _print_import_report(report)
 
 
+@app.command("import-cards")
+def import_cards_cmd(
+    cards_dir: Path = typer.Option(  # noqa: B008 - idiomatic typer default
+        Path("cards"), "--dir", help="Directory with cards/*.yaml (drafts/ is never read)"
+    ),
+) -> None:
+    """Import candidate cards into the registry as ideas (T32); safe to repeat."""
+    from qlab.registry.card_importer import CardImportError, import_cards
+
+    try:
+        with session_scope() as session:
+            report = import_cards(session, cards_dir)
+    except (CardImportError, FileNotFoundError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"{'ideas inserted':<28}{len(report.ideas_inserted)}")
+    typer.echo(f"{'ideas already there':<28}{len(report.ideas_existing)}")
+    typer.echo(f"{'drivers inserted':<28}{len(report.drivers_inserted)}")
+    typer.echo(f"{'drivers attached':<28}{len(report.drivers_attached)}")
+    typer.echo(f"{'retired by the card':<28}{len(report.retired)}")
+    typer.echo(f"{'graveyard matches checked':<28}{report.matches_checked}")
+    for idea_id, reason in report.retired:
+        typer.echo(f"  retired {idea_id}: {reason}")
+
+
 # --------------------------------------------------------------------------
 # graveyard retired / near / ripe
 # --------------------------------------------------------------------------
@@ -661,6 +686,10 @@ def night_run_cmd(
     generate: bool | None = typer.Option(
         None, "--generate/--no-generate",
         help="The idea generator on night/generate.yaml (tokens; default: its weekly day)"),
+    decay: bool | None = typer.Option(
+        None, "--decay/--no-decay",
+        help="The decay detector: realised results against the stand's own history "
+        "(default: with --paper)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -672,7 +701,7 @@ def night_run_cmd(
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
-               research=research, generate=generate,
+               research=research, generate=generate, decay=decay,
                noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 

@@ -189,6 +189,7 @@ def create_app() -> FastAPI:
         detail["research_notes"] = _research_notes(session, idea_id)
         detail["paper_check"] = _paper_check(session, idea_id)
         detail["paper_rule"] = _paper_rule(session, idea_id)
+        detail["decay"] = _decay(session, idea_id)
         detail["strategy"] = strategy_view(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
@@ -242,6 +243,17 @@ def create_app() -> FastAPI:
 
         rule = paper_rule_for_idea(session, idea_id)
         return None if rule is None else rule.to_dict()
+
+    def _decay(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """Whether the running strategy still behaves like its own stand history
+        (qlab.decay, the latest night's check); null for ideas with no running
+        book or no check yet. Never fails the page."""
+        from qlab.decay import latest_decay
+
+        try:
+            return latest_decay(session, idea_id)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _research_notes(session: Session, idea_id: str) -> list[dict[str, Any]]:
         """The researcher's latest memos about this idea, newest first (the

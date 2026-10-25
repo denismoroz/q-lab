@@ -90,6 +90,7 @@ export default function IdeaDetail() {
             />
             <PaperCheck check={ideaQuery.data.paper_check} />
             <PaperRule rule={ideaQuery.data.paper_rule} />
+            <Decay decay={ideaQuery.data.decay} />
             <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
             <ResearchNotes notes={ideaQuery.data.research_notes} />
             <Header idea={ideaQuery.data} />
@@ -344,6 +345,126 @@ function PaperRule({ rule }) {
       </p>
     </section>
   )
+}
+
+// qlab.decay: does the running strategy still behave like its own history on the
+// stand? The realised result against same-length windows of the stand's history.
+// It shows where the result falls and labels nothing good or bad: the alert
+// threshold is the owner's to set (night/decay.yaml), and while it is null no
+// label appears. A weeks-long return says nothing about profitability.
+function signedPct(value, digits = 1) {
+  if (typeof value !== 'number') return '—'
+  const text = `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`
+  return text.replace('-', '−')
+}
+
+function plainPct(value, digits = 2) {
+  return typeof value === 'number' ? `${(value * 100).toFixed(digits)}%` : '—'
+}
+
+function Decay({ decay }) {
+  if (!decay) return null
+  const days = Math.round(decay.days)
+  const rows = [
+    {
+      name: 'Доходность за период',
+      m: decay.ret,
+      fmt: signedPct,
+      place: (p) => `хуже были ${Math.round(p)} из 100`,
+    },
+    {
+      name: 'Самое глубокое падение',
+      m: decay.drawdown,
+      fmt: signedPct,
+      place: (p) => `глубже было у ${Math.round(p)} из 100`,
+    },
+    {
+      name: 'Дневной разброс',
+      m: decay.spread,
+      fmt: plainPct,
+      place: (p) => `спокойнее были ${Math.round(p)} из 100`,
+    },
+  ]
+  const tone = decay.alert ? 'border-amber-300 bg-amber-50' : 'border-slate-200'
+  return (
+    <section className={`rounded border p-4 ${tone}`}>
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        Ведёт ли себя стратегия как на стенде
+      </div>
+      <p className="mt-1 text-sm text-slate-700">
+        {decay.live ? 'Живые деньги' : 'Бумажная книга'} «{decay.book}»: {days} {daysWord(days)} с{' '}
+        {dayText(decay.first)}. Её результат поставлен рядом с такими же по длине отрезками из
+        истории этой же стратегии на стенде до {dayText(decay.first)}.
+      </p>
+      {decay.note ? (
+        <p className="mt-2 text-sm font-medium text-amber-800">{decay.note}</p>
+      ) : (
+        <>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                  <th className="py-1 pr-4 font-normal">что смотрим</th>
+                  <th className="py-1 pr-4 font-normal">сейчас</th>
+                  <th className="py-1 pr-4 font-normal">на стенде обычно (от … до, посередине)</th>
+                  <th className="py-1 font-normal">где лежит</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ name, m, fmt, place }) => (
+                  <tr key={name} className="border-t border-slate-100 align-top">
+                    <td className="py-1 pr-4 text-slate-600">{name}</td>
+                    <td className="py-1 pr-4 tabular-nums font-medium">{fmt(m.realised)}</td>
+                    <td className="py-1 pr-4 tabular-nums">
+                      {m.stand
+                        ? `${fmt(m.stand.p10)} … ${fmt(m.stand.p90)}, ${fmt(m.stand.p50)}`
+                        : '—'}
+                    </td>
+                    <td className="py-1 tabular-nums">
+                      {typeof m.percentile === 'number' ? place(m.percentile) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Отрезков такой длины в истории стенда: {decay.windows} (с {dayText(decay.history_from)}{' '}
+            по {dayText(decay.history_to)}); друг на друга не налегают примерно {decay.independent}.
+            Чем их меньше, тем грубее оценка.
+          </p>
+        </>
+      )}
+      {decay.bands?.map((b) => (
+        <p key={b.id} className="mt-2 text-sm text-slate-700">
+          Записано заранее, до результатов: {b.label} —{' '}
+          {b.status === 'not_applicable'
+            ? `к этому отрезку не относится (заявлено на ${Math.round(b.horizon_days)} ${daysWord(Math.round(b.horizon_days))})`
+            : b.kind === 'stop'
+              ? `сейчас ${signedPct(b.value)}, условие остановки ${b.status === 'outside' ? 'СРАБОТАЛО' : 'не сработало'}`
+              : `сейчас ${signedPct(b.value)}, ${b.status === 'inside' ? 'внутри' : 'ВНЕ'} заявленной полосы`}
+          .
+        </p>
+      ))}
+      {decay.alert === 'below' && (
+        <p className="mt-2 text-sm font-medium text-amber-800">
+          Результат ниже порога тревоги, который задал владелец.
+        </p>
+      )}
+      <p className="mt-3 text-xs text-slate-500">
+        Порог тревоги задаёт владелец (`night/decay.yaml`, `alert_percentile`); пока он не задан,
+        «хорошо» и «плохо» здесь не говорится: показано только, где результат лежит среди обычных
+        на стенде. Доходность за недели о выгоде стратегии не говорит — только о том, похожа ли
+        она на себя. Проверка за {dayText(decay.at)}.
+      </p>
+    </section>
+  )
+}
+
+function daysWord(n) {
+  if (n % 10 === 1 && n % 100 !== 11) return 'день'
+  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'дня'
+  return 'дней'
 }
 
 function weeksWord(n) {

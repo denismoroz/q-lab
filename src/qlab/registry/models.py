@@ -595,6 +595,30 @@ class PaperCheck(Base):
     note: Mapped[str] = mapped_column(String, nullable=False, default="")
 
 
+class DecayCheck(Base):
+    """`decay_check` -- one night's comparison of a running strategy's realised
+    results with the distribution of same-length windows of its own stand
+    history (qlab.decay, night/decay.yaml). It describes behaviour, not value:
+    no verdict is stored, and `return_percentile` is the realised return's place
+    (0-100) among the stand's windows, null when the history is too short.
+    `detail` is the whole result (spreads, drawdown, daily spread,
+    preregistered-band checks, report text) so the idea page shows exactly what
+    the night computed. `at` is the night's day; a re-run updates the row."""
+
+    __tablename__ = "decay_check"
+    __table_args__ = (UniqueConstraint("idea_id", "at", name="uq_decay_check_idea_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    book: Mapped[str] = mapped_column(String, nullable=False)
+    at: Mapped[date] = mapped_column(Date, nullable=False)
+    window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    realised_return: Mapped[float] = mapped_column(Float, nullable=False)
+    return_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
 class DetectorTrial(Base):
     """`detector_trial` -- one variant of a regime detector measured on one
     period (docs/REGIME_DETECT.md; owner, 2026-10-04: «да, делай оба»).

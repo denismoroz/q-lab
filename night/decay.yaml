@@ -1,0 +1,60 @@
+# Decay detector settings (qlab.decay). For every running book in
+# night/paper_books.yaml the night shows where its realised results fall among
+# same-length windows of the strategy's own stand history. It shows, it does not
+# judge: no number below is invented.
+
+# THE OWNER SETS THIS. The place among the stand's windows (0-100) at or below
+# which the realised return counts as "unlike the strategy's own history": with
+# 10, a result in the worst tenth of same-length stand windows is flagged. While
+# it is null nothing is labelled good or bad (CLAUDE.md: thresholds are declared,
+# never invented). Only the return is flagged by it.
+alert_percentile: null
+
+# Bands that seed/preregistration/*.yaml declared, quoted with their source,
+# keyed by the idea whose book they are about. The preregistration files are not
+# edited (a prediction rewritten after the fact is destroyed); the numbers are
+# copied here so code can check them. `horizon_days`: the horizon the declaration
+# is about; a realised period shorter than that gets "not applicable", because a
+# one-year band says nothing about six weeks. `kind: stop` is a stop condition.
+#
+# Declared but NOT encoded, and why:
+#   * `predicted_band: acceptable` for trend -- written as a "CEILING" of
+#     expectation without a horizon; there is no number to compare with.
+#   * "a single day worse than the bench's worst day by more than 2x" -- the
+#     bench never stored its worst day (seed/preregistration/2026-10-02-outcome-
+#     trend-tracking.yaml).
+#   * live-vs-model daily correlation below 0.3 over 20 days -- a paper-versus-
+#     replay check, not a stand-history one; qlab.paper_rule reads it.
+preregistered:
+  # `trend-live` is the live-code fork of `trend-tsmom-crypto`, the idea the
+  # preregistration names; the outcome file 2026-10-02 checks it against the
+  # production trend book.
+  trend-live:
+    - id: year_80_band
+      kind: band
+      metric: return
+      lo: -0.132
+      hi: 0.227
+      horizon_days: 365
+      label: "80% исходов за целый год при истинных +4.75% годовых"
+      source: >
+        seed/preregistration/2026-09-21-paper-bv2-trend.yaml, PREDICTION 0:
+        «Over a full year at a true +4.75%: 80% of outcomes fall in -13.2%..+22.7%»
+    - id: stop_drawdown
+      kind: stop
+      metric: max_drawdown
+      lo: -0.20
+      label: "остановка, если просадка книги глубже −20%"
+      source: >
+        seed/preregistration/2026-09-21-paper-bv2-trend.yaml, stop_conditions:
+        «trend: cumulative paper drawdown worse than -20%»
+  strategy-b-v2:
+    - id: year_not_profitable
+      kind: band
+      metric: return
+      hi: 0.04
+      horizon_days: 365
+      label: "годовая доходность не выше 4% (полоса «не выгодно», уверенность низкая)"
+      source: >
+        seed/preregistration/2026-09-21-paper-bv2-trend.yaml, strategy-b-v2:
+        predicted_band: not_profitable   # < 0.04, confidence: low

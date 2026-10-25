@@ -11,6 +11,13 @@
 # `replay_block` names this book's block in the replay scripts' printed output
 # ("book <id>" for Bv2, "trend"), which the paper rule (qlab.paper_rule, owner
 # 2026-10-25: at least 4-6 weeks on paper) reads when the replay file is absent.
+#
+# `live_books` below are books trading REAL money. They are read only by the
+# decay detector (qlab.decay), not by the paper rule or the paper-vs-stand check,
+# which are about paper. Optional fields: `equity_column` (default `equity`) and
+# `realised_from` (the date the realised period starts, default the book's first
+# row); a live book needs `realised_from` so the night's export of its hourly
+# equity is bounded and cheap.
 books:
   # Production `b2` (strategy id 3, hedge_margin_headroom 1.0): the stand's
   # strategy-b-v2 spec is this instance verbatim, every param sourced from
@@ -55,3 +62,21 @@ books:
     sum_coins: false
     replay_file: replay_trend.csv
     replay_block: "trend"
+
+live_books:
+  # FRAB, production strategy id 1 (`two_phase`), real money. Equity is
+  # `equity_snapshots.total_equity`, sampled once an hour by the night's export
+  # (qlab.decay.live_export_sql). The realised period starts on the day the
+  # decision rule last changed (frab a0f5b5e, 2026-10-10), which is also the
+  # stand spec's params_fixed_at. Caveat: total_equity moves with deposits and
+  # withdrawals as well as with trading; a transfer inside the period would read
+  # as a return.
+  frab:
+    book: two_phase
+    spec: specs/frab-live.yaml
+    label: "FRAB"
+    paper_file: frab_equity.csv
+    equity_column: total_equity
+    strategy_id: 1
+    sum_coins: false
+    realised_from: 2026-10-10
