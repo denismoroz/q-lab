@@ -22,6 +22,11 @@ from sqlalchemy.orm import Session
 from qlab.registry.models import Idea, IdeaStatus, Spec
 
 _NOT_STRATEGIES = ("qlab.calibration.",)
+# A composed strategy (qlab.strategies.blocks) is defined by its blocks, not its
+# module: every generated idea runs the same module, so grouping by it would
+# make all of them variants of one strategy and the cap on strategies
+# (night/limits.yaml) would see one. Their family is set explicitly instead.
+_NO_FAMILY_BY_MODULE = ("qlab.strategies.blocks",)
 _STATUS_RANK = {IdeaStatus.LIVE: 0, IdeaStatus.PAPER: 1}
 
 
@@ -32,7 +37,7 @@ def strategy_key(code_ref: str | None, params: object) -> str | None:
         code_ref = str(params["inner_code_ref"])
         params = params.get("inner_params") or params.get("base_params") or {}
         seen += 1
-    if not code_ref or code_ref.startswith(_NOT_STRATEGIES):
+    if not code_ref or code_ref.startswith(_NOT_STRATEGIES + _NO_FAMILY_BY_MODULE):
         return None
     module = code_ref.split(":", 1)[0]
     return module.rsplit(".", 1)[-1]

@@ -30,6 +30,7 @@ from qlab.api.serializers import (
 )
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
 from qlab.registry.queries import funnel_stats
+from qlab.registry.strategies import strategy_view
 
 # The dev frontend runs on port 5890 and the API on 8890 (web/vite.config.js):
 # off Vite's and uvicorn's defaults, which the owner's other projects use
@@ -178,6 +179,8 @@ def create_app() -> FastAPI:
         detail["latest_outcome"] = _latest_outcome(session, spec_ids)
         detail["assessment"] = _latest_assessment(session, idea_id)
         detail["research_notes"] = _research_notes(session, idea_id)
+        detail["paper_check"] = _paper_check(session, idea_id)
+        detail["strategy"] = strategy_view(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -202,6 +205,26 @@ def create_app() -> FastAPI:
                 "model": row.model, "view": row.view, "summary": row.summary,
                 "disputes": contested(row.view, row.accepted), "claims": row.accepted,
                 "rejected_claims": len(row.rejected), "checks": row.checks}
+
+    def _paper_check(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """The latest night's paper book against the stand over one window
+        (qlab.paper_check); null for ideas with no paper book."""
+        from qlab.paper_check import latest_check
+
+        row = latest_check(session, idea_id)
+        if row is None:
+            return None
+        return {
+            "at": row.at.isoformat(), "book": row.book,
+            "window_start": row.window_start.isoformat(), "window_end": row.window_end.isoformat(),
+            "paper_return": row.paper_return, "stand_return": row.stand_return,
+            "stand_trial_id": row.stand_trial_id, "replay_return": row.replay_return,
+            "stand_window_start": row.stand_window_start.isoformat()
+            if row.stand_window_start else None,
+            "stand_window_end": row.stand_window_end.isoformat()
+            if row.stand_window_end else None,
+            "note": row.note,
+        }
 
     def _research_notes(session: Session, idea_id: str) -> list[dict[str, Any]]:
         """The researcher's latest memos about this idea, newest first (the

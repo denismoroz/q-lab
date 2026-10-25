@@ -189,10 +189,11 @@ def paper_reconciliation(day: date) -> list[str]:
     runs = {
         "Bv2 (book 3 = b2, sized as created with carry on; book 4 = b2_cold)": [
             "scripts/replay_bv2_paper.py", "--paper", str(folder / "b2_equity.csv"),
-            "--b2-sized-with-carry"],
+            "--b2-sized-with-carry", "--out", str(folder / "replay_b2.csv")],
         "trend": ["scripts/replay_trend_paper.py", "--paper", str(folder / "trend_equity.csv"),
                   "--params", str(folder / "trend_params.json"),
-                  "--events", str(folder / "trend_events.csv")],
+                  "--events", str(folder / "trend_events.csv"),
+                  "--out", str(folder / "replay_trend.csv")],
     }
     for label, args in runs.items():
         done = subprocess.run(["uv", "run", "python", *args], capture_output=True, text=True,
@@ -203,7 +204,22 @@ def paper_reconciliation(day: date) -> list[str]:
         status = "" if done.returncode == 0 else f" (exit {done.returncode})"
         lines.append(f"**{label}**{status}")
         lines += [f"    {ln}" for ln in keep] or [f"    {done.stderr.strip()[-300:]}"]
-    return lines
+    return lines + _paper_check_lines(day, folder)
+
+
+def _paper_check_lines(day: date, folder: Path) -> list[str]:
+    """Each paper book against the stand's forward test over the SAME window
+    (qlab.paper_check, night/paper_books.yaml); one row per idea in the
+    registry. A failure here is a report line, not a failed night."""
+    from qlab.paper_check import run_paper_checks
+    from qlab.registry.db import session_scope
+
+    try:
+        with session_scope() as session:
+            checks = run_paper_checks(session, day, folder)
+    except Exception as exc:  # noqa: BLE001 - the reconciliation above already succeeded
+        return [f"**Бумага и стенд за один отрезок** не посчитаны: {type(exc).__name__}: {exc}"]
+    return ["**Бумага и стенд за один отрезок**", *[f"    {ln}" for ln in checks]]
 
 
 def _pct(v) -> str:
@@ -271,7 +287,7 @@ def write_report(day: date, state: dict) -> Path:
     if kind_lines := state.get("paper"):
         lines += ["## Сверка бумаги на проде со стендом", "", *kind_lines, ""]
     if studied := state.get("research"):
-        lines += ["## Исследователь (раз в неделю)", ""]
+        lines += ["## Исследователь", ""]
         for e in studied:
             if e.get("stopped"):
                 lines.append(f"- {e['strategy']}: остановлено — {e['stopped']}")
@@ -281,6 +297,12 @@ def write_report(day: date, state: dict) -> Path:
             lines += [f"    - не принято: {p}" for p in e.get("problems") or []]
             lines += [f"    - {line}" for line in e.get("stand") or [] if line.startswith("- ")]
         lines.append("")
+        if drops := [(e["strategy"], d) for e in studied for d in e.get("drops") or []]:
+            lines += ["## Исследователь предлагает вывести варианты (решает владелец)", "",
+                      "Это предложение агента, не решение: код статусов по его слову не меняет. "
+                      "Вывести вариант — `qlab retire <идея> --reason '…'`.", ""]
+            lines += [f"- {strategy}: `{d['idea']}` — {d['why']}" for strategy, d in drops]
+            lines.append("")
     if assessed := state.get("assessed"):
         views = {"agree": "согласен", "too_harsh": "вердикт слишком строгий",
                  "too_lenient": "вердикт слишком мягкий", "unsure": "не уверен"}
@@ -417,7 +439,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         save_state(day, state)
     if assess:
         assess_stage(day, state)
-    if research if research is not None else sweep:
+    if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
         research_stage(day, state, noise_trials=noise_trials)
     if implement:
         implement_stage(day, state, noise_trials=noise_trials,
@@ -493,36 +515,81 @@ def assess_stage(day: date, state: dict) -> None:
 
 RESEARCH = Path("night/research.yaml")
 LIMITS = Path("night/limits.yaml")
-ACTIVE_STATUSES = ("candidate", "bench", "validated")
+NO_CAP = 1_000_000
 
 
-def is_agent_idea(idea_id: str) -> bool:
-    """Ideas the agents create: the generator's `gen-*`, the researcher's `*-research-*`."""
-    return idea_id.startswith("gen-") or "-research-" in idea_id
+def is_generator_idea(idea_id: str) -> bool:
+    """Ideas the generator creates: `gen-*`."""
+    return idea_id.startswith("gen-")
 
 
-def agent_idea_slots(session, limits: Path = LIMITS) -> tuple[int, int, list[str]]:
-    """(free places, the cap, the active agent ideas) under night/limits.yaml:
-    the owner keeps at most a few agent ideas in active development at once.
-    Without the file there is no cap."""
+def _limit(limits: Path, key: str) -> int | None:
+    """One number from night/limits.yaml; None when the file or the key is missing
+    (the repository ships the file, so a missing one means no cap)."""
+    if not limits.is_file():
+        return None
+    raw = (yaml.safe_load(limits.read_text(encoding="utf-8")) or {}).get(key)
+    return None if raw is None else int(raw)
+
+
+def load_research_plan(config: Path = RESEARCH) -> dict:
+    """night/research.yaml as a dict; empty when the file is missing."""
+    if not config.is_file():
+        return {}
+    return yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+
+
+def strategy_slots(session, research_plan: dict,
+                   limits: Path = LIMITS) -> tuple[int, int, list[str]]:
+    """(free places, the cap, the active strategies) under night/limits.yaml.
+    Owner, 2026-10-25: the lab counts strategies, not ideas. The researcher's
+    strategies (`research_plan["strategies"]`) always occupy their places; each
+    active generator idea that is a root of its own is a new strategy and takes
+    a free place. Variants (ideas with a parent) take none. Without the limits
+    file there is no cap."""
     from qlab.registry.models import Idea
+    from qlab.registry.strategies import ACTIVE_STATUSES, strategy_root
 
-    active = sorted(i.id for i in session.query(Idea).filter(
-        Idea.status.in_(ACTIVE_STATUSES)) if is_agent_idea(i.id))
-    raw = (yaml.safe_load(limits.read_text(encoding="utf-8")) or {}).get(
-        "max_active_agent_ideas") if limits.is_file() else None
-    if raw is None:  # no limits file: no cap (the repository ships one)
-        return 1_000_000, 0, active
-    cap = int(raw)
+    plan = research_plan.get("strategies") or {}
+    taken = {strategy_root(session, e["ideas"][0]) for e in plan.values() if e.get("ideas")}
+    generated = sorted(
+        i for (i,) in session.query(Idea.id).filter(Idea.status.in_(ACTIVE_STATUSES))
+        if is_generator_idea(i) and strategy_root(session, i) == i and i not in taken)
+    active = [*plan, *generated]
+    cap = _limit(limits, "max_active_strategies")
+    if cap is None:
+        return NO_CAP, 0, active
     return max(0, cap - len(active)), cap, active
 
 
-def full_house_focus(cap: int, active: list[str]) -> str:
-    """The researcher's instruction when no place is free."""
-    return (f"The lab keeps at most {cap} agent ideas in active development and all places are "
-            f"taken ({', '.join(active)}). Propose NO new experiment spec. Instead, in the memo, "
-            "say which of these active ideas you would drop and why, and what you would try in "
-            "its place.")
+def variant_slots(session, strategy: dict, limits: Path = LIMITS) -> tuple[int, int, list[str]]:
+    """(free places, the cap, the active variants) for one strategy of the
+    research plan: the variants are the active ideas under the root of the
+    strategy's first idea. Without the limits file there is no cap."""
+    from qlab.registry.strategies import active_variants, strategy_root
+
+    variants = active_variants(session, strategy_root(session, strategy["ideas"][0]))
+    cap = _limit(limits, "max_active_variants_per_strategy")
+    if cap is None:
+        return NO_CAP, 0, variants
+    return max(0, cap - len(variants)), cap, variants
+
+
+def full_strategy_focus(name: str, cap: int, variants: list[str]) -> str:
+    """The researcher's instruction when the strategy has no free variant place."""
+    return (f"The strategy `{name}` already has {len(variants)} active variants and the lab keeps "
+            f"at most {cap} per strategy ({', '.join(variants)}). Propose NO new experiment spec. "
+            "Instead, in the memo, say which of these active variants you would drop and why, "
+            "and what you would try in its place; write each variant you would drop as a line "
+            "`DROP: <idea_id> — <why>` (the owner decides; you cannot drop anything).")
+
+
+def split_drops(drops: list, variants: list[str]) -> tuple[list, list]:
+    """The researcher's DROP proposals split into those naming an active
+    variant of the strategy (kept for the owner) and the rest (ignored, said in
+    the report). Nothing here changes a status."""
+    return ([d for d in drops if d.idea_id in variants],
+            [d for d in drops if d.idea_id not in variants])
 
 
 def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | None:
@@ -531,12 +598,39 @@ def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | Non
     return memos[-1] if memos else None
 
 
+def unfinished_research(day: date, plan: dict) -> list[str]:
+    """The plan's strategies whose research did not finish on the previous
+    night (the stage ran, a budget stop left them). They go first tonight."""
+    yesterday = load_state(day - timedelta(days=1))
+    if "research" not in yesterday:
+        return []
+    return [name for name in plan.get("strategies") or {}
+            if f"research:{name}" not in yesterday.get("done", {})]
+
+
+def research_due(day: date, plan: dict, *, sweep: bool) -> bool:
+    """Whether the researcher runs tonight. `cadence: nightly` in
+    night/research.yaml: every night. `weekly` (the default): on the weekly day
+    (`sweep`), and also the night after a stop left a strategy unfinished -- a
+    stop is the normal mode (CLAUDE.md), not a lost week."""
+    if not plan.get("strategies"):
+        return False
+    cadence = plan.get("cadence", "weekly")
+    if cadence == "nightly":
+        return True
+    if cadence != "weekly":
+        raise ValueError(f"night/research.yaml: cadence must be nightly or weekly, got {cadence!r}")
+    return sweep or bool(unfinished_research(day, plan))
+
+
 def research_stage(day: date, state: dict, *, noise_trials: int,
                    config: Path = RESEARCH) -> None:
-    """The researcher on each strategy of `night/research.yaml`, weekly, in
-    the implement stage's budget (CLAUDE.md order: after rechecks, before the
-    search for new ideas); the stand then runs its experiments. A stop keeps
-    the rest for the next night that runs the stage."""
+    """The researcher on each strategy of `night/research.yaml`, on its cadence
+    (`research_due`), in the implement stage's budget (CLAUDE.md order: after
+    rechecks, before the search for new ideas); the stand then runs its
+    experiments. Each strategy is researched at most once per night (the
+    night's `done` marker); one the budget stopped goes first on the next
+    night that runs the stage."""
     from qlab.agents.researcher import research, run_experiments
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
     from qlab.registry.db import session_scope
@@ -545,16 +639,20 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         return
     plan = yaml.safe_load(config.read_text(encoding="utf-8"))
     out = state.setdefault("research", [])
-    todo = {name: e for name, e in (plan.get("strategies") or {}).items()
-            if f"research:{name}" not in state["done"]}
+    first = unfinished_research(day, plan)
+    todo = {name: e for name, e in sorted(
+        (plan.get("strategies") or {}).items(), key=lambda item: item[0] not in first)
+        if f"research:{name}" not in state["done"]}
     if not todo:
         return
+    # A run stopped earlier tonight tries again now: its old stop line goes.
+    out[:] = [e for e in out if not (e.get("stopped") and e["strategy"] in todo)]
     with session_scope() as session:
-        free, cap, active = agent_idea_slots(session)
         stage = NightBudget.open(session, probe(session).report.reading).stage(
             Stage.IMPLEMENT, candidates=len(todo))
         for name, e in todo.items():
             entry = {"strategy": name}
+            free, cap, variants = variant_slots(session, e)
             docs = [Path(d) for d in e.get("docs") or [] if Path(d).is_file()]
             if (memo := latest_memo(name)) is not None:
                 docs.append(memo)
@@ -566,11 +664,16 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                    max_experiments=min(int(plan.get("max_experiments", 2)), free),
                                    focus="\n\n".join(filter(None, [
                                        plan.get("focus"),
-                                       full_house_focus(cap, active) if free == 0 else None])))
-                free = max(0, free - len(outcome.specs))
+                                       full_strategy_focus(name, cap, variants)
+                                       if free == 0 else None])))
                 session.commit()
+                kept, stray = split_drops(outcome.drops, variants)
                 entry.update(memo=str(outcome.memo or ""), specs=[str(p) for p in outcome.specs],
-                             problems=outcome.problems, tokens=budget.spent_tokens)
+                             problems=[*outcome.problems, *(
+                                 f"DROP names `{d.idea_id}`, which is not an active variant of "
+                                 f"{name}: ignored" for d in stray)],
+                             drops=[{"idea": d.idea_id, "why": d.why} for d in kept],
+                             tokens=budget.spent_tokens)
                 state["done"][f"research:{name}"] = datetime.now(UTC).isoformat()
             except NightExhausted as stop:
                 entry["stopped"] = f"night budget: {stop}"
@@ -728,9 +831,9 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
             save_state(day, state)
             return
         with session_scope() as session:
-            free, cap, active = agent_idea_slots(session)
+            free, cap, active = strategy_slots(session, load_research_plan())
         if free == 0:
-            gen["skipped"] = (f"в работе уже {len(active)} идей агентов при потолке {cap} "
+            gen["skipped"] = (f"в работе уже {len(active)} стратегий при потолке {cap} "
                               f"({', '.join(active)}): новых не завожу")
             save_state(day, state)
             return

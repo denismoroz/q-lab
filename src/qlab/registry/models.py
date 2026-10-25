@@ -566,6 +566,35 @@ class ResearchNote(Base):
     model: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class PaperCheck(Base):
+    """`paper_check` -- one night's comparison of a production paper book with
+    the stand's forward test of the same configuration (qlab.paper_check,
+    night/paper_books.yaml). Owner, 2026-10-25: the console showed the stand
+    at minus and the paper book at plus because the two measured different
+    windows. `window_*` is the window the paper return is measured on (the
+    stand's forward window, clipped to what the paper book has); `stand_window_*`
+    is the stand's own forward window. `at` is the night's day; a re-run of the
+    same night updates the row. Returns are totals over their windows, not
+    yearly. `stand_return` and `replay_return` are null when not computable."""
+
+    __tablename__ = "paper_check"
+    __table_args__ = (UniqueConstraint("idea_id", "at", name="uq_paper_check_idea_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    book: Mapped[str] = mapped_column(String, nullable=False)
+    at: Mapped[date] = mapped_column(Date, nullable=False)
+    window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    paper_return: Mapped[float] = mapped_column(Float, nullable=False)
+    stand_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stand_trial_id: Mapped[int | None] = mapped_column(ForeignKey("trial.id"), nullable=True)
+    replay_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stand_window_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    stand_window_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
 class DetectorTrial(Base):
     """`detector_trial` -- one variant of a regime detector measured on one
     period (docs/REGIME_DETECT.md; owner, 2026-10-04: «да, делай оба»).

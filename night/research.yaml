@@ -1,17 +1,30 @@
-# The researcher, weekly, on the strategies trading on paper or live money
-# (qlab.agents.researcher, docs/NIGHT.md).
+# The researcher, every night, on the four strategies it works on: Bv2, trend, FRAB and
+# XSMOM (qlab.agents.researcher, docs/NIGHT.md).
 #
 # Owner, 2026-10-24: «мне не нравится вердикт агента - просто ждать - нужно
-# думать как улучшить стратегию - это задача фреймворка»; on running the
-# researcher in the night for paper and live strategies -- «делай все три по
-# порядку». It runs on the night's weekly day (the graveyard sweep's Sunday)
-# inside the night's token budget, writes a memo and at most
-# `max_experiments` experiment specs per strategy, and the stand runs them.
-# Each memo of a strategy is handed to the next week's run, so it builds on
-# what was tried instead of repeating it.
+# думать как улучшить стратегию - это задача фреймворка».
+#
+# Owner, 2026-10-25: «я предлагаю статус ждет проверку вперед - для reserchera -
+# игнорировать. а сформулировать так - 4 стратегии где он может работать. - если
+# он по этим стратегиям может улучшить - отлично - пускай улучшает. ... данные
+# есть - отлично - проверили - если данных мало - смотрим где стратегия плохо
+# работает - основные просадки и их пытаемся исправить»; «четвёртая — XSMOM.
+# исследователь запускается каждую ночь - я перешел на тариф Max».
+#
+# So "waiting for the forward test" is not a reason to stop, and the researcher runs
+# every night inside the night's token budget (a strategy it did not finish because of a
+# budget stop goes first on the next night). Per strategy it writes a memo and at most
+# `max_experiments` experiment specs (fewer when the strategy's variant places are
+# taken); the stand runs them. It is shown where the strategy lost money before a cut
+# date (qlab.diagnose) and must judge a fix on the data after the cut. Each memo of a
+# strategy is handed to the next run, so it builds on what was tried.
+
+# `nightly` runs the stage every night; `weekly` only on the graveyard's Sunday (and the
+# night after a budget stop left a strategy unfinished).
+cadence: nightly
 
 max_experiments: 2
-focus: "мне не нравится вердикт агента - просто ждать - нужно думать как улучшить стратегию - это задача фреймворка"
+focus: "я предлагаю статус ждет проверку вперед - для reserchera - игнорировать. а сформулировать так - 4 стратегии где он может работать. - если он по этим стратегиям может улучшить - отлично - пускай улучшает. я не совсем понимаю - статус - ждет проверку вперед - нужен ли он вообще - данные есть - отлично - проверили - если данных мало - смотрим где стратегия плохо работает - основные просадки и их пытаемся исправить... как тебе такая идея?"
 
 strategies:
   bv2:
@@ -44,3 +57,19 @@ strategies:
     docs:
       - docs/FRAB_LIVE.md
       - docs/FIT_VS_FORWARD.md
+  # Owner, 2026-10-25: «четвёртая — XSMOM». Cross-sectional momentum: the strategy that
+  # caused q-lab to exist (docs/XSMOM_T21.md). Its three specs are the honest discovered
+  # universe, the same with the live book's 20 legs, and the frozen 32-coin list; all on
+  # Hyperliquid, whose history since 2023 is short, so a fix designed on its drawdowns is
+  # preliminary unless the researcher also tests it on Binance (long history).
+  xsmom:
+    ideas: [xsmom, xsmom-honest-20legs, xsmom-frozen-universe]
+    specs:
+      - specs/xsmom.yaml
+      - specs/xsmom-honest-20legs.yaml
+      - specs/xsmom-frozen-universe.yaml
+    docs:
+      - docs/XSMOM_T21.md
+      - docs/CALIBRATION_2026-09-21.1__xsmom-honest-20legs.md
+      - docs/FIT_VS_FORWARD.md
+      - ../funding-rate-arbitrage/research/xsmom_live_recon/AUDIT_2026_09.md

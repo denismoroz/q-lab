@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import { Absent, DateText, IdeaLink, Json, Num } from './ui.jsx'
+import { daysText, shortForwardReturn } from '../forwardReturn.js'
 import { ROW_SOURCE, TRIAL_ROUTE, TRIAL_STATUS, label } from '../labels.js'
 
 // The metrics shown as columns. Anything else a trial recorded is still
@@ -15,6 +16,20 @@ const METRIC_COLUMNS = [
 
 function MetricCell({ metrics, key_ }) {
   if (!metrics || metrics[key_] == null) return <Absent>нет</Absent>
+  // A forward test under 90 days: its total over the period, the yearly figure
+  // only as a small unreliable note.
+  const short = key_ === 'ann_return_net' ? shortForwardReturn(metrics) : null
+  if (short) {
+    return (
+      <div>
+        <Num value={short.total} digits={4} />
+        <div className="text-xs text-slate-400">
+          за {daysText(short.days)}; в пересчёте на год {Number(short.yearly).toFixed(2)} — на коротком
+          отрезке ненадёжно
+        </div>
+      </div>
+    )
+  }
   return <Num value={metrics[key_]} digits={key_ === 'turnover' ? 2 : 4} />
 }
 

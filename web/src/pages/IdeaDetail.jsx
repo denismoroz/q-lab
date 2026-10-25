@@ -15,6 +15,7 @@ import {
   routeHint,
   label,
 } from '../labels.js'
+import { daysText, shortForwardReturn } from '../forwardReturn.js'
 
 const PAGE_SIZE = 50
 
@@ -87,9 +88,11 @@ export default function IdeaDetail() {
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
             />
+            <PaperCheck check={ideaQuery.data.paper_check} />
             <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
             <ResearchNotes notes={ideaQuery.data.research_notes} />
             <Header idea={ideaQuery.data} />
+            <StrategyLine strategy={ideaQuery.data.strategy} />
           </>
         )}
       </QueryState>
@@ -200,8 +203,13 @@ function Outcome({ outcome }) {
   // the selection period's when both exist.
   const split = typeof m.judged_on_forward === 'number'
   const judged = split && m.judged_on_forward === 1 ? 'проверка вперёд' : 'период подбора'
+  // A forward test shorter than 90 days is shown as its total over the period;
+  // the yearly figure of so short a stretch is a small note, not the headline.
+  const short = shortForwardReturn(m)
   const numbers = [
-    ['доходность в год после комиссий', pct(m.ann_return_net)],
+    short
+      ? [`доходность за ${daysText(short.days)} после комиссий`, pct(short.total)]
+      : ['доходность в год после комиссий', pct(m.ann_return_net)],
     ['Шарп после комиссий', sharpe(m.sharpe_net)],
     ['худшая просадка', pct(m.max_dd)],
     ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
@@ -234,6 +242,11 @@ function Outcome({ outcome }) {
       {numbers.length > 0 && (
         <NumberList title={split ? `${judged} — по ней решение` : null} numbers={numbers} />
       )}
+      {short && (
+        <p className="mt-1 text-xs text-slate-400">
+          в пересчёте на год: {pct(short.yearly)} — на коротком отрезке ненадёжно
+        </p>
+      )}
       {fitNumbers.length > 0 && (
         <NumberList title="период подбора — только для сведения" numbers={fitNumbers} />
       )}
@@ -243,6 +256,49 @@ function Outcome({ outcome }) {
         {outcome.unrouted_trials
           ? ` · ещё ${outcome.unrouted_trials} прогонов до 2026-10-01 без записанного исхода; их числа ниже — история, а не вывод`
           : ''}
+      </p>
+    </section>
+  )
+}
+
+// 2026-10-25: the paper book and the stand's test of the same configuration,
+// over ONE window (qlab.paper_check). Two numbers on different windows had the
+// stand at minus and the paper book at plus.
+function dayText(iso) {
+  return iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : '—'
+}
+
+function PaperCheck({ check }) {
+  if (!check) return null
+  const differ = check.note.startsWith('Отрезки разные')
+  const rows = [
+    [`бумажная книга за ${dayText(check.window_start)}–${dayText(check.window_end)}`, pct(check.paper_return)],
+    [
+      check.stand_window_start
+        ? `стенд за ${dayText(check.stand_window_start)}–${dayText(check.stand_window_end)}`
+        : 'стенд',
+      pct(check.stand_return) ?? 'не посчитан',
+    ],
+    ['та же бумажная книга, пересчитанная на стенде', pct(check.replay_return)],
+  ].filter(([, v]) => v !== null)
+  return (
+    <section className={`rounded border p-4 ${differ ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
+      <div className="text-xs uppercase tracking-wide text-slate-500">Бумага и стенд за один отрезок</div>
+      <p className="mt-1 text-sm text-slate-700">
+        Итоги за сам отрезок, без пересчёта на год. Бумажная книга — та, что торгует на бумаге на
+        боевом сервере тем же набором настроек.
+      </p>
+      <NumberList numbers={rows} />
+      {check.note && <p className="mt-2 text-sm font-medium text-amber-800">{check.note}</p>}
+      <p className="mt-3 text-xs text-slate-500">
+        Почему две книги с одними настройками могут разойтись: книга на стенде могла начать работу
+        раньше и уже держать позиции в первый день отрезка, а бумажная начала с пустого счёта; к
+        тому же стенд может считать по дням, а бумажная книга шагает по часам. Поэтому сравнивать
+        можно только числа за один и тот же отрезок.
+      </p>
+      <p className="mt-2 text-xs text-slate-400">
+        сверка за {dayText(check.at)}, книга «{check.book}»
+        {check.stand_trial_id ? `, прогон стенда #${check.stand_trial_id}` : ''}
       </p>
     </section>
   )
@@ -481,6 +537,36 @@ function NumberList({ title, numbers }) {
         ))}
       </dl>
     </div>
+  )
+}
+
+// Variants of one strategy take no place of their own (owner, 2026-10-25):
+// a variant points at its strategy, a strategy lists its active variants.
+function StrategyLine({ strategy }) {
+  if (!strategy) return null
+  if (strategy.is_variant) {
+    return (
+      <p className="text-sm text-slate-700">
+        вариант стратегии{' '}
+        <Link className="font-mono text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${strategy.root}`}>
+          {strategy.root}
+        </Link>
+      </p>
+    )
+  }
+  if (strategy.active_variants.length === 0) return null
+  return (
+    <p className="text-sm text-slate-700">
+      активные варианты этой стратегии ({strategy.active_variants.length}):{' '}
+      {strategy.active_variants.map((id, i) => (
+        <span key={id}>
+          {i > 0 && ', '}
+          <Link className="font-mono text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${id}`}>
+            {id}
+          </Link>
+        </span>
+      ))}
+    </p>
   )
 }
 

@@ -331,6 +331,24 @@ def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
     )
 
 
+def resolve_cached_panel(session: Session, data: StrategySpec) -> MarketPanel | None:
+    """The cached snapshot that answers the spec's data request, or None when
+    there is none. Unlike `resolve_panel` it never fetches: it is for readers
+    (`qlab.diagnose`) that must not trigger a download."""
+    data_block = data.data
+    existing_id = _find_matching_snapshot(
+        session,
+        source=data_block.source,
+        start=_to_utc_timestamp(data_block.start),
+        end=_to_utc_timestamp(data_block.end),
+        interval=data_block.interval,
+        instruments=data_block.instruments,
+        include_spot=data_block.include_spot,
+        min_daily_volume_usd=data_block.min_daily_volume_usd,
+    )
+    return None if existing_id is None else load_snapshot(existing_id, session=session)
+
+
 def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     """Find an existing registry `spec` row with identical content for this
     `idea_id`, or append a new version.
@@ -1474,6 +1492,7 @@ __all__ = [
     "decide_route",
     "evaluate_spec",
     "not_evaluable_reasons",
+    "resolve_cached_panel",
     "resolve_panel",
     "resolve_strategy",
 ]

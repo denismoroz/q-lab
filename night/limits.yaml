@@ -1,10 +1,21 @@
-# How many ideas the agents may keep in active development at once
-# (qlab.night.agent_idea_slots). Owner, 2026-10-25: «не нужно плодить 100-200 идей -
-# не больше 3-4 в активной разработке».
+# How much the agents may keep in active development at once
+# (qlab.night.strategy_slots, qlab.night.variant_slots).
 #
-# An agent's idea (the generator's `gen-*`, the researcher's `*-research-*`) is
-# active while it is a candidate, waits on the bench or has passed and waits for
-# the owner (candidate, bench, validated). The generator writes new specs only
-# into free places; the researcher proposes experiments only into free places
-# and, when none is free, says which active idea it would drop instead.
-max_active_agent_ideas: 4
+# Owner, 2026-10-25: «не нужно плодить 100-200 идей - не больше 3-4 в активной
+# разработке». Then, the same day: «давай увеличим число до 6» and «сформулировать
+# так - 4 стратегии где он может работать» (FRAB, Bv2, Trend, XSMOM), and on the
+# variants of one strategy: «bv2-research-headroom-retune-binance ... это все таже
+# самая bv2-research-headroom-retune ... должна быть 1 стратегия - просто вариация».
+#
+# So the cap counts STRATEGIES, not ideas. A strategy is the root of a parent chain
+# (`idea.parent_id`); an idea with a parent is a variant and takes no place of its own.
+# "Active" = candidate, bench or validated. The researcher's strategies
+# (night/research.yaml) always occupy their places; each active generator idea that is a
+# root of its own is a new strategy and takes a free place. The generator writes new
+# specs only into free places.
+max_active_strategies: 6
+
+# The researcher runs every night, so the variants inside one strategy stay bounded too:
+# when a strategy has this many active variants it proposes no new experiment and says
+# which variant it would drop instead.
+max_active_variants_per_strategy: 3

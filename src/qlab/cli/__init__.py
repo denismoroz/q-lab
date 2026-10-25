@@ -654,7 +654,7 @@ def night_run_cmd(
                                    help="Rebuild night/detectors.yaml before the watch list"),
     research: bool | None = typer.Option(
         None, "--research/--no-research",
-        help="The researcher on night/research.yaml (tokens; default: the weekly day)"),
+        help="The researcher on night/research.yaml (tokens; default: its cadence there, nightly)"),
     assess: bool = typer.Option(True, "--assess/--no-assess",
                                 help="The assessor's second opinion on changed verdicts and on "
                                 "paper/live ideas (tokens)"),
@@ -852,6 +852,37 @@ def families_cmd() -> None:
                 by_status[kid.status.value] = by_status.get(kid.status.value, 0) + 1
             typer.echo(f"{parent_id} ({parent.status.value}): {len(kids)} variants -- "
                        + ", ".join(f"{n} {s}" for s, n in sorted(by_status.items())))
+
+
+idea_app = typer.Typer(add_completion=False, help="Ideas in the registry.")
+app.add_typer(idea_app, name="idea")
+
+
+@idea_app.command("set-parent")
+def idea_set_parent(
+    idea_id: str = typer.Argument(..., help="The variant."),
+    parent_id: str = typer.Argument(..., help="The idea it is a variant of."),
+) -> None:
+    """Make IDEA_ID a variant of PARENT_ID (owner, 2026-10-25: a variant of a
+    strategy takes no place of its own in the night's cap). Refuses unknown ids
+    and a cycle."""
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea
+    from qlab.registry.strategies import would_make_cycle
+
+    with session_scope() as session:
+        idea = session.get(Idea, idea_id)
+        if idea is None or session.get(Idea, parent_id) is None:
+            missing = idea_id if idea is None else parent_id
+            typer.echo(f"unknown idea: {missing}", err=True)
+            raise typer.Exit(code=1)
+        if would_make_cycle(session, idea_id, parent_id):
+            typer.echo(f"refused: {parent_id} is {idea_id} or already below it; "
+                       "the parent chain would loop", err=True)
+            raise typer.Exit(code=1)
+        old = idea.parent_id
+        idea.parent_id = parent_id
+        typer.echo(f"{idea_id}: {old or '(none)'} -> {parent_id}")
 
 
 detectors_app = typer.Typer(help="Regime detectors' own trials (docs/REGIME_DETECT.md).",

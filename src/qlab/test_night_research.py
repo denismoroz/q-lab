@@ -1,0 +1,341 @@
+"""Tests for the nightly researcher: cadence, once per night, the four strategies,
+the drawdown evidence in its context and DROP proposals (docs/NIGHT.md)."""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+import yaml
+
+import qlab.agents.researcher as researcher
+import qlab.night as night
+from qlab.harness.panel import MarketPanel
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+# ---- night/research.yaml ----------------------------------------------------------------
+
+
+def test_the_research_plan_has_the_four_strategies_and_runs_nightly() -> None:
+    from qlab.pipeline.spec import load_spec
+
+    plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
+    assert plan["cadence"] == "nightly"
+    assert set(plan["strategies"]) == {"bv2", "trend", "frab", "xsmom"}
+    for name, entry in plan["strategies"].items():
+        assert entry["ideas"] and all(isinstance(i, str) for i in entry["ideas"]), name
+        assert entry["specs"] and entry["docs"], name
+        spec_ideas = {load_spec(REPO / p).idea_id for p in entry["specs"]}
+        assert spec_ideas <= set(entry["ideas"]) | {"strategy-b-v2"}, (name, spec_ideas)
+        for doc in entry["docs"]:
+            assert (REPO / doc).is_file(), doc
+    xsmom = plan["strategies"]["xsmom"]
+    assert xsmom["ideas"][0] == "xsmom"
+    assert {load_spec(REPO / p).idea_id for p in xsmom["specs"]} == set(xsmom["ideas"])
+
+
+# ---- cadence and once-per-night ---------------------------------------------------------
+
+
+def test_nightly_runs_every_night_weekly_on_the_sweep_day_or_after_a_stop(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    plan = {"strategies": {"a": {}, "b": {}}}
+    day = date(2026, 10, 27)
+    assert night.research_due(day, {**plan, "cadence": "nightly"}, sweep=False)
+    assert not night.research_due(day, plan, sweep=False)  # weekly is the default
+    assert night.research_due(day, plan, sweep=True)
+    assert not night.research_due(day, {"cadence": "nightly"}, sweep=True)  # nothing to research
+    night.save_state(date(2026, 10, 26), {"done": {"research:a": "t"}, "research": [{}]})
+    assert night.unfinished_research(day, plan) == ["b"]
+    assert night.research_due(day, plan, sweep=False)  # b was left unfinished yesterday
+    with pytest.raises(ValueError, match="cadence"):
+        night.research_due(day, {**plan, "cadence": "monthly"}, sweep=False)
+
+
+class _Budget:
+    spent_tokens = 7
+
+
+class _Reading:
+    class report:  # noqa: N801 - mimics the probe's result shape
+        reading = None
+
+
+def _stage_env(tmp_path, monkeypatch, *, exhausted_on: str | None = None):
+    """A research_stage environment: empty registry, fake budget, recorded `research` calls."""
+    import qlab.budget as budget_module
+    import qlab.registry.db as db_module
+    from qlab.budget import NightExhausted
+    from qlab.registry.models import Base
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    Base.metadata.create_all(db_module.get_engine())
+    calls: list[str] = []
+
+    class _Stage:
+        def candidate(self, name):
+            return _Budget()
+
+    class _NightBudget:
+        @staticmethod
+        def open(_session, _reading):
+            return _NightBudget()
+
+        def stage(self, _stage, candidates):
+            return _Stage()
+
+    def fake_research(name, **kw):
+        if name == exhausted_on:
+            raise NightExhausted("the night's budget is spent")
+        calls.append(name)
+        return researcher.ResearchOutcome(memo=None, specs=[], problems=[])
+
+    monkeypatch.setattr(researcher, "research", fake_research)
+    monkeypatch.setattr(budget_module, "NightBudget", _NightBudget)
+    monkeypatch.setattr(budget_module, "probe", lambda _session: _Reading)
+    config = tmp_path / "research.yaml"
+    config.write_text("cadence: nightly\nmax_experiments: 2\nstrategies:\n"
+                      "  s1: {ideas: [i1], specs: []}\n  s2: {ideas: [i2], specs: []}\n",
+                      encoding="utf-8")
+    return calls, config, db_module
+
+
+def test_a_strategy_is_researched_once_per_night(tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch)
+    state = {"done": {}}
+    night.research_stage(date(2026, 10, 26), state, noise_trials=1, config=config)
+    night.research_stage(date(2026, 10, 26), state, noise_trials=1, config=config)
+    assert calls == ["s1", "s2"]
+    assert set(state["done"]) == {"research:s1", "research:s2"}
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_a_stopped_run_continues_first_on_the_next_night(tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch, exhausted_on="s2")
+    monday = {"done": {}}
+    night.research_stage(date(2026, 10, 26), monday, noise_trials=1, config=config)
+    assert calls == ["s1"] and "research:s2" not in monday["done"]
+    assert monday["research"][-1]["strategy"] == "s2" and monday["research"][-1]["stopped"]
+    night.save_state(date(2026, 10, 26), monday)
+    calls.clear()
+    monkeypatch.setattr(researcher, "research", lambda name, **kw: (
+        calls.append(name) or researcher.ResearchOutcome(memo=None)))
+    tuesday = {"done": {}}
+    night.research_stage(date(2026, 10, 27), tuesday, noise_trials=1, config=config)
+    assert calls == ["s2", "s1"]  # the unfinished one goes first
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+# ---- DROP proposals ---------------------------------------------------------------------
+
+
+def test_drop_lines_are_parsed_from_the_memo() -> None:
+    memo = "\n".join([
+        "# Записка", "Текст.",
+        "DROP: bv2-a — слабее соседа на любых данных",
+        "- DROP: `bv2-b` -- дублирует bv2-a",
+        "**DROP:** bv2-c - no edge over noise",
+        "DROP: bv2-a — second mention is ignored",
+        "Мы бы сделали DROP: not-a-line — inside a sentence",
+        "DROP: missing-reason —",
+        "DROP:",
+    ])
+    assert researcher.parse_drop_proposals(memo) == [
+        researcher.DropProposal("bv2-a", "слабее соседа на любых данных"),
+        researcher.DropProposal("bv2-b", "дублирует bv2-a"),
+        researcher.DropProposal("bv2-c", "no edge over noise"),
+    ]
+    assert researcher.parse_drop_proposals("no proposals here") == []
+
+
+def test_research_reads_drop_lines_after_the_run(tmp_path, monkeypatch) -> None:
+    import subprocess
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from qlab.budget import ExplicitNoBudget
+    from qlab.budget.agent import CLAUDE_BIN_ENV
+    from qlab.registry.models import Base
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "README").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
+                   cwd=tmp_path, check=True)
+    monkeypatch.setattr(researcher, "QLAB_ROOT", tmp_path)
+    monkeypatch.setattr("qlab.agents.implementer.QLAB_ROOT", tmp_path)
+    today = datetime.now(UTC).date().isoformat()
+    reset = int((datetime.now(UTC) + timedelta(days=3)).timestamp())
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"type": "rate_limit_event", "rate_limit_info": {
+        "status": "allowed", "unifiedWindows": {"seven_day": {"utilization": 0.2,
+                                                              "resetsAt": reset}}}}) + "\n"
+        + json.dumps({"type": "result", "is_error": False, "result": "done",
+                      "total_cost_usd": 0.0, "usage": {"input_tokens": 1, "output_tokens": 1},
+                      "modelUsage": {"claude-opus": {}}}) + "\n")
+    script = tmp_path / "claude"
+    script.write_text("#!/bin/sh\n"
+                      "printf '# memo\\nDROP: v1 — no better than v2\\n' "
+                      f"> docs/research/t-{today}.md\n"
+                      f'cat "{out}"\n')
+    script.chmod(0o755)
+    monkeypatch.setenv(CLAUDE_BIN_ENV, str(script))
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    outcome = researcher.research("t", idea_ids=[], specs=[], docs=[],
+                                  budget=ExplicitNoBudget("test"), session=sessionmaker(
+                                      bind=engine)())
+    assert outcome.drops == [researcher.DropProposal("v1", "no better than v2")]
+
+
+def test_drops_are_kept_only_for_active_variants_and_change_no_status(
+        tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch)
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea, IdeaStatus
+    from qlab.test_night import _add_ideas
+
+    with session_scope() as session:
+        _add_ideas(session, [("i1", "paper", None), ("i1-v", "bench", "i1"),
+                             ("i1-old", "rejected", "i1"), ("i2", "paper", None)])
+    config.write_text("cadence: nightly\nstrategies:\n  s1: {ideas: [i1], specs: []}\n",
+                      encoding="utf-8")
+
+    def fake_research(name, **kw):
+        calls.append(name)
+        return researcher.ResearchOutcome(
+            memo=None, drops=[researcher.DropProposal("i1-v", "weak"),
+                              researcher.DropProposal("i1-old", "already out"),
+                              researcher.DropProposal("i1", "the root")])
+
+    monkeypatch.setattr(researcher, "research", fake_research)
+    state = {"done": {}}
+    night.research_stage(date(2026, 10, 26), state, noise_trials=1, config=config)
+    entry = state["research"][0]
+    assert entry["drops"] == [{"idea": "i1-v", "why": "weak"}]
+    assert any("`i1-old`" in p and "not an active variant" in p for p in entry["problems"])
+    assert any("`i1`" in p for p in entry["problems"])
+    with session_scope() as session:  # the agent's word moved nothing
+        assert session.get(Idea, "i1-v").status == IdeaStatus.BENCH
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    report = night.write_report(date(2026, 10, 26), state).read_text(encoding="utf-8")
+    assert "предлагает вывести варианты" in report
+    assert "- s1: `i1-v` — weak" in report
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_a_full_strategy_is_told_to_write_drop_lines() -> None:
+    assert "DROP: <idea_id>" in night.full_strategy_focus("bv2", 3, ["a", "b", "c"])
+
+
+# ---- the drawdown evidence in the researcher's context ----------------------------------
+
+
+DAYS = pd.date_range("2025-01-01", periods=300, freq="1D", tz="UTC")
+
+
+def _fake_panel() -> MarketPanel:
+    steps = np.where(np.arange(300) % 9 < 4, 1.01, 0.99)
+    return MarketPanel(
+        snapshot_id="fake", prices=pd.DataFrame({"A": 100.0 * np.cumprod(steps)}, index=DAYS),
+        funding=pd.DataFrame(0.0, index=DAYS, columns=["A"]),
+        tradeable=pd.DataFrame(True, index=DAYS, columns=["A"]), meta={})
+
+
+def _write_spec(tmp_path: Path, fixed_at: str | None = None) -> Path:
+    spec = {"idea_id": "fake", "title": "fake", "code_ref": "qlab.test_diagnose:_Seen",
+            "data": {"source": "binance", "interval": "1d", "start": "2025-01-01",
+                     "end": "2025-10-27"},
+            "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+            "unexpressed_mechanisms": []}
+    if fixed_at:
+        spec.update(params_fixed_at=fixed_at, params_fixed_evidence="a test")
+    path = tmp_path / "fake.yaml"
+    path.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    return path
+
+
+def _session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from qlab.registry.models import Base
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
+
+
+def test_context_carries_the_drawdown_evidence_and_the_cut_sentence(
+        tmp_path, monkeypatch) -> None:
+    import qlab.pipeline.evaluate as evaluate
+    import qlab.regimes
+    from qlab.rules.loader import load_latest
+
+    monkeypatch.setattr(evaluate, "resolve_cached_panel", lambda session, spec: _fake_panel())
+    monkeypatch.setattr(qlab.regimes, "load", lambda: None)
+    text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path)])
+    share = load_latest().holdout_share.share  # read from the rules, not written in the code
+    cut = DAYS[int(round(300 * (1 - share)))].date()
+    assert (f"До даты отреза {cut}; данные после неё — для проверки исправлений, "
+            "на них не смотреть.") in text
+    assert "## Drawdown evidence:" in text and "idea fake" in text
+    assert "Deepest drawdowns" in text and "Worst calendar months" in text
+    assert "no stored regime labels" in text
+    assert f"held-out share is read from ruleset {load_latest().version}" in text
+
+
+def test_context_uses_the_specs_params_fixed_at_as_the_cut(tmp_path, monkeypatch) -> None:
+    import qlab.pipeline.evaluate as evaluate
+    import qlab.regimes
+
+    monkeypatch.setattr(evaluate, "resolve_cached_panel", lambda session, spec: _fake_panel())
+    monkeypatch.setattr(qlab.regimes, "load", lambda: None)
+    text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path, "2025-06-01")])
+    assert "До даты отреза 2025-06-01;" in text
+    assert "params_fixed_at 2025-06-01" in text
+
+
+def test_context_says_so_when_the_panel_is_not_cached(tmp_path, monkeypatch) -> None:
+    import qlab.pipeline.evaluate as evaluate
+
+    def never_fetch(*_a, **_k):
+        raise AssertionError("the evidence must never fetch data")
+
+    monkeypatch.setattr(evaluate, "resolve_panel", never_fetch)
+    monkeypatch.setattr(evaluate, "build_snapshot", never_fetch)
+    monkeypatch.setattr(evaluate, "resolve_cached_panel", lambda session, spec: None)
+    text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path)])
+    assert "is not cached" in text and "nothing is fetched" in text
+    assert "До даты отреза" not in text
+
+
+def test_a_broken_spec_does_not_stop_the_context(tmp_path) -> None:
+    text = researcher.build_context("t", [], _session(), [tmp_path / "missing.yaml"])
+    assert "evidence not built" in text
+
+
+def test_the_instructions_frame_the_work_on_the_owners_terms() -> None:
+    text = researcher.INSTRUCTIONS.format(
+        name="n", context_path="c", docs="d", specs="s", memo_path="m", spec_dir="sd",
+        max_experiments=2, today="2026-10-26", focus="")
+    assert "ignore that" in text and "NOT a reason to stop" in text
+    assert "DROP: <idea_id>" in text and "CUT DATE" in text and "preliminary" in text
+    assert "data.source: binance" in text
+    assert "Never set params_fixed_at to 2026-10-26" in text

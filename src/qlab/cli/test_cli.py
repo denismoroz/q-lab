@@ -237,6 +237,33 @@ def test_retire_needs_a_reason_and_writes_the_transition(cli_db):
     assert "already retired" in again.output
 
 
+def test_idea_set_parent_links_a_variant_and_refuses_a_cycle_or_unknown_ids(cli_db):
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Idea, Profile, SourceType
+
+    runner.invoke(app, ["init-db"])
+    with session_scope() as session:
+        for idea_id in ("root", "variant", "grandchild"):
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+    result = runner.invoke(app, ["idea", "set-parent", "variant", "root"])
+    assert result.exit_code == 0, result.output
+    assert "variant: (none) -> root" in result.output
+    again = runner.invoke(app, ["idea", "set-parent", "variant", "root"])
+    assert "variant: root -> root" in again.output
+    assert runner.invoke(app, ["idea", "set-parent", "grandchild", "variant"]).exit_code == 0
+
+    for idea_id, parent in (("root", "grandchild"), ("root", "variant"), ("root", "root")):
+        refused = runner.invoke(app, ["idea", "set-parent", idea_id, parent])
+        assert refused.exit_code == 1 and "loop" in refused.output
+    assert runner.invoke(app, ["idea", "set-parent", "nope", "root"]).exit_code == 1
+    assert runner.invoke(app, ["idea", "set-parent", "root", "nope"]).exit_code == 1
+    with session_scope() as session:
+        assert session.get(Idea, "root").parent_id is None
+        assert session.get(Idea, "grandchild").parent_id == "variant"
+
+
 def test_research_notes_import_is_idempotent_and_reports_skipped_strategies(cli_db, tmp_path):
     from qlab.registry import repo
     from qlab.registry.db import session_scope

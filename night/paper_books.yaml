@@ -1,0 +1,51 @@
+# Which production paper book runs the same configuration as which stand idea
+# (qlab.paper_check, docs/NIGHT.md). The night compares the two over ONE window:
+# the stand's forward test. Owner, 2026-10-25: "на стенде минус, на paper в плюсе".
+#
+# Fields: `book` is the book's name on the production host; `spec` is the stand's
+# spec (its params_fixed_at starts the stand's forward test); `paper_file` is the
+# night's export in data/paper/<day>/; `strategy_id` picks the book inside the
+# file; `sum_coins` is true when the file has one row per coin and the book's
+# equity is their sum; `replay_file` is the stand's replay of that book
+# (scripts/replay_*_paper.py --out); `label` is the Russian name shown in the report.
+books:
+  # Production `b2` (strategy id 3, hedge_margin_headroom 1.0): the stand's
+  # strategy-b-v2 spec is this instance verbatim, every param sourced from
+  # seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json).
+  # Caveat: the stand's forward test starts at params_fixed_at 2025-06-01, the
+  # paper book at 2026-09-13, so the two windows differ for this idea.
+  strategy-b-v2:
+    book: b2
+    spec: specs/bv2-live.yaml
+    label: "Bv2, запас 1.0"
+    paper_file: b2_equity.csv
+    strategy_id: 3
+    sum_coins: true
+    replay_file: replay_b2.csv
+
+  # Production `b2_cold` (strategy id 4): differs from `b2` only in
+  # hedge_margin_headroom 1.5, which is exactly what the research spec changes;
+  # its value is sourced from seed/prod_params/2026-10-02-b2_cold.json. The spec's
+  # params_fixed_at 2026-10-03 is the day the researcher declared the experiment.
+  bv2-research-headroom:
+    book: b2_cold
+    spec: specs/research/bv2/bv2-research-headroom.yaml
+    label: "Bv2, запас 1.5"
+    paper_file: b2_equity.csv
+    strategy_id: 4
+    sum_coins: true
+    replay_file: replay_b2.csv
+
+  # Production `trend` (strategy id 5): trend-live runs frab's own TrendParams()
+  # defaults, which is what the production book was created with on 2026-09-14
+  # (the spec's params_fixed_at); params come from frab's params.py, see the spec.
+  # Caveat: the stand's book runs on daily bars from 2025-01 and already held
+  # positions at its fix date, the paper book started flat on hourly bars.
+  trend-live:
+    book: trend
+    spec: specs/trend-live.yaml
+    label: "Тренд"
+    paper_file: trend_equity.csv
+    strategy_id: 5
+    sum_coins: false
+    replay_file: replay_trend.csv

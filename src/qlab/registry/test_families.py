@@ -56,3 +56,12 @@ def test_the_most_established_member_is_the_parent(session) -> None:
     assert session.get(Idea, "frab").parent_id is None  # alone in its family
     assert session.get(Idea, "fx-carry").parent_id is None  # no spec, no family
     assert assign_parents(session) == {}  # idempotent
+
+
+def test_composed_strategies_are_not_grouped_by_module() -> None:
+    # Every generated idea runs qlab.strategies.blocks:Composed; grouping by module
+    # would fold them all into one strategy.
+    from qlab.registry.families import strategy_key
+
+    assert strategy_key("qlab.strategies.blocks:Composed", {"signal": {}}) is None
+    assert strategy_key("qlab.strategies.trend:TrendTSMOMEnsemble", {}) == "trend"

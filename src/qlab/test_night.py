@@ -46,11 +46,11 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     day = date(2026, 10, 3)
     try:
         night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                  detectors=False, assess=False)
+                  detectors=False, assess=False, research=False)
     except KeyboardInterrupt:
         pass
     report = night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                       detectors=False, assess=False)
+                       detectors=False, assess=False, research=False)
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
@@ -94,7 +94,7 @@ def test_detectors_are_rebuilt_before_the_watch_list_and_reported(tmp_path, monk
     monkeypatch.setattr(night, "WATCHLIST", watch)
     monkeypatch.setattr(night, "_token_lines", lambda day: "")
     path = night.run(date(2026, 10, 4), graveyard=False, paper=False, implement=False,
-                     search=False, assess=False)
+                     search=False, assess=False, research=False)
     assert order == ["detectors"]
     assert "level1 x" in path.read_text(encoding="utf-8")
 
@@ -463,7 +463,8 @@ def test_a_night_without_search_does_not_run_the_generator(tmp_path, monkeypatch
     seen = []
     monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: seen.append(kw.get("force")))
     monkeypatch.setattr(night, "search_stage", lambda *a, **kw: None)
-    flags = dict(graveyard=False, paper=False, implement=False, detectors=False, assess=False)
+    flags = dict(graveyard=False, paper=False, implement=False, detectors=False, assess=False,
+                 research=False)
     night.run(date(2026, 10, 21), search=False, **flags)
     assert seen == []
     night.run(date(2026, 10, 21), search=True, **flags)
@@ -471,36 +472,161 @@ def test_a_night_without_search_does_not_run_the_generator(tmp_path, monkeypatch
     assert seen == [None, True]
 
 
-def test_agent_idea_slots_count_only_active_agent_ideas(tmp_path, monkeypatch) -> None:
-    # Owner, 2026-10-25: «не больше 3-4 в активной разработке».
-    from qlab.registry.models import Idea
+def _memory_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
-    class _Q:
-        def __init__(self, ideas):
-            self.ideas = ideas
+    from qlab.registry.models import Base
 
-        def filter(self, *_):
-            return [i for i in self.ideas if i.status in night.ACTIVE_STATUSES]
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)()
 
-    class _S:
-        def __init__(self, ideas):
-            self.ideas = ideas
 
-        def query(self, _model):
-            return _Q(self.ideas)
+def _add_ideas(session, rows) -> None:
+    """rows: (id, status, parent_id or None)."""
+    from qlab.registry.models import AssetClass, Idea, Profile, SourceType
 
-    ideas = [Idea(id=i, status=s) for i, s in [
-        ("gen-a", "candidate"), ("bv2-research-x", "bench"), ("trend-research-y", "validated"),
-        ("gen-old", "rejected"), ("bv2-research-z", "retired"), ("frab", "live"),
-        ("strategy-b-v2", "bench")]]
+    for idea_id, status, _parent in rows:
+        session.add(Idea(id=idea_id, title=idea_id, status=status, parent_id=None,
+                         source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
+                         profile=Profile.OTHER))
+    session.flush()
+    for idea_id, _status, parent in rows:
+        session.get(Idea, idea_id).parent_id = parent
+    session.flush()
+
+
+_PLAN = {"strategies": {
+    "bv2": {"ideas": ["strategy-b-v2", "bv2-binance"]},
+    "trend": {"ideas": ["trend-live"]},
+    "frab": {"ideas": ["frab"]},
+    "xsmom": {"ideas": ["xsmom"]},
+}}
+
+
+def test_strategy_slots_count_strategies_not_ideas(tmp_path) -> None:
+    # Owner, 2026-10-25: «давай увеличим число до 6», «4 стратегии где он может работать».
+    session = _memory_session()
+    _add_ideas(session, [
+        ("strategy-b-v2", "paper", None), ("bv2-binance", "bench", "strategy-b-v2"),
+        ("bv2-research-x", "bench", "strategy-b-v2"), ("trend-live", "live", None),
+        ("frab", "live", None), ("xsmom", "bench", None),
+        ("gen-a", "candidate", None), ("gen-b", "bench", None),
+        ("gen-variant", "bench", "gen-a"),  # a variant of a generated strategy: no place
+        ("gen-old", "rejected", None),
+        ("gen-under-bv2", "bench", "strategy-b-v2"),  # a generated variant of Bv2: no place
+    ])
     limits = tmp_path / "limits.yaml"
-    limits.write_text("max_active_agent_ideas: 4\n", encoding="utf-8")
-    free, cap, active = night.agent_idea_slots(_S(ideas), limits)
-    assert (free, cap, active) == (1, 4, ["bv2-research-x", "gen-a", "trend-research-y"])
-    limits.write_text("max_active_agent_ideas: 3\n", encoding="utf-8")
-    assert night.agent_idea_slots(_S(ideas), limits)[0] == 0
-    assert night.agent_idea_slots(_S(ideas), tmp_path / "missing.yaml")[0] > 100
-    assert "Propose NO new experiment" in night.full_house_focus(3, ["gen-a"])
+    limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
+    free, cap, active = night.strategy_slots(session, _PLAN, limits)
+    assert (free, cap) == (0, 6)
+    assert active == ["bv2", "trend", "frab", "xsmom", "gen-a", "gen-b"]
+    limits.write_text("max_active_strategies: 7\n", encoding="utf-8")
+    assert night.strategy_slots(session, _PLAN, limits)[0] == 1
+    limits.write_text("max_active_strategies: 3\n", encoding="utf-8")
+    assert night.strategy_slots(session, _PLAN, limits)[0] == 0
+    assert night.strategy_slots(session, _PLAN, tmp_path / "missing.yaml")[0] > 100
+    # Variants alone never fill the places: the plan's four strategies leave two.
+    limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
+    assert night.strategy_slots(session, _PLAN, limits)[0] == 0
+    assert night.strategy_slots(session, {"strategies": {}}, limits)[0] == 4
+
+
+def test_a_generator_idea_that_is_a_researched_strategys_root_is_not_counted_twice(
+        tmp_path) -> None:
+    session = _memory_session()
+    _add_ideas(session, [("gen-root", "bench", None)])
+    limits = tmp_path / "limits.yaml"
+    limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
+    plan = {"strategies": {"gen": {"ideas": ["gen-root"]}}}
+    assert night.strategy_slots(session, plan, limits) == (5, 6, ["gen"])
+
+
+def test_variant_slots_and_the_drop_one_instruction(tmp_path) -> None:
+    session = _memory_session()
+    _add_ideas(session, [
+        ("strategy-b-v2", "paper", None), ("v1", "bench", "strategy-b-v2"),
+        ("v2", "candidate", "v1"), ("v3", "validated", "strategy-b-v2"),
+        ("v4", "retired", "strategy-b-v2")])
+    limits = tmp_path / "limits.yaml"
+    limits.write_text("max_active_variants_per_strategy: 3\n", encoding="utf-8")
+    entry = {"ideas": ["v2"]}  # any idea of the chain leads to the same root
+    assert night.variant_slots(session, entry, limits) == (0, 3, ["v1", "v2", "v3"])
+    limits.write_text("max_active_variants_per_strategy: 4\n", encoding="utf-8")
+    assert night.variant_slots(session, entry, limits)[0] == 1
+    assert night.variant_slots(session, entry, tmp_path / "missing.yaml")[0] > 100
+    text = night.full_strategy_focus("bv2", 3, ["v1", "v2", "v3"])
+    assert "Propose NO new experiment" in text and "v1, v2, v3" in text and "`bv2`" in text
+
+
+def test_research_stage_limits_experiments_per_strategy_and_says_what_to_drop(
+        tmp_path, monkeypatch) -> None:
+    import qlab.agents.researcher as researcher
+    import qlab.budget as budget_module
+    import qlab.registry.db as db_module
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Base
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    (tmp_path / "night").mkdir()
+    Base.metadata.create_all(db_module.get_engine())
+    (tmp_path / "night" / "limits.yaml").write_text(
+        "max_active_strategies: 6\nmax_active_variants_per_strategy: 3\n", encoding="utf-8")
+    with session_scope() as session:
+        _add_ideas(session, [
+            ("bv2", "paper", None), ("bv2-a", "bench", "bv2"), ("bv2-b", "bench", "bv2"),
+            ("bv2-c", "candidate", "bv2"),  # Bv2 is full
+            ("frab", "live", None), ("frab-a", "bench", "frab"),  # FRAB has two free places
+            ("trend", "live", None)])
+    config = tmp_path / "research.yaml"
+    config.write_text(
+        "max_experiments: 2\nstrategies:\n  bv2: {ideas: [bv2], specs: []}\n"
+        "  frab: {ideas: [frab], specs: []}\n  trend: {ideas: [trend], specs: []}\n",
+        encoding="utf-8")
+
+    class _Budget:
+        spent_tokens = 1
+
+    class _Stage:
+        def candidate(self, _name):
+            return _Budget()
+
+    class _NightBudget:
+        @staticmethod
+        def open(_session, _reading):
+            return _NightBudget()
+
+        def stage(self, _stage, candidates):
+            return _Stage()
+
+    class _Reading:
+        class report:  # noqa: N801 - mimics the probe's result shape
+            reading = None
+
+    calls = {}
+
+    def fake_research(name, **kw):
+        calls[name] = kw
+        return researcher.ResearchOutcome(memo=None, specs=[], problems=[])
+
+    monkeypatch.setattr(researcher, "research", fake_research)
+    monkeypatch.setattr(budget_module, "NightBudget", _NightBudget)
+    monkeypatch.setattr(budget_module, "probe", lambda _session: _Reading)
+    night.research_stage(date(2026, 10, 26), {"done": {}}, noise_trials=1, config=config)
+
+    assert calls["bv2"]["max_experiments"] == 0
+    assert "Propose NO new experiment" in calls["bv2"]["focus"]
+    assert "bv2-a, bv2-b, bv2-c" in calls["bv2"]["focus"]
+    assert calls["frab"]["max_experiments"] == 2 and "Propose NO" not in (
+        calls["frab"]["focus"] or "")
+    assert calls["trend"]["max_experiments"] == 2
+    db_module._engine = None
+    db_module._SessionLocal = None
 
 
 def test_generator_stage_waits_when_no_place_is_free(tmp_path, monkeypatch) -> None:
@@ -516,7 +642,7 @@ def test_generator_stage_waits_when_no_place_is_free(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr(generator, "generate", fake_generate)
     (tmp_path / "night").mkdir()
-    (tmp_path / "night" / "limits.yaml").write_text("max_active_agent_ideas: 1\n",
+    (tmp_path / "night" / "limits.yaml").write_text("max_active_strategies: 1\n",
                                                     encoding="utf-8")
     with db_module.session_scope() as session:
         session.add(Idea(id="gen-busy", title="t", status="bench", source_type="internal",

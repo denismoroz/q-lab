@@ -15,7 +15,11 @@ Export the paper side first (read-only on the production host):
 
 Usage:
 
-    uv run python scripts/replay_bv2_paper.py --paper b2_equity.csv [--b2-sized-with-carry]
+    uv run python scripts/replay_bv2_paper.py --paper b2_equity.csv [--b2-sized-with-carry] \\
+        [--out replay_b2.csv]
+
+`--out` writes the hour-by-hour totals (strategy_id, ts_ms, equity, replay_equity), which
+`qlab.paper_check` cuts to the stand's forward window.
 
 `--b2-sized-with-carry` reproduces how book 3 (`b2`) was actually created on
 2026-09-13: with carry still enabled, so its persisted position sizes are the
@@ -102,8 +106,10 @@ def main() -> None:
     parser.add_argument("--paper", required=True, help="b2_equity export from frab.db")
     parser.add_argument("--record-dir", default="data/recorded/hyperliquid")
     parser.add_argument("--b2-sized-with-carry", action="store_true")
+    parser.add_argument("--out", help="write the hour-by-hour totals of every book here (csv)")
     args = parser.parse_args()
     paper = pd.read_csv(args.paper)
+    written = []
 
     for strategy_id, headroom in BOOKS:
         params = B2Params.from_dict({**BASE, "hedge_margin_headroom": headroom})
@@ -123,6 +129,7 @@ def main() -> None:
         m = pd.concat(merged)
         mismatched = int((abs(m.replay_price - m.price) > 1e-9).sum())
         total = m.groupby("ts_ms")[["equity", "replay_equity"]].sum()
+        written.append(total.reset_index().assign(strategy_id=strategy_id))
         total.index = pd.to_datetime(total.index, unit="ms", utc=True)
         daily = total.resample("1D").last().pct_change().dropna()
 
@@ -133,6 +140,9 @@ def main() -> None:
         print(f"  max |hourly equity diff| {abs(total.equity - total.replay_equity).max():.4f}")
         corr = daily.equity.corr(daily.replay_equity)
         print(f"  daily return correlation {corr:.4f} (n={len(daily)})")
+    if args.out:
+        pd.concat(written)[["strategy_id", "ts_ms", "equity", "replay_equity"]].to_csv(
+            args.out, index=False)
 
 
 if __name__ == "__main__":

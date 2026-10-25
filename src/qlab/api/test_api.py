@@ -516,3 +516,43 @@ def test_idea_detail_carries_the_latest_five_research_notes_newest_first(client,
 
 def test_idea_detail_without_research_notes_has_an_empty_list(client):
     assert client.get("/api/ideas/alpha").json()["research_notes"] == []
+
+
+def test_idea_detail_names_the_strategy_of_a_variant_and_lists_a_roots_variants(
+        client, session_factory):
+    from qlab.registry.models import AssetClass, Idea, IdeaStatus, Profile, SourceType
+
+    session = session_factory()
+    session.add(Idea(id="alpha-variant", title="v", source_type=SourceType.INTERNAL,
+                     asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                     status=IdeaStatus.BENCH, parent_id="alpha"))
+    session.commit()
+    session.close()
+
+    assert client.get("/api/ideas/alpha-variant").json()["strategy"] == {
+        "root": "alpha", "is_variant": True, "active_variants": []}
+    root = client.get("/api/ideas/alpha").json()["strategy"]
+    assert root["is_variant"] is False and root["active_variants"] == ["alpha-variant"]
+
+
+def test_idea_detail_carries_the_latest_paper_check_or_null(client, session_factory):
+    from qlab.registry.models import PaperCheck
+
+    assert client.get("/api/ideas/alpha").json()["paper_check"] is None
+
+    session = session_factory()
+    for day, paper in ((24, -0.01), (25, -0.018)):
+        session.add(PaperCheck(
+            idea_id="alpha", book="b2_cold", at=date(2026, 10, day),
+            window_start=date(2026, 10, 3), window_end=date(2026, 10, 24), paper_return=paper,
+            stand_return=-0.024, stand_trial_id=None, replay_return=None,
+            stand_window_start=date(2026, 10, 3), stand_window_end=date(2026, 10, 24), note=""))
+    session.commit()
+    session.close()
+
+    check = client.get("/api/ideas/alpha").json()["paper_check"]
+
+    assert check["at"] == "2026-10-25" and check["paper_return"] == -0.018
+    assert check["stand_return"] == -0.024 and check["replay_return"] is None
+    assert check["window_start"] == "2026-10-03" and check["stand_window_end"] == "2026-10-24"
+    assert client.get("/api/ideas/omega").json()["paper_check"] is None

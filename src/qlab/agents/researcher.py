@@ -25,6 +25,7 @@ read anything and write only those two places; it runs nothing.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,7 +40,56 @@ SPEC_DIR = Path("specs/research")
 CONTEXT_DIR = Path("data/research")
 
 
-def build_context(name: str, idea_ids: list[str], session) -> str:
+CUT_SENTENCE = ("До даты отреза {cut}; данные после неё — для проверки исправлений, "
+                "на них не смотреть.")
+
+
+def drawdown_evidence(specs: list[Path], session) -> list[str]:
+    """One section per strategy spec: where it lost money before the cut
+    (`qlab.diagnose`). Built from cached panels only -- nothing is fetched; a spec
+    whose panel is not cached says so. No number here comes from the agent."""
+    from qlab.diagnose import diagnose_spec, render
+    from qlab.night import last_closed_day, with_end
+    from qlab.pipeline.spec import load_spec
+    from qlab.regimes import load as load_regimes
+    from qlab.rules.loader import load_latest
+
+    lines: list[str] = []
+    try:
+        ruleset = load_latest()
+        share = ruleset.holdout_share.share if ruleset.holdout_share is not None else None
+        rules_version = ruleset.version
+    except Exception:  # noqa: BLE001 - the section says what is missing
+        share, rules_version = None, "unknown"
+    regimes = load_regimes()
+    for path in specs:
+        full = path if path.is_absolute() else QLAB_ROOT / path
+        try:
+            spec = load_spec(full)
+            lines += [f"## Drawdown evidence: {path} (idea {spec.idea_id}, data source "
+                      f"{spec.data.source}, window {spec.data.start}..{spec.data.end})"]
+            found = diagnose_spec(spec, session, share=share, regimes=regimes)
+            if found is None:  # the nightly recheck keeps the panel of the extended window
+                extended = with_end(spec, last_closed_day())
+                if extended is not spec:
+                    found = diagnose_spec(extended, session, share=share, regimes=regimes)
+                    lines[-1] += f" -- panel of the window extended to {extended.data.end}"
+        except Exception as exc:  # noqa: BLE001 - one broken spec must not stop the research
+            lines += [f"evidence not built: {type(exc).__name__}: {exc}", ""]
+            continue
+        if found is None:
+            lines += ["the panel for this spec's data window is not cached, so the drawdown "
+                      "evidence is not built (nothing is fetched for it)", ""]
+            continue
+        lines += [CUT_SENTENCE.format(cut=found.cut.day), *render(found)]
+        if "holdout_share" in found.cut.source:
+            lines.append(f"(the held-out share is read from ruleset {rules_version})")
+        lines.append("")
+    return lines
+
+
+def build_context(name: str, idea_ids: list[str], session, specs: list[Path] | None = None
+                  ) -> str:
     """The evidence, written by code: no number in it comes from the agent."""
     from qlab.registry.models import Spec, Trial
 
@@ -68,12 +118,24 @@ def build_context(name: str, idea_ids: list[str], session) -> str:
         state = json.loads(states[-1].read_text())
         if state.get("paper"):
             lines += [f"## Paper reconciliation ({states[-1].stem})", *state["paper"], ""]
+    if specs:
+        lines += ["# Where the strategy loses (drawdown evidence, before the cut only)", "",
+                  *drawdown_evidence(specs, session)]
     return "\n".join(lines)
 
 
 INSTRUCTIONS = """You are q-lab's researcher. q-lab is a research lab that finds and
 filters trading strategies; it never places orders, and its verdicts are made by code, not
-by you. Study the strategy "{name}" and say what else is needed or possible.
+by you. Work on the strategy "{name}": make it better, and say what else is needed or possible.
+
+The owner's decision, 2026-10-25, verbatim: «я предлагаю статус ждет проверку вперед - для
+reserchera - игнорировать. а сформулировать так - 4 стратегии где он может работать. - если он
+по этим стратегиям может улучшить - отлично - пускай улучшает. ... данные есть - отлично -
+проверили - если данных мало - смотрим где стратегия плохо работает - основные просадки и их
+пытаемся исправить». So "waiting for the forward test" is NOT a reason to stop: ignore that
+status. Find where the strategy loses (the drawdown evidence in the evidence file: its deepest
+drawdowns, its returns by market regime, its worst months) and propose fixes for those losses
+as experiment specs.
 
 The evidence, built by code from the registry (every number you may quote): {context_path}
 Documents to read: {docs}
@@ -85,33 +147,79 @@ every experiment is a trial counted in deflation; a strategy's regime may be det
 from the past; a number must come from a source (frab's research, a card, the owner) -- never
 invent one; a grid of variants is declared before it runs and reported whole.
 
+A fix must be judged on data it did not see. The drawdown evidence is computed only on the
+data BEFORE a cut date (stated in each section of the evidence file); the data after the cut
+is held back for judging your fix. Design a fix from the evidence before the cut only: do not
+look at the strategy's results after the cut anywhere (older memos and research documents that
+quote whole-window numbers do not count as evidence for choosing a fix), and do not tune
+anything to them.
+
 Write two kinds of files and nothing else:
 
 1. {memo_path} -- a memo for the owner IN RUSSIAN, no jargon (explain a term on first use):
-   what the strategy does, what the evidence says works and does not, and why; hypotheses for
+   what the strategy does, what the evidence says works and does not, and why; where it
+   loses (the drawdowns, in plain words) and what fix you propose for each; hypotheses for
    improvement ranked by expected value and cost; what you would do about production (capital,
    configuration) and why; what the framework cannot yet answer about it. Quote numbers only
    from the evidence file and the documents, naming where each comes from.
+   If you propose to drop one of the strategy's active variants (the lab keeps only a few per
+   strategy), put a line of exactly this form on a line of its own, one line per variant:
+   DROP: <idea_id> — <why, one sentence>
+   Code reads these lines and shows them to the owner. You cannot drop anything yourself:
+   statuses are changed by code and by the owner, never on your word.
 
 2. At most {max_experiments} experiment specs in {spec_dir}/ -- each a variant worth running
-   on the stand that tests one hypothesis of the memo: copy the closest existing spec, change
-   only what the hypothesis needs, give it a new idea_id "{name}-research-<short>", set
-   params_fixed_at {today} with params_fixed_evidence "declared by the researcher on {today}:
-   <hypothesis>", and cite a source for every changed number in `sources`. Prefer strategy
-   code that already exists (wrappers such as qlab.strategies.regime_gate:RegimeGate and
-   qlab.strategies.retune:Retune, or existing parameters); you cannot write strategy code.
-   Write no spec if nothing is worth a trial.
-   A NEW FIXED parameter value chosen today has no forward test until data after today
-   accumulates. To test a parameter idea on history at once, offer it as a grid to
+   on the stand that tests one fix of the memo: copy the closest existing spec, change
+   only what the fix needs, give it a new idea_id "{name}-research-<short>", and cite a source
+   for every changed number in `sources`. Prefer strategy code that already exists (wrappers
+   such as qlab.strategies.regime_gate:RegimeGate and qlab.strategies.retune:Retune, or
+   existing parameters); you cannot write strategy code. Write no spec if nothing is worth a
+   trial.
+   Where long history exists, prefer a variant on it: Binance (`data.source: binance`, history
+   since 2019; see specs/bv2-binance.yaml, specs/trend-binance-cap.yaml). Set
+   params_fixed_at to the CUT DATE stated in the evidence file, with params_fixed_evidence
+   "declared by the researcher on {today}: fix designed on the data before <cut date>;
+   <hypothesis>". The data after the cut is then the fix's forward test, and the stand judges
+   it at once. Never set params_fixed_at to {today} for a fixed-parameter fix on history: it
+   has no forward test until data after today accumulates.
+   Where only a short history exists (Hyperliquid only, as for FRAB), the same applies with
+   the cut of the evidence, but its held-out part is short: say in the memo that the result is
+   preliminary. A preliminary result does not block anything; you keep working.
+   To test a parameter idea on history at once, you may also offer it as a grid to
    qlab.strategies.retune:Retune with `selects_causally: true` (docs/RETUNE.md): the wrapper
-   picks among the grid using only the past, so every day after its first choice is a
-   forward test. Prefer that form for parameter ideas. For such a spec params_fixed_at is NOT
-   today but the date of the wrapper's FIRST choice -- the start of the data where the whole
-   book exists, plus the inner strategy's warm-up, plus one whole re-tuning period -- as in
-   specs/trend-retune-monthly.yaml; its params_fixed_evidence says that arithmetic and that
-   the grid was declared {today}. With today's date the whole history would be warm-up.
+   picks among the grid using only the past, so every day after its first choice is a forward
+   test. For such a spec params_fixed_at is NOT today but the date of the wrapper's FIRST
+   choice -- the start of the data where the whole book exists, plus the inner strategy's
+   warm-up, plus one whole re-tuning period -- as in specs/trend-retune-monthly.yaml; its
+   params_fixed_evidence says that arithmetic and that the grid was declared {today}. With
+   today's date the whole history would be warm-up.
 
 {focus}Reply with one line: the memo path and the experiment spec paths."""
+
+
+@dataclass(frozen=True)
+class DropProposal:
+    """The researcher's suggestion to drop a variant. A suggestion only: code
+    never changes a status on the agent's word (the owner decides)."""
+
+    idea_id: str
+    why: str
+
+
+# `DROP: <idea_id> — <why>` on a line of its own (a list bullet or bold marker is
+# tolerated); the dash is an em dash, an en dash, "--" or a spaced hyphen.
+_DROP_LINE = re.compile(
+    r"^[ \t>*_-]*DROP:[*_ \t]*`?(?P<idea>[A-Za-z0-9][A-Za-z0-9._-]*)`?[ \t]*"
+    r"(?:[—–]|--|-(?=[ \t]))[ \t]*(?P<why>\S.*?)[ \t*_]*$", re.MULTILINE)
+
+
+def parse_drop_proposals(memo_text: str) -> list[DropProposal]:
+    """Every `DROP: <idea_id> — <why>` line of a memo, in order, one per idea
+    (the first wins). Lines that do not fit the form are not proposals."""
+    seen: dict[str, DropProposal] = {}
+    for match in _DROP_LINE.finditer(memo_text):
+        seen.setdefault(match["idea"], DropProposal(match["idea"], match["why"]))
+    return list(seen.values())
 
 
 @dataclass
@@ -121,6 +229,7 @@ class ResearchOutcome:
     reply: str | None = None
     problems: list[str] = field(default_factory=list)
     reverted: list[str] = field(default_factory=list)
+    drops: list[DropProposal] = field(default_factory=list)
 
 
 def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Path],
@@ -133,7 +242,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     today = datetime.now(UTC).date()
     (QLAB_ROOT / CONTEXT_DIR).mkdir(parents=True, exist_ok=True)
     context_path = CONTEXT_DIR / f"{name}-{today}.md"
-    (QLAB_ROOT / context_path).write_text(build_context(name, idea_ids, session),
+    (QLAB_ROOT / context_path).write_text(build_context(name, idea_ids, session, specs),
                                           encoding="utf-8")
     memo_path = MEMO_DIR / f"{name}-{today}.md"
     spec_dir = SPEC_DIR / name
@@ -167,6 +276,9 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
         outcome.problems.append(f"wrote outside its places (reverted): {outcome.reverted}")
     if outcome.memo is None:
         outcome.problems.append("no memo written")
+    else:
+        outcome.drops = parse_drop_proposals((QLAB_ROOT / outcome.memo).read_text(
+            encoding="utf-8"))
     if len(outcome.specs) > max_experiments:
         outcome.problems.append(f"{len(outcome.specs)} experiments, at most {max_experiments}")
     for spec_path in outcome.specs:
@@ -228,4 +340,5 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
     return lines
 
 
-__all__ = ["MODEL", "ResearchOutcome", "build_context", "research", "run_experiments"]
+__all__ = ["CUT_SENTENCE", "MODEL", "DropProposal", "ResearchOutcome", "build_context",
+           "drawdown_evidence", "parse_drop_proposals", "research", "run_experiments"]
