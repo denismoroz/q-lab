@@ -1,0 +1,98 @@
+# Asset-class rule for the instruments of the `xyz` HIP-3 deployment on Hyperliquid.
+# Version 2026-10-25.1, written and committed BEFORE the class table was built from it and
+# BEFORE any run that uses the table (docs/TASKS.md T34, docs/ASSET_CLASSES.md).
+#
+# What this file is: the whole mapping from what the venue says about an instrument to its
+# asset class. `qlab.data.asset_classes` applies it mechanically. Nothing here looks at prices
+# or returns, and no instrument is classified by hand: an instrument the venue has not
+# described is `unclassified`, never guessed.
+#
+# What "asset class" means here. The source paper ranks "securities in an asset class (or
+# within a country for global equities)" (Frazzini and Pedersen, NBER w16601, section
+# "Constructing Betting-Against-Beta Factors"). Its classes are single stocks (ranked per
+# country), equity indices, bonds, currencies and commodities; it has no sector or industry
+# split. So the class of a single stock here is its asset type plus the country of the
+# exchange its reference price comes from, and no sector is assigned.
+
+version: "2026-10-25.1"
+venue: hyperliquid-xyz
+
+sources:
+  # The deployer's own on-chain annotation of every instrument it lists: a category and a text
+  # that names the underlying security, its share class and its exchange. Read per instrument.
+  annotation:
+    url: https://api.hyperliquid.xyz/info
+    request: '{"type": "perpAnnotation", "coin": "xyz:<NAME>"}'
+    documented_at: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals
+    note: >-
+      The annotation is the deployer's, it is free text plus a free-form category, and the
+      venue serves only today's value. The venue serves none for 14 instruments that were
+      delisted (null); the daily snapshots of it start on the date in the class table.
+  # Cross-check only: the same texts as published by the deployer for the active markets.
+  documentation:
+    url: https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index
+    note: the descriptions there match the annotations; it lists active markets only.
+
+# Rule 1. No annotation, or an annotation that does not describe an underlying -> unclassified.
+# An unclassified instrument belongs to no class, so no rank-within-class and no class filter
+# can pick it up. Candidate sources for such tickers that were tried and rejected:
+# exchange symbol directories (they collide: the ticker CATL is a blank-check company in the
+# Nasdaq directory, while the xyz instrument is a different issuer).
+unclassified_when:
+  annotation_missing: true
+  description_equals: ["coming soon"]   # case-insensitive; placeholder text, not a description
+
+# Rule 2. The venue category maps to the asset class. Categories are compared case-insensitively.
+# Category `stocks` is not yet an asset class: the venue puts single stocks, funds and a
+# preferred share under it, so rule 3 splits it. A category that is not listed here makes the
+# instrument `unclassified` and is reported by the table builder so the rule can be extended
+# in a new version, not guessed.
+category_to_asset_class:
+  stocks: stock          # refined by rule 3
+  stock: stock           # one deployer (para) spells it this way; same meaning
+  commodities: commodity
+  fx: fx
+  indices: index
+  preipo: preipo
+
+# Rule 3. Inside category `stocks`, the first matching row wins; the text searched is the
+# annotation description, compared case-insensitively. No row matching means a single stock.
+stock_refinements:
+  - match_any: ["preferred stock"]
+    asset_class: preferred
+  - match_any: [" etf", " fund", "investment company", " etn"]
+    asset_class: fund     # exchange-traded funds (leveraged ones included) and closed-end funds
+
+# Rule 4. Country of a stock, fund or preferred share: the country of the FIRST exchange named
+# in the description in the form "(<exchange>: <symbol>)". That is the exchange the reference
+# price comes from; an American depositary share is therefore US, the share it represents is not
+# looked at. Longest exchange name first when names share a prefix.
+exchange_to_country:
+  "NYSE Arca": US
+  "NYSE": US
+  "Nasdaq": US
+  "Cboe BZX": US
+  "KRX": KR
+  "TSE": JP
+  "HKEX": HK
+  "SSE STAR": CN
+  "SSE": CN
+countries_apply_to: [stock, fund, preferred]
+
+# Rule 5. The class key is the group inside which instruments are ranked against each other.
+#   stock      -> "stock:<country>"   (the paper ranks stocks within a country)
+#   all others -> the asset class alone
+# A stock whose description names no known exchange gets the key "stock:unknown"; the table
+# builder lists such rows so the rule can be extended.
+class_key:
+  with_country: [stock]
+
+# Point-in-time (docs/ASSET_CLASSES.md). An instrument has a class from its listing date:
+# the first daily candle the venue served or we recorded; if there is none, the first day it
+# appears in our daily listing snapshots (a bound: "listed on or before"). A class changes
+# only when two daily snapshots of the annotation differ, from the first day the new value was
+# SEEN; a later value is never applied backwards. The ticker names an underlying that does not
+# change, so the first observed annotation is taken to hold from the listing date.
+point_in_time:
+  listing_date: first_daily_candle_else_first_listing_snapshot
+  change_effective: first_day_seen

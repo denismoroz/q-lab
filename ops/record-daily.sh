@@ -15,6 +15,10 @@ mkdir -p data/recorded/logs
   # Coin attributes as of each Sunday (docs/COIN_ATTRIBUTES.md); history the
   # source keeps, so only the last three weeks are checked.
   uv run qlab data coin-attributes --start "$(date -u -v-21d +%Y-%m-%d)"
+  # The deployer's annotation of every xyz instrument (category and underlying), kept
+  # per day so a change of class is seen, then the class table rebuilt from it
+  # (docs/ASSET_CLASSES.md). The venue serves only today's annotation.
+  uv run qlab data asset-classes
   # Off-machine copy: the store is irreplaceable by construction. No
   # --delete: a file gone here stays there. Runs even if a record step
   # failed -- whatever was written must still be copied.

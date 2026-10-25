@@ -2,20 +2,27 @@
 # the idea exactly as cards/xyz-equity-bab.yaml states it. Written 2026-10-01,
 # committed before any run.
 #
-# Not evaluable today, and the reason is named below rather than worked around.
-# The paper ranks securities "in an asset class"; the card's driver is about
-# equity investors. The venue's API carries no asset class per instrument
-# (metaAndAssetCtxs fields: name, szDecimals, maxLeverage, marginTableId,
-# marginMode, onlyIsolated, growthMode, isDelisted, ...) and its documentation
-# lists all markets in one table without categories. Its 129 instruments mix
-# single stocks with ETFs (SMH, XLE), leveraged ETFs (SOXL, KORU), indices,
-# commodities, FX and contracts on companies not yet listed anywhere (SHEIN,
-# ZHIPU), and 7 of the 19 delisted ones are stocks (LRCX, GLW, UMC, ...). Any
-# "stocks only" list would be a classification made by us, including the dead
-# names, and it has to come from a source before it can be used.
+# Version 2 (2026-10-25). Version 1 (2026-10-01) was not evaluable for one reason named
+# below, and this version removes that reason; it is committed before its first run.
 #
-# The same method on the whole deployment, with no classification, is the
-# neighbour idea specs/xyz-deployment-bab.yaml.
+# What was missing. The paper ranks securities "in an asset class (or within a country for
+# global equities)"; the card's driver is about equity investors. Version 1 believed the
+# venue publishes no asset class per instrument. It does: the deployer annotates every
+# instrument it lists (category and a text naming the underlying security and its
+# exchange; Hyperliquid info endpoint `perpAnnotation`), and the rule
+# classification/hyperliquid-xyz.rule.yaml (written 2026-10-25, before any run that uses it)
+# turns that into a class mechanically. Single stocks are ranked per country of the
+# exchange their price comes from; ETFs, leveraged ETFs, a preferred share, indices,
+# commodities and currencies are other classes and are not in the book (docs/ASSET_CLASSES.md).
+# The class of an instrument is point in time: it exists from its listing date and not
+# after its delisting.
+#
+# What is still not solved by classes. The venue erased the history of delisted instruments;
+# a stock among them is a survivor-only book whatever the classes say (the reason the run
+# reports). Fourteen delisted instruments have no annotation at all and stay unclassified.
+#
+# The same method on the whole deployment, with no classification, is the neighbour idea
+# specs/xyz-deployment-bab.yaml.
 
 idea_id: xyz-equity-bab
 title: "Betting against beta on xyz single stocks (the card as written)"
@@ -34,6 +41,10 @@ params:
   dimson_lags: 5          # "lags up to K = 5 trading days"
   shrink_weight: 0.5      # "we set w = 0.5 and beta_XS = 1"
   shrink_target: 1.0
+  # The class filter and the ranking group (docs/ASSET_CLASSES.md): single stocks only,
+  # ranked inside their country, groups pooled by size (src/qlab/strategies/bab.py).
+  classes: ["stock"]
+  rank_within_class: true
 
 data:
   source: hyperliquid-xyz
@@ -63,8 +74,13 @@ min_leg_notional: 10.0    # venues/hyperliquid-xyz.yaml
 simultaneous_legs: 1
 
 
-unexpressed_mechanisms:
-  - "ranking within the single-stock asset class: the venue publishes no asset class per instrument, so the implementation can only rank the whole deployment"
+unexpressed_mechanisms: []
+
+# Recorded, never routed on: where this book is not the paper's.
+differs_from_source:
+  - "the paper does not say how its country groups are pooled into one book; here each group is weighted by its share of the ranked stocks"
+  - "the class of a stock is the country of the exchange its price comes from (an American depositary share is US), the paper's is the country of the listing in its data"
+  - "the instruments are perpetual contracts on stocks, not the stocks"
 
 # Where every number and choice comes from (docs/SOURCES.md); checked
 # before any run starts.
@@ -74,6 +90,8 @@ sources:
   "min_observations": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
   "dimson_lags": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
   "shrink_weight": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "classes": "classification/hyperliquid-xyz.rule.yaml (single stocks are the card's driver; the paper's asset class for them is a country: NBER w16601, https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "rank_within_class": "https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25 («all securities in an asset class are ranked in ascending order on the basis of their estimated beta»); pooling of the groups: src/qlab/strategies/bab.py docstring, rule written before the first run"
   "shrink_target": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
   "costs.taker_fee_bps": "derived: 0.00070 * 10000; HIP-3 taker at the standard spot rate, funding-rate-arbitrage/src/frab/constants.py SPOT_TAKER"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"

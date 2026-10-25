@@ -67,11 +67,34 @@ states them and a reader can check them against the quotes above.
   denominator of every beta, not a security being ranked.
 - **Fewer than two eligible instruments at a formation means no position**
   until the next formation: there is no median to split.
+
+## Asset classes (optional, docs/ASSET_CLASSES.md; off unless a spec asks)
+
+The paper ranks "securities in an asset class (or within a country for global
+equities)". Two optional params bring that in; without them nothing changes.
+
+- `classes`: a list of class kinds or ranking groups ("stock", "stock:US", ...).
+  Only instruments whose class AT THAT FORMATION is in the list are ranked.
+  The class comes from the point-in-time table `qlab.data.asset_classes`;
+  an instrument it does not know, has not listed yet, has delisted or could
+  not classify is out.
+- `rank_within_class` (default false): rank inside each ranking group of the
+  table (for single stocks the group is the country of the exchange the price
+  comes from), as the paper ranks inside a country. Each group with at least
+  two eligible instruments gets its own equation-16 weights, each side summing
+  to one. The paper does not say how the groups are pooled into one book. The
+  rule written here before the first run that uses it: the group's weights are
+  scaled by its share of the pooled ranked instruments (n_g / sum n), so a
+  group of two weighs less than a group of sixty and the pooled sides each
+  still sum to one; then equation 17 rescales the pooled sides to a beta of
+  one. A group with fewer than two eligible instruments holds nothing.
+- `class_table` (optional): path of another class table, for tests.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -118,6 +141,30 @@ def rank_weights(betas: pd.Series) -> tuple[pd.Series, pd.Series]:
     return low, high
 
 
+def pooled_rank_weights(
+    betas: pd.Series, groups: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Equation 16 inside each group, pooled by group size (module docstring).
+
+    `groups` gives every name in `betas` its ranking group. A group with fewer than two names
+    is left out. Each returned side sums to one over the names that were ranked.
+    """
+    ranked = [
+        names.index
+        for _, names in betas.groupby(groups.reindex(betas.index), sort=True)
+        if len(names) >= 2
+    ]
+    total = sum(len(names) for names in ranked)
+    low = pd.Series(0.0, index=betas.index)
+    high = pd.Series(0.0, index=betas.index)
+    for names in ranked:
+        group_low, group_high = rank_weights(betas.loc[names])
+        share = len(names) / total
+        low.loc[names] = group_low * share
+        high.loc[names] = group_high * share
+    return low, high
+
+
 def formation_rows(index: pd.DatetimeIndex) -> list[int]:
     """Row positions of the last bar of each calendar month in `index`."""
     months = index.tz_convert(None).to_period("M") if index.tz is not None else index.to_period("M")
@@ -150,18 +197,46 @@ class BettingAgainstBeta:
 
         returns = prices.pct_change(fill_method=None)
         candidates = [c for c in prices.columns if c != market]
+        within_class = bool(params.get("rank_within_class", False))
+        labels = (
+            self._class_labels(panel, candidates, params)
+            if "classes" in params or within_class
+            else None
+        )
         weights = pd.DataFrame(0.0, index=prices.index, columns=prices.columns)
         held: pd.Series | None = None
 
         formations = set(formation_rows(prices.index))
         for t in range(len(prices.index)):
             if t in formations:
-                held = self._form(returns, panel.tradeable, candidates, market, t,
-                                  window, min_obs, lags, shrink_w, shrink_to)
+                held = self._form(
+                    returns, panel.tradeable, candidates, market, t,
+                    window, min_obs, lags, shrink_w, shrink_to,
+                    groups=None if labels is None else labels.iloc[t],
+                    within_class=within_class,
+                )
             if held is not None:
                 row = held.where(panel.tradeable.iloc[t][held.index], 0.0)
                 weights.iloc[t, weights.columns.get_indexer(row.index)] = row.to_numpy()
         return weights
+
+    @staticmethod
+    def _class_labels(
+        panel: MarketPanel, candidates: list[str], params: Mapping[str, object]
+    ) -> pd.DataFrame:
+        """Ranking group of every candidate at every bar; None where it is out of scope."""
+        from qlab.data import asset_classes
+
+        path = params.get("class_table")
+        table = asset_classes.load_table(Path(str(path))) if path else asset_classes.load_table()
+        index = panel.prices.index
+        keys = table.labels_frame(index, candidates, "class_key")
+        classes = params.get("classes")
+        if classes is None:
+            return keys
+        if not isinstance(classes, list) or not classes:
+            raise ValueError("classes must be a non-empty list of class names")
+        return keys.where(table.member_mask(index, candidates, classes))
 
     @staticmethod
     def _form(
@@ -175,8 +250,12 @@ class BettingAgainstBeta:
         lags: int,
         shrink_w: float,
         shrink_to: float,
+        groups: pd.Series | None = None,
+        within_class: bool = False,
     ) -> pd.Series | None:
-        """Weights decided at row `t` from returns of rows `t-window+1 .. t`."""
+        """Weights decided at row `t` from returns of rows `t-window+1 .. t`. `groups` (the
+        ranking group of each candidate at `t`, None for out of scope) restricts the ranking to
+        the instruments that have one; with `within_class` it also ranks inside each group."""
         first = max(0, t - window + 1)
         # `lags` extra rows before the window feed the lagged market terms of
         # the window's first observations; still entirely at or before `t`.
@@ -187,6 +266,8 @@ class BettingAgainstBeta:
         betas: dict[str, float] = {}
         for name in candidates:
             if not bool(tradeable[name].iloc[t]):
+                continue
+            if groups is not None and pd.isna(groups.get(name)):
                 continue
             asset_r = returns[name].iloc[lo : t + 1].to_numpy(dtype=float)
             in_window = asset_r[trim:]
@@ -202,7 +283,12 @@ class BettingAgainstBeta:
         if len(betas) < 2:
             return None
         beta = pd.Series(betas)
-        low, high = rank_weights(beta)
+        if within_class and groups is not None:
+            low, high = pooled_rank_weights(beta, groups)
+            if float(low.sum()) == 0.0:
+                return None  # no group had two instruments to split
+        else:
+            low, high = rank_weights(beta)
         beta_low = float((beta * low).sum())
         beta_high = float((beta * high).sum())
         if beta_low <= 0 or beta_high <= 0:
@@ -212,4 +298,10 @@ class BettingAgainstBeta:
         return low / beta_low - high / beta_high
 
 
-__all__ = ["BettingAgainstBeta", "dimson_beta", "formation_rows", "rank_weights"]
+__all__ = [
+    "BettingAgainstBeta",
+    "dimson_beta",
+    "formation_rows",
+    "pooled_rank_weights",
+    "rank_weights",
+]

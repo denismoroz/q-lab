@@ -1,0 +1,1787 @@
+# Derived by `qlab data asset-classes` from the recorded annotation snapshots, the
+# rule classification/hyperliquid-xyz.rule.yaml and the listing facts. Do not
+# edit by hand: a change belongs in the rule (a new version) or in the sources.
+version: 1
+venue: hyperliquid-xyz
+rule_version: 2026-10-25.1
+annotation_snapshots:
+- '2026-10-25'
+sources:
+  annotation:
+    url: https://api.hyperliquid.xyz/info
+    request: '{"type": "perpAnnotation", "coin": "xyz:<NAME>"}'
+    documented_at: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals
+    note: The annotation is the deployer's, it is free text plus a free-form category,
+      and the venue serves only today's value. The venue serves none for 14 instruments
+      that were delisted (null); the daily snapshots of it start on the date in the
+      class table.
+  documentation:
+    url: https://docs.trade.xyz/perpetuals/specifications-and-schedules/specification-index
+    note: the descriptions there match the annotations; it lists active markets only.
+instruments:
+  xyz:AAOI:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AAOI references 1 share of Applied Optoelectronics, Inc. common
+        stock (Nasdaq: AAOI), quoted in USD. Applied Optoelectronics develops and
+        manufactures fiber-optic networking products for data centers, broadband,
+        and telecommunications.'
+  xyz:AAPL:
+    listed_from: '2025-11-21'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-21'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AAPL references 1 share of Apple Inc. common stock (Nasdaq: AAPL),
+        quoted in USD. Apple designs consumer devices, software, and services.'
+  xyz:ACN:
+    listed_from: '2026-10-04'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-04'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-04'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:ALUMINIUM:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: ALUMINIUM references the USD price of 1 metric ton of aluminium.
+        Aluminium is a lightweight industrial metal widely used in transportation,
+        construction, packaging, and power infrastructure.
+  xyz:AMAT:
+    listed_from: '2026-06-29'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-29'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AMAT references 1 share of Applied Materials, Inc. common stock
+        (Nasdaq: AMAT), quoted in USD. Applied Materials provides equipment and services
+        for semiconductor and display manufacturing.'
+  xyz:AMD:
+    listed_from: '2025-12-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AMD references 1 share of Advanced Micro Devices, Inc. common stock
+        (Nasdaq: AMD), quoted in USD. AMD designs processors, graphics chips, and
+        data-center accelerators.'
+  xyz:AMEC:
+    listed_from: '2026-10-08'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-08'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-08'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:AMZN:
+    listed_from: '2025-11-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AMZN references 1 share of Amazon.com, Inc. common stock (Nasdaq:
+        AMZN), quoted in USD. Amazon operates e-commerce, cloud-computing, advertising,
+        and logistics businesses.'
+  xyz:ARM:
+    listed_from: '2026-05-21'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-21'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'ARM references 1 Arm Holdings plc ADS (Nasdaq: ARM), representing
+        1 ordinary share, quoted in USD. Arm designs and licenses processor architectures
+        and related computing technology.'
+  xyz:ASML:
+    listed_from: '2026-05-29'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-29'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'ASML references 1 registered ordinary share of ASML Holding N.V.
+        (Nasdaq: ASML), quoted in USD. The Nasdaq line consists of New York Registry
+        Shares, each representing one ordinary share (Euronext Amsterdam: ASML). ASML
+        develops...'
+  xyz:AVGO:
+    listed_from: '2026-06-03'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-03'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'AVGO references 1 share of Broadcom Inc. common stock (Nasdaq:
+        AVGO), quoted in USD. Broadcom provides semiconductors and infrastructure
+        software.'
+  xyz:BABA:
+    listed_from: '2026-01-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-15'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BABA references 1 Alibaba Group Holding Limited ADS (NYSE: BABA),
+        representing 8 ordinary shares (HKEX: 9988), quoted in USD. Alibaba operates
+        commerce, cloud-computing, and logistics businesses.'
+  xyz:BB:
+    listed_from: '2026-05-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-26'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BB references 1 share of BlackBerry Limited common stock (NYSE:
+        BB), quoted in USD. BlackBerry provides cybersecurity, secure communications,
+        and embedded software.'
+  xyz:BE:
+    listed_from: '2026-06-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-22'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BE references 1 share of Bloom Energy Corporation Class A common
+        stock (NYSE: BE), quoted in USD. Bloom Energy develops solid-oxide fuel-cell
+        systems for on-site power generation.'
+  xyz:BIRD:
+    listed_from: '2026-04-16'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-04-16'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BIRD references 1 share of Smartbird, Inc. Class A common stock
+        (Nasdaq: BIRD), quoted in USD. Smartbird develops AI compute infrastructure.'
+  xyz:BMNR:
+    listed_from: '2026-09-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BMNR references 1 share of BitMine Immersion Technologies, Inc.
+        common stock (NYSE: BMNR), quoted in USD. BitMine operates an Ethereum treasury
+        and blockchain infrastructure business, with activities including ETH staking
+        and...'
+  xyz:BOT:
+    listed_from: '2026-06-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-26'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'BOT references 1 share of RoboStrategy, Inc. common stock (Nasdaq:
+        BOT), quoted in USD. RoboStrategy is a closed-end investment company focused
+        on robotics and embodied AI.'
+  xyz:BRENTOIL:
+    listed_from: '2026-03-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-04'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: BRENTOIL references the USD price of 1 barrel of Brent crude oil.
+        Brent is the world's primary oil benchmark, used to price the majority of
+        globally traded crude.
+  xyz:BX:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'BX references 1 share of Blackstone Inc. common stock (NYSE: BX),
+        quoted in USD. Blackstone is an alternative asset manager investing across
+        private equity, real estate, credit, and infrastructure.'
+  xyz:CAMBRICON:
+    listed_from: '2026-10-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-15'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:CN
+      country: CN
+      venue_category: stocks
+      underlying: 'CAMBRICON references 1 A-share of Cambricon Technologies Corporation
+        Limited (SSE STAR: 688256). The oracle converts the CNY share price to USD
+        at the prevailing offshore USD/CNH rate. Cambricon designs AI processors and
+        develops...'
+  xyz:CATL:
+    listed_from: '2026-10-09'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-09'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-09'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:CBRS:
+    listed_from: '2026-05-01'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-01'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'CBRS references 1 share of Cerebras Systems Inc. Class A common
+        stock (Nasdaq: CBRS), quoted in USD. Cerebras develops wafer-scale AI processors,
+        computing systems, and cloud services.'
+  xyz:CL:
+    listed_from: '2026-01-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-06'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: WTIOIL references the USD price of 1 barrel of WTI Light Sweet Crude
+        Oil. WTI serves as a primary global benchmark for oil prices due to its high
+        quality (low density, low sulfur).
+  xyz:COIN:
+    listed_from: '2025-11-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'COIN references 1 share of Coinbase Global, Inc. Class A common
+        stock (Nasdaq: COIN), quoted in USD. Coinbase provides digital-asset trading,
+        custody, and infrastructure services.'
+  xyz:COPPER:
+    listed_from: '2026-01-14'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-14'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: COPPER references the USD price of 1 pound of high-grade copper.
+        Copper is a core industrial metal and a widely followed barometer of global
+        manufacturing and infrastructure demand.
+  xyz:CORN:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: CORN references the USD price of 1 bushel of corn. Corn is one of
+        the world's most actively traded agricultural commodities, used across food,
+        animal feed, ethanol, and industrial applications.
+  xyz:COST:
+    listed_from: '2026-03-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'COST references 1 share of Costco Wholesale Corporation common
+        stock (Nasdaq: COST), quoted in USD. Costco operates membership-based warehouse
+        retail stores.'
+  xyz:CRCL:
+    listed_from: '2025-12-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-15'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'CRCL references 1 share of Circle Internet Group, Inc. Class A
+        common stock (NYSE: CRCL), quoted in USD. Circle provides stablecoin and digital-asset
+        payment infrastructure, including USDC.'
+  xyz:CRWD:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'CRWD references 1 share of CrowdStrike Holdings, Inc. Class A common
+        stock (Nasdaq: CRWD), quoted in USD. CrowdStrike provides cloud-native cybersecurity
+        software through its Falcon platform for endpoint, identity, cloud, and data...'
+  xyz:CRWV:
+    listed_from: '2026-01-27'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-27'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'CRWV references 1 share of CoreWeave, Inc. Class A common stock
+        (Nasdaq: CRWV), quoted in USD. CoreWeave provides GPU-based cloud infrastructure.'
+  xyz:CVX:
+    listed_from: '2026-09-17'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-17'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'CVX references 1 share of Chevron Corporation common stock (NYSE:
+        CVX), quoted in USD. Chevron produces crude oil and natural gas and manufactures
+        transportation fuels, lubricants, and petrochemicals.'
+  xyz:CXMT:
+    listed_from: '2026-07-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-07-15'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:CN
+      country: CN
+      venue_category: stocks
+      underlying: 'CXMT references 1 CXMT Corporation A-share (SSE STAR: 688825).
+        The oracle converts the CNY share price to USD at the prevailing offshore
+        USD/CNH rate. CXMT Corporation, operating as ChangXin Memory Technologies,
+        is a Chinese developer...'
+  xyz:DELL:
+    listed_from: '2026-06-01'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-01'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'DELL references 1 share of Dell Technologies Inc. Class C common
+        stock (NYSE: DELL), quoted in USD. Dell provides computers, servers, storage,
+        networking, and enterprise infrastructure.'
+  xyz:DKNG:
+    listed_from: '2026-03-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'DKNG references 1 share of DraftKings Inc. Class A common stock
+        (Nasdaq: DKNG), quoted in USD. DraftKings provides online sports betting,
+        gaming, and digital sports-entertainment products.'
+  xyz:DRAM:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'DRAM references 1 share of the Roundhill Memory ETF (Cboe BZX:
+        DRAM), quoted in USD. The actively managed fund invests in companies involved
+        in semiconductor memory and storage.'
+  xyz:DXY:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: fx
+      class_key: fx
+      venue_category: fx
+      underlying: 'DXY tracks a U.S. dollar basket index, measuring the value of the
+        U.S. dollar against six major foreign currencies: the euro, Japanese yen,
+        British pound, Canadian dollar, Swedish krona, and Swiss franc.'
+  xyz:EBAY:
+    listed_from: '2026-05-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-05'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'EBAY references 1 share of eBay Inc. common stock (Nasdaq: EBAY),
+        quoted in USD. eBay operates online marketplaces connecting buyers and sellers.'
+  xyz:EUR:
+    listed_from: '2025-12-23'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-23'
+      observed_on: '2026-10-25'
+      asset_class: fx
+      class_key: fx
+      venue_category: fx
+      underlying: 'EURUSD references the EUR/USD spot exchange rate: U.S. dollars
+        per 1 euro. The euro is the official currency of the euro area.'
+  xyz:EWJ:
+    listed_from: '2026-03-02'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-02'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'EWJ references 1 share of the iShares MSCI Japan ETF (NYSE Arca:
+        EWJ), quoted in USD. The fund provides exposure to large- and mid-cap Japanese
+        equities; local-currency exposure is embedded in the ETF.'
+  xyz:EWT:
+    listed_from: '2026-05-21'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-21'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'EWT references 1 share of the iShares MSCI Taiwan ETF (NYSE Arca:
+        EWT), quoted in USD. The fund provides exposure to large- and mid-cap Taiwanese
+        equities; local-currency exposure is embedded in the ETF.'
+  xyz:EWY:
+    listed_from: '2026-03-02'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-02'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'EWY references 1 share of the iShares MSCI South Korea ETF (NYSE
+        Arca: EWY), quoted in USD. The fund provides exposure to large- and mid-cap
+        South Korean equities; local-currency exposure is embedded in the ETF.'
+  xyz:EWZ:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'EWZ references 1 share of the iShares MSCI Brazil ETF (NYSE Arca:
+        EWZ), quoted in USD. The fund provides exposure to large- and mid-cap Brazilian
+        equities; local-currency exposure is embedded in the ETF.'
+  xyz:GBP:
+    listed_from: '2026-05-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-18'
+      observed_on: '2026-10-25'
+      asset_class: fx
+      class_key: fx
+      venue_category: fx
+      underlying: 'GBPUSD references the GBP/USD spot exchange rate: U.S. dollars
+        per 1 pound sterling. The pound sterling is the official currency of the United
+        Kingdom.'
+  xyz:GEV:
+    listed_from: '2026-08-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-05'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'GEV references 1 share of GE Vernova Inc. common stock (NYSE: GEV),
+        quoted in USD. GE Vernova provides equipment, software, and services for power
+        generation, wind energy, and grid electrification.'
+  xyz:GIGADEV:
+    listed_from: '2026-07-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-07-22'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:CN
+      country: CN
+      venue_category: stocks
+      underlying: 'GIGADEV references 1 GigaDevice Semiconductor Inc. A-share (SSE:
+        603986). The oracle converts the CNY share price to USD at the prevailing
+        offshore USD/CNH rate. GigaDevice is a fabless designer of NOR flash memory,
+        specialty DRAM,...'
+  xyz:GLW:
+    listed_from: '2026-10-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-06'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'GLW references 1 share of Corning Incorporated common stock (NYSE:
+        GLW), quoted in USD. Corning manufactures specialty glass, ceramics, and optical
+        communications products.'
+  xyz:GME:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'GME references 1 share of GameStop Corp. Class A common stock (NYSE:
+        GME), quoted in USD. GameStop is a retailer of video games, collectibles,
+        and consumer electronics.'
+  xyz:GOLD:
+    listed_from: '2025-12-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-22'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: GOLD references the USD spot price of 1 troy ounce of gold (XAU/USD).
+  xyz:GOOGL:
+    listed_from: '2025-11-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'GOOGL references 1 share of Alphabet Inc. Class A common stock
+        (Nasdaq: GOOGL), quoted in USD. Alphabet operates Google and businesses spanning
+        advertising, cloud computing, and AI.'
+  xyz:H100:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:HIMS:
+    listed_from: '2026-03-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'HIMS references 1 share of Hims & Hers Health, Inc. Class A common
+        stock (NYSE: HIMS), quoted in USD. Hims & Hers operates a consumer health
+        and telehealth platform.'
+  xyz:HO:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: DIESEL references the USD price of 1 U.S. gallon of New York Harbor
+        ultra-low sulfur diesel (ULSD).
+  xyz:HOOD:
+    listed_from: '2025-11-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-26'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'HOOD references 1 share of Robinhood Markets, Inc. Class A common
+        stock (Nasdaq: HOOD), quoted in USD. Robinhood operates a financial-services
+        platform for individual investors.'
+  xyz:HYUNDAI:
+    listed_from: '2026-02-20'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-02-20'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:KR
+      country: KR
+      venue_category: stocks
+      underlying: 'HYUNDAI references 1 Hyundai Motor Company common share (KRX: 005380).
+        The oracle converts the KRW share price to USD at the prevailing USD/KRW FX
+        rate. Hyundai Motor manufactures vehicles and mobility products.'
+  xyz:IBIDEN:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:JP
+      country: JP
+      venue_category: stocks
+      underlying: 'IBIDEN references 1 Ibiden Co., Ltd. ordinary share (TSE: 4062).
+        The oracle converts the JPY share price to USD at the prevailing USD/JPY FX
+        rate. Ibiden manufactures IC package substrates, printed wiring boards, and
+        ceramic products...'
+  xyz:IBM:
+    listed_from: '2026-06-01'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-01'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'IBM references 1 share of International Business Machines Corporation
+        common stock (NYSE: IBM), quoted in USD. IBM provides hybrid-cloud, AI, software,
+        infrastructure, and consulting services.'
+  xyz:IBOV:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:INNOLIGHT:
+    listed_from: '2026-10-06'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-06'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-06'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:INTC:
+    listed_from: '2025-12-03'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-03'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'INTC references 1 share of Intel Corporation common stock (Nasdaq:
+        INTC), quoted in USD. Intel designs and manufactures semiconductors and computing
+        platforms.'
+  xyz:IREN:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'IREN references 1 IREN Limited ordinary share (Nasdaq: IREN), quoted
+        in USD. IREN develops and operates data centers supporting AI cloud computing.'
+  xyz:JIO:
+    listed_from: '2026-10-23'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-23'
+      observed_on: '2026-10-25'
+      asset_class: preipo
+      class_key: preipo
+      venue_category: preipo
+      underlying: JIO references 1 equity share of Jio Platforms Limited, quoted in
+        USD. Jio Platforms provides digital connectivity services in India. JIO is
+        currently a pre-IPO market reflecting the anticipated share price; it is expected
+        to convert to...
+  xyz:JP225:
+    listed_from: '2026-04-09'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-04-09'
+      observed_on: '2026-10-25'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: JP225 references the native JPY level of the Japan 225, a price-weighted
+        index of 225 leading Japanese equities. No FX conversion is applied; index-point
+        P&L is cash-settled in USDC.
+  xyz:JPY:
+    listed_from: '2025-12-23'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-23'
+      observed_on: '2026-10-25'
+      asset_class: fx
+      class_key: fx
+      venue_category: fx
+      underlying: 'USDJPY references the USD/JPY spot exchange rate: Japanese yen
+        per 1 U.S. dollar. The Japanese yen is the official currency of Japan.'
+  xyz:KIOXIA:
+    listed_from: '2026-06-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:JP
+      country: JP
+      venue_category: stocks
+      underlying: 'KIOXIA references 1 Kioxia Holdings Corporation ordinary share
+        (TSE: 285A). The oracle converts the JPY share price to USD at the prevailing
+        USD/JPY FX rate. Kioxia manufactures NAND flash-memory and storage products.'
+  xyz:KORU:
+    listed_from: '2026-08-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-05'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'KORU references 1 share of the Direxion Daily MSCI South Korea
+        Bull 3X ETF (NYSE Arca: KORU), quoted in USD. The fund seeks daily investment
+        results, before fees and expenses, of 300% of the performance of the MSCI
+        Korea 25/50 Index;...'
+  xyz:KR200:
+    listed_from: '2026-04-09'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-04-09'
+      observed_on: '2026-10-25'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: KR200 references the native KRW level of the Korea 200, a capitalization-weighted
+        index of 200 leading South Korean equities. No FX conversion is applied; index-point
+        P&L is cash-settled in USDC.
+  xyz:KRW:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: fx
+      class_key: fx
+      venue_category: fx
+      underlying: 'USDKRW references the USD/KRW spot exchange rate: South Korean
+        won per 1 U.S. dollar. The South Korean won is the official currency of the
+        Republic of Korea.'
+  xyz:KSTR:
+    listed_from: '2026-09-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-15'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'KSTR references 1 share of the KraneShares China Technology & Semiconductor
+        STAR 50 Index ETF (NYSE Arca: KSTR), quoted in USD. The fund tracks the STAR
+        50 Index of the 50 largest companies listed on the Shanghai Stock Exchange
+        STAR...'
+  xyz:LITE:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'LITE references 1 share of Lumentum Holdings Inc. common stock
+        (Nasdaq: LITE), quoted in USD. Lumentum develops optical and photonic components
+        for communications, computing, and industrial applications.'
+  xyz:LLY:
+    listed_from: '2026-03-25'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-25'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'LLY references 1 share of Eli Lilly and Company common stock (NYSE:
+        LLY), quoted in USD. Eli Lilly develops and manufactures pharmaceutical products.'
+  xyz:LRCX:
+    listed_from: '2026-10-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-06'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'LRCX references 1 share of Lam Research Corporation common stock
+        (Nasdaq: LRCX), quoted in USD. Lam Research supplies wafer fabrication equipment
+        and services to the semiconductor industry.'
+  xyz:LYTE:
+    listed_from: '2026-08-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-06'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'LYTE references 1 share of the Roundhill Photonics & Optics ETF
+        (Cboe BZX: LYTE), quoted in USD. The actively managed fund invests in companies
+        involved in photonics and optics, including optical interconnects, lasers,
+        and photonic chips.'
+  xyz:MAGS:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'MAGS references 1 share of the Roundhill Magnificent Seven ETF
+        (Cboe BZX: MAGS), quoted in USD. The fund offers approximately equal-weight
+        exposure to Alphabet, Amazon, Apple, Meta, Microsoft, NVIDIA, and Tesla.'
+  xyz:META:
+    listed_from: '2025-11-20'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-20'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'META references 1 share of Meta Platforms, Inc. Class A common
+        stock (Nasdaq: META), quoted in USD. Meta operates Facebook, Instagram, WhatsApp,
+        and related advertising and computing businesses.'
+  xyz:MINIMAX:
+    listed_from: '2026-06-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:HK
+      country: HK
+      venue_category: stocks
+      underlying: 'MINIMAX references 1 MiniMax Group Inc. Class A ordinary share
+        (HKEX: 0100). The oracle converts the HKD share price to USD at the prevailing
+        USD/HKD FX rate. MiniMax develops multimodal AI models and applications.'
+  xyz:MRNA:
+    listed_from: '2026-08-19'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-19'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'MRNA references 1 share of Moderna, Inc. common stock (Nasdaq:
+        MRNA), quoted in USD. Moderna develops messenger RNA (mRNA) medicines, including
+        infectious-disease vaccines and oncology therapeutics.'
+  xyz:MRVL:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'MRVL references 1 share of Marvell Technology, Inc. common stock
+        (Nasdaq: MRVL), quoted in USD. Marvell develops semiconductors for data infrastructure,
+        networking, storage, and computing.'
+  xyz:MSFT:
+    listed_from: '2025-11-19'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-19'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'MSFT references 1 share of Microsoft Corporation common stock (Nasdaq:
+        MSFT), quoted in USD. Microsoft provides software, cloud computing, devices,
+        and enterprise services.'
+  xyz:MSTR:
+    listed_from: '2025-12-02'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-02'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'MSTR references 1 share of Strategy Inc Class A common stock (Nasdaq:
+        MSTR), quoted in USD. Strategy operates a Bitcoin treasury and enterprise-analytics
+        software business.'
+  xyz:MU:
+    listed_from: '2025-12-19'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-19'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'MU references 1 share of Micron Technology, Inc. common stock (Nasdaq:
+        MU), quoted in USD. Micron manufactures memory and storage products, including
+        DRAM and NAND.'
+  xyz:MUU:
+    listed_from: '2026-10-22'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-22'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-22'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:NATGAS:
+    listed_from: '2026-01-21'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-21'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: NATGAS references the USD price of 1 MMBtu of Henry Hub natural
+        gas. Henry Hub serves as the primary U.S. benchmark for natural gas pricing
+        and is widely referenced in global energy markets.
+  xyz:NBIS:
+    listed_from: '2026-06-09'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-09'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NBIS references 1 Nebius Group N.V. Class A ordinary share (Nasdaq:
+        NBIS), quoted in USD. Nebius provides GPU-based cloud and AI infrastructure.'
+  xyz:NCLD:
+    listed_from: '2026-08-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-06'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'NCLD references 1 share of the Roundhill Neocloud ETF (Nasdaq:
+        NCLD), quoted in USD. The actively managed fund invests in neocloud companies,
+        including GPU-as-a-Service platforms and data centers built for AI and high-performance
+        computing.'
+  xyz:NET:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NET references 1 share of Cloudflare, Inc. Class A common stock
+        (NYSE: NET), quoted in USD. Cloudflare provides cloud-based network, security,
+        and developer services for websites, applications, and internet infrastructure.'
+  xyz:NFLX:
+    listed_from: '2025-12-08'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-08'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NFLX references 1 share of Netflix, Inc. common stock (Nasdaq:
+        NFLX), quoted in USD. Netflix provides subscription video entertainment and
+        advertising-supported streaming.'
+  xyz:NIFTY:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:NOK:
+    listed_from: '2026-06-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-15'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NOK references 1 Nokia Corporation ADS (NYSE: NOK), representing
+        1 share (Nasdaq Helsinki: NOKIA), quoted in USD. Nokia provides telecommunications
+        networks, infrastructure, software, and related services.'
+  xyz:NOW:
+    listed_from: '2026-06-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NOW references 1 share of ServiceNow, Inc. common stock (NYSE:
+        NOW), quoted in USD. ServiceNow provides cloud-based workflow and enterprise
+        automation software.'
+  xyz:NVDA:
+    listed_from: '2025-11-12'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-12'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NVDA references 1 share of NVIDIA Corporation common stock (Nasdaq:
+        NVDA), quoted in USD. NVIDIA designs accelerated-computing hardware, software,
+        and platforms.'
+  xyz:ORCL:
+    listed_from: '2025-12-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-05'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'ORCL references 1 share of Oracle Corporation common stock (NYSE:
+        ORCL), quoted in USD. Oracle provides database software, enterprise applications,
+        and cloud infrastructure.'
+  xyz:OURA:
+    listed_from: '2026-09-23'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-23'
+      observed_on: '2026-10-25'
+      asset_class: preipo
+      class_key: preipo
+      venue_category: preipo
+      underlying: 'OURA references 1 share of Oura Inc. common stock (Nasdaq: OURA),
+        quoted in USD. OURA is currently a pre-IPO market reflecting the anticipated
+        share price; it is expected to convert to a standard XYZ perpetual upon the
+        IPO. Oura designs...'
+  xyz:PALLADIUM:
+    listed_from: '2026-03-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-04'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: PALLADIUM references the USD spot price of 1 troy ounce of palladium
+        (XPD/USD).
+  xyz:PLATINUM:
+    listed_from: '2026-01-27'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-27'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: PLATINUM references the USD spot price of 1 troy ounce of platinum
+        (XPT/USD).
+  xyz:PLTR:
+    listed_from: '2025-11-14'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-14'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'PLTR references 1 share of Palantir Technologies Inc. Class A common
+        stock (Nasdaq: PLTR), quoted in USD. Palantir develops data-integration, analytics,
+        and AI software.'
+  xyz:PURRDAT:
+    listed_from: '2026-05-14'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-14'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'PURRDAT references 1 share of Hyperliquid Strategies Inc. common
+        stock (Nasdaq: PURR), quoted in USD. Hyperliquid Strategies is a digital-asset
+        treasury company focused on HYPE, Hyperliquid''s native token.'
+  xyz:QCOM:
+    listed_from: '2026-06-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-22'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'QCOM references 1 share of QUALCOMM Incorporated common stock (Nasdaq:
+        QCOM), quoted in USD. Qualcomm develops semiconductors, wireless technology,
+        and related software and licensing.'
+  xyz:QNT:
+    listed_from: '2026-05-28'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-28'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'QNT references 1 share of Quantinuum Inc. Class A common stock
+        (Nasdaq: QNT), quoted in USD. Quantinuum develops trapped-ion quantum computers,
+        software, and related applications.'
+  xyz:RDDT:
+    listed_from: '2026-08-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-18'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'RDDT references 1 share of Reddit, Inc. Class A common stock (NYSE:
+        RDDT), quoted in USD. Reddit operates an online platform organized into user-created
+        communities where users share and discuss content.'
+  xyz:RELIANCE:
+    listed_from: '2026-10-12'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-12'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-12'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:RIVN:
+    listed_from: '2026-01-14'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-14'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'RIVN references 1 share of Rivian Automotive, Inc. Class A common
+        stock (Nasdaq: RIVN), quoted in USD. Rivian designs and manufactures electric
+        vehicles and related products.'
+  xyz:RKLB:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'RKLB references 1 share of Rocket Lab Corporation common stock
+        (Nasdaq: RKLB), quoted in USD. Rocket Lab provides launch services, spacecraft,
+        satellite components, and related systems.'
+  xyz:SHAZ:
+    listed_from: '2026-07-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-07-06'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'SHAZ references 1 share of SharonAI Holdings Inc. Class A common
+        stock (Nasdaq: SHAZ), quoted in USD. Sharon AI provides GPU cloud and high-performance
+        computing infrastructure.'
+  xyz:SHEIN:
+    listed_from: '2026-08-27'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-27'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:HK
+      country: HK
+      venue_category: stocks
+      underlying: 'SHEIN references 1 Class B ordinary share of SHEIN Global Holdings
+        Limited (HKEX: 0625). The oracle converts the HKD share price to USD at the
+        prevailing USD/HKD FX rate. SHEIN is an online fashion and lifestyle retailer
+        selling...'
+  xyz:SILVER:
+    listed_from: '2025-12-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-12-26'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: SILVER references the USD spot price of 1 troy ounce of silver (XAG/USD).
+  xyz:SKHX:
+    listed_from: '2026-02-19'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-02-19'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:KR
+      country: KR
+      venue_category: stocks
+      underlying: 'SKHYNIX references 1 SK hynix Inc. common share (KRX: 000660).
+        The oracle converts the KRW share price to USD at the prevailing USD/KRW FX
+        rate. SK hynix manufactures DRAM and NAND memory semiconductors used in data
+        centers, AI...'
+  xyz:SKHY:
+    listed_from: '2026-07-09'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-07-09'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'SKHY references 1 SK hynix Inc. ADS (Nasdaq: SKHY), representing
+        one-tenth of 1 common share (KRX: 000660), quoted in USD. SK hynix manufactures
+        DRAM and NAND memory semiconductors used in data centers, AI hardware, mobile
+        devices, and...'
+  xyz:SMH:
+    listed_from: '2026-06-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-15'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'SMH references 1 share of the VanEck Semiconductor ETF (Nasdaq:
+        SMH), quoted in USD. The fund tracks U.S.-listed companies involved in semiconductor
+        production and equipment.'
+  xyz:SMSN:
+    listed_from: '2026-02-20'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-02-20'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:KR
+      country: KR
+      venue_category: stocks
+      underlying: 'SAMSUNG references 1 Samsung Electronics Co., Ltd. common share
+        (KRX: 005930). The oracle converts the KRW share price to USD at the prevailing
+        USD/KRW FX rate. Samsung Electronics makes semiconductors, displays, and consumer
+        electronics.'
+  xyz:SNAP:
+    listed_from: '2026-10-17'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-17'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-17'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:SNDK:
+    listed_from: '2026-01-12'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-12'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'SNDK references 1 share of Sandisk Corporation common stock (Nasdaq:
+        SNDK), quoted in USD. Sandisk develops NAND flash-memory and data-storage
+        products.'
+  xyz:SNXX:
+    listed_from: '2026-09-15'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-15'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'SNXX references 1 share of the Tradr 2X Long SNDK Daily ETF (Cboe
+        BZX: SNXX), quoted in USD. The fund seeks daily investment results, before
+        fees and expenses, of 200% of the daily performance of Sandisk Corporation
+        common stock...'
+  xyz:SOFTBANK:
+    listed_from: '2026-06-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-26'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:JP
+      country: JP
+      venue_category: stocks
+      underlying: 'SOFTBANK references 1 SoftBank Group Corp. ordinary share (TSE:
+        9984). The oracle converts the JPY share price to USD at the prevailing USD/JPY
+        FX rate. SoftBank Group is an investment holding company.'
+  xyz:SOXL:
+    listed_from: '2026-08-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-06'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'SOXL references 1 share of the Direxion Daily Semiconductor Bull
+        3X Shares (NYSE Arca: SOXL), quoted in USD. The fund seeks daily investment
+        results of 300% of the daily performance of the ICE Semiconductor Index, an
+        index of the 30...'
+  xyz:SP500:
+    listed_from: '2026-03-18'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-03-18'
+      observed_on: '2026-10-25'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: S&P500 references the S&P 500 Index, a free-float-capitalization-weighted
+        benchmark of 500 leading publicly-traded U.S. companies, widely regarded as
+        the best single gauge of large-cap U.S. equities. The S&P 500 Index is a product
+        of...
+  xyz:SPCX:
+    listed_from: '2026-05-17'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-17'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'SPCX references 1 share of Space Exploration Technologies Corp.
+        Class A common stock (Nasdaq: SPCX), quoted in USD. SpaceX develops launch
+        vehicles, spacecraft, satellite communications, and AI technology.'
+  xyz:STRC:
+    listed_from: '2026-06-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-22'
+      observed_on: '2026-10-25'
+      asset_class: preferred
+      class_key: preferred
+      country: US
+      venue_category: stocks
+      underlying: 'STRC references 1 share of Strategy Inc''s Variable Rate Series
+        A Perpetual Stretch Preferred Stock (Nasdaq: STRC), quoted in USD. Stretch,
+        the underlying security, pays cumulative monthly cash dividends at a variable
+        rate on a $100...'
+  xyz:TLT:
+    listed_from: '2026-09-17'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-09-17'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'TLT references 1 share of the iShares 20+ Year Treasury Bond ETF
+        (Nasdaq: TLT), quoted in USD. The fund tracks the ICE U.S. Treasury 20+ Year
+        Bond Index, an index of U.S. Treasury bonds with remaining maturities greater
+        than 20 years.'
+  xyz:TSLA:
+    listed_from: '2025-11-13'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-11-13'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'TSLA references 1 share of Tesla, Inc. common stock (Nasdaq: TSLA),
+        quoted in USD. Tesla designs electric vehicles, energy-storage systems, and
+        related products.'
+  xyz:TSM:
+    listed_from: '2026-02-03'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-02-03'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'TSM references 1 Taiwan Semiconductor Manufacturing Company Limited
+        ADS (NYSE: TSM), representing 5 common shares (TWSE: 2330), quoted in USD.
+        TSMC manufactures semiconductors for third-party customers.'
+  xyz:TTF:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:TTWO:
+    listed_from: '2026-10-21'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-21'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-21'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:TWST:
+    listed_from: '2026-10-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-06'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'TWST references 1 share of Twist Bioscience Corporation common
+        stock (Nasdaq: TWST), quoted in USD. Twist Bioscience manufactures synthetic
+        DNA-based products for research, sequencing, and drug discovery.'
+  xyz:UMC:
+    listed_from: '2026-10-06'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-06'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'UMC references 1 ADS of United Microelectronics Corporation (NYSE:
+        UMC), representing 5 common shares (TWSE: 2303), quoted in USD. The company
+        manufactures semiconductors for third-party customers.'
+  xyz:UNITREE:
+    listed_from: '2026-08-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-05'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:CN
+      country: CN
+      venue_category: stocks
+      underlying: 'UNITREE references 1 Yushu Technology Co., Ltd. A-share (SSE STAR:
+        688836). The oracle converts the CNY share price to USD at the prevailing
+        offshore USD/CNH rate. Yushu Technology, operating as Unitree Robotics, develops
+        and...'
+  xyz:URANIUM:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:URNM:
+    listed_from: '2026-01-29'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-29'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'URNM references 1 share of the Sprott Uranium Miners ETF (NYSE
+        Arca: URNM), quoted in USD. The fund holds uranium-mining equities and physical
+        uranium exposure.'
+  xyz:USAR:
+    listed_from: '2026-01-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-01-26'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'USAR references 1 share of USA Rare Earth, Inc. Class A common
+        stock (Nasdaq: USAR), quoted in USD. USA Rare Earth develops rare-earth mining,
+        processing, and magnet-production assets.'
+  xyz:VIX:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      venue_category: indices
+      note: the annotation is a placeholder
+  xyz:VOL:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: VOL tracks U.S. equity market volatility expectations. The market
+        is based on implied volatility in S&P 500 options and is designed to reflect
+        expectations for near-term volatility in large-cap U.S. equities.
+  xyz:WDC:
+    listed_from: '2026-06-09'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-09'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'WDC references 1 share of Western Digital Corporation common stock
+        (Nasdaq: WDC), quoted in USD. Western Digital manufactures hard-disk drives
+        and data-storage products.'
+  xyz:WHEAT:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: commodity
+      class_key: commodity
+      venue_category: commodities
+      underlying: WHEAT references the USD price of 1 bushel of Chicago Soft Red Winter
+        Wheat, the primary U.S. wheat benchmark. Wheat is a major global agricultural
+        commodity used primarily in food production and traded across global grain
+        markets.
+  xyz:XBI:
+    listed_from: '2026-08-27'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-08-27'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'XBI references 1 share of the State Street SPDR S&P Biotech ETF
+        (NYSE Arca: XBI), quoted in USD. The fund tracks the S&P Biotechnology Select
+        Industry Index, a modified equal-weighted index of U.S.-listed biotechnology
+        companies.'
+  xyz:XLE:
+    listed_from: '2026-05-04'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-04'
+      observed_on: '2026-10-25'
+      asset_class: fund
+      class_key: fund
+      country: US
+      venue_category: stocks
+      underlying: 'XLE references 1 share of the State Street Energy Select Sector
+        SPDR ETF (NYSE Arca: XLE), quoted in USD. The fund tracks large U.S. energy
+        companies in the Energy Select Sector Index.'
+  xyz:XYZ100:
+    listed_from: '2025-10-13'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2025-10-13'
+      observed_on: '2026-10-25'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: XYZ100 tracks a modified market-capitalization-weighted index of
+        100 of the largest, most actively-traded, non-financial companies that are
+        listed on a U.S. stock exchange, serving as a benchmark for large-cap U.S.
+        technology and growth...
+  xyz:YMTC:
+    listed_from: '2026-10-01'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-01'
+    delisted_basis: on_or_before_first_snapshot
+    history:
+    - valid_from: '2026-10-01'
+      observed_on: '2026-10-25'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
+  xyz:ZHIPU:
+    listed_from: '2026-06-22'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-06-22'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:HK
+      country: HK
+      venue_category: stocks
+      underlying: 'ZHIPU references 1 H-share of Knowledge Atlas Technology Joint
+        Stock Company Limited (HKEX: 2513). The oracle converts the HKD share price
+        to USD at the prevailing USD/HKD FX rate. The company, also known as Zhipu
+        AI or Z.ai, develops...'
+  xyz:ZM:
+    listed_from: '2026-05-05'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-05-05'
+      observed_on: '2026-10-25'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'ZM references 1 share of Zoom Communications, Inc. Class A common
+        stock (Nasdaq: ZM), quoted in USD. Zoom provides video, voice, contact-center,
+        and workplace collaboration software.'

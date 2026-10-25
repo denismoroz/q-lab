@@ -523,7 +523,7 @@ def test_cap_weight_reads_stored_snapshots_visible_only_after_their_date(
 
 
 def test_registries_hold_every_block() -> None:
-    assert set(UNIVERSES) == {"all", "top_volume"}
+    assert set(UNIVERSES) == {"all", "top_volume", "asset_class"}
     assert set(SIGNALS) == {"momentum", "reversal", "funding", "low_vol"}
     assert set(PORTFOLIOS) == {
         "long_short", "long_only", "long_short_quantile", "long_only_quantile",
