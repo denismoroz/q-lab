@@ -302,6 +302,19 @@ class StrategySpec(BaseModel):
     row). Required whenever the date is given: an undocumented date would
     let anyone move the boundary to where the results look best."""
 
+    judged_from: date | None = None
+    """The first day the run is judged on; bars before it are the warm-up the
+    strategy needs (price history, signal lookback, a portfolio rule that waits
+    for enough coins) and carry no book (docs/TWO_STAGE.md).
+
+    `None` (the default, every spec before the second stage of the idea
+    generator) judges from the first bar of the data, as always. The second
+    stage sets it on a market whose panel starts later than the mechanism can
+    trade: judging the empty warm-up as flat days would dilute the return and
+    the Sharpe, and the verdict would be about the dilution. It only moves the
+    start of the judged window; it never moves `params_fixed_at`, so the
+    forward test still starts where the parameters were fixed."""
+
     sources: dict[str, str] = Field(default_factory=dict)
     """Where every number and choice comes from: dotted path -> citation
     (`qlab.pipeline.sources`, docs/SOURCES.md). A citation at a path covers

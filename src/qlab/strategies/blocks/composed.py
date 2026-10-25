@@ -121,6 +121,49 @@ def _pairs_tradeable(
     return mask
 
 
+def _eligibility(panel: MarketPanel, perp: MarketPanel, perp_columns: list,
+                 scores: pd.DataFrame, universe_fn, universe_kw: dict, min_history_days: float,
+                 *, needs_spot: bool) -> tuple[pd.DataFrame, dict]:
+    """The eligibility mask (docs/BLOCKS.md, "Общие правила") and, for a portfolio
+    that holds spot, the `{perp column: spot column}` map. One definition, used by
+    the weights and by `eligible_coins`."""
+    index = panel.prices.index
+    history_ok = perp.prices.notna().cumsum() >= bars(index, min_history_days)
+    eligible = (
+        perp.tradeable.astype(bool)
+        & perp.prices.notna()
+        & history_ok
+        & universe_fn(perp, **universe_kw).astype(bool)
+        & scores.notna()
+    )
+    spot_of: dict = {}
+    if needs_spot:
+        spot_of = _spot_columns(panel, perp_columns)
+        eligible = eligible & _spot_ready(panel, perp_columns, spot_of)
+    return eligible, spot_of
+
+
+def eligible_coins(panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
+    """Which coins the spec's blocks admit to trading at each bar: the `eligible`
+    mask `Composed.target_weights` hands its portfolio block, without building any
+    weights. Used to ask, before a run, whether a market has enough coins at once
+    for the portfolio rule (`qlab.pipeline.stage2`). Raises `ValueError` on a bad
+    spec exactly as `target_weights` does."""
+    universe_fn, universe_kw = parse_block("universe", params["universe"], UNIVERSES, "rule")
+    signal_fn, signal_kw = parse_block("signal", params["signal"], SIGNALS, "block")
+    parse_block("portfolio", params["portfolio"], PORTFOLIOS, "block")  # a bad spec raises
+    min_history_days = non_negative_number("min_history_days", params["min_history_days"])
+    perp_columns = [c for c in panel.prices.columns if not str(c).endswith(SPOT_COLUMN_SUFFIX)]
+    if not perp_columns:
+        return pd.DataFrame(False, index=panel.prices.index, columns=[])
+    perp = _perp_panel(panel, perp_columns)
+    scores = signal_fn(perp, **signal_kw).replace([np.inf, -np.inf], np.nan)
+    eligible, _ = _eligibility(
+        panel, perp, perp_columns, scores, universe_fn, universe_kw, min_history_days,
+        needs_spot=PORTFOLIOS[params["portfolio"]["block"]].needs_spot)
+    return eligible
+
+
 class Composed:
     """A strategy built from universe / signal / portfolio / sizing blocks.
 
@@ -169,19 +212,9 @@ class Composed:
         perp = _perp_panel(panel, perp_columns)
 
         scores = signal_fn(perp, **signal_kw).replace([np.inf, -np.inf], np.nan)
-        history_ok = perp.prices.notna().cumsum() >= bars(index, min_history_days)
-        eligible = (
-            perp.tradeable.astype(bool)
-            & perp.prices.notna()
-            & history_ok
-            & universe_fn(perp, **universe_kw).astype(bool)
-            & scores.notna()
-        )
-
-        spot_of: dict = {}
-        if PORTFOLIOS[params["portfolio"]["block"]].needs_spot:
-            spot_of = _spot_columns(panel, perp_columns)
-            eligible = eligible & _spot_ready(panel, perp_columns, spot_of)
+        eligible, spot_of = _eligibility(
+            panel, perp, perp_columns, scores, universe_fn, universe_kw, min_history_days,
+            needs_spot=PORTFOLIOS[params["portfolio"]["block"]].needs_spot)
 
         raw = portfolio_fn(scores, eligible, **portfolio_kw)
         sized = sizing_fn(raw, perp, **sizing_kw)

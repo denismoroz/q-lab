@@ -34,6 +34,9 @@ tie it is the first to be long and the last to be short).
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable, Mapping
+
 import numpy as np
 import pandas as pd
 
@@ -153,3 +156,31 @@ PORTFOLIOS: dict[str, Block] = {
     "spot_perp_carry": Block(spot_perp_carry, {"top_n": positive_int}, needs_spot=True),
     "time_series_sign": Block(time_series_sign, {}),
 }
+
+
+def _fraction_min(fraction: float) -> int:
+    """The fewest eligible coins that give k = floor(count * fraction) >= 1."""
+    return math.ceil(1.0 / fraction - 1e-9)
+
+
+PORTFOLIO_MIN_COINS: dict[str, Callable[[Mapping[str, object]], int]] = {
+    "long_short": lambda p: 2 * int(p["top_n"]),
+    "long_only": lambda p: int(p["top_n"]),
+    "long_short_quantile": lambda p: int(p["quantiles"]),
+    "long_only_quantile": lambda p: int(p["quantiles"]),
+    "long_short_fraction": lambda p: _fraction_min(float(p["fraction"])),
+    "long_only_fraction": lambda p: _fraction_min(float(p["fraction"])),
+    "spot_perp_carry": lambda p: 1,
+    "time_series_sign": lambda p: 1,
+}
+"""Per block, the fewest eligible coins at one bar for which the block holds its book at
+the size its parameters name: the top and bottom `top_n` of `long_short` (below
+`2 * top_n` it halves its sides), one coin per group of a quantile or fraction rule
+(below it k is 0 and there is no position). Asked before a run, on a market that may
+not have that many coins at once (`qlab.pipeline.stage2`); a test requires an entry
+for every block in `PORTFOLIOS`."""
+
+
+def min_coins(portfolio: Mapping[str, object]) -> int:
+    """`PORTFOLIO_MIN_COINS` for one validated `params["portfolio"]` fragment."""
+    return PORTFOLIO_MIN_COINS[str(portfolio["block"])](portfolio)
