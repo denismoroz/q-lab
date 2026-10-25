@@ -705,7 +705,7 @@ def test_the_report_carries_the_agents_funnel_and_the_paper_rule(tmp_path, monke
     books.write_text(
         "books:\n  x-research-a:\n    book: trend\n    label: Тренд\n"
         "    paper_file: trend_equity.csv\n    strategy_id: 5\n    sum_coins: false\n"
-        "    replay_block: trend\n", encoding="utf-8")
+        "    strategy_capital_usd: 3000\n    replay_block: trend\n", encoding="utf-8")
     monkeypatch.setattr(paper_check, "BOOKS", books)
     export = tmp_path / "paper" / "2026-10-20"
     export.mkdir(parents=True)

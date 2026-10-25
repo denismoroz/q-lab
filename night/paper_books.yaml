@@ -12,12 +12,25 @@
 # ("book <id>" for Bv2, "trend"), which the paper rule (qlab.paper_rule, owner
 # 2026-10-25: at least 4-6 weeks on paper) reads when the replay file is absent.
 #
+# `strategy_capital_usd` (every book, required; loading refuses a book without it) is the
+# money AVAILABLE TO THE STRATEGY, the only base of any percent. Owner, 2026-10-25:
+# «стратегия работает на 90 и должна считать все на 90 43 - это то что еще доступно на
+# счету - оно не должно никак фигурировать в расчетах»; «нужно ставить различие - деньги на
+# счету и деньги доступные для стратегии». Money on the exchange account (free cash that
+# belongs to no position, deposits, withdrawals) is never a denominator.
+#
 # `live_books` below are books trading REAL money. They are read only by the
 # decay detector (qlab.decay), not by the paper rule or the paper-vs-stand check,
-# which are about paper. Optional fields: `equity_column` (default `equity`) and
-# `realised_from` (the date the realised period starts, default the book's first
-# row); a live book needs `realised_from` so the night's export of its hourly
-# equity is bounded and cheap.
+# which are about paper. A live book declares `equity_from: strategy_pnl`: its equity is
+# built by qlab.strategy_pnl as the strategy's capital plus the strategy's own result
+# (funding, fees, trading of its legs), from raw rows exported read-only. Optional fields:
+# `equity_column` (default `equity`) and `realised_from` (the date the realised period
+# starts, default the book's first row); a live book needs `realised_from` so the night's
+# export is bounded and cheap.
+#
+# Paper books: the book's equity already IS strategy money (the paper engine has no other),
+# and `strategy_capital_usd` is the capital the production host created it with
+# (strategies.params_json capital_usd). A test checks it against the first export row.
 books:
   # Production `b2` (strategy id 3, hedge_margin_headroom 1.0): the stand's
   # strategy-b-v2 spec is this instance verbatim, every param sourced from
@@ -31,6 +44,7 @@ books:
     paper_file: b2_equity.csv
     strategy_id: 3
     sum_coins: true
+    strategy_capital_usd: 257
     replay_file: replay_b2.csv
     replay_block: "book 3"
 
@@ -45,6 +59,7 @@ books:
     paper_file: b2_equity.csv
     strategy_id: 4
     sum_coins: true
+    strategy_capital_usd: 257
     replay_file: replay_b2.csv
     replay_block: "book 4"
 
@@ -61,6 +76,7 @@ books:
     paper_file: trend_equity.csv
     strategy_id: 5
     sum_coins: false
+    strategy_capital_usd: 3000
     replay_file: replay_trend.csv
     replay_block: "trend"
 
@@ -79,6 +95,7 @@ books:
     paper_file: b2_equity.csv
     strategy_id: 8
     sum_coins: true
+    strategy_capital_usd: 257
     realised_from: 2026-10-25T14:00:00+00:00
 
   # Production `trend_retune_3k` (strategy id 6, $3000, coins chosen weekly by code, from
@@ -93,21 +110,29 @@ books:
     paper_file: trend_retune_equity.csv
     strategy_id: 6
     sum_coins: false
+    strategy_capital_usd: 3000
 
 live_books:
-  # FRAB, production strategy id 1 (`two_phase`), real money. Equity is
-  # `equity_snapshots.total_equity`, sampled once an hour by the night's export
-  # (qlab.decay.live_export_sql). The realised period starts on the day the
-  # decision rule last changed (frab a0f5b5e, 2026-10-10), which is also the
-  # stand spec's params_fixed_at. Caveat: total_equity moves with deposits and
-  # withdrawals as well as with trading; a transfer inside the period would read
-  # as a return.
+  # FRAB, production strategy id 1 (`two_phase`), real money. FRAB works on its own
+  # Hyperliquid account, but only `budget_cap_usdc` (90, strategies.params_json) is the
+  # strategy's money: the account also holds free USDC that belongs to no position
+  # (about $43 on 2026-10-25) and takes deposits. So `strategy_capital_usd` is 90, and the
+  # equity is that 90 plus the strategy's own result since `realised_from`, hourly
+  # (qlab.strategy_pnl): funding on its perp legs, minus fees, plus the trading result of
+  # its spot and perp legs, marked at the host's hourly prices. Account totals
+  # (`equity_snapshots.total_equity`) are not used anywhere: a transfer would read as a
+  # return and the free cash would be a base of the percent. If the budget in the database
+  # is not this number, the night refuses to build the series until the owner aligns them.
+  # The realised period starts on the day the decision rule last changed (frab a0f5b5e,
+  # 2026-10-10), which is also the stand spec's params_fixed_at.
   frab:
     book: two_phase
     spec: specs/frab-live.yaml
     label: "FRAB"
-    paper_file: frab_equity.csv
-    equity_column: total_equity
+    paper_file: frab_strategy_equity.csv
+    equity_from: strategy_pnl
+    equity_column: strategy_equity
+    strategy_capital_usd: 90
     strategy_id: 1
     sum_coins: false
     realised_from: 2026-10-10

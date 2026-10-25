@@ -296,7 +296,7 @@ def test_the_night_step_exports_replays_and_writes_the_check(tmp_path, monkeypat
     books.write_text(
         "books:\n  bv2-x:\n    book: b2_cold\n    spec: x.yaml\n    label: 'Bv2, запас 1.5'\n"
         "    paper_file: b2_equity.csv\n    strategy_id: 4\n    sum_coins: true\n"
-        "    replay_file: replay_b2.csv\n")
+        "    strategy_capital_usd: 257\n    replay_file: replay_b2.csv\n")
     monkeypatch.setattr(paper_check, "BOOKS", books)
     _fixed(monkeypatch, date(2026, 10, 3))
     folder = tmp_path / "paper" / day.isoformat()

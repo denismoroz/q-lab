@@ -617,7 +617,8 @@ def test_idea_detail_carries_the_paper_rule_or_null(client, monkeypatch, tmp_pat
     books = tmp_path / "books.yaml"
     books.write_text(
         "books:\n  alpha:\n    book: trend\n    label: Тренд\n    paper_file: trend_equity.csv\n"
-        "    strategy_id: 5\n    sum_coins: false\n    replay_block: trend\n", encoding="utf-8")
+        "    strategy_id: 5\n    sum_coins: false\n    strategy_capital_usd: 3000\n"
+        "    replay_block: trend\n", encoding="utf-8")
     export = tmp_path / "paper" / "2026-10-25"
     export.mkdir(parents=True)
     first = int(datetime(2026, 9, 14, tzinfo=UTC).timestamp() * 1000)

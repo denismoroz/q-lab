@@ -8,7 +8,11 @@ For every strategy that trades on paper or live money (`night/paper_books.yaml`)
 
 * **Realised** -- the book's equity from the night's read-only export of the
   production host (`data/paper/<day>/`), from the book's first row (or its
-  `realised_from`) to the latest row.
+  `realised_from`) to the latest row. The equity is always STRATEGY money
+  (`strategy_capital_usd` in `night/paper_books.yaml`) plus what the strategy
+  made, never the exchange account's total: free cash that belongs to no
+  position and every deposit or withdrawal are not the strategy's
+  (`qlab.strategy_pnl`; owner, 2026-10-25).
 * **Expected** -- the same strategy's history on the stand: its spec's strategy
   is run on the CACHED panel, cut at the first realised row (nothing the
   realised period saw reaches it), WITHOUT writing a `trial` (nothing is
@@ -55,7 +59,7 @@ import yaml
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
-from qlab import paper_check, paper_rule
+from qlab import paper_check, paper_rule, strategy_pnl
 from qlab.paper_check import as_utc, equity_curve, window_return
 
 CONFIG = Path("night/decay.yaml")
@@ -355,39 +359,82 @@ def bands_for(config: dict, idea_id: str) -> list[Band]:
             for b in (config.get("preregistered") or {}).get(idea_id) or []]
 
 
+STRATEGY_PNL = "strategy_pnl"
+"""`equity_from` of a live book whose equity is built by `qlab.strategy_pnl` from the
+strategy's own rows (budget plus its profit and loss), never from the account."""
+
+
 def load_all_books(path: Path | None = None) -> dict[str, dict]:
     """Paper books and live-money books of `night/paper_books.yaml`, idea id ->
     description. Live books are marked `live: True`; they are kept out of
     `paper_check.load_books` on purpose (the paper rule and the paper-vs-stand
-    check are about paper)."""
+    check are about paper).
+
+    Every book states `strategy_capital_usd`, the money available to the strategy. A live
+    book's equity must be the strategy's own (`equity_from: strategy_pnl`): account money
+    (`equity_snapshots.total_equity`) is never a base for a percent (owner, 2026-10-25)."""
     raw = yaml.safe_load((path or paper_check.BOOKS).read_text(encoding="utf-8"))
     books = {k: dict(v, live=False) for k, v in (raw.get("books") or {}).items()}
     books.update({k: dict(v, live=True) for k, v in (raw.get("live_books") or {}).items()})
+    paper_check.require_strategy_capital(books)
+    for idea_id, cfg in books.items():
+        if cfg["live"] and cfg.get("equity_from") != STRATEGY_PNL:
+            raise ValueError(
+                f"night/paper_books.yaml: live book {idea_id!r} must declare "
+                f"equity_from: {STRATEGY_PNL}; the account's own equity includes money that "
+                f"belongs to no position and every transfer, so no percent may be taken on it")
     return books
 
 
-def live_export_sql(strategy_id: int, since_ms: int) -> str:
-    """The cheap hourly sample of a live strategy's equity for the production
-    host's sqlite (one snapshot per minute is stored; the first minute of each
-    hour is kept, from `since_ms` on, so a year of minutes is not read)."""
-    return (f"select strategy_id, ts_ms, total_equity from equity_snapshots "
-            f"where strategy_id={int(strategy_id)} and ts_ms>={int(since_ms)} "
-            f"and ts_ms%3600000<60000 order by ts_ms")
-
-
 def live_exports(books: dict[str, dict] | None = None) -> list[tuple[str, str]]:
-    """(export file name, sql) for every live book that declares `realised_from`."""
+    """(export file name, sql) for every live book that declares `realised_from`: the raw rows
+    of its legs, fills, funding payments, hourly prices and budget, read-only
+    (`qlab.strategy_pnl.export_queries`)."""
     books = books if books is not None else load_all_books()
-    out = []
+    out: list[tuple[str, str]] = []
     for cfg in books.values():
         if not cfg.get("live"):
             continue
         since = _as_datetime(cfg.get("realised_from"))
         if since is None:
             continue
-        out.append((cfg["paper_file"],
-                    live_export_sql(cfg["strategy_id"], int(since.timestamp() * 1000))))
+        out += strategy_pnl.export_queries(cfg["strategy_id"], int(since.timestamp() * 1000))
     return out
+
+
+def build_live_series(folder: Path, books: dict[str, dict] | None = None) -> list[str]:
+    """After the night's export: build each live book's strategy-equity file in `folder` from
+    the raw rows. Returns report lines; a book that cannot be built is a line, not a failure."""
+    books = books if books is not None else load_all_books()
+    lines: list[str] = []
+    for cfg in books.values():
+        since = _as_datetime(cfg.get("realised_from"))
+        if not cfg.get("live") or since is None:
+            continue
+        label = cfg.get("label", cfg["book"])
+        try:
+            summary = strategy_pnl.build_series_file(
+                folder, filename=cfg["paper_file"], strategy_id=cfg["strategy_id"],
+                since_ms=int(since.timestamp() * 1000),
+                expected_budget=float(cfg["strategy_capital_usd"]))
+        except (strategy_pnl.StrategyPnlError, OSError, KeyError, ValueError) as exc:
+            lines.append(f"{label}: ряд денег стратегии не построен ({type(exc).__name__}: {exc})")
+            continue
+        if summary["dropped"]:
+            lines.append(f"{label}: в ряду денег стратегии пропущено часов без цены: "
+                         f"{summary['dropped']}")
+    return lines
+
+
+def capital_mismatch(cfg: dict, first_value: float, *, tolerance: float) -> str | None:
+    """None when a book's first equity value is its `strategy_capital_usd` within the relative
+    `tolerance`; else a plain sentence. A percent is taken on the strategy's money, so a book
+    whose equity does not start there is on a different base than the one written down."""
+    capital = float(cfg["strategy_capital_usd"])
+    if abs(first_value - capital) <= tolerance * capital:
+        return None
+    return (f"деньги стратегии по записи {capital:g}, а выгрузка начинается с {first_value:g}: "
+            f"проценты считались бы на другой основе")
 
 
 def _as_datetime(value) -> datetime | None:
@@ -569,6 +616,11 @@ def run_decay(session: Session, day: date, end: date, *, books: dict[str, dict] 
             if len(sub) < 2:
                 lines.append(f"{label}: в выгрузке меньше двух точек, сверка пропущена")
                 continue
+            if cfg.get("equity_from") == STRATEGY_PNL:
+                problem = capital_mismatch(cfg, float(sub.iloc[0]), tolerance=1e-6)
+                if problem:  # the series starts at the strategy's money, by construction
+                    lines.append(f"{label}: {problem}, сверка пропущена")
+                    continue
             net = stand_fn(session, cfg["spec"], end=end, cut=sub.index[0])
             result = compare(
                 idea_id=idea_id, label=label, book=cfg["book"], live=bool(cfg.get("live")),
@@ -638,7 +690,8 @@ def latest_decay(session: Session, idea_id: str, *, night_dir: Path | None = Non
 __all__ = [
     "Band", "BandCheck", "DecayResult", "Measured", "SECTION_TITLE", "Spread",
     "StandHistoryMissing", "WindowMeasure", "alert_label", "band_line", "bands_for",
-    "check_band", "compare", "daily_closes", "latest_decay", "live_export_sql", "live_exports",
+    "STRATEGY_PNL", "build_live_series", "capital_mismatch", "check_band", "compare",
+    "daily_closes", "latest_decay", "live_exports",
     "load_all_books", "load_config", "max_drawdown", "percentile_of", "result_lines",
     "rolling_windows", "run_decay", "save_results", "stand_net_return", "trim_flat_start",
 ]

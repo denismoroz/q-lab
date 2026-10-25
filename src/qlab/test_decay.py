@@ -262,32 +262,46 @@ def test_the_report_text_is_plain_russian_with_no_percentile_jargon() -> None:
 # --- the live book's hourly export ------------------------------------------------------------
 
 
-def test_the_live_export_is_one_bounded_hourly_sample() -> None:
-    sql = decay.live_export_sql(1, 1_760_000_000_000)
-    assert "from equity_snapshots" in sql and "strategy_id=1" in sql
-    assert "ts_ms>=1760000000000" in sql and "ts_ms%3600000<60000" in sql
-    assert "order by ts_ms" in sql
+def test_the_live_export_reads_raw_rows_of_the_strategy_not_the_account() -> None:
+    queries = decay.live_exports(decay.load_all_books(_shipped_books()))
+
+    assert [name for name, _ in queries] == [
+        "frab_legs.csv", "frab_fills.csv", "frab_funding.csv", "frab_marks.csv",
+        "frab_budget.csv"]
+    everything = " ".join(sql for _, sql in queries)
+    assert "equity_snapshots" not in everything and "total_equity" not in everything
+    assert "strategy_id=1" in everything and f"{_ms(date(2026, 10, 10))}" in everything
+
+
+def _shipped_books() -> Path:
+    return Path(__file__).resolve().parents[2] / "night" / "paper_books.yaml"
 
 
 def test_live_books_are_kept_apart_from_paper_books(tmp_path) -> None:
     books = tmp_path / "books.yaml"
     books.write_text(
-        "books:\n  p:\n    book: trend\n    paper_file: t.csv\n"
-        "live_books:\n  frab:\n    book: two_phase\n    paper_file: frab_equity.csv\n"
+        "books:\n  p:\n    book: trend\n    paper_file: t.csv\n    strategy_capital_usd: 3000\n"
+        "live_books:\n  frab:\n    book: two_phase\n    paper_file: frab_strategy_equity.csv\n"
+        "    equity_from: strategy_pnl\n    strategy_capital_usd: 90\n"
         "    strategy_id: 1\n    realised_from: 2026-10-10\n", encoding="utf-8")
 
     assert set(paper_check.load_books(books)) == {"p"}  # the paper checks never see FRAB
     everything = decay.load_all_books(books)
     assert everything["p"]["live"] is False and everything["frab"]["live"] is True
-    [(filename, sql)] = decay.live_exports(everything)
-    assert filename == "frab_equity.csv"
-    assert f"ts_ms>={_ms(date(2026, 10, 10))}" in sql
+    queries = decay.live_exports(everything)
+    assert [name for name, _ in queries][0] == "frab_legs.csv"
+    assert all(f"{_ms(date(2026, 10, 10))}" in sql for name, sql in queries
+               if name != "frab_budget.csv")
 
 
 def test_the_shipped_mapping_and_config_are_consistent() -> None:
     root = Path(__file__).resolve().parents[2]
     books = decay.load_all_books(root / "night" / "paper_books.yaml")
     assert books["frab"]["live"] and books["frab"]["strategy_id"] == 1
+    # FRAB's percents are on its budget (90), not on the account (owner, 2026-10-25).
+    assert books["frab"]["strategy_capital_usd"] == 90
+    assert books["frab"]["equity_from"] == "strategy_pnl"
+    assert books["frab"]["equity_column"] == "strategy_equity"
     for cfg in books.values():
         assert (root / cfg["spec"]).is_file()
 
@@ -316,8 +330,10 @@ def _books(tmp_path: Path) -> Path:
     path.write_text(
         "books:\n  trend-x:\n    book: trend\n    spec: x.yaml\n    label: Тренд\n"
         "    paper_file: trend_equity.csv\n    strategy_id: 5\n    sum_coins: false\n"
+        "    strategy_capital_usd: 3000\n"
         "live_books:\n  frab-x:\n    book: two_phase\n    spec: y.yaml\n    label: FRAB\n"
-        "    paper_file: frab_equity.csv\n    equity_column: total_equity\n    strategy_id: 1\n"
+        "    paper_file: frab_strategy_equity.csv\n    equity_from: strategy_pnl\n"
+        "    equity_column: strategy_equity\n    strategy_capital_usd: 500\n    strategy_id: 1\n"
         "    realised_from: 2026-10-10\n", encoding="utf-8")
     return path
 
@@ -325,12 +341,12 @@ def _books(tmp_path: Path) -> Path:
 def test_the_night_step_reads_the_exports_and_reports_each_book(tmp_path, monkeypatch) -> None:
     root = tmp_path / "paper"
     _trend_export(root / "2026-10-25", datetime(2026, 9, 14, tzinfo=UTC), 24 * 30, 0.0001)
-    # The live book's export has its own column and a long history; only the period counts.
-    live_ms = _ms(date(2026, 10, 1))
+    # The live book's series is the strategy's own equity: it starts at the strategy's money.
+    live_ms = _ms(date(2026, 10, 10))
     pd.DataFrame({"strategy_id": 1,
-                  "ts_ms": [live_ms + h * HOUR_MS for h in range(24 * 24)],
-                  "total_equity": [500.0 + 0.001 * h for h in range(24 * 24)]}
-                 ).to_csv(root / "2026-10-25" / "frab_equity.csv", index=False)
+                  "ts_ms": [live_ms + h * HOUR_MS for h in range(24 * 15)],
+                  "strategy_equity": [500.0 + 0.001 * h for h in range(24 * 15)]}
+                 ).to_csv(root / "2026-10-25" / "frab_strategy_equity.csv", index=False)
     seen = []
 
     def fake_stand(session, spec_path, *, end, cut):
@@ -369,7 +385,7 @@ def test_a_missing_export_or_stand_history_is_a_line_not_a_failure(tmp_path) -> 
 
     assert results == []
     assert any(ln.startswith("Тренд: на стенде нет истории для сравнения") for ln in lines)
-    assert any(ln.startswith("FRAB: нет выгрузки книги (frab_equity.csv)") for ln in lines)
+    assert any(ln.startswith("FRAB: нет выгрузки книги (frab_strategy_equity.csv)") for ln in lines)
 
 
 def _use_registry(tmp_path, monkeypatch, *, tables: bool):
@@ -494,9 +510,10 @@ def test_live_books_are_exported_by_the_paper_reconciliation(tmp_path, monkeypat
 
     night.paper_reconciliation(date(2026, 10, 25))
 
-    live = [(sql, out) for sql, out in asked if "equity_snapshots" in sql]
-    assert len(live) == 1 and live[0][1].name == "frab_equity.csv"
-    assert "strategy_id=1" in live[0][0]
+    live = [out.name for _, out in asked if out.name.startswith("frab_")]
+    assert live == ["frab_legs.csv", "frab_fills.csv", "frab_funding.csv", "frab_marks.csv",
+                    "frab_budget.csv"]
+    assert not any("equity_snapshots" in sql for sql, _ in asked)
 
 
 def test_the_stand_history_is_cut_before_the_strategy_runs(tmp_path, monkeypatch) -> None:

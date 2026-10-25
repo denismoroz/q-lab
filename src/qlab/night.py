@@ -213,10 +213,11 @@ def paper_reconciliation(day: date) -> list[str]:
 
 
 def _export_live_books(folder: Path) -> list[str]:
-    """The hourly equity of the live-money books (night/paper_books.yaml,
-    `live_books`), read-only, for the decay detector (qlab.decay). A failure is
-    a report line: it must not stop the paper books' reconciliation."""
-    from qlab.decay import live_exports
+    """The raw rows of the live-money books (night/paper_books.yaml, `live_books`), read-only,
+    and the strategy-equity series built from them (qlab.strategy_pnl: the strategy's budget
+    plus its own result, not the account's total), for the decay detector (qlab.decay). A
+    failure is a report line: it must not stop the paper books' reconciliation."""
+    from qlab.decay import build_live_series, live_exports
 
     try:
         queries = live_exports()
@@ -228,6 +229,8 @@ def _export_live_books(folder: Path) -> list[str]:
             _ssh_query(sql, folder / filename)
         except (subprocess.SubprocessError, OSError) as exc:
             lines.append(f"export of {filename} from the production host failed: {exc}")
+    if not lines:  # the series is built from the rows just exported, only if all arrived
+        lines += build_live_series(folder)
     return lines
 
 

@@ -76,9 +76,25 @@ class PaperCheckResult:
     note: str
 
 
+def require_strategy_capital(books: dict[str, dict]) -> dict[str, dict]:
+    """Every book states `strategy_capital_usd`: the money available to the strategy, the only
+    base of its percents. Owner, 2026-10-25: money on the account and money available to the
+    strategy are different things, and a percent is never taken on the first. A book without
+    the field is refused when the mapping loads, so no percent can be taken on an unstated
+    base."""
+    for idea_id, cfg in books.items():
+        capital = cfg.get("strategy_capital_usd")
+        if isinstance(capital, bool) or not isinstance(capital, int | float) or capital <= 0:
+            raise ValueError(
+                f"night/paper_books.yaml: book {idea_id!r} has no positive strategy_capital_usd "
+                f"({capital!r}); the money available to the strategy must be written down")
+    return books
+
+
 def load_books(path: Path | None = None) -> dict[str, dict]:
     """Idea id -> its paper book's description (night/paper_books.yaml)."""
-    return yaml.safe_load((path or BOOKS).read_text(encoding="utf-8"))["books"]
+    return require_strategy_capital(
+        yaml.safe_load((path or BOOKS).read_text(encoding="utf-8"))["books"])
 
 
 def forward_total(ann_return_net: float, forward_days: float) -> float:
