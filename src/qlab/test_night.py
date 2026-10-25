@@ -46,11 +46,11 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     day = date(2026, 10, 3)
     try:
         night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                  detectors=False, assess=False, research=False)
+                  detectors=False, assess=False, research=False, waiting=False)
     except KeyboardInterrupt:
         pass
     report = night.run(day, graveyard=False, paper=False, implement=False, search=False,
-                       detectors=False, assess=False, research=False)
+                       detectors=False, assess=False, research=False, waiting=False)
     assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
     text = report.read_text()
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
@@ -94,7 +94,7 @@ def test_detectors_are_rebuilt_before_the_watch_list_and_reported(tmp_path, monk
     monkeypatch.setattr(night, "WATCHLIST", watch)
     monkeypatch.setattr(night, "_token_lines", lambda day: "")
     path = night.run(date(2026, 10, 4), graveyard=False, paper=False, implement=False,
-                     search=False, assess=False, research=False)
+                     search=False, assess=False, research=False, waiting=False)
     assert order == ["detectors"]
     assert "level1 x" in path.read_text(encoding="utf-8")
 
@@ -534,7 +534,7 @@ def test_a_night_without_search_does_not_run_the_generator(tmp_path, monkeypatch
     monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: seen.append(kw.get("force")))
     monkeypatch.setattr(night, "search_stage", lambda *a, **kw: None)
     flags = dict(graveyard=False, paper=False, implement=False, detectors=False, assess=False,
-                 research=False)
+                 research=False, waiting=False)
     night.run(date(2026, 10, 21), search=False, **flags)
     assert seen == []
     night.run(date(2026, 10, 21), search=True, **flags)
