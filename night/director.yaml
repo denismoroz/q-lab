@@ -38,3 +38,14 @@ families:
   funding-and-basis:
     - perp-funding-carry
     - perp-basis-convergence
+    # Added with the catalogue's widening (2026-10-25); all four read the funding rate or the
+    # futures-spot gap, the one signal of this family.
+    - perp-carry-crash-timing
+    - perp-funding-extreme-rebound
+    - cross-venue-funding-spread
+    - classic-carry
+  # A family of its own: a premium for selling option-implied variance has no relation to the
+  # momentum, reversal, low-volatility or funding families (it needs option data the lab does
+  # not store, so for now it only records the mechanism in the catalogue's coverage).
+  volatility-premium:
+    - crypto-variance-risk-premium
