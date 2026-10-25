@@ -18,4 +18,6 @@ max_active_strategies: 6
 # The researcher runs every night, so the variants inside one strategy stay bounded too:
 # when a strategy has this many active variants it proposes no new experiment and says
 # which variant it would drop instead.
-max_active_variants_per_strategy: 3
+max_active_variants_per_strategy: 6
+# Owner, 2026-10-25, on the variants cap: «так по лимитам же решили - 6 я уже писал» --
+# the same 6 holds for the variants of one strategy.
