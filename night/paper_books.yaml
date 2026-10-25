@@ -9,7 +9,7 @@
 # equity is their sum; `replay_file` is the stand's replay of that book
 # (scripts/replay_*_paper.py --out); `label` is the Russian name shown in the report;
 # `replay_block` names this book's block in the replay scripts' printed output
-# ("book <id>" for Bv2, "trend"), which the paper rule (qlab.paper_rule, owner
+# ("book <id>" for Bv2, "trend", "trend_retune_3k"), which the paper rule (qlab.paper_rule, owner
 # 2026-10-25: at least 4-6 weeks on paper) reads when the replay file is absent.
 #
 # `strategy_capital_usd` (every book, required; loading refuses a book without it) is the
@@ -87,7 +87,8 @@ books:
   # first choice (2026-06-01); those rows are the stand's own arithmetic, not paper, so
   # `realised_from` (the launch hour) cuts them off for the paper rule, the paper-vs-stand
   # check and the decay detector. The replay matched the stand's choices at all 7 re-tunings.
-  # No replay script exists for this book yet, so the paper rule reads its replay as unknown.
+  # scripts/replay_b2_retune_paper.py replays it from the history start with frab's own code and
+  # compares only the hours from `realised_from`.
   bv2-research-headroom-retune:
     book: b2_retune
     spec: specs/research/bv2/bv2-research-headroom-retune.yaml
@@ -96,13 +97,16 @@ books:
     strategy_id: 8
     sum_coins: true
     strategy_capital_usd: 257
+    replay_file: replay_b2_retune.csv
+    replay_block: "book 8"
     realised_from: 2026-10-25T14:00:00+00:00
 
   # Production `trend_retune_3k` (strategy id 6, $3000, coins chosen weekly by code, from
   # 2026-10-25 13:00 UTC; owner: «замена на монеты которые выбирает код»): the stand's
   # trend-retune-weekly at the same capital. The book replayed only the CHOICES at launch,
   # not equity: its first row is its first paper hour. The $10 000 book (id 7) has no stand
-  # spec of its own and is not checked here. No replay script exists for these books yet.
+  # spec of its own and is not checked here. scripts/replay_trend_retune_paper.py replays this
+  # book (all its rows are live).
   trend-retune-weekly:
     book: trend_retune_3k
     spec: specs/trend-retune-weekly.yaml
@@ -111,6 +115,8 @@ books:
     strategy_id: 6
     sum_coins: false
     strategy_capital_usd: 3000
+    replay_file: replay_trend_retune.csv
+    replay_block: "trend_retune_3k"
 
 live_books:
   # FRAB, production strategy id 1 (`two_phase`), real money. FRAB works on its own
