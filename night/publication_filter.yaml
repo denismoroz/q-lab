@@ -1,0 +1,110 @@
+# The topic rule that marks a paper as a candidate for the scout
+# (qlab.publications.filter). A pure function of the title and the abstract,
+# versioned: a change of the terms is a new `version`, and papers not yet
+# handed to the scout are judged again under it.
+#
+# The rule is about TOPIC ONLY. It never reads, and has no term for, what a
+# paper claims to earn (no Sharpe, profit, alpha, "outperform"): q-lab's own
+# lesson is that selection by a pretty number finds noise (the XSMOM case,
+# docs/PLAN.md). A paper is a candidate because it is about a mechanism q-lab
+# could test, not because it reports that the mechanism pays.
+#
+# A candidate means "worth the scout's tokens", never "worth trading".
+version: "2026-10-25.1"
+
+# Matching is case-insensitive, on whole words, hyphens and spaces are the same,
+# and an optional plural ("-s" / "-es") is accepted.
+groups:
+  strong:
+    rationale: >-
+      Terms that name the objects of q-lab's catalogue of mechanisms
+      (docs/MECHANISMS.md): perpetual futures and what is paid on them, basis
+      and carry, forced liquidations, venues q-lab trades or watches. One of
+      them in a paper is enough.
+    terms:
+      - perpetual futures
+      - perpetual future
+      - perpetual swap
+      - perpetual contract
+      - perp
+      - perp dex
+      - funding rate
+      - funding fee
+      - funding payment
+      - funding arbitrage
+      - cash and carry
+      - basis trade
+      - basis trading
+      - liquidation cascade
+      - forced liquidation
+      - hyperliquid
+      - binance futures
+  crypto:
+    rationale: >-
+      The asset class q-lab's venues trade. Alone it is far too wide (most
+      crypto papers are about prices or blockchains), so it counts only
+      together with a mechanism term.
+    terms:
+      - crypto
+      - cryptocurrency
+      - cryptocurrencies
+      - crypto asset
+      - bitcoin
+      - ethereum
+      - digital asset
+      - stablecoin
+      - altcoin
+      - defi
+      - decentralized finance
+      - decentralized exchange
+      - deribit
+      - binance
+  mechanism:
+    rationale: >-
+      The kinds of structure a strategy can be built on and q-lab's data can
+      show (candles, funding, volume, open interest; docs/SEARCH_CONSTRAINTS.md):
+      who pays and why, not how much a backtest returned. Alone these are too
+      wide (every finance paper says "momentum"), so two different ones must
+      appear together with a crypto term. Words that are common outside
+      trading ("basis", "carry", "funding", "leverage", "arbitrage") are listed
+      only in the phrases that make them a trading term; a first read of 90
+      days of papers (2026-10-25) showed the bare words dragging in accounting,
+      law and cryptography papers.
+    terms:
+      - cross sectional
+      - cross section of returns
+      - momentum
+      - time series momentum
+      - short term reversal
+      - mean reversion
+      - market microstructure
+      - limit order book
+      - order flow
+      - order book imbalance
+      - market making
+      - liquidity provision
+      - futures basis
+      - spot futures basis
+      - cash futures basis
+      - basis risk
+      - carry trade
+      - futures carry
+      - funding cost
+      - liquidation
+      - open interest
+      - statistical arbitrage
+      - cross venue arbitrage
+      - cross exchange arbitrage
+      - volatility risk premium
+      - variance risk premium
+      - prediction market
+      - lead lag
+      - regime switching
+
+# candidate = at least `strong_alone` terms of the group `strong`,
+# OR at least `crypto_min` terms of `crypto` together with at least
+# `mechanism_min` terms of `mechanism`.
+rule:
+  strong_alone: 1
+  crypto_min: 1
+  mechanism_min: 2

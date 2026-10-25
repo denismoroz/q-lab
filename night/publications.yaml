@@ -1,0 +1,88 @@
+# The publication feed (qlab.publications, docs/NIGHT.md): what is fetched, how
+# often, and how much of it the scout may read. Code only up to the hand-off.
+#
+# Terms of the public APIs this config respects:
+#   arXiv API   https://info.arxiv.org/help/api/tou.html
+#               "no more than one request every three seconds ... a single
+#               connection at a time"; metadata may be retrieved and stored.
+#   Crossref    https://www.crossref.org/documentation/retrieve-metadata/rest-api/
+#               https://www.crossref.org/documentation/retrieve-metadata/rest-api/rest-api-metadata-license-information/
+#               public pool: the response headers on 2026-10-25 said one request
+#               per second and one concurrent request (x-rate-limit-limit: 1,
+#               x-rate-limit-interval: 1s, x-concurrency-limit: 1); metadata is
+#               open (CC0).
+#   SSRN        has no public API or feed (the site answers scripts with 403 and
+#               its robots.txt asks for a 5 s crawl delay); SSRN papers are read
+#               through Crossref, where every SSRN paper has a DOI under the
+#               prefix 10.2139.
+#   Semantic Scholar's open API was considered and left out: it indexes the same
+#   arXiv papers and its unauthenticated pool is shared and throttled.
+
+# The first night reads this far back; later nights read from the newest paper
+# already stored per source, minus `overlap_days`.
+lookback_days: 90
+# Papers reach an index some hours or days after their submission date; the
+# overlap re-reads that tail. Duplicates are dropped by id, so it costs only requests.
+overlap_days: 3
+
+# How many candidate abstracts one night may hand to the scout. The cap is
+# set by the cost, not by supply: the scout is one agent call with a fixed price
+# (the CLI's own prompt alone is ~40k tokens, docs/BUDGET.md) plus a few
+# thousand tokens per abstract, and the search stage is what the budget cuts
+# first (CLAUDE.md). Three is the batch the generator also uses per call
+# (night/generate.yaml max_specs). The backlog drains over nights, best match first.
+max_abstracts_per_night: 3
+# An abstract is cut to this many characters in the hand-off file: arXiv
+# abstracts are 1000-2000 characters, so this only guards against a runaway one.
+max_abstract_chars: 3000
+# A paper whose stored abstract is shorter is never handed over: with a title
+# and a sentence there is no mechanism to card (Crossref often has no abstract
+# for SSRN papers). It stays in the table and in the report.
+min_abstract_chars: 200
+
+# Contact address for Crossref's polite pool (optional; the owner may set one).
+# Never filled in by code: it would be sent to a third party.
+contact: null
+
+filter: night/publication_filter.yaml
+
+arxiv:
+  enabled: true
+  endpoint: https://export.arxiv.org/api/query
+  min_interval_seconds: 3.0
+  page_size: 100
+  # A safeguard against a runaway query, not a limit that is expected to bind.
+  max_pages_per_query: 20
+  queries:
+    # q-fin: Trading and Market Microstructure, Portfolio Management,
+    # Statistical Finance, Computational Finance, Risk Management
+    # (https://arxiv.org/archive/q-fin).
+    - {name: q-fin.TR, search_query: "cat:q-fin.TR"}
+    - {name: q-fin.PM, search_query: "cat:q-fin.PM"}
+    - {name: q-fin.ST, search_query: "cat:q-fin.ST"}
+    - {name: q-fin.CP, search_query: "cat:q-fin.CP"}
+    - {name: q-fin.RM, search_query: "cat:q-fin.RM"}
+    # Crypto papers outside q-fin (computer science, economics, statistics).
+    - name: crypto-anywhere
+      search_query: >-
+        abs:"perpetual futures" OR abs:"perpetual swap" OR abs:"funding rate"
+        OR abs:"perpetual contract" OR abs:cryptocurrency OR abs:bitcoin
+
+crossref:
+  enabled: true
+  endpoint: https://api.crossref.org/works
+  min_interval_seconds: 1.0
+  rows: 100
+  max_pages_per_query: 3
+  # The DOI prefix of SSRN, and the name papers under it carry in the feed.
+  prefix: "10.2139"
+  source_name: ssrn
+  queries:
+    - perpetual futures funding rate
+    - perpetual swap
+    - cryptocurrency market microstructure
+    - cryptocurrency cross-sectional returns
+    - bitcoin futures basis
+    - cash and carry basis crypto
+    - liquidation cascade leverage crypto
+    - decentralized exchange perpetual

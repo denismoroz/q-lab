@@ -655,3 +655,33 @@ class Dossier(Base):
     path: Mapped[str] = mapped_column(String, nullable=False)
     rendered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     rules_version: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+
+class Publication(Base):
+    """`publication` -- one paper seen by the publication feed
+    (qlab.publications, docs/NIGHT.md). The feed is code only: it fetches new
+    papers from public APIs, keeps every one it has seen (so a night reads only
+    the new tail) and marks, by a topic rule (night/publication_filter.yaml),
+    which are candidates for the scout. `matched` says why. `handed_at` is set
+    when the abstract went to the scout; `draft` is the card draft the scout
+    wrote from it, if any. `title_key` dedupes the same paper across sources."""
+
+    __tablename__ = "publication"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # "arxiv:<id>" | "doi:<doi>"
+    source: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    title_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    authors: Mapped[list] = mapped_column(JSON, nullable=False)
+    published: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    abstract: Mapped[str] = mapped_column(String, nullable=False)
+    link: Mapped[str] = mapped_column(String, nullable=False)
+    categories: Mapped[list] = mapped_column(JSON, nullable=False)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    filter_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    handed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scout_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    draft: Mapped[str | None] = mapped_column(String, nullable=True)

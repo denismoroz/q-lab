@@ -498,6 +498,9 @@ def write_report(day: date, state: dict) -> Path:
                   + (f" ({sc.get('tokens', 0):,} токенов)" if sc.get("tokens") else "")]
         lines += [f"- проверка не пройдена: {p}" for p in sc.get("problems") or []]
         lines.append("")
+    from qlab.publications.stage import report_lines as publication_lines
+
+    lines += publication_lines(state)
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     lines += ["## Токены", "", _token_lines(day), ""]
     path = REPORT_DIR / f"{day.isoformat()}.md"
@@ -1061,9 +1064,11 @@ def search_stage(day: date, state: dict) -> None:
     scout's draft card (if any) inside what tonight's budget has left."""
     from qlab.agents.scout import scout
     from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
+    from qlab.publications.stage import fetch_stage, scout_stage
     from qlab.registry.db import session_scope
     from qlab.venue_watch import watch
 
+    fetch_stage(day, state)  # new papers: code only, no tokens (qlab.publications)
     if "events" not in state:
         try:
             state["events"] = [e.__dict__ for e in watch(day)]
@@ -1072,6 +1077,7 @@ def search_stage(day: date, state: dict) -> None:
             state["events_error"] = f"{type(exc).__name__}: {exc}"
         save_state(day, state)
     if "scout" in state:
+        scout_stage(day, state)
         return
     with session_scope() as session:
         try:
@@ -1084,6 +1090,7 @@ def search_stage(day: date, state: dict) -> None:
             state["scout"] = {"reply": None, "stopped": str(stop)}
         session.commit()
     save_state(day, state)
+    scout_stage(day, state)  # then a few abstracts of new papers, in the same share
 
 
 GENERATE = Path("night/generate.yaml")
