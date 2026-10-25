@@ -45,6 +45,18 @@ def positive_int(label: str, value: object) -> int:
     return int(value)
 
 
+def quantile_count(minimum: int) -> Callable[[str, object], int]:
+    """A validator for a number of equal groups, at least `minimum`."""
+
+    def check(label: str, value: object) -> int:
+        count = positive_int(label, value)
+        if count < minimum:
+            raise ValueError(f"{label} must be >= {minimum}, got {value!r}")
+        return count
+
+    return check
+
+
 @dataclass(frozen=True)
 class Block:
     """A block function and the validators of its keyword parameters."""

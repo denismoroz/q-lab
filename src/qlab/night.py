@@ -492,6 +492,37 @@ def assess_stage(day: date, state: dict) -> None:
 
 
 RESEARCH = Path("night/research.yaml")
+LIMITS = Path("night/limits.yaml")
+ACTIVE_STATUSES = ("candidate", "bench", "validated")
+
+
+def is_agent_idea(idea_id: str) -> bool:
+    """Ideas the agents create: the generator's `gen-*`, the researcher's `*-research-*`."""
+    return idea_id.startswith("gen-") or "-research-" in idea_id
+
+
+def agent_idea_slots(session, limits: Path = LIMITS) -> tuple[int, int, list[str]]:
+    """(free places, the cap, the active agent ideas) under night/limits.yaml:
+    the owner keeps at most a few agent ideas in active development at once.
+    Without the file there is no cap."""
+    from qlab.registry.models import Idea
+
+    active = sorted(i.id for i in session.query(Idea).filter(
+        Idea.status.in_(ACTIVE_STATUSES)) if is_agent_idea(i.id))
+    raw = (yaml.safe_load(limits.read_text(encoding="utf-8")) or {}).get(
+        "max_active_agent_ideas") if limits.is_file() else None
+    if raw is None:  # no limits file: no cap (the repository ships one)
+        return 1_000_000, 0, active
+    cap = int(raw)
+    return max(0, cap - len(active)), cap, active
+
+
+def full_house_focus(cap: int, active: list[str]) -> str:
+    """The researcher's instruction when no place is free."""
+    return (f"The lab keeps at most {cap} agent ideas in active development and all places are "
+            f"taken ({', '.join(active)}). Propose NO new experiment spec. Instead, in the memo, "
+            "say which of these active ideas you would drop and why, and what you would try in "
+            "its place.")
 
 
 def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | None:
@@ -519,6 +550,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
     if not todo:
         return
     with session_scope() as session:
+        free, cap, active = agent_idea_slots(session)
         stage = NightBudget.open(session, probe(session).report.reading).stage(
             Stage.IMPLEMENT, candidates=len(todo))
         for name, e in todo.items():
@@ -531,8 +563,11 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                 outcome = research(name, idea_ids=list(e["ideas"]),
                                    specs=[Path(p) for p in e["specs"]], docs=docs,
                                    budget=budget, session=session,
-                                   max_experiments=int(plan.get("max_experiments", 2)),
-                                   focus=plan.get("focus"))
+                                   max_experiments=min(int(plan.get("max_experiments", 2)), free),
+                                   focus="\n\n".join(filter(None, [
+                                       plan.get("focus"),
+                                       full_house_focus(cap, active) if free == 0 else None])))
+                free = max(0, free - len(outcome.specs))
                 session.commit()
                 entry.update(memo=str(outcome.memo or ""), specs=[str(p) for p in outcome.specs],
                              problems=outcome.problems, tokens=budget.spent_tokens)
@@ -692,6 +727,13 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
             gen["skipped"] = f"no catalogue of mechanisms at {catalogue_path}"
             save_state(day, state)
             return
+        with session_scope() as session:
+            free, cap, active = agent_idea_slots(session)
+        if free == 0:
+            gen["skipped"] = (f"в работе уже {len(active)} идей агентов при потолке {cap} "
+                              f"({', '.join(active)}): новых не завожу")
+            save_state(day, state)
+            return
         gen.pop("skipped", None)
         gen.pop("stopped", None)
         with session_scope() as session:
@@ -700,7 +742,7 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
                 budget = night_budget.stage(Stage.SEARCH, candidates=1).candidate(None)
                 outcome = generate(
                     budget=budget, session=session, catalogue_path=catalogue_path,
-                    max_specs=int(plan.get("max_specs", 3)),
+                    max_specs=min(int(plan.get("max_specs", 3)), free),
                     data_end=_data_end_for_generation(session, day),
                     registry_idea_ids=[i for (i,) in session.query(Idea.id)])
                 gen.update(

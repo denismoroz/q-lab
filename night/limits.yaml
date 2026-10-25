@@ -1,0 +1,10 @@
+# How many ideas the agents may keep in active development at once
+# (qlab.night.agent_idea_slots). Owner, 2026-10-25: «не нужно плодить 100-200 идей -
+# не больше 3-4 в активной разработке».
+#
+# An agent's idea (the generator's `gen-*`, the researcher's `*-research-*`) is
+# active while it is a candidate, waits on the bench or has passed and waits for
+# the owner (candidate, bench, validated). The generator writes new specs only
+# into free places; the researcher proposes experiments only into free places
+# and, when none is free, says which active idea it would drop instead.
+max_active_agent_ideas: 4

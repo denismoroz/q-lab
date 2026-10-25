@@ -15,9 +15,11 @@ nothing. Code then guards what it wrote and runs what passes:
    `gen-` idea id, a `# mechanism: <id>` header naming a catalogue mechanism,
    Binance daily data from 2019-09-08 on up to the end the agent was told, and
    the costs of the reference Binance spec;
-3. every number in `params` cites the catalogue (or a `derived:` formula over
-   catalogue numbers), appears in it literally, and where the catalogue gives
-   the mechanism's values for that parameter, is one of them;
+3. every number in `params` is one of the values the mechanism's own table gives
+   for exactly that parameter (or the framework's `sizing.gross` 1), cites the
+   catalogue and appears in it literally; a `derived:` formula may combine only
+   values from the mechanism's table; a parameter the table has no row for
+   cannot be used;
 4. `qlab.pipeline.sources.source_problems` passes, the idea is not already in
    the registry or in `specs/generated/`, and a mechanism the blocks do not
    fully express is declared in `unexpressed_mechanisms`;
@@ -217,15 +219,45 @@ def mechanism_of(spec_text: str) -> str | None:
     return m.group(1) if m else None
 
 
+FRAMEWORK_VALUES: dict[str, tuple[float, ...]] = {"sizing.gross": (1.0,)}
+"""Numbers a spec may use without a catalogue row. `sizing.gross` 1 means the
+whole capital, no leverage: the stand accounts every portfolio that way, so it
+is not a finding of any paper and no mechanism needs to give it. Nothing else
+belongs here: any other number must come from the mechanism's own table."""
+
+
+DERIVABLE = frozenset({"min_history_days"})
+"""Parameters a `derived:` formula may set. The history a coin needs before it
+is traded is bookkeeping -- enough bars to compute the longest window the
+blocks read (e.g. "derived: 28; the signal's lookback") -- not a finding of a
+paper. A formula elsewhere would let catalogue numbers be combined into values
+no paper used (a rebalance of 7 * 2 = 14 where the paper gave only 7)."""
+
+
+def _close(a: float, b: float) -> bool:
+    return abs(a - b) <= 1e-9 * max(1.0, abs(b))
+
+
+def _in(number: float, values) -> bool:
+    return any(_close(number, v) for v in values)
+
+
 def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_path: Path,
                                  catalogue_text: str) -> list[str]:
-    """Every number in `params` cites the catalogue and is one of the numbers the
-    catalogue gives for that parameter. (`source_problems` then checks that a
-    number cited to a file appears in it literally.)"""
-    from qlab.pipeline.sources import _DERIVED, _appears, _numbers, covering_key
+    """Every numeric leaf of `params` is a value the spec's mechanism gives in the
+    table row for exactly that parameter path, or a `FRAMEWORK_VALUES` entry. A
+    parameter the table has no row for cannot be used, even if its number
+    appears somewhere else in the catalogue. A `derived:` leaf is exempt from
+    the row check (the formula is evaluated by `source_problems`), but each
+    operand of the formula must be a value from some row of the same mechanism.
+    (`source_problems` then checks that a number cited to a file appears in it
+    literally.)"""
+    from qlab.pipeline.sources import _DERIVED, _numbers, covering_key
 
     problems: list[str] = []
     rows = {r.param: r for r in mechanism.params} if mechanism else {}
+    mechanism_values = tuple(v for r in rows.values() for v in r.values)
+    name = mechanism.id if mechanism else "?"
     for path, value in _param_leaves("", spec.params):
         numbers = _numbers(value)
         if not numbers:
@@ -233,21 +265,36 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
         key = covering_key(path, spec.sources)
         citation = spec.sources.get(key, "") if key else ""
         derived = _DERIVED.match(citation)
+        if derived and path not in DERIVABLE:
+            problems.append(f"{path}: a formula may set only {sorted(DERIVABLE)}; {path} must be "
+                            f"a value from {name}'s own row")
+            continue
         if derived:
             operands = [float(n) for n in _NUMBER.findall(derived.group(1))]
-            absent = [n for n in operands if not _appears(n, catalogue_text)]
-            if absent:
-                problems.append(f"{path}: derived from numbers not in {catalogue_path}: {absent}")
-        elif str(catalogue_path) not in citation:
+            if mechanism is not None:
+                absent = [n for n in operands if not _in(n, mechanism_values)]
+                if absent:
+                    problems.append(f"{path}: derived from numbers that are not values in any "
+                                    f"row of {name} in {catalogue_path}: {absent}")
+            continue
+        if str(catalogue_path) not in citation:
             problems.append(f"{path} = {value!r} does not cite {catalogue_path}: the numbers come "
                             "from the catalogue only")
+        if mechanism is None:
+            continue  # reported once, at the missing mechanism
         row = rows.get(path)
-        if row is not None and row.values:
-            off = [n for n in numbers if not any(abs(n - v) <= 1e-9 * max(1.0, abs(v))
-                                                 for v in row.values)]
-            if off:
-                problems.append(f"{path} = {value!r}: {off} is not among the catalogue's values "
-                                f"for it ({row.values_text})")
+        allowed = (*(row.values if row else ()), *FRAMEWORK_VALUES.get(path, ()))
+        off = [n for n in numbers if not _in(n, allowed)]
+        if off and not allowed:
+            problems.append(f"{path} = {value!r}: the catalogue gives no value for {path} in "
+                            f"{name}")
+        elif off:
+            given = row.values_text if row and row.values else ""
+            if path in FRAMEWORK_VALUES:
+                framework = [f"{v:g}" for v in FRAMEWORK_VALUES[path]]
+                given = ", ".join(filter(None, [given, *framework]))
+            problems.append(f"{path} = {value!r}: {off} is not among the catalogue's values "
+                            f"for it in {name} ({given})")
     return problems
 
 
@@ -369,17 +416,35 @@ Shape of each spec (comments allowed; the first line is mandatory):
   sources: ...
 
 Rules:
-- Use only mechanisms and numbers from {catalogue}. Never invent a number. For EACH number
-  in params, `sources` must have an entry (at the number's own dotted path such as
-  signal.lookback_days, or at an ancestor such as signal) whose text names the catalogue
-  file {catalogue}, the mechanism id and the paper, for example:
+- Use only mechanisms and numbers from {catalogue}. Never invent a number. EVERY number in
+  params must be one of the values in the chosen mechanism's OWN table, in the row for that
+  very parameter (the row's name is the dotted path in params: signal.lookback_days,
+  portfolio.quantiles, universe.n, universe.window_days, rebalance_days, min_history_days,
+  sizing.window_days, ...). A value from another mechanism, from another row, or from a note
+  or the prose of the catalogue is not allowed, and code rejects the spec. A parameter the
+  mechanism's table has no row for (or an empty row) cannot be used at all: choose blocks
+  that need only the parameters the table gives (for example universe rule `all`, which takes
+  none, and sizing `equal`), and if the mechanism leaves you no usable values, skip it and
+  say so in your reply.
+- Portfolios: the papers sort coins into quantile groups (long the top fifth, short the
+  bottom fifth), so use `long_short_quantile` or `long_only_quantile` with the mechanism's
+  portfolio.quantiles value. `top_n` (a count of coins) is allowed only if the mechanism's
+  table has a portfolio.top_n row with a value.
+- The one framework value: sizing.gross 1.0 (the whole capital, no leverage; this is how the
+  stand accounts every portfolio, so no paper has to give it). Cite it as "{catalogue},
+  framework value: gross 1 = the whole capital, no leverage". Any other sizing.gross is
+  rejected.
+- For EACH number in params, `sources` must have an entry (at the number's own dotted path
+  such as signal.lookback_days, or at an ancestor such as signal) whose text names the
+  catalogue file {catalogue}, the mechanism id and the paper, for example:
   "{catalogue}, mechanism <id>, row signal.lookback_days: 7, 14, 28 (Author Year)". Name the
   paper as author and year, with no web address. The number must appear in {catalogue}
-  literally, and where the mechanism's table has a row for the parameter, take the value from
-  that row. A number the catalogue does not give (a warm-up such as min_history_days) may be
-  a formula over catalogue numbers: "derived: <arithmetic>; <why>" -- the formula must
-  evaluate to exactly the number. If the catalogue gives no sizing, use the `equal` block.
-  Strings and block names need a citation too (an ancestor entry such as `signal` covers them).
+  literally. Only min_history_days may be a formula (when the table has no row for it): the
+  history a coin needs before it is traded, e.g. "derived: 28; the signal's lookback" -- every
+  operand must be a value from a row of the mechanism you chose, and the formula must evaluate
+  to exactly the number. Every other parameter is a value from its own row, never a formula.
+  If the catalogue gives no sizing, use the `equal` block. Strings and block names need a citation too (an
+  ancestor entry such as `signal` covers them).
 - Costs, min_leg_notional and their sources: copy from {reference}. Do not change data.source,
   interval, or add an instrument list, a liquidity floor or a regime_claim.
 - data.end must be exactly {data_end} (the latest Binance snapshot end).

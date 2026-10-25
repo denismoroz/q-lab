@@ -195,6 +195,8 @@ def test_history_gate_counts_known_price_bars() -> None:
         {"signal": {"block": "low_vol", "window_days": 10},
          "portfolio": {"block": "long_only", "top_n": 3}},
         {"universe": {"rule": "top_volume", "n": 4, "window_days": 5}},
+        {"portfolio": {"block": "long_short_quantile", "quantiles": 3}},
+        {"portfolio": {"block": "long_only_quantile", "quantiles": 2}},
         {"portfolio": {"block": "time_series_sign"},
          "sizing": {"block": "vol_target", "window_days": 10, "target_daily": 0.02,
                     "leverage_cap": 2.0}},

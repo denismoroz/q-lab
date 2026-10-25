@@ -3,6 +3,7 @@ the agent call with a fake `claude` that writes files the way the real one would
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 from datetime import UTC, date, datetime, timedelta
@@ -42,8 +43,9 @@ CATALOGUE_TEXT = """# Каталог механизмов (фикстура)
 |---|---|---|
 | signal.lookback_days | 7, 14, 28 | [Author 2020](https://e.org/a), [Other 2021](https://e.org/b) |
 | portfolio.top_n | 3, 5 | [Author 2020](https://example.org/a) |
+| portfolio.quantiles | 5 | [Author 2020](https://example.org/a) |
 | universe.n | 10, 20 | [Author 2020](https://example.org/a) |
-| universe.window_days | 30 | [Author 2020](https://example.org/a) |
+| universe.window_days | 30 (в статье 45 дней) | [Author 2020](https://example.org/a) |
 | sizing.gross | 1 | [Author 2020](https://example.org/a) |
 | rebalance_days | 7 | [Author 2020](https://example.org/a) |
 | sizing.target | 5% | [Author 2020](https://example.org/a) |
@@ -175,7 +177,7 @@ def test_catalogue_is_parsed_into_mechanisms_and_parameter_rows(repo) -> None:
     assert rows["signal.lookback_days"].values_text == "7, 14, 28"
     assert "Author 2020" in rows["signal.lookback_days"].source
     assert rows["sizing.target"].values == (5.0, 0.05)  # a percentage also reads as a fraction
-    assert len(first.params) == 7
+    assert len(first.params) == 8
     assert first.fully_expressed and first.sources == "Author 2020; Other 2021."
     second = mechanisms[1]
     assert not second.fully_expressed and "Сезонная" in second.unexpressed
@@ -216,6 +218,96 @@ def test_a_number_in_the_catalogue_but_not_in_its_row_is_rejected(repo) -> None:
     _, problems = _check(repo, _spec_text(lookback=5))
     assert not any("does not appear" in p for p in problems)
     assert any("signal.lookback_days" in p and "not among" in p for p in problems)
+
+
+def test_a_value_not_in_the_rows_value_list_is_rejected(repo) -> None:
+    text = _spec_text().replace("top_n: 3", "top_n: 4")  # the row gives 3, 5
+    _, problems = _check(repo, text)
+    assert any("portfolio.top_n" in p and "not among the catalogue's values" in p
+               and "(3, 5)" in p for p in problems)
+
+
+def test_a_parameter_without_a_row_is_rejected_even_if_its_number_is_in_the_catalogue(
+        repo) -> None:
+    # The fixture's sizing.window_days has no row; 30 is in the file (universe.window_days),
+    # 0.05 too (sizing.target: 5%), 1 as well (sizing.gross) -- none of that counts.
+    sizing = "  sizing:\n    block: vol_target\n    window_days: 30\n    target_daily: 0.05\n" \
+             "    leverage_cap: 1\n"
+    text = _spec_text().replace("  sizing:\n    block: equal\n    gross: 1\n", sizing)
+    _, problems = _check(repo, text)
+    for path in ("sizing.window_days", "sizing.target_daily", "sizing.leverage_cap"):
+        assert any(path in p and f"the catalogue gives no value for {path} in xs-reversal-1w" in p
+                   for p in problems), path
+    assert not any("does not appear" in p for p in problems)  # the old guard let these through
+
+
+def test_a_row_without_values_gives_nothing_to_use(repo) -> None:
+    mechanisms = [dataclasses.replace(m, params=tuple(
+        dataclasses.replace(r, values=()) if r.param == "rebalance_days" else r
+        for r in m.params)) for m in gen.catalogue()]
+    path = gen.SPEC_DIR / "gen-xs-reversal.yaml"
+    (repo / gen.SPEC_DIR).mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(_spec_text(), encoding="utf-8")
+    _, problems = gen.check_generated(path, mechanisms=mechanisms, reference=None,
+                                      data_end=DATA_END)
+    assert any("no value for rebalance_days" in p for p in problems)
+
+
+def _without_gross_row() -> list[gen.Mechanism]:
+    return [dataclasses.replace(m, params=tuple(r for r in m.params if r.param != "sizing.gross"))
+            for m in gen.catalogue()]
+
+
+def _check_without_gross_row(repo: Path, text: str):
+    path = gen.SPEC_DIR / "gen-xs-reversal.yaml"
+    (repo / gen.SPEC_DIR).mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(text, encoding="utf-8")
+    return gen.check_generated(path, mechanisms=_without_gross_row(), reference=None,
+                               data_end=DATA_END)
+
+
+def test_sizing_gross_one_is_the_framework_value_and_nothing_else_is(repo) -> None:
+    assert gen.FRAMEWORK_VALUES == {"sizing.gross": (1.0,)}
+    # No sizing.gross row at all: 1.0 (and 1) pass, 2.0 does not.
+    for one in ("1.0", "1"):
+        _, problems = _check_without_gross_row(
+            repo, _spec_text().replace("gross: 1\n", f"gross: {one}\n"))
+        assert problems == []
+    _, problems = _check_without_gross_row(repo, _spec_text().replace("gross: 1\n", "gross: 2.0\n"))
+    assert any("sizing.gross" in p and "2.0" in p for p in problems)
+    # With the row present, its own values do not widen the framework's: 2.0 is still off.
+    _, problems = _check(repo, _spec_text().replace("gross: 1\n", "gross: 2.0\n"))
+    assert any("sizing.gross" in p and "not among" in p for p in problems)
+
+
+def test_a_derived_formula_may_use_only_values_from_the_mechanisms_rows(repo) -> None:
+    def with_formula(formula: str, result: int):
+        text = _spec_text().replace("derived: 28 + 30;", f"derived: {formula};").replace(
+            "min_history_days: 58", f"min_history_days: {result}")
+        return _check(repo, text)[1]
+
+    assert with_formula("14 + 30", 44) == []  # 14: signal.lookback_days row, 30: universe row
+    # 60 is a value of another mechanism (tsmom-seasonal): it appears in the file, not in this one.
+    problems = with_formula("60 + 30", 90)
+    assert any("min_history_days" in p and "60" in p and "xs-reversal-1w" in p for p in problems)
+    # 45 stands in a note of this mechanism's own row ("в статье 45 дней"): commentary, not a value.
+    problems = with_formula("45 + 28", 73)
+    assert any("min_history_days" in p and "45" in p for p in problems)
+    # A number from nowhere else in the catalogue fails too.
+    assert any("31" in p for p in with_formula("28 + 31", 59))
+
+
+def test_a_quantile_portfolio_with_the_rows_value_is_accepted(repo) -> None:
+    text = _spec_text().replace("block: long_short\n    top_n: 3",
+                                "block: long_short_quantile\n    quantiles: 5")
+    text = text.replace("row portfolio.top_n (Author 2020)",
+                        "row portfolio.quantiles (Author 2020)")
+    item, problems = _check(repo, text)
+    assert problems == [] and item.spec.params["portfolio"]["quantiles"] == 5
+    _, problems = _check(repo, text.replace("quantiles: 5", "quantiles: 4"))
+    assert any("portfolio.quantiles" in p and "not among" in p for p in problems)
+    # top_n has a row in the fixture, so it is allowed here; without a row it would not be.
+    assert "long_short_quantile" in gen.INSTRUCTIONS and "portfolio.quantiles" in gen.INSTRUCTIONS
 
 
 def test_a_number_not_cited_to_the_catalogue_is_rejected(repo) -> None:
@@ -463,3 +555,14 @@ def test_cell_values_ignore_notes_in_parentheses_and_trailing_text():
                         "таблица 15), 1 (доходность на следующий день)") == (7.0, 1.0)
     assert cell_numbers("— (источники окна не задают)") == ()
     assert cell_numbers("5%") == (5.0, 0.05)
+
+
+
+def test_a_formula_may_set_only_min_history_days(repo) -> None:
+    # Catalogue values combined by a formula elsewhere would give numbers no paper used.
+    cited = ('rebalance_days: "docs/MECHANISMS.md, mechanism xs-reversal-1w, '
+             'row rebalance_days (Author 2020)"')
+    text = _spec_text().replace(cited, 'rebalance_days: "derived: 7 + 7; two weeks"')
+    text = text.replace("rebalance_days: 7\n", "rebalance_days: 14\n")
+    _, problems = _check(repo, text)
+    assert any("rebalance_days" in p and "only" in p and "min_history_days" in p for p in problems)

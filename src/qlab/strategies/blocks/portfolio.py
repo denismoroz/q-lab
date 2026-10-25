@@ -11,6 +11,14 @@ tie it is the first to be long and the last to be short).
   with fewer than two eligible coins there is no position.
 - `long_only`: long the `top_n` highest scores in equal parts, summing to 1
   (fewer coins if fewer are eligible).
+- `long_short_quantile`: the way the published papers sort coins. Split the eligible
+  coins into `quantiles` equal groups (5 = fifths, 3 = thirds, 10 = tenths); each
+  group has k = floor(eligible / quantiles) coins. Long the top group, short the
+  bottom group; each side sums to 0.5 (gross 1, zero net). With k = 0 there is no
+  position. `quantiles` is at least 2.
+- `long_only_quantile`: long the top group of k = floor(eligible / quantiles)
+  coins in equal parts, summing to 1; with k = 0 there is no position.
+  `quantiles` is at least 1 (1 = every eligible coin).
 - `time_series_sign`: each eligible coin goes long if its own score is positive
   and short if negative, in parts of 1 / (number of eligible coins), so gross
   is at most 1. A score of exactly zero gives no position.
@@ -21,7 +29,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from qlab.strategies.blocks._schema import Block, positive_int
+from qlab.strategies.blocks._schema import Block, positive_int, quantile_count
 
 
 def _ranks(scores: pd.DataFrame, eligible: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
@@ -49,6 +57,27 @@ def long_only(scores: pd.DataFrame, eligible: pd.DataFrame, *, top_n: int) -> pd
     return rank.le(k, axis=0).mul(part, axis=0)
 
 
+def long_short_quantile(scores: pd.DataFrame, eligible: pd.DataFrame, *,
+                        quantiles: int) -> pd.DataFrame:
+    """Long the top group, short the bottom group, k = eligible // quantiles coins
+    each; sides +0.5 / -0.5."""
+    rank, count = _ranks(scores, eligible)
+    k = count // quantiles
+    side = (0.5 / k.where(k > 0)).fillna(0.0)
+    longs = rank.le(k, axis=0)
+    shorts = rank.gt(count - k, axis=0)
+    return longs.mul(side, axis=0) - shorts.mul(side, axis=0)
+
+
+def long_only_quantile(scores: pd.DataFrame, eligible: pd.DataFrame, *,
+                       quantiles: int) -> pd.DataFrame:
+    """Long the top group, k = eligible // quantiles coins, equally, summing to 1."""
+    rank, count = _ranks(scores, eligible)
+    k = count // quantiles
+    part = (1.0 / k.where(k > 0)).fillna(0.0)
+    return rank.le(k, axis=0).mul(part, axis=0)
+
+
 def time_series_sign(scores: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
     """Sign of each coin's own score, divided by the number of eligible coins."""
     masked = scores.where(eligible)
@@ -60,5 +89,7 @@ def time_series_sign(scores: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFra
 PORTFOLIOS: dict[str, Block] = {
     "long_short": Block(long_short, {"top_n": positive_int}),
     "long_only": Block(long_only, {"top_n": positive_int}),
+    "long_short_quantile": Block(long_short_quantile, {"quantiles": quantile_count(2)}),
+    "long_only_quantile": Block(long_only_quantile, {"quantiles": quantile_count(1)}),
     "time_series_sign": Block(time_series_sign, {}),
 }

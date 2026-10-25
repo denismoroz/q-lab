@@ -8,7 +8,14 @@ import pytest
 
 from qlab.harness.panel import MarketPanel
 from qlab.strategies.blocks._schema import parse_block
-from qlab.strategies.blocks.portfolio import PORTFOLIOS, long_only, long_short, time_series_sign
+from qlab.strategies.blocks.portfolio import (
+    PORTFOLIOS,
+    long_only,
+    long_only_quantile,
+    long_short,
+    long_short_quantile,
+    time_series_sign,
+)
 from qlab.strategies.blocks.signals import SIGNALS, funding, low_vol, momentum, reversal
 from qlab.strategies.blocks.sizing import SIZINGS, equal, vol_target
 from qlab.strategies.blocks.universe import UNIVERSES, all_coins, top_volume
@@ -174,6 +181,81 @@ def test_long_only_equal_parts_summing_to_one() -> None:
     assert few.iloc[0].sum() == pytest.approx(1.0)
 
 
+def test_long_short_quantile_takes_top_and_bottom_group() -> None:
+    # 10 eligible coins, quantiles=5 -> k = 2: the two best long, the two worst short.
+    scores = _frame([[9, 0, 8, 1, 5, 4, 6, 3, 7, 2]], list("ABCDEFGHIJ"))
+    out = long_short_quantile(scores, scores.notna(), quantiles=5)
+    expected = [0.25, -0.25, 0.25, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # best: A(9), C(8); worst: B(0), D(1)
+    assert out.iloc[0].tolist() == expected
+    # quantiles=2 -> k = 5: halves; every coin is held, 0.1 each side
+    halves = long_short_quantile(scores, scores.notna(), quantiles=2)
+    assert halves.iloc[0].tolist() == pytest.approx(
+        [0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1])
+
+
+def test_long_short_quantile_floors_the_group_size_and_can_be_empty() -> None:
+    scores = _frame([[3, 1, 2, 5, 4, 0, 6]], list("ABCDEFG"))
+    # 7 eligible, quantiles=3 -> k = 2 (floor of 7 / 3); the best two long, the worst two short
+    out = long_short_quantile(scores, scores.notna(), quantiles=3)
+    assert out.iloc[0].tolist() == [0.0, -0.25, 0.0, 0.25, 0.0, -0.25, 0.25]
+    # 4 eligible, quantiles=5 -> k = 0: no position
+    four = pd.DataFrame([[True, True, True, True, False, False, False]], index=scores.index,
+                        columns=scores.columns)
+    assert long_short_quantile(scores, four, quantiles=5).abs().sum().sum() == 0.0
+    none = four & False
+    assert long_short_quantile(scores, none, quantiles=2).abs().sum().sum() == 0.0
+
+
+def test_long_short_quantile_ineligible_coins_stay_flat_and_book_is_neutral() -> None:
+    rng = np.random.default_rng(2)
+    scores = pd.DataFrame(rng.normal(size=(30, 12)), columns=list("ABCDEFGHIJKL"),
+                          index=pd.date_range("2026-01-01", periods=30, freq="D", tz="UTC"))
+    eligible = pd.DataFrame(rng.random((30, 12)) > 0.3, index=scores.index, columns=scores.columns)
+    out = long_short_quantile(scores, eligible, quantiles=4)
+    assert (out.to_numpy()[~eligible.to_numpy()] == 0.0).all()
+    for ts, row in out.iterrows():
+        if row.abs().sum() > 0:
+            assert row.sum() == pytest.approx(0.0, abs=1e-12)
+            assert row.abs().sum() == pytest.approx(1.0)
+            assert (row > 0).sum() == eligible.loc[ts].sum() // 4
+
+
+def test_long_short_quantile_ties_break_by_column_order() -> None:
+    scores = _frame([[1, 1, 1, 1]])
+    out = long_short_quantile(scores, scores.notna(), quantiles=4)  # k = 1
+    assert out.iloc[0].tolist() == [0.5, 0.0, 0.0, -0.5]
+
+
+def test_long_only_quantile_equal_parts_of_the_top_group() -> None:
+    scores = _frame([[3, 1, 2, 0, 5, 4]])
+    # 6 eligible, quantiles=3 -> k = 2: E(5) and F(4)
+    out = long_only_quantile(scores, scores.notna(), quantiles=3)
+    assert out.iloc[0].tolist() == [0.0, 0.0, 0.0, 0.0, 0.5, 0.5]
+    # quantiles=1 -> every eligible coin, equal parts
+    every = long_only_quantile(scores, scores.notna(), quantiles=1)
+    assert every.iloc[0].tolist() == pytest.approx([1 / 6] * 6)
+    # 7 eligible, quantiles=2 -> k = 3
+    seven = _frame([[7, 6, 5, 4, 3, 2, 1]], list("ABCDEFG"))
+    assert long_only_quantile(seven, seven.notna(), quantiles=2).iloc[0].tolist() == \
+        pytest.approx([1 / 3, 1 / 3, 1 / 3, 0, 0, 0, 0])
+    # fewer eligible coins than quantiles -> k = 0, no position
+    two = pd.DataFrame([[True, True, False, False, False, False]], index=scores.index,
+                       columns=scores.columns)
+    assert long_only_quantile(scores, two, quantiles=3).abs().sum().sum() == 0.0
+
+
+def test_quantile_blocks_validate_their_group_count() -> None:
+    for block, bad in (("long_short_quantile", 1), ("long_short_quantile", 0),
+                       ("long_only_quantile", 0), ("long_only_quantile", 2.5),
+                       ("long_only_quantile", True)):
+        with pytest.raises(ValueError, match="quantiles"):
+            parse_block("portfolio", {"block": block, "quantiles": bad}, PORTFOLIOS, "block")
+    for block, good in (("long_short_quantile", 2), ("long_only_quantile", 1),
+                        ("long_short_quantile", 5.0)):
+        parse_block("portfolio", {"block": block, "quantiles": good}, PORTFOLIOS, "block")
+
+
 def test_time_series_sign_divides_by_the_number_of_eligible_coins() -> None:
     scores = _frame([[2.0, -1.0, 0.0, 5.0]])
     eligible = pd.DataFrame([[True, True, True, False]], index=scores.index,
@@ -223,7 +305,9 @@ def test_vol_target_zero_vol_gives_zero_weight() -> None:
 def test_registries_hold_every_block() -> None:
     assert set(UNIVERSES) == {"all", "top_volume"}
     assert set(SIGNALS) == {"momentum", "reversal", "funding", "low_vol"}
-    assert set(PORTFOLIOS) == {"long_short", "long_only", "time_series_sign"}
+    assert set(PORTFOLIOS) == {
+        "long_short", "long_only", "long_short_quantile", "long_only_quantile",
+        "time_series_sign"}
     assert set(SIZINGS) == {"equal", "vol_target"}
 
 

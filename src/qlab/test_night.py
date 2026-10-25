@@ -469,3 +469,59 @@ def test_a_night_without_search_does_not_run_the_generator(tmp_path, monkeypatch
     night.run(date(2026, 10, 21), search=True, **flags)
     night.run(date(2026, 10, 21), search=False, generate=True, **flags)
     assert seen == [None, True]
+
+
+def test_agent_idea_slots_count_only_active_agent_ideas(tmp_path, monkeypatch) -> None:
+    # Owner, 2026-10-25: «не больше 3-4 в активной разработке».
+    from qlab.registry.models import Idea
+
+    class _Q:
+        def __init__(self, ideas):
+            self.ideas = ideas
+
+        def filter(self, *_):
+            return [i for i in self.ideas if i.status in night.ACTIVE_STATUSES]
+
+    class _S:
+        def __init__(self, ideas):
+            self.ideas = ideas
+
+        def query(self, _model):
+            return _Q(self.ideas)
+
+    ideas = [Idea(id=i, status=s) for i, s in [
+        ("gen-a", "candidate"), ("bv2-research-x", "bench"), ("trend-research-y", "validated"),
+        ("gen-old", "rejected"), ("bv2-research-z", "retired"), ("frab", "live"),
+        ("strategy-b-v2", "bench")]]
+    limits = tmp_path / "limits.yaml"
+    limits.write_text("max_active_agent_ideas: 4\n", encoding="utf-8")
+    free, cap, active = night.agent_idea_slots(_S(ideas), limits)
+    assert (free, cap, active) == (1, 4, ["bv2-research-x", "gen-a", "trend-research-y"])
+    limits.write_text("max_active_agent_ideas: 3\n", encoding="utf-8")
+    assert night.agent_idea_slots(_S(ideas), limits)[0] == 0
+    assert night.agent_idea_slots(_S(ideas), tmp_path / "missing.yaml")[0] > 100
+    assert "Propose NO new experiment" in night.full_house_focus(3, ["gen-a"])
+
+
+def test_generator_stage_waits_when_no_place_is_free(tmp_path, monkeypatch) -> None:
+    import qlab.registry.db as db_module
+    from qlab.registry.models import Idea
+
+    generator, _, config, _ = _generator_env(tmp_path, monkeypatch)
+    calls = {"agent": 0}
+
+    def fake_generate(**_kw):
+        calls["agent"] += 1
+        raise AssertionError("the agent must not be called when no place is free")
+
+    monkeypatch.setattr(generator, "generate", fake_generate)
+    (tmp_path / "night").mkdir()
+    (tmp_path / "night" / "limits.yaml").write_text("max_active_agent_ideas: 1\n",
+                                                    encoding="utf-8")
+    with db_module.session_scope() as session:
+        session.add(Idea(id="gen-busy", title="t", status="bench", source_type="internal",
+                         asset_class="crypto-perp", profile="other"))
+    state = {"done": {}}
+    night.generate_stage(date(2026, 10, 28), state, noise_trials=3, config=config)
+    assert calls["agent"] == 0
+    assert "gen-busy" in state["generate"]["skipped"]
