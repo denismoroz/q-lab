@@ -311,3 +311,44 @@ def test_generate_dry_run_prints_the_catalogue_without_spending(tmp_path, monkey
     assert "xs-reversal-1w: 1 parameter rows, partly expressed" in result.output
     assert "signal.lookback_days: 7, 14, 28" in result.output
     assert "1 mechanisms in" in result.output
+
+
+def test_director_dry_run_prints_the_evidence_and_approve_clears_the_flag(
+        cli_db, tmp_path, monkeypatch):
+    from datetime import date
+
+    import qlab.agents.director as director_module
+    from qlab import directions as dirs
+
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "MECHANISMS.md").write_text(
+        "### xs-mom\n\n**Суть:** s\n\n**Блоки:** b\n\n**Параметры:**\n\n"
+        "| параметр блока | значения из источника | источник |\n|---|---|---|\n"
+        "| rebalance_days | 7 | [A](https://e.org) |\n\n**Чего блоки не выражают:** x\n",
+        encoding="utf-8")
+    config = tmp_path / "director.yaml"
+    config.write_text("enabled: true\ncadence_days: 2\nfamilies:\n  momentum: [xs-mom]\n",
+                      encoding="utf-8")
+    research = tmp_path / "research.yaml"
+    research.write_text("strategies:\n  bv2: {ideas: [i], specs: []}\n", encoding="utf-8")
+    monkeypatch.setattr(director_module, "QLAB_ROOT", root)
+    monkeypatch.setenv("QLAB_CLAUDE_BIN", "/nonexistent/claude")  # an agent call would raise
+    assert runner.invoke(app, ["init-db"]).exit_code == 0
+
+    result = runner.invoke(app, ["director", "--dry-run", "--config", str(config),
+                                 "--research-config", str(research)])
+    assert result.exit_code == 0, result.output
+    assert "# Evidence for the research director" in result.output
+    assert "xs-mom: buildable now" in result.output and "researcher strategies" in result.output
+
+    # Nothing to approve yet; then the owner clears the flag of the first directions.
+    assert runner.invoke(app, ["director", "--approve"]).exit_code == 1
+    parsed = dirs.parse_block("generator: {}", mechanism_ids=set(), strategy_names=set(),
+                              family_names=set(), day=date(2026, 10, 26),
+                              pending_owner_review=True)
+    dirs.write_directions(parsed.directions, root)
+    assert dirs.active_directions(root) is None
+    result = runner.invoke(app, ["director", "--approve"])
+    assert result.exit_code == 0 and "approved" in result.output
+    assert dirs.active_directions(root) is not None

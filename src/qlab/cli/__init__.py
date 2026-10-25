@@ -690,6 +690,10 @@ def night_run_cmd(
         None, "--decay/--no-decay",
         help="The decay detector: realised results against the stand's own history "
         "(default: with --paper)"),
+    director: bool | None = typer.Option(
+        None, "--director/--no-director",
+        help="The research director (tokens; default: every cadence_days nights in "
+        "night/director.yaml, not on a night with --no-research; --director forces it)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -702,7 +706,7 @@ def night_run_cmd(
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               noise_trials=noise_trials)
+               director=director, noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
 
@@ -1156,6 +1160,78 @@ def generate_cmd(
         return
     for result in run_generated(outcome.accepted, noise_trials=noise_trials):
         typer.echo(result_line(result))
+
+
+@app.command("director")
+def director_cmd(
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Only print the evidence file the director would read (no tokens)"),
+    approve: bool = typer.Option(
+        False, "--approve", help="The owner has reviewed night/directions.yaml: clear "
+        "`pending_owner_review` so the generator and the researcher obey it (no tokens)"),
+    apply: bool = typer.Option(True, "--apply/--no-apply",
+                               help="Validate the memo's block into night/directions.yaml"),
+    config_path: Path = typer.Option(Path("night/director.yaml"), "--config"),  # noqa: B008
+    research_config: Path = typer.Option(Path("night/research.yaml"), "--research-config"),  # noqa: B008
+) -> None:
+    """The research director watches the directions of the search and steers the idea
+    generator and the researcher (docs/DIRECTOR.md). It writes a memo for the owner and a
+    block that code validates into night/directions.yaml; the first directions ever wait
+    for the owner's review. A real run spends tokens through the budget guard, like
+    `qlab research`."""
+    from datetime import UTC, datetime
+
+    from qlab import directions as dirs
+    from qlab.agents import director as director_module
+    from qlab.agents.generator import CATALOGUE, catalogue
+    from qlab.night import load_research_plan
+
+    if approve:
+        approved = dirs.approve(director_module.QLAB_ROOT)
+        if approved is None:
+            typer.echo("no readable night/directions.yaml to approve", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"directions of {approved.date} approved: the generator and the researcher "
+                   "obey them from the next run")
+        return
+    config = dirs.load_config(config_path)
+    if config is None:
+        typer.echo(f"no {config_path}", err=True)
+        raise typer.Exit(1)
+    plan = load_research_plan(research_config)
+    root = director_module.QLAB_ROOT
+    if dry_run:
+        with session_scope() as session:
+            typer.echo(director_module.build_evidence(session, root=root, config=config,
+                                                      plan=plan))
+        return
+
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+
+    with session_scope() as session:
+        budget = open_candidate(session, None, Stage.IMPLEMENT)
+        outcome = director_module.direct(budget=budget, session=session, config=config, plan=plan)
+        spent = budget.spent_tokens
+    typer.echo(f"director: memo {outcome.memo}; {spent:,} tokens\nagent: {outcome.reply or '-'}")
+    for problem in outcome.problems:
+        typer.echo(f"  problem: {problem}")
+    if not apply or outcome.memo is None:
+        return
+    ids, strategies, families = director_module.known_names(
+        plan, config, catalogue(root / CATALOGUE))
+    result = director_module.apply_memo(outcome.memo, root=root, mechanism_ids=ids,
+                                        strategy_names=strategies, family_names=families,
+                                        day=datetime.now(UTC).date())
+    if result.directions is None:
+        typer.echo("directions not written: " + "; ".join(result.problems), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"directions written to {result.written}"
+               + (" -- waiting for the owner's review (`qlab director --approve`)"
+                  if result.directions.pending_owner_review else ""))
+    for problem in result.problems:
+        typer.echo(f"  dropped: {problem}")
 
 
 research_notes_app = typer.Typer(help="The researcher's memos in the registry.",

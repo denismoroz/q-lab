@@ -331,6 +331,8 @@ def write_report(day: date, state: dict) -> Path:
         from qlab.decay import SECTION_TITLE
 
         lines += [f"## {SECTION_TITLE}", "", *decayed["lines"], ""]
+    if directed := state.get("director"):
+        lines += ["## Руководитель исследований", "", *_director_lines(directed), ""]
     if studied := state.get("research"):
         lines += ["## Исследователь", ""]
         for e in studied:
@@ -424,6 +426,45 @@ def write_report(day: date, state: dict) -> Path:
     return path
 
 
+def _director_lines(entry: dict) -> list[str]:
+    """The research director's memo and key decisions for the morning report
+    (docs/DIRECTOR.md). What it proposes to close is the owner's to decide."""
+    lines = ["Агент следит за направлениями поиска и подсказывает генератору идей и "
+             "исследователю, куда смотреть. Код проверяет каждое его слово; закрывать "
+             "направления он не может.", ""]
+    if entry.get("error"):
+        lines.append(f"- сбой этапа: {entry['error']}")
+    if entry.get("stopped"):
+        lines.append(f"- не запускался: {entry['stopped']}; продолжит в следующую ночь")
+    if entry.get("memo"):
+        lines.append(f"- записка `{entry['memo']}`, {entry.get('tokens', 0):,} токенов")
+    lines += [f"    - {p}" for p in entry.get("problems") or []]
+    d = entry.get("directions")
+    if d is None:
+        lines += [f"    - не принято: {p}" for p in entry.get("rejected") or []]
+        return lines
+    if d.get("pending_owner_review"):
+        lines.append("- **направления ждут проверки владельца**: генератор и исследователь файл "
+                     "`night/directions.yaml` пока не читают. Прочитать записку и снять пометку: "
+                     "`uv run qlab director --approve`.")
+    gen = d.get("generator") or {}
+    if gen.get("prefer_mechanisms"):
+        lines.append(f"- генератору предпочитать: {', '.join(gen['prefer_mechanisms'])}")
+    lines += [f"- генератору приостановить `{p['id']}` — {p['why']}"
+              for p in gen.get("pause_mechanisms") or []]
+    lines += [f"- исследователь, {name}: важность {s['priority']}"
+              + (f"; пометка: {s['note']}" if s.get("note") else "")
+              for name, s in (d.get("researcher") or {}).items()]
+    lines += [f"- просьба к каталогу ({r['family']}): {r['look_for']} — {r['why']}"
+              for r in d.get("catalogue_requests") or []]
+    lines += [f"- просьба о данных: {r['what']} — {r['why']}"
+              for r in d.get("data_requests") or []]
+    lines += [f"- **предлагает закрыть `{c['family']}` — решает владелец**: {c['why']}"
+              for c in d.get("propose_close_family") or []]
+    lines += [f"    - отброшено кодом: {p}" for p in entry.get("rejected") or []]
+    return lines
+
+
 def _paper_rule_lines(replay_lines: list[str]) -> list[str]:
     """How long each paper book has run against the owner's 4-6 weeks rule
     (qlab.paper_rule). A failure is a report line, not a failed night."""
@@ -479,11 +520,15 @@ def _token_lines(day: date) -> str:
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
-        decay: bool | None = None, noise_trials: int = 200,
+        decay: bool | None = None, director: bool | None = None, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
-    follows `paper` unless given: it reads the paper books' export."""
+    follows `paper` unless given: it reads the paper books' export. `director`
+    (the research director, docs/DIRECTOR.md) runs on its own cadence unless
+    given, and not at all on a night with `research=False` (it steers the
+    researcher and the generator; a night without the researcher is a partial
+    one)."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
@@ -523,6 +568,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         save_state(day, state)
     if assess:
         assess_stage(day, state)
+    if director if director is not None else research is not False:
+        # Before the researcher and the generator it steers; in the implement stage's
+        # budget, and skipped (not the rechecks) when that budget is short.
+        director_stage(day, state, force=director)
     if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
         research_stage(day, state, noise_trials=noise_trials)
     if implement:
@@ -735,10 +784,15 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         return
     plan = yaml.safe_load(config.read_text(encoding="utf-8"))
     out = state.setdefault("research", [])
-    first = unfinished_research(day, plan)
-    todo = {name: e for name, e in sorted(
-        (plan.get("strategies") or {}).items(), key=lambda item: item[0] not in first)
-        if f"research:{name}" not in state["done"]}
+    from qlab.directions import active_directions, order_strategies, researcher_focus
+
+    strategies = plan.get("strategies") or {}
+    # The research director's directions (docs/DIRECTOR.md), once the owner has reviewed
+    # them: high-priority strategies go first, so a short budget cuts the low ones.
+    directions = active_directions()
+    waiting = [name for name in strategies if f"research:{name}" not in state["done"]]
+    todo = {name: strategies[name]
+            for name in order_strategies(waiting, directions, unfinished_research(day, plan))}
     if not todo:
         return
     # A run stopped earlier tonight tries again now: its old stop line goes.
@@ -761,6 +815,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                    focus="\n\n".join(filter(None, [
                                        plan.get("focus"),
                                        owner_ideas_focus(e.get("owner_ideas")),
+                                       researcher_focus(name, directions),
                                        full_strategy_focus(name, cap, variants)
                                        if free == 0 else None])))
                 session.commit()
@@ -791,6 +846,103 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         if entry.get("memo") and "noted" not in entry:
             record_research_note(entry, plan)
             save_state(day, state)
+
+
+DIRECTOR = Path("night/director.yaml")
+
+
+def last_director_day(day: date) -> date | None:
+    """The latest night before `day` whose director call finished (its done-marker)."""
+    found: date | None = None
+    for path in STATE_DIR.glob("*.json"):
+        try:
+            night_day = date.fromisoformat(path.stem)
+            finished = "director:agent" in (json.loads(path.read_text()).get("done") or {})
+        except (ValueError, OSError):
+            continue
+        if finished and night_day < day and (found is None or night_day > found):
+            found = night_day
+    return found
+
+
+def director_due(day: date, config) -> bool:
+    """Whether the research director runs tonight: enabled, and `cadence_days` have
+    passed since its last finished call (never run: due). A call the budget stopped
+    is continued the next night -- a stop is the normal mode (CLAUDE.md)."""
+    if not config.enabled:
+        return False
+    yesterday = load_state(day - timedelta(days=1))
+    if (yesterday.get("director") or {}).get("stopped") and \
+            "director:agent" not in yesterday.get("done", {}):
+        return True
+    last = last_director_day(day)
+    return last is None or (day - last).days >= config.cadence_days
+
+
+def director_stage(day: date, state: dict, *, config: Path = DIRECTOR,
+                   force: bool | None = None) -> None:
+    """The research director (`qlab.agents.director`) every `cadence_days` nights,
+    before the researcher and the generator it steers, in the implement stage's budget
+    (it steers the costliest work). Short of budget it is skipped with a line in the
+    report; nothing else is cut for it. Its memo's block becomes
+    `night/directions.yaml` (`qlab.directions`), waiting for the owner's review on the
+    first run.
+
+    Resumable: the agent's call (`director:agent`) and the writing of the directions
+    (`director:directions`, no tokens) have their own done-markers. `force` overrides
+    the config's cadence and `enabled` (the CLI's --director)."""
+    from qlab.agents import director as director_module
+    from qlab.agents.director import apply_memo, direct, known_names, summary
+    from qlab.agents.generator import CATALOGUE, catalogue
+    from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
+    from qlab.directions import load_config
+    from qlab.registry.db import session_scope
+
+    if force is False or (not config.is_file() and force is not True):
+        return
+    cfg = load_config(config)
+    if cfg is None:
+        return
+    if force is None and not director_due(day, cfg):
+        return
+    if "director:directions" in state["done"]:
+        return
+    plan = load_research_plan()
+    root = director_module.QLAB_ROOT
+    entry = state.setdefault("director", {})
+    try:
+        if "director:agent" not in state["done"]:
+            entry.pop("stopped", None)
+            with session_scope() as session:
+                try:
+                    night_budget = NightBudget.open(session, probe(session).report.reading)
+                    # One candidate of the implement stage's share among the researcher's
+                    # strategies and itself: it must not take the whole of tonight.
+                    budget = night_budget.stage(
+                        Stage.IMPLEMENT, candidates=1 + len(plan.get("strategies") or {})
+                    ).candidate(None)
+                    outcome = direct(budget=budget, session=session, config=cfg, plan=plan)
+                    entry.update(memo=str(outcome.memo or ""), problems=outcome.problems,
+                                 reply=outcome.reply, tokens=budget.spent_tokens)
+                    state["done"]["director:agent"] = datetime.now(UTC).isoformat()
+                except BudgetExhausted as stop:
+                    entry["stopped"] = str(stop)
+                session.commit()
+            save_state(day, state)
+        if "director:agent" in state["done"] and "director:directions" not in state["done"]:
+            if entry.get("memo"):
+                mechanism_ids, strategy_names, family_names = known_names(
+                    plan, cfg, catalogue(root / CATALOGUE))
+                result = apply_memo(Path(entry["memo"]), root=root, mechanism_ids=mechanism_ids,
+                                    strategy_names=strategy_names, family_names=family_names,
+                                    day=day)
+                entry["rejected"] = result.problems
+                if result.directions is not None:
+                    entry["directions"] = summary(result.directions)
+            state["done"]["director:directions"] = datetime.now(UTC).isoformat()
+    except Exception as exc:  # noqa: BLE001 - a steering stage must not fail the night
+        entry["error"] = f"{type(exc).__name__}: {exc}"
+    save_state(day, state)
 
 
 def record_research_note(entry: dict, plan: dict) -> None:
@@ -1049,6 +1201,7 @@ def _ensure_idea(spec: StrategySpec, card: str) -> None:
                              notes=f"Implemented by the implementer agent from {card}.")
 
 
-__all__ = ["ItemResult", "decay_stage", "evaluate_item", "generate_due", "generate_stage",
+__all__ = ["ItemResult", "decay_stage", "director_due", "director_stage", "evaluate_item",
+           "generate_due", "generate_stage",
            "graveyard_specs", "last_closed_day",
            "paper_reconciliation", "run", "with_end", "write_report"]

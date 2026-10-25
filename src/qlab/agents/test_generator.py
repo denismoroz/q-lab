@@ -632,3 +632,72 @@ cp "{payload}/good.yaml" specs/generated/nested/gen-nested.yaml
     assert (repo / "STRAY.txt").exists()  # someone else's work would survive
     assert any("changed during the run" in p and "STRAY.txt" in p for p in outcome.problems)
     assert all("outside its place" in r.problems[0] for r in outcome.rejected)
+
+
+# ---- the research director's directions (night/directions.yaml) -----------------------
+
+
+def _write_directions(repo: Path, *, pending: bool, pause: str = "xs-reversal-1w") -> None:
+    from qlab import directions as dirs
+
+    parsed = dirs.parse_block(
+        f"generator:\n  prefer_mechanisms: [tsmom-seasonal]\n  pause_mechanisms:\n"
+        f"    - {{id: {pause}, why: \"every idea of it fails the same rule\"}}\n",
+        mechanism_ids={"xs-reversal-1w", "tsmom-seasonal"}, strategy_names=set(),
+        family_names=set(), day=date(2026, 10, 26), pending_owner_review=pending)
+    dirs.write_directions(parsed.directions, repo)
+
+
+def test_a_spec_of_a_paused_mechanism_is_rejected(repo) -> None:
+    _, problems = _check(repo, _spec_text(), paused={"xs-reversal-1w": "fails the same rule"})
+    assert any("paused by the research director" in p and "fails the same rule" in p
+               for p in problems)
+    _, problems = _check(repo, _spec_text(), paused={"another": "x"})
+    assert not any("paused" in p for p in problems)
+    _, problems = _check(repo, _spec_text())
+    assert not any("paused" in p for p in problems)
+
+
+def test_reviewed_directions_reach_the_prompt_and_the_guard(
+        repo, session, tmp_path, monkeypatch) -> None:
+    _write_directions(repo, pending=False)
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "good.yaml").write_text(_spec_text(idea_id="gen-good"), encoding="utf-8")
+    args_file = _fake_claude(tmp_path, monkeypatch,
+                             f'mkdir -p specs/generated\ncp "{payload}/good.yaml" '
+                             "specs/generated/gen-good.yaml")
+    outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END)
+    args = args_file.read_text()
+    assert "research director's directions" in args and "tsmom-seasonal" in args
+    assert "xs-reversal-1w -- every idea of it fails the same rule" in args
+    assert outcome.accepted == []  # the spec is of the paused mechanism
+    assert any("paused by the research director" in p
+               for r in outcome.rejected for p in r.problems)
+
+
+def test_directions_waiting_for_the_owner_change_nothing(
+        repo, session, tmp_path, monkeypatch) -> None:
+    _write_directions(repo, pending=True)
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "good.yaml").write_text(_spec_text(idea_id="gen-good"), encoding="utf-8")
+    args_file = _fake_claude(tmp_path, monkeypatch,
+                             f'mkdir -p specs/generated\ncp "{payload}/good.yaml" '
+                             "specs/generated/gen-good.yaml")
+    outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END)
+    assert "research director" not in args_file.read_text()
+    assert [a.spec.idea_id for a in outcome.accepted] == ["gen-good"]
+
+
+def test_without_directions_the_generator_is_unchanged(
+        repo, session, tmp_path, monkeypatch) -> None:
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    (payload / "good.yaml").write_text(_spec_text(idea_id="gen-good"), encoding="utf-8")
+    args_file = _fake_claude(tmp_path, monkeypatch,
+                             f'mkdir -p specs/generated\ncp "{payload}/good.yaml" '
+                             "specs/generated/gen-good.yaml")
+    outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END)
+    assert "research director" not in args_file.read_text()
+    assert [a.spec.idea_id for a in outcome.accepted] == ["gen-good"]

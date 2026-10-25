@@ -146,8 +146,8 @@ def scout_drafts(night_dir: Path, since: datetime, until: datetime) -> int:
     return count
 
 
-def _latest_routes(session: Session, idea_ids: list[str]) -> dict[str, str]:
-    """Idea id -> the route of its latest routed trial."""
+def latest_routed_trials(session: Session, idea_ids: list[str]) -> dict[str, tuple[int, str]]:
+    """Idea id -> (trial id, route) of its latest trial with a route."""
     if not idea_ids:
         return {}
     latest: dict[str, tuple[int, TrialRoute]] = {}
@@ -157,7 +157,14 @@ def _latest_routes(session: Session, idea_ids: list[str]) -> dict[str, str]:
     for idea_id, trial_id, route in rows:
         if idea_id not in latest or trial_id > latest[idea_id][0]:
             latest[idea_id] = (trial_id, route)
-    return {idea_id: TrialRoute(route).value for idea_id, (_, route) in latest.items()}
+    return {idea_id: (trial_id, TrialRoute(route).value)
+            for idea_id, (trial_id, route) in latest.items()}
+
+
+def _latest_routes(session: Session, idea_ids: list[str]) -> dict[str, str]:
+    """Idea id -> the route of its latest routed trial."""
+    return {idea_id: route for idea_id, (_, route) in
+            latest_routed_trials(session, idea_ids).items()}
 
 
 def period_funnel(session: Session, since: datetime, until: datetime, *, label: str,
@@ -258,7 +265,8 @@ ROUTE_TITLE = {
     "error": "прогон упал",
 }
 
-AGENT_TITLE = {**SOURCE_TITLE, "assessor": "второе мнение", "reviewer": "проверяющий"}
+AGENT_TITLE = {**SOURCE_TITLE, "assessor": "второе мнение", "reviewer": "проверяющий",
+               "director": "руководитель"}
 
 STAGE_TITLE = {
     "recheck": "перепроверка",
@@ -301,5 +309,5 @@ def report_lines(period: PeriodFunnel) -> list[str]:
 
 
 __all__ = ["AGENT_WORK_START", "NO_SURVIVORS", "AgentFunnel", "PeriodFunnel", "SourceFunnel",
-           "agent_funnel", "idea_source", "period_funnel", "price_text", "report_lines",
-           "scout_drafts"]
+           "agent_funnel", "idea_source", "latest_routed_trials", "period_funnel", "price_text",
+           "report_lines", "scout_drafts"]

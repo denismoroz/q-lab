@@ -1,0 +1,40 @@
+# The research director (qlab.agents.director, qlab.directions, docs/DIRECTOR.md).
+#
+# Owner, 2026-10-25: «я думаю в агентах не хватает агента эксперта - который бы
+# следил за направлениями поиска и корректировал действия генератора идей
+# исследователя»; «запуск руководителя раз в 2 дня - добавляй».
+#
+# One agent call every `cadence_days` nights reads code-built evidence (the funnel,
+# verdicts aggregated by direction, the catalogue's coverage, the researcher's DROP
+# proposals, the decay detector, tokens by direction) and writes a memo for the owner
+# plus a block that code validates into night/directions.yaml: mechanisms the generator
+# should prefer or pause, a priority and a note per researcher strategy, requests for
+# the catalogue and for data, and families it proposes to close (shown to the owner;
+# no code acts on it). It runs BEFORE the researcher and the generator on the nights it
+# runs, in the implement stage's budget, and is skipped (not the rechecks) when that
+# budget is short. The first directions ever written wait for the owner's review
+# (`pending_owner_review: true`; `qlab director --approve` clears it).
+enabled: true
+cadence_days: 2
+max_turns: 40
+
+# Mechanism families: which catalogue mechanisms (docs/MECHANISMS.md) are one direction
+# of search. The catalogue itself has no family field; this grouping is the lab's own
+# reading of it and the owner may change it -- the verdicts of a family are the sum of
+# its mechanisms' ideas, and `propose_close_family` names these ids. A mechanism listed
+# nowhere is counted as a family of its own (the evidence file says so).
+families:
+  momentum:
+    - crypto-xs-momentum
+    - crypto-liquid-coins-momentum
+    - crypto-ts-momentum
+    - crypto-vol-managed-momentum
+    - classic-ts-momentum
+  reversal:
+    - crypto-short-term-reversal
+    - classic-weekly-reversal
+  low-volatility:
+    - crypto-low-vol
+  funding-and-basis:
+    - perp-funding-carry
+    - perp-basis-convergence

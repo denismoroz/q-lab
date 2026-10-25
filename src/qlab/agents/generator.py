@@ -27,6 +27,11 @@ nothing. Code then guards what it wrote and runs what passes:
    researcher's experiments (matched noise, every rule); a spec that fails a
    guard is reported and not run. Every run writes its trial.
 
+The research director (`qlab.agents.director`) may steer the generator through
+`night/directions.yaml`: the mechanisms it prefers are named in the instructions,
+and a spec of a mechanism it paused is rejected by the guard (`paused`). Both apply
+only after the owner has reviewed the file; without it nothing changes.
+
 The verdict is the code's, never the agent's. The agent's spending goes
 through the budget guard (`qlab.budget.run_agent`): without a budget the call
 fails instead of spending silently.
@@ -36,12 +41,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.directions import active_directions, generator_text
 from qlab.pipeline.sources import QLAB_ROOT
 
 MODEL = "sonnet"  # docs/PLAN.md: the agents that write specs run on sonnet
@@ -309,10 +316,14 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
 def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: Path = CATALOGUE,
                     data_end: date | None = None, registry_idea_ids: frozenset[str] = frozenset(),
                     other_params: dict[tuple[str, str], str] | None = None,
-                    reference: Path | None = REFERENCE_SPEC
+                    reference: Path | None = REFERENCE_SPEC,
+                    paused: Mapping[str, str] | None = None
                     ) -> tuple[GeneratedSpec | None, list[str]]:
     """Every guard on one spec file the agent wrote. Returns the spec (if it
-    loads) and the problems; a spec with problems is reported, not run."""
+    loads) and the problems; a spec with problems is reported, not run.
+    `paused` maps the mechanisms the research director paused to its reason
+    (night/directions.yaml, once the owner has reviewed it): a spec of one of them
+    is rejected."""
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
 
@@ -335,6 +346,9 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
         problems.append("no '# mechanism: <id>' header naming a mechanism of the catalogue"
                         if mechanism_id is None
                         else f"mechanism {mechanism_id!r} is not in the catalogue")
+    elif paused and mechanism.id in paused:
+        problems.append(f"mechanism {mechanism.id} is paused by the research director "
+                        f"(night/directions.yaml): {paused[mechanism.id]}")
 
     data = spec.data
     if (data.source, data.interval) != (DATA_SOURCE, DATA_INTERVAL):
@@ -493,8 +507,8 @@ Rules:
   whole history into selection data. params_fixed_evidence says which sources and which dates
   gave the day.
 
-Reply with one line per spec: idea_id, the mechanism id, and the params_fixed_at you chose
-with the reason in a few words (or "no spec: <reason>")."""
+{directions}Reply with one line per spec: idea_id, the mechanism id, and the params_fixed_at you
+chose with the reason in a few words (or "no spec: <reason>")."""
 
 
 @dataclass
@@ -557,9 +571,13 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
         "## Idea ids already in the registry (do not duplicate)", "",
         *[f"- {i}" for i in sorted(registry_idea_ids)], ""]), encoding="utf-8")
 
+    # The research director's directions, once the owner has reviewed them; no file (or one
+    # still waiting for the review) is today's behaviour.
+    directions = active_directions(QLAB_ROOT)
+    paused = directions.paused() if directions is not None else {}
     originals = {p: p.read_bytes() for p in sorted(_abs(spec_dir).glob("*.yaml"))}
     before = set(_changed_paths())
-    prompt = INSTRUCTIONS.format(
+    prompt = INSTRUCTIONS.format(directions=generator_text(directions), 
         code_ref=CODE_REF, catalogue=catalogue_path, reference=REFERENCE_SPEC,
         context_path=context_path, max_specs=max_specs, spec_dir=spec_dir,
         data_source=DATA_SOURCE, data_interval=DATA_INTERVAL, data_start=DATA_START,
@@ -611,7 +629,7 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
             continue
         generated, problems = check_generated(
             path, mechanisms=mechanisms, catalogue_path=catalogue_path, data_end=data_end,
-            registry_idea_ids=registry, other_params=seen)
+            registry_idea_ids=registry, other_params=seen, paused=paused)
         if problems or generated is None:
             outcome.rejected.append(Rejected(str(path), problems))
             continue
