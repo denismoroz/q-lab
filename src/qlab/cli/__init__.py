@@ -428,6 +428,51 @@ def data_coin_attributes_cmd(
         raise typer.Exit(code=1)
 
 
+@data_app.command("asset-classes")
+def data_asset_classes_cmd(
+    fetch: bool = typer.Option(
+        True, "--fetch/--no-fetch",
+        help="Record today's venue annotations first (default); --no-fetch only rebuilds",
+    ),
+) -> None:
+    """Record the xyz deployment's annotations (category and underlying of every instrument)
+    and rebuild the point-in-time class table classification/hyperliquid-xyz.yaml by the
+    versioned rule classification/hyperliquid-xyz.rule.yaml (docs/ASSET_CLASSES.md)."""
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from qlab.data import asset_classes as ac
+    from qlab.data.sources import hyperliquid as hl
+
+    rule = ac.load_rule()
+    if fetch:
+        with httpx.Client() as client:
+            names = hl.fetch_meta(client, "xyz")
+            annotations = ac.fetch_annotations(client, names)
+        path = ac.save_annotation_snapshot(
+            ac.DEFAULT_RECORD_DIR, datetime.now(UTC).date(), annotations
+        )
+        typer.echo(f"recorded {len(annotations)} annotations -> {path}")
+    snapshots = ac.load_annotation_snapshots(ac.DEFAULT_RECORD_DIR)
+    document = ac.build_table(rule, snapshots, ac.listing_facts(ac.DEFAULT_RECORD_DIR))
+    ac.write_table(document)
+    counts: dict[str, int] = {}
+    for entry in document["instruments"].values():
+        key = entry["history"][-1]["class_key"]
+        counts[key] = counts.get(key, 0) + 1
+    typer.echo(f"rule {rule.version}; {len(document['instruments'])} instruments")
+    for key, count in sorted(counts.items()):
+        typer.echo(f"  {key}: {count}")
+    notes = sorted(
+        (name, entry["history"][-1]["note"])
+        for name, entry in document["instruments"].items()
+        if entry["history"][-1].get("note")
+    )
+    for name, note in notes:
+        typer.echo(f"  note {name}: {note}")
+
+
 @data_app.command("list")
 def data_list_cmd() -> None:
     """List registered data_snapshot rows, newest first."""
