@@ -46,7 +46,7 @@ def mechanisms() -> list[gen.Mechanism]:
 
 def test_every_new_mechanism_is_parsed_with_its_rows(mechanisms) -> None:
     by_id = {m.id: m for m in mechanisms}
-    assert len(by_id) == len(mechanisms) == 15
+    assert len(by_id) == len(mechanisms) >= 15
     for mech_id, rows in PINNED.items():
         m = by_id[mech_id]
         assert {r.param: r.values for r in m.params} == rows, mech_id

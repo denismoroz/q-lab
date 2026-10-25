@@ -49,3 +49,15 @@ families:
   # not store, so for now it only records the mechanism in the catalogue's coverage).
   volatility-premium:
     - crypto-variance-risk-premium
+  # Outcome (prediction) markets, added 2026-10-25 (docs/OUTCOME_MARKETS.md): contracts that pay
+  # 0 or 1 at resolution, so the premium is a mispricing of probabilities (the favourite-longshot
+  # bias and its relatives), not a funding rate, a trend or a variance premium. None of the four
+  # can be built from the existing blocks (they need a binary-contract block and resolved-market
+  # data), so for now the family only records the catalogue's coverage and gives the director a
+  # direction to name. Polymarket and Kalshi name Belarus in their terms; Hyperliquid HIP-4 is the
+  # one venue that does not (docs/OUTCOME_MARKETS.md).
+  outcome-markets:
+    - outcome-favorite-longshot
+    - outcome-horizon-miscalibration
+    - outcome-maker-taker-split
+    - outcome-complete-set-arbitrage
