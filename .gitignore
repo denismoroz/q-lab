@@ -39,3 +39,6 @@ data/night/
 data/paper/
 reports/night/
 data/events/
+
+# publication feed hand-off files (the scout reads them; docs/NIGHT.md)
+data/publications/
