@@ -1,0 +1,88 @@
+# EXPLORATORY run of specs/xyz-equity-bab.yaml (version 2, with asset classes): the same
+# parameters, every one the paper's, nothing tuned. Written 2026-10-25 and committed before
+# its first run.
+#
+# Why it exists. With classes the card's strategy is expressed in full, but the run is
+# still not evaluable: the venue erased the history of 22 delisted instruments, one of them
+# a classified stock (IBIDEN), fourteen with no description at all, so a book of the
+# stocks is a book of survivors. The owner's earlier instruction, 2026-10-01: "не тупо
+# следовать описанию а пробывать прогнать стратегию на доступных данных" (given for this
+# card's family and used for the deployment-wide variants). It is applied here to the one
+# run with the paper's own parameters, not to a grid; the owner should confirm that it
+# covers this version. The route stays not-evaluable whatever the numbers say; the rules'
+# answer is recorded in the route reason.
+
+idea_id: xyz-equity-bab
+title: "Betting against beta on xyz single stocks by class, exploratory run"
+code_ref: "qlab.strategies.bab:BettingAgainstBeta"
+
+# Every value is the source's, see qlab.strategies.bab's docstring for the
+# verbatim quotes and for why beta estimation follows the 2010 working paper
+# (NBER w16601) while portfolio construction follows the 2014 published one.
+params:
+  # The deployment's own index, and the only proxy with enough history: the
+  # alternative, xyz:SP500, had 189 daily bars on 2026-09-22, below the
+  # paper's 200-observation minimum (cards/xyz-equity-bab.yaml, legs).
+  market: "xyz:XYZ100"
+  window_bars: 365        # "1-year rolling windows" of daily data; xyz trades every day
+  min_observations: 200   # "require at least 200 observations"
+  dimson_lags: 5          # "lags up to K = 5 trading days"
+  shrink_weight: 0.5      # "we set w = 0.5 and beta_XS = 1"
+  shrink_target: 1.0
+  # The class filter and the ranking group (docs/ASSET_CLASSES.md): single stocks only,
+  # ranked inside their country, groups pooled by size (src/qlab/strategies/bab.py).
+  classes: ["stock"]
+  rank_within_class: true
+
+data:
+  source: hyperliquid-xyz
+  interval: "1d"
+  # The deployment's first daily candle is 2025-10-13 (xyz:XYZ100); the window
+  # starts a little earlier so nothing listed at launch is cut off.
+  start: 2025-10-01
+  end: 2026-09-30
+
+costs:
+  # docs.trade.xyz/perpetuals/mechanics/fees: "Standard fees for all HIP-3
+  # assets are currently 2x the usual fees on validator-operated perp markets".
+  # The usual taker q-lab uses for Hyperliquid perps is 3.5 bps
+  # (funding-rate-arbitrage/src/frab/constants.py, PERP_TAKER = 0.00035; the
+  # same figure every other spec here uses), so 7.0 bps. Many xyz instruments
+  # report growthMode "enabled" (fees cut by >= 90% per the same page), but
+  # the API gives only today's mode, not its history -- so the standard rate
+  # is used throughout, an upper bound on cost, not an estimate.
+  taker_fee_bps: 7.0
+  # Same slippage figure as the main-market specs (SCREENING.md: ~4.4 bps per
+  # leg = 3.5 taker + 0.9). xyz books are thinner, so this is a lower bound.
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0    # venues/hyperliquid-xyz.yaml
+# A portfolio, not a pair: a partly filled rebalance mis-sizes the book but
+# leaves no leg uncovered (cards/xyz-equity-bab.yaml, execution.note).
+simultaneous_legs: 1
+
+
+exploratory: "owner 2026-10-01: run on the survivors-only data that exists, the paper's parameters, ranked within asset classes; informs, does not decide"
+
+unexpressed_mechanisms: []
+
+# Recorded, never routed on: where this book is not the paper's.
+differs_from_source:
+  - "the paper does not say how its country groups are pooled into one book; here each group is weighted by its share of the ranked stocks"
+  - "the class of a stock is the country of the exchange its price comes from (an American depositary share is US), the paper's is the country of the listing in its data"
+  - "the instruments are perpetual contracts on stocks, not the stocks"
+
+# Where every number and choice comes from (docs/SOURCES.md); checked
+# before any run starts.
+sources:
+  "market": "docs/STAGE3_XYZ_BAB.md (xyz:XYZ100, the deployment's own index)"
+  "window_bars": "derived: 365 * 1; «1-year rolling windows» of daily bars (src/qlab/strategies/bab.py), and xyz trades every calendar day"
+  "min_observations": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "dimson_lags": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "shrink_weight": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "classes": "classification/hyperliquid-xyz.rule.yaml (single stocks are the card's driver; the paper's asset class for them is a country: NBER w16601, https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "rank_within_class": "https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25 («all securities in an asset class are ranked in ascending order on the basis of their estimated beta»); pooling of the groups: src/qlab/strategies/bab.py docstring, rule written before the first run"
+  "shrink_target": "src/qlab/strategies/bab.py docstring (verbatim quotes from the source paper, NBER w16601 / https://econpapers.repec.org/RePEc:eee:jfinec:v:111:y:2014:i:1:p:1-25)"
+  "costs.taker_fee_bps": "derived: 0.00070 * 10000; HIP-3 taker at the standard spot rate, funding-rate-arbitrage/src/frab/constants.py SPOT_TAKER"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"
