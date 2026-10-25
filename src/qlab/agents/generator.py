@@ -443,8 +443,8 @@ Rules:
   history a coin needs before it is traded, e.g. "derived: 28; the signal's lookback" -- every
   operand must be a value from a row of the mechanism you chose, and the formula must evaluate
   to exactly the number. Every other parameter is a value from its own row, never a formula.
-  If the catalogue gives no sizing, use the `equal` block. Strings and block names need a citation too (an
-  ancestor entry such as `signal` covers them).
+  If the catalogue gives no sizing, use the `equal` block. Strings and block names need a
+  citation too (an ancestor entry such as `signal` covers them).
 - Costs, min_leg_notional and their sources: copy from {reference}. Do not change data.source,
   interval, or add an instrument list, a liquidity floor or a regime_claim.
 - data.end must be exactly {data_end} (the latest Binance snapshot end).
