@@ -552,9 +552,10 @@ def test_variant_slots_and_the_drop_one_instruction(tmp_path) -> None:
     limits = tmp_path / "limits.yaml"
     limits.write_text("max_active_variants_per_strategy: 3\n", encoding="utf-8")
     entry = {"ideas": ["v2"]}  # any idea of the chain leads to the same root
-    assert night.variant_slots(session, entry, limits) == (0, 3, ["v1", "v2", "v3"])
-    limits.write_text("max_active_variants_per_strategy: 4\n", encoding="utf-8")
-    assert night.variant_slots(session, entry, limits)[0] == 1
+    # v2 is a variant of v1 (the same idea on other data): v1's branch takes one place.
+    assert night.variant_slots(session, entry, limits) == (1, 3, ["v1", "v3"])
+    limits.write_text("max_active_variants_per_strategy: 2\n", encoding="utf-8")
+    assert night.variant_slots(session, entry, limits)[0] == 0
     assert night.variant_slots(session, entry, tmp_path / "missing.yaml")[0] > 100
     text = night.full_strategy_focus("bv2", 3, ["v1", "v2", "v3"])
     assert "Propose NO new experiment" in text and "v1, v2, v3" in text and "`bv2`" in text

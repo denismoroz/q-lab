@@ -48,6 +48,24 @@ def active_variants(session: Session, root: str) -> list[str]:
     return sorted(i for i in active if i != root and _root_of(parents, i) == root)
 
 
+def active_branches(session: Session, root: str) -> list[str]:
+    """The root's direct variants that are in active work themselves or have an
+    active variant below them, sorted. A variant of a variant is the same
+    variant on other data (bv2-research-headroom-retune-binance under
+    bv2-research-headroom-retune), so a branch takes one place, not one per idea."""
+    parents = _parents(session)
+    active = {i for (i,) in session.query(Idea.id).filter(Idea.status.in_(ACTIVE_STATUSES))}
+    branches: set[str] = set()
+    for idea in active:
+        if idea == root or _root_of(parents, idea) != root:
+            continue
+        current = idea
+        while parents.get(current) not in (None, root):
+            current = parents[current]  # type: ignore[assignment]
+        branches.add(current)
+    return sorted(branches)
+
+
 def would_make_cycle(session: Session, idea_id: str, parent_id: str) -> bool:
     """True if pointing `idea_id` at `parent_id` closes a loop."""
     parents = _parents(session)
@@ -70,5 +88,5 @@ def strategy_view(session: Session, idea_id: str) -> dict:
             "active_variants": active_variants(session, idea_id) if root == idea_id else []}
 
 
-__all__ = ["ACTIVE_STATUSES", "active_variants", "strategy_root", "strategy_view",
+__all__ = ["ACTIVE_STATUSES", "active_branches", "active_variants", "strategy_root", "strategy_view",
            "would_make_cycle"]

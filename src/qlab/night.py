@@ -564,11 +564,12 @@ def strategy_slots(session, research_plan: dict,
 
 def variant_slots(session, strategy: dict, limits: Path = LIMITS) -> tuple[int, int, list[str]]:
     """(free places, the cap, the active variants) for one strategy of the
-    research plan: the variants are the active ideas under the root of the
-    strategy's first idea. Without the limits file there is no cap."""
-    from qlab.registry.strategies import active_variants, strategy_root
+    research plan: the variants are the active branches under the root of the
+    strategy's first idea -- a variant together with its own variants (the same
+    idea on other data) takes one place. Without the limits file there is no cap."""
+    from qlab.registry.strategies import active_branches, strategy_root
 
-    variants = active_variants(session, strategy_root(session, strategy["ideas"][0]))
+    variants = active_branches(session, strategy_root(session, strategy["ideas"][0]))
     cap = _limit(limits, "max_active_variants_per_strategy")
     if cap is None:
         return NO_CAP, 0, variants

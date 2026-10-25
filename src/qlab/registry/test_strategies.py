@@ -84,3 +84,29 @@ def test_strategy_view_for_the_idea_page(session) -> None:
                                            "active_variants": []}
     assert strategy_view(session, "root") == {"root": "root", "is_variant": False,
                                               "active_variants": ["v"]}
+
+
+def test_a_variant_and_its_own_variants_take_one_place() -> None:
+    # Owner, 2026-10-25: the Binance run of the retune "должна быть 1 стратегия - просто вариация".
+    from qlab.registry.strategies import active_branches
+
+    class _Q:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def filter(self, *_):
+            return _Q([(i,) for i, _p, s in ROWS if s in ("candidate", "bench", "validated")])
+
+        def __iter__(self):
+            return iter(self.rows)
+
+    class _S:
+        def query(self, *cols):
+            if len(cols) == 2:
+                return _Q([(i, p) for i, p, _s in ROWS])
+            return _Q([(i,) for i, _p, _s in ROWS])
+
+    ROWS = [("bv2", None, "paper"), ("retune", "bv2", "validated"),
+            ("retune-binance", "retune", "candidate"), ("headroom", "bv2", "bench"),
+            ("old", "bv2", "retired"), ("old-child", "old", "bench")]
+    assert active_branches(_S(), "bv2") == ["headroom", "old", "retune"]
