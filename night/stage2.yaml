@@ -1,0 +1,54 @@
+# The second stage of the idea generator's evaluation (qlab.pipeline.stage2,
+# docs/TWO_STAGE.md, T45).
+#
+# An idea the generator wrote is judged on Binance's long history first (stage 1,
+# the spec as written). If it survives, the SAME mechanism with the SAME parameter
+# values is built on Hyperliquid -- where q-lab's paper and live execution lives --
+# and judged there, forward from the date the parameters were fixed (stage 2). It
+# needs both to survive. Stage 2 is code only: it calls no agent and spends no
+# tokens, so it sits outside the token budget guard by construction.
+#
+# Run by hand on one spec: `qlab stage2 specs/generated/<idea>.yaml --measure`.
+
+enabled: true
+
+venue: hyperliquid
+
+# The first day of the Hyperliquid panel (stage 2 starts at the later of this and
+# stage 1's start). The window every other Hyperliquid spec of the lab uses and the
+# one whose daily snapshot is cached (docs/XSMOM_T21.md line 4: «тот же вызов, что и
+# во всех прочих»; docs/T27_LIQUIDITY.md line 76). Daily candles with trades exist
+# at the source from earlier (BTC: 2023-02-26, measured 2026-10-25 with
+# candleSnapshot), so an earlier start would lengthen the test; that is the owner's
+# decision, not the code's.
+data_start: 2025-01-01
+
+# Hyperliquid's costs, replacing Binance's (the numbers are not strategy parameters,
+# nothing is refitted). Each number is cited where `source_problems` can find it.
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+  sources:
+    costs.taker_fee_bps: >-
+      docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0,
+      0.045% (4.5 bps), the Fees table of
+      https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+      a book of a few thousand dollars trades at the base tier
+    costs.slippage_bps: >-
+      derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+      «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid's own cost
+      estimate, whose slippage part is 0.9
+
+# Stage 1 routes that go on to stage 2: every strategy rule passed, or none failed
+# yet. A stage 1 `reject` is final (the graveyard); the routes that decide nothing
+# (not-evaluable, needs-more-data, error) have nothing to confirm.
+#   paper, shelf          -- passed every rule on Binance
+#   needs-infrastructure  -- passed every strategy rule; only Binance's missing
+#                            order adapter failed (venues/binance.yaml), which is
+#                            exactly what Hyperliquid, where the adapter is, settles
+#   needs-forward         -- nothing is against it yet; forward data decides
+stage1_survives:
+  - paper
+  - shelf
+  - needs-infrastructure
+  - needs-forward

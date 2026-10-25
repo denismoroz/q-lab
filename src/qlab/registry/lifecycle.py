@@ -45,6 +45,7 @@ Two guards sit on top of the mapping:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -139,6 +140,7 @@ def apply_route(
     trial_id: int,
     rules_version: str | None,
     run_data_end: date | None,
+    also_ideas: Sequence[str] = (),
 ) -> StatusDecision:
     """Apply `next_status` to `idea_id` and write the transition if it moves.
 
@@ -147,6 +149,10 @@ def apply_route(
 
     The failing-verdict date is read EXCLUDING `trial_id`'s own verdicts:
     the question is what data the idea was rejected on before this run.
+    `also_ideas` names ideas whose failing verdicts count as this idea's own
+    for that date: the second stage of a two-stage idea is judged under an idea
+    of its own (docs/TWO_STAGE.md), and the data it failed on is the data the
+    parent was rejected on.
     """
     idea = session.get(Idea, idea_id)
     if idea is None:
@@ -155,7 +161,7 @@ def apply_route(
     rejected_on_data_end = (
         session.query(func.max(Verdict.data_range_end))
         .filter(
-            Verdict.idea_id == idea_id,
+            Verdict.idea_id.in_([idea_id, *also_ideas]),
             Verdict.passed.is_(False),
             Verdict.trial_id.is_distinct_from(trial_id),
         )

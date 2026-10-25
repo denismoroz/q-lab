@@ -1004,6 +1004,7 @@ def evaluate_spec(
     update_idea_status: bool = True,
     check_lookahead: bool = True,
     check_sources: bool = True,
+    not_evaluable_extra: Sequence[str] = (),
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
 
@@ -1159,6 +1160,9 @@ def evaluate_spec(
     )
     reasons = not_evaluable_reasons(spec, coverage, panel.meta)
     reasons += review_reasons(session, spec)
+    # Reasons the caller established from the data before the run (the second
+    # stage of the idea generator: too few instruments for the portfolio rule).
+    reasons += list(not_evaluable_extra)
     exploratory = bool(reasons) and spec.exploratory is not None
     if reasons and not exploratory:
         reason = "; ".join(reasons)
@@ -1202,6 +1206,11 @@ def evaluate_spec(
         first, last = 0, len(panel.prices.index) - 1
         if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
             first, last = coverage.window
+        if spec.judged_from is not None:
+            # Warm-up before the first judged day (StrategySpec.judged_from).
+            first = max(first, min(
+                int(panel.prices.index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC"))),
+                last))
 
         costs = CostModel(
             taker_fee_bps=spec.costs.taker_fee_bps, slippage_bps=spec.costs.slippage_bps
@@ -1312,6 +1321,8 @@ def evaluate_spec(
         if judged is None:  # the whole window is shorter than two bars
             judged = (first, last)
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None)
+        if spec.judged_from is not None and first > 0:
+            metrics["skipped_warmup_days"] = _days((0, first - 1))
         if spec.measure_hedge_timing:
             # Does the book pick WHEN to hedge better than chance, on the
             # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.

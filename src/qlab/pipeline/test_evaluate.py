@@ -1850,3 +1850,66 @@ def test_a_strategys_own_costs_reach_the_net_return(session, tmp_path) -> None:
     total_free = (1 + free.metrics["ann_return_net"]) ** (n_periods / 8760.0) - 1
     total_paying = (1 + paying.metrics["ann_return_net"]) ** (n_periods / 8760.0) - 1
     assert total_free - total_paying == pytest.approx(0.01, rel=0.1)
+
+
+def test_judged_from_starts_the_judged_window_after_the_warm_up(session, tmp_path) -> None:
+    """Bars before `judged_from` are warm-up: the verdict's data range and the metrics
+    start at it (docs/TWO_STAGE.md), and the run says how much it skipped."""
+    end = date(2026, 1, 5)
+    _register_snapshot(session, tmp_path, snapshot_id=DISCOVERED_ID, instruments=INSTRUMENTS,
+                       universe_complete=True, end=end)
+    rules = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+    data = {"source": SOURCE, "interval": INTERVAL, "start": START, "end": end}
+
+    whole = evaluate_spec(_make_spec(params={"weight": 0.4}, data=data), session=session,
+                          ruleset=rules, deployable_capital_usd=1000.0, check_lookahead=False)
+    judged = evaluate_spec(_make_spec(params={"weight": 0.4}, data=data,
+                                      judged_from=date(2026, 1, 3)),
+                           session=session, ruleset=rules, deployable_capital_usd=1000.0,
+                           check_lookahead=False)
+
+    assert "skipped_warmup_days" not in whole.metrics
+    assert judged.metrics["skipped_warmup_days"] == pytest.approx(2.0)
+    assert judged.metrics["n_periods"] < whole.metrics["n_periods"]
+    rows = session.query(Verdict).filter(Verdict.trial_id == judged.trial_id).all()
+    assert {v.data_range_start for v in rows} == {date(2026, 1, 3)}
+    assert {v.data_range_end for v in rows} == {end}
+
+
+def test_judged_from_never_moves_the_forward_boundary(session, tmp_path) -> None:
+    """`judged_from` only moves the start of the window; the split at `params_fixed_at`
+    stays where the spec put it (the parameters were fixed before the market existed)."""
+    end = date(2026, 1, 5)
+    _register_snapshot(session, tmp_path, snapshot_id=DISCOVERED_ID, instruments=INSTRUMENTS,
+                       universe_complete=True, end=end)
+    ruleset = RuleSet(version="2026-01-01.1", rules=[CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE],
+                      forward_resolution=RESOLUTION)
+    spec = _make_spec(
+        params={"weight": 0.4}, data={"source": SOURCE, "interval": INTERVAL, "start": START,
+                                      "end": end},
+        judged_from=date(2026, 1, 3), params_fixed_at=date(2025, 6, 1),
+        params_fixed_evidence="owner 2026-01-01: test fixture")
+    result = evaluate_spec(spec, session=session, ruleset=ruleset,
+                           deployable_capital_usd=1000.0, check_lookahead=False)
+    assert result.metrics["judged_on_forward"] == 1.0
+    assert result.metrics["selection_days"] == 0.0
+    assert result.metrics["forward_days"] == pytest.approx(2.0, abs=0.1)  # 3 Jan .. 5 Jan 00:00
+
+
+def test_extra_not_evaluable_reasons_write_a_not_evaluable_trial_and_run_nothing(
+        session, tmp_path) -> None:
+    """A reason the caller established from the data (too few instruments for the
+    portfolio rule) is a not-evaluable trial: written, never a fail, no verdict rows."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4})
+    result = evaluate_spec(
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
+        deployable_capital_usd=1000.0, not_evaluable_extra=["the market had 3 coins, 5 needed"])
+
+    assert result.routing.route == "not-evaluable"
+    assert "the market had 3 coins, 5 needed" in result.routing.reason
+    assert result.metrics is None
+    trial = session.get(Trial, result.trial_id)
+    assert trial.status == TrialStatus.NOT_EVALUABLE
+    assert session.query(Verdict).filter(Verdict.trial_id == result.trial_id).count() == 0
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE  # never "rejected"

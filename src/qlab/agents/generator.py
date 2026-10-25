@@ -655,6 +655,24 @@ class GeneratedResult:
     reason: str | None = None
     metrics: dict = field(default_factory=dict)
     error: str | None = None
+    stage2: dict | None = None
+    """The second stage (`qlab.pipeline.stage2.Stage2Result` as a dict): the same
+    mechanism on Hyperliquid, run when this stage-1 result survived. None before it
+    ran, or for a result recorded before stage 2 existed."""
+
+
+def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_trials: int,
+                     deployable_capital_usd: float) -> None:
+    """The idea's second stage, from its stage-1 `result` (docs/TWO_STAGE.md): code
+    only, no agent call, no tokens -- so it needs no budget. Sets `result.stage2`;
+    a failure is in it as `status == "error"`, never raised."""
+    from dataclasses import asdict
+
+    from qlab.pipeline.stage2 import run_stage2
+
+    result.stage2 = asdict(run_stage2(
+        item.spec, stage1_route=result.route, stage1_trial_id=result.trial_id,
+        noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd))
 
 
 def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
@@ -687,6 +705,11 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
             result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the others still run
         result.error = f"{type(exc).__name__}: {exc}"
+    if result.error is None:
+        # Survivors only (night/stage2.yaml); the same call, so an idea is never
+        # left at "passed" with its second stage forgotten.
+        run_second_stage(item, result, noise_trials=noise_trials,
+                         deployable_capital_usd=deployable_capital_usd)
     return result
 
 
@@ -696,6 +719,14 @@ def run_generated(items: list[GeneratedSpec], *, noise_trials: int = 200,
     stop the others."""
     return [run_generated_one(item, noise_trials=noise_trials,
                               deployable_capital_usd=deployable_capital_usd) for item in items]
+
+
+def second_stage_lines(r: GeneratedResult) -> list[str]:
+    """The idea's second stage (the same mechanism on Hyperliquid) and the verdict
+    of both stages together, as plain Russian lines under `result_line`."""
+    from qlab.pipeline.stage2 import report_lines
+
+    return report_lines({"route": r.route}, r.stage2)
 
 
 def result_line(r: GeneratedResult) -> str:
@@ -719,4 +750,4 @@ def result_line(r: GeneratedResult) -> str:
 __all__ = ["GenerateOutcome", "GeneratedResult", "GeneratedSpec", "MODEL", "Mechanism",
            "ParamRow", "Rejected", "catalogue", "check_generated", "generate",
            "latest_binance_end", "parse_catalogue", "result_line", "run_generated",
-           "run_generated_one"]
+           "run_generated_one", "run_second_stage", "second_stage_lines"]

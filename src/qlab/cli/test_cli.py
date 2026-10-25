@@ -313,6 +313,37 @@ def test_generate_dry_run_prints_the_catalogue_without_spending(tmp_path, monkey
     assert "1 mechanisms in" in result.output
 
 
+def test_stage2_measure_runs_the_second_stage_by_hand_and_prints_it_in_russian(
+        cli_db, tmp_path, monkeypatch):
+    from qlab.pipeline import stage2
+
+    runner.invoke(app, ["init-db"])
+    spec = tmp_path / "gen-a.yaml"
+    spec.write_text(
+        "idea_id: gen-a\ntitle: Тест\ncode_ref: qlab.strategies.blocks:Composed\n"
+        "data: {source: binance, interval: 1d, start: 2019-09-08, end: 2026-10-24}\n"
+        "costs: {taker_fee_bps: 3.5, slippage_bps: 0.9}\nmin_leg_notional: 10.0\n"
+        "unexpressed_mechanisms: []\n", encoding="utf-8")
+    seen = {}
+
+    def fake(spec_, **kw):
+        seen.update(kw)
+        return stage2.Stage2Result(
+            parent_id=spec_.idea_id, idea_id="gen-a-hl", stage1_route=kw["stage1_route"],
+            status="evaluated", measurement=kw["measure"], trial_id=5, route="reject",
+            reason="capital_fit", metrics={"ann_return_net": -0.2}, data_end="2026-10-24")
+
+    monkeypatch.setattr(stage2, "run_stage2", fake)
+    no_route = runner.invoke(app, ["stage2", str(spec)])
+    assert no_route.exit_code == 1 and "pass --stage1-route" in no_route.output
+
+    result = runner.invoke(app, ["stage2", str(spec), "--measure", "--stage1-route", "reject"])
+    assert result.exit_code == 0, result.output
+    assert seen["measure"] is True and seen["stage1_route"] == "reject"
+    assert "ЗАМЕР на Hyperliquid" in result.output
+    assert "stage 2 trial 5: reject -- capital_fit" in result.output
+
+
 def test_director_dry_run_prints_the_evidence_and_approve_clears_the_flag(
         cli_db, tmp_path, monkeypatch):
     from datetime import date

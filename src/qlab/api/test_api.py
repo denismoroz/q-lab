@@ -535,6 +535,57 @@ def test_idea_detail_names_the_strategy_of_a_variant_and_lists_a_roots_variants(
     assert root["is_variant"] is False and root["active_variants"] == ["alpha-variant"]
 
 
+def test_idea_detail_puts_both_stages_of_a_generated_idea_side_by_side(client, session_factory):
+    """docs/TWO_STAGE.md: stage 1 under the idea, stage 2 under its child; the parent's page
+    and the child's page show the same pair, with the data each was judged on."""
+    from qlab.registry.models import Idea, Spec, TrialRoute
+
+    assert client.get("/api/ideas/alpha").json()["two_stage"] is None  # no second stage
+
+    session = session_factory()
+    session.add(Idea(id="alpha-hl", title="Alpha, stage 2", source_type=SourceType.INTERNAL,
+                     asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                     status=IdeaStatus.REJECTED, parent_id="alpha",
+                     notes="Second stage of alpha (docs/TWO_STAGE.md): the same mechanism"))
+    session.flush()
+    stage1_spec = session.query(Spec).filter(Spec.idea_id == "alpha").one()
+    stage2_spec = repo.add_spec(
+        session, idea_id="alpha-hl", version=1, params={"lookback": 30},
+        data_requirements={"source": "hyperliquid"}, rebalance="1d", costs_model={},
+        code_ref="qlab.strategies.trend")
+    stage1_spec.data_requirements = {"source": "binance"}
+    trials = {}
+    for key, spec, route, reason in (("1", stage1_spec, TrialRoute.NEEDS_FORWARD, "waits"),
+                                     ("2", stage2_spec, TrialRoute.REJECT, "capital_fit")):
+        trials[key] = repo.add_trial(
+            session, spec_id=spec.id, config_hash=f"h{key}", snapshot_id="snap-1",
+            code_sha="x", params={}, status=TrialStatus.OK, route=route, route_reason=reason,
+            metrics={"ann_return_net": 0.1 if key == "1" else -0.2})
+    for key, idea_id, start in (("1", "alpha", date(2019, 9, 8)), ("2", "alpha-hl",
+                                                                    date(2025, 1, 30))):
+        repo.add_verdicts(session, [dict(
+            idea_id=idea_id, trial_id=trials[key].id, stage=VerdictStage.EDGE, rule_id="r",
+            rules_version="v", metric="m", value=1.0, comparator=">=", threshold=0.0,
+            passed=key == "1", data_range_start=start, data_range_end=date(2026, 10, 24),
+            decided_at=datetime(2026, 10, 25, tzinfo=UTC), source=TrialSource.QLAB)])
+    session.commit()
+    session.close()
+
+    parent = client.get("/api/ideas/alpha").json()["two_stage"]
+    child = client.get("/api/ideas/alpha-hl").json()["two_stage"]
+    assert parent["role"] == "parent" and child["role"] == "child"
+    for view in (parent, child):
+        assert (view["parent_id"], view["child_id"]) == ("alpha", "alpha-hl")
+        assert view["stage1"]["venue"] == "binance" and view["stage2"]["venue"] == "hyperliquid"
+        assert view["stage1"]["trial"]["route"] == "needs-forward"
+        assert view["stage2"]["trial"]["route"] == "reject"
+        assert view["stage1"]["data_range"] == {"start": "2019-09-08", "end": "2026-10-24"}
+        assert view["stage2"]["data_range"] == {"start": "2025-01-30", "end": "2026-10-24"}
+        assert view["parent_status"] == "validated"
+    # The child is a variant of its parent: it takes no place of its own.
+    assert client.get("/api/ideas/alpha-hl").json()["strategy"]["root"] == "alpha"
+
+
 def test_idea_detail_carries_the_latest_paper_check_or_null(client, session_factory):
     from qlab.registry.models import PaperCheck
 

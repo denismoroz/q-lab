@@ -129,6 +129,7 @@ def unwatched_bench(watch: list[str], spec_dir: Path = Path("specs")) -> list[st
     owner either follows or retires each (`qlab retire`)."""
     from qlab.registry.db import session_scope
     from qlab.registry.models import Idea, IdeaStatus
+    from qlab.registry.stages import is_stage2_child
 
     watched = set()
     for path in watch:
@@ -137,7 +138,10 @@ def unwatched_bench(watch: list[str], spec_dir: Path = Path("specs")) -> list[st
         except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
             continue
     with session_scope() as session:
-        bench = [i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.BENCH)]
+        # The second stage of a generated idea (docs/TWO_STAGE.md) waits with its parent,
+        # which is named; naming both would count one idea twice.
+        bench = [i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.BENCH)
+                 if not is_stage2_child(i)]
     return sorted(i for i in bench if i not in watched)
 
 
@@ -453,7 +457,7 @@ def write_report(day: date, state: dict) -> Path:
                 lines.append(f"    - остановлено: {e['stopped']}")
         lines.append("")
     if gen := state.get("generate"):
-        from qlab.agents.generator import GeneratedResult, result_line
+        from qlab.agents.generator import GeneratedResult, result_line, second_stage_lines
 
         lines += ["## Генератор идей (раз в неделю)", "",
                   "Агент берёт опубликованные механизмы из `docs/MECHANISMS.md` и пишет описания "
@@ -472,6 +476,7 @@ def write_report(day: date, state: dict) -> Path:
             lines += [f"    - не принято `{r['path']}`: {p}" for p in r["problems"]]
         for r in gen.get("results") or []:
             lines.append(f"- {result_line(GeneratedResult(**r))}")
+            lines += [f"    - {ln}" for ln in second_stage_lines(GeneratedResult(**r))]
         lines.append("")
     if (events := state.get("events")) is not None:
         lines += ["## Площадки", ""]
@@ -1132,9 +1137,11 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
     overrides the config's cadence and `enabled` (the CLI's --generate)."""
     from qlab.agents.generator import (
         CATALOGUE,
+        GeneratedResult,
         GeneratedSpec,
         generate,
         run_generated_one,
+        run_second_stage,
     )
     from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
     from qlab.registry.db import session_scope
@@ -1199,11 +1206,21 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
             continue
         item = GeneratedSpec(path=Path(entry["path"]), spec=load_spec(Path(entry["path"])),
                              mechanism=entry["mechanism"])
-        result = run_generated_one(item, noise_trials=noise_trials,
-                                   deployable_capital_usd=deployable_capital_usd)
+        before = next((r for r in results if r["idea_id"] == entry["idea_id"]), None)
+        if before and before.get("error") is None and (
+                (before.get("stage2") or {}).get("status") == "error"):
+            # Stage 1 is on record; only the second stage (code, no tokens) failed:
+            # run it again, not the stage-1 trial and its noise a second time.
+            result = GeneratedResult(**before)
+            run_second_stage(item, result, noise_trials=noise_trials,
+                             deployable_capital_usd=deployable_capital_usd)
+        else:
+            result = run_generated_one(item, noise_trials=noise_trials,
+                                       deployable_capital_usd=deployable_capital_usd)
         results[:] = [r for r in results if r["idea_id"] != result.idea_id]
         results.append(asdict(result))
-        if result.error is None:  # a failed run is tried again on the next restart
+        if result.error is None and (result.stage2 or {}).get("status") != "error":
+            # a failed run is tried again on the next restart
             state["done"][key] = datetime.now(UTC).isoformat()
         save_state(day, state)
 

@@ -200,6 +200,7 @@ def create_app() -> FastAPI:
         detail["paper_rule"] = _paper_rule(session, idea_id)
         detail["decay"] = _decay(session, idea_id)
         detail["strategy"] = strategy_view(session, idea_id)
+        detail["two_stage"] = _two_stage(session, idea)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -209,6 +210,50 @@ def create_app() -> FastAPI:
             "sizing": card["parts"]["sizing"]["fields"],
         }
         return detail
+
+    def _two_stage(session: Session, idea: Idea) -> dict[str, Any] | None:
+        """Both stages of a generated idea's evaluation side by side
+        (docs/TWO_STAGE.md): stage 1 on Binance's long history under the idea
+        itself, stage 2 -- the same mechanism on Hyperliquid -- under its child.
+        Shown on both pages; null for an idea with no second stage."""
+        from qlab.registry.stages import (
+            data_range,
+            is_stage2_child,
+            latest_routed,
+            stage2_child,
+        )
+
+        if is_stage2_child(idea):
+            parent_id, child_id = idea.parent_id, idea.id
+        else:
+            child = stage2_child(session, idea.id)
+            if child is None:
+                return None
+            parent_id, child_id = idea.id, child.id
+
+        def stage(stage_idea_id: str) -> dict[str, Any] | None:
+            found = latest_routed(session, stage_idea_id)
+            if found is None:
+                return None
+            trial, spec = found
+            window = data_range(session, trial.id)
+            return {
+                "idea_id": stage_idea_id,
+                "venue": (spec.data_requirements or {}).get("source"),
+                "trial": trial_json(trial, idea_id=stage_idea_id),
+                "data_range": None if window is None else {
+                    "start": window[0].isoformat(), "end": window[1].isoformat()},
+            }
+
+        parent = session.get(Idea, parent_id)
+        return {
+            "role": "child" if idea.id == child_id else "parent",
+            "parent_id": parent_id,
+            "child_id": child_id,
+            "parent_status": parent.status.value if parent is not None else None,
+            "stage1": stage(parent_id),
+            "stage2": stage(child_id),
+        }
 
     def _latest_assessment(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The assessor agent's latest second opinion (docs/ASSESSOR.md). The

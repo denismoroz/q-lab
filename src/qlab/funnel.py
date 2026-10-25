@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 
 from qlab.budget.guard import _total as tokens_of
 from qlab.registry.models import Idea, IdeaStatus, Spec, TokenSpend, Trial, TrialRoute
+from qlab.registry.stages import NOTES_PREFIX as STAGE2_NOTES
 
 AGENT_WORK_START = datetime(2026, 10, 3, tzinfo=UTC)
 """The day the agents started to put ideas into the registry (the researcher's
@@ -73,6 +74,8 @@ def idea_source(idea_id: str, notes: str | None) -> str | None:
     """Which agent created the idea, from the mark it left; None when no agent
     did (imported, the owner's, or made in an interactive session)."""
     notes = notes or ""
+    if notes.startswith(STAGE2_NOTES):
+        return None  # the second stage of a generated idea (docs/TWO_STAGE.md), not a new idea
     if notes.startswith("Generated from") or idea_id.startswith("gen-"):
         return "generator"
     if notes.startswith("Declared by the researcher") or "-research-" in idea_id:
