@@ -15,6 +15,7 @@ from qlab.venues.derive import (
     data_forward_available,
     derive_cross_venue_metrics,
     derive_venue_metrics,
+    explain_venue_failures,
     venue_supported,
 )
 
@@ -227,3 +228,36 @@ def test_a_stranded_leg_across_venues_is_the_spot_venues_question() -> None:
 def test_an_unknown_spot_venue_leaves_support_unknown() -> None:
     metrics = _cross(HYPERLIQUID_LIKE, None)
     assert "venue_supported" not in metrics and "data_forward_available" not in metrics
+
+
+# ---- explain_venue_failures -----------------------------------------------------------
+
+
+def test_explanation_names_venue_adapter_fact_and_held_instruments() -> None:
+    reasons = explain_venue_failures(
+        BINANCE_LIKE, venue_id="binance", instruments=["BTC", "ETH", "SOL"]
+    )
+
+    text = reasons["venue_supported"]
+    assert "venue binance has no order-placing adapter" in text
+    assert "venues/binance.yaml execution_adapter: false" in text
+    assert "not about access" in text
+    assert "the book held 3 instrument(s): BTC, ETH, SOL" in text
+
+
+def test_explanation_truncates_a_long_instrument_list() -> None:
+    names = [f"C{i}" for i in range(20)]
+
+    text = explain_venue_failures(BINANCE_LIKE, venue_id="binance", instruments=names)[
+        "venue_supported"
+    ]
+
+    assert "the book held 20 instrument(s): C0, C1" in text
+    assert "and 12 more" in text
+    assert "C19" not in text
+
+
+def test_explanation_is_empty_for_a_pass_or_an_unknown() -> None:
+    assert explain_venue_failures(HYPERLIQUID_LIKE, venue_id="hyperliquid") == {}
+    assert explain_venue_failures(BARE_VENUE, venue_id="bare") == {}
+    assert explain_venue_failures(None, venue_id="nowhere") == {}

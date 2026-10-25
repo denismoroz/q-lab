@@ -6,6 +6,15 @@
 id: binance
 title: "Binance USDT-margined perpetual futures"
 
+# ACCESS is a different fact from this file's `execution_adapter` (checked
+# 2026-10-25): Binance's official "List of Prohibited Countries" (updated
+# 5 January 2026, https://www.binance.com/en/about-legal/list-of-prohibited-countries)
+# names United States; Canada, Netherlands; Cuba, North Korea, Iran, Crimea,
+# so-called DPR and LPR -- not Belarus. Under the owner's rule
+# (docs/SEARCH_CONSTRAINTS.md point 2) the venue is available. Nothing below
+# says the venue is closed: `execution_adapter: false` only says WE have no
+# order code for it. See docs/VENUES.md section 3.18.
+#
 # execution_adapter — no order-placing integration with Binance exists in
 # either this repo or funding-rate-arbitrage; only a read-only market-data
 # fetcher exists here.

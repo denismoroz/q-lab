@@ -15,7 +15,13 @@ does not have to repeat that filtering logic for each of the three metrics.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from qlab.venues.config import VenueConfig
+
+#: How many instrument names a failure explanation spells out before it
+#: says "and N more".
+EXPLAINED_INSTRUMENTS = 8
 
 
 def venue_supported(venue: VenueConfig | None) -> bool | None:
@@ -193,10 +199,55 @@ def derive_cross_venue_metrics(
     return {name: float(value) for name, value in raw.items() if value is not None}
 
 
+def explain_venue_failures(
+    venue: VenueConfig | None,
+    *,
+    venue_id: str,
+    instruments: Sequence[str] = (),
+) -> dict[str, str]:
+    """Plain-language reason for every venue metric that came out FALSE, keyed
+    by metric name (`venue_supported`, ...). A metric that passed or is
+    unknown has no entry: this only explains a known "no".
+
+    Why it exists: the rule row says `venue_supported = 0` and nothing else, so
+    a reader could not tell whether the venue is closed to the owner (a legal
+    fact, `docs/SEARCH_CONSTRAINTS.md` point 2) or merely has no order adapter
+    of ours (an infrastructure fact). `venue_supported` is only the second:
+    `venue.execution_adapter`. Access is a separate fact, recorded in
+    `docs/VENUES.md`, and this metric never reads it.
+
+    The venue checked is the spec's data source: a spec has no execution-venue
+    field, so the pipeline asks whether orders could be placed where the
+    candles come from. It does not ask whether the traded instruments exist
+    on Hyperliquid (that check belongs to the second evaluation stage, T45);
+    the text says so, and names the instruments the book actually held.
+    """
+    reasons: dict[str, str] = {}
+    if venue is not None and venue.execution_adapter is False:
+        names = list(instruments)
+        shown = ", ".join(names[:EXPLAINED_INSTRUMENTS])
+        more = len(names) - EXPLAINED_INSTRUMENTS
+        held = (
+            f"; the book held {len(names)} instrument(s): {shown}"
+            + (f" and {more} more" if more > 0 else "")
+            if names
+            else ""
+        )
+        reasons["venue_supported"] = (
+            f"venue {venue_id} has no order-placing adapter of ours "
+            f"(venues/{venue_id}.yaml execution_adapter: false); this is a fact about "
+            "our infrastructure, not about access (docs/VENUES.md) and not about "
+            "the strategy; whether the instruments exist on Hyperliquid, where "
+            f"orders could be placed, is not checked here{held}"
+        )
+    return reasons
+
+
 __all__ = [
     "atomic_execution",
     "data_forward_available",
     "derive_cross_venue_metrics",
     "derive_venue_metrics",
+    "explain_venue_failures",
     "venue_supported",
 ]
