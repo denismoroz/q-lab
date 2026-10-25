@@ -458,12 +458,20 @@ PDF по ссылке): названы Соединённые Штаты; Кан
 так называемые ДНР и ЛНР. **Беларуси в перечне нет**, поэтому по правилу владельца спот Binance
 доступен.
 
-Как это записано. Проверка выполнена до начала работы над стратегией и передана задаче как
-результат; дословной цитаты перечня здесь нет, потому что в этой сессии PDF не открывался
-(страница собирается скриптами, и её текст без браузера пуст — проверено запросом 2026-10-25).
-Перечислены страны так, как их назвала проверка. Дословную цитату стоит добавить при
-следующем открытии PDF руками. Общие санкционные оговорки в условиях Binance, если они есть, не
-разбирались: по правилу владельца общая оговорка без списка стран площадку не закрывает.
+Цитата перечня (PDF, на который ссылается страница:
+https://bin.bnbstatic.com/static/cms/cg08ou2ak0tn7mcplvfg/file/2dead3dd5d9bccb32694e2f0fe5c7f2c6b583e7a6f851296edef7088340e6df5.pdf,
+скачан и прочитан 2026-10-25):
+
+> List of Prohibited Countries — Updated: 5 January 2026. […] To be eligible to register for a
+> Binance Account and use the Binance Services, you must not be: (i) located, incorporated,
+> otherwise established in, resident of, a citizen of, or operating in: United States
+> (ii) located, incorporated, otherwise established in, or resident of: Canada, Netherlands
+> (iii) located, incorporated, otherwise established in, or resident of: Cuba, North Korea, Iran,
+> Crimea (as defined in US Executive Order 13685), The so-called Donetsk People’s Republic […],
+> The so-called Luhansk People’s Republic […]
+
+Общие санкционные оговорки в условиях Binance, если они есть, не разбирались: по правилу
+владельца общая оговорка без списка стран площадку не закрывает.
 
 Что отсюда не следует: что у frab есть исполнение на Binance. Его нет (`venues/binance.yaml`:
 `execution_adapter: false`), и стенд пишет это числом `venue_supported = 0`, а не молчит.
