@@ -184,6 +184,10 @@ def paper_reconciliation(day: date) -> list[str]:
                    folder / "trend_equity.csv")
         _ssh_query("select * from trend_events where strategy_id=5 order by ts_ms",
                    folder / "trend_events.csv")
+        # trend_retune_* books (frab, one strategy row each), night/paper_books.yaml
+        _ssh_query("select * from trend_equity where strategy_id in (select id from strategies "
+                   "where name like 'trend_retune%') order by strategy_id, ts_ms",
+                   folder / "trend_retune_equity.csv")
     except (subprocess.SubprocessError, OSError) as exc:
         return [f"export from the production host failed: {exc}"]
     lines += _export_live_books(folder)

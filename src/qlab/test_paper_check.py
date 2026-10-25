@@ -232,6 +232,39 @@ def test_what_is_missing_is_a_line_not_a_crash(session, tmp_path, monkeypatch) -
     assert session.query(PaperCheck).count() == 0
 
 
+def test_rows_before_realised_from_are_not_paper(session, tmp_path, monkeypatch) -> None:
+    # A book that replayed history at launch (frab's b2_retune): the replayed rows are the
+    # stand's own arithmetic, so the paper window starts at the launch, not at the stand's.
+    _stand(session)
+    _fixed(monkeypatch, date(2026, 10, 3))
+    folder = tmp_path / "p"
+    _paper_fixture(folder, date(2026, 9, 13), 24 * 45)
+    books = _books(tmp_path)
+    books["bv2-x"]["realised_from"] = "2026-10-10T00:00:00+00:00"
+
+    lines = paper_check.run_paper_checks(session, date(2026, 10, 25), folder, books)
+
+    row = session.query(PaperCheck).one()
+    assert row.window_start == date(2026, 10, 10)
+    assert row.note.startswith("Отрезки разные")
+    assert "числа сравнивать нельзя" in lines[0]
+
+
+def test_paper_that_began_after_the_stand_forward_test_has_no_common_window(
+        session, tmp_path, monkeypatch) -> None:
+    _stand(session)  # forward test 10-03 .. 10-24
+    _fixed(monkeypatch, date(2026, 10, 3))
+    folder = tmp_path / "p"
+    _paper_fixture(folder, date(2026, 9, 13), 24 * 45)
+    books = _books(tmp_path)
+    books["bv2-x"]["realised_from"] = "2026-10-25T14:00:00+00:00"
+
+    lines = paper_check.run_paper_checks(session, date(2026, 10, 25), folder, books)
+
+    assert "общего отрезка пока нет" in lines[0]
+    assert session.query(PaperCheck).count() == 0
+
+
 def test_without_a_stand_forward_test_the_paper_side_is_still_recorded(
         session, tmp_path, monkeypatch) -> None:
     _stand(session, forward=0.0)
@@ -297,8 +330,12 @@ def test_the_shipped_mapping_names_real_specs_and_files() -> None:
     books = paper_check.load_books(root / "night" / "paper_books.yaml")
 
     assert {k: v["book"] for k, v in books.items()} == {
-        "strategy-b-v2": "b2", "bv2-research-headroom": "b2_cold", "trend-live": "trend"}
-    assert {v["strategy_id"] for v in books.values()} == {3, 4, 5}
+        "strategy-b-v2": "b2", "bv2-research-headroom": "b2_cold", "trend-live": "trend",
+        "bv2-research-headroom-retune": "b2_retune", "trend-retune-weekly": "trend_retune_3k"}
+    assert {v["strategy_id"] for v in books.values()} == {3, 4, 5, 6, 8}
+    # b2_retune replayed its history at launch: only rows from the launch hour are paper.
+    assert paper_check.as_utc(books["bv2-research-headroom-retune"]["realised_from"]) == \
+        datetime(2026, 10, 25, 14, tzinfo=UTC)
     for cfg in books.values():
         assert (root / cfg["spec"]).is_file()
 

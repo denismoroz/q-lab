@@ -27,9 +27,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
-from qlab.paper_check import equity_curve, load_books
+from qlab.paper_check import as_utc, equity_curve, load_books
 
 MIN_WEEKS = 4
 MAX_WEEKS = 6
@@ -177,9 +178,14 @@ def rule_line(rule: PaperRule) -> str:
     return f"{text}; до решения ещё рано"
 
 
-def book_age(csv: Path, *, strategy_id: int | None, sum_coins: bool) -> tuple[datetime, datetime]:
-    """First and latest row of the book in the export; ValueError when empty."""
+def book_age(csv: Path, *, strategy_id: int | None, sum_coins: bool,
+             realised_from: datetime | None = None) -> tuple[datetime, datetime]:
+    """First and latest row of the book in the export; ValueError when empty.
+    `realised_from`: rows before it are history the book replayed at launch
+    (frab's re-tuned books, night/paper_books.yaml), not paper, and do not count."""
     curve = equity_curve(csv, strategy_id=strategy_id, sum_coins=sum_coins)
+    if realised_from is not None:
+        curve = curve[curve.index >= pd.Timestamp(realised_from)]
     if curve.empty:
         raise ValueError(f"no rows for the book in {csv}")
     return curve.index[0].to_pydatetime(), curve.index[-1].to_pydatetime()
@@ -203,7 +209,8 @@ def paper_rule(session: Session, idea_id: str, cfg: dict, *, root: Path | None =
     if csv is None:
         return None
     first, last = book_age(csv, strategy_id=cfg.get("strategy_id"),
-                           sum_coins=bool(cfg.get("sum_coins")))
+                           sum_coins=bool(cfg.get("sum_coins")),
+                           realised_from=as_utc(cfg.get("realised_from")))
     weeks = (last - first).total_seconds() / (7 * 86400)
     replay = replay_state(session, idea_id, cfg, replay_lines)
     return PaperRule(idea_id=idea_id, label=cfg.get("label", idea_id), book=cfg["book"],

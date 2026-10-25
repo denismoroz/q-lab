@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -56,7 +56,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from qlab import paper_check, paper_rule
-from qlab.paper_check import equity_curve, window_return
+from qlab.paper_check import as_utc, equity_curve, window_return
 
 CONFIG = Path("night/decay.yaml")
 NIGHT_DIR = Path("data/night")
@@ -391,13 +391,7 @@ def live_exports(books: dict[str, dict] | None = None) -> list[tuple[str, str]]:
 
 
 def _as_datetime(value) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=UTC)
-    return datetime.fromisoformat(str(value)).replace(tzinfo=UTC)
+    return as_utc(value)
 
 
 # ---------------------------------------------------------------------------

@@ -115,6 +115,18 @@ def test_age_runs_from_the_first_row_to_the_latest(tmp_path) -> None:
     assert last - first == timedelta(days=42)
 
 
+def test_age_counts_only_rows_from_realised_from(tmp_path) -> None:
+    # frab's b2_retune replays its history at launch; those rows are not weeks on paper.
+    _export(tmp_path / "2026-10-25", date(2026, 9, 13), 42)
+
+    first, last = paper_rule.book_age(tmp_path / "2026-10-25" / "b2_equity.csv",
+                                      strategy_id=4, sum_coins=True,
+                                      realised_from=datetime(2026, 10, 18, tzinfo=UTC))
+
+    assert first == datetime(2026, 10, 18, tzinfo=UTC)
+    assert last - first == timedelta(days=7)
+
+
 def test_a_book_is_ready_after_four_weeks_with_the_replay_matching(session, tmp_path) -> None:
     _export(tmp_path / "2026-10-25", date(2026, 9, 13), 42)
 

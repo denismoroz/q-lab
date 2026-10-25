@@ -48,7 +48,8 @@ books:
     replay_file: replay_b2.csv
     replay_block: "book 4"
 
-  # Production `trend` (strategy id 5): trend-live runs frab's own TrendParams()
+  # Production `trend` (strategy id 5), paused 2026-10-25 13:18 UTC at the owner's request
+  # («останови старую книгу trend»); its paper history stays checkable. trend-live runs frab's own TrendParams()
   # defaults, which is what the production book was created with on 2026-09-14
   # (the spec's params_fixed_at); params come from frab's params.py, see the spec.
   # Caveat: the stand's book runs on daily bars from 2025-01 and already held
@@ -62,6 +63,36 @@ books:
     sum_coins: false
     replay_file: replay_trend.csv
     replay_block: "trend"
+
+  # Production `b2_retune` (strategy id 8, frab 2a0d8b1/d26ce00, launched 2026-10-25 14:00
+  # UTC; owner, 2026-10-25: «да, запускай b2_retune на paper»): the stand's
+  # bv2-research-headroom-retune -- b2 and b2_cold as candidates, the better Sharpe so far
+  # chosen at the first hour of every month. At launch the book replayed its history from the
+  # first choice (2026-06-01); those rows are the stand's own arithmetic, not paper, so
+  # `realised_from` (the launch hour) cuts them off for the paper rule, the paper-vs-stand
+  # check and the decay detector. The replay matched the stand's choices at all 7 re-tunings.
+  # No replay script exists for this book yet, so the paper rule reads its replay as unknown.
+  bv2-research-headroom-retune:
+    book: b2_retune
+    spec: specs/research/bv2/bv2-research-headroom-retune.yaml
+    label: "Bv2, запас выбирает код раз в месяц"
+    paper_file: b2_equity.csv
+    strategy_id: 8
+    sum_coins: true
+    realised_from: 2026-10-25T14:00:00+00:00
+
+  # Production `trend_retune_3k` (strategy id 6, $3000, coins chosen weekly by code, from
+  # 2026-10-25 13:00 UTC; owner: «замена на монеты которые выбирает код»): the stand's
+  # trend-retune-weekly at the same capital. The book replayed only the CHOICES at launch,
+  # not equity: its first row is its first paper hour. The $10 000 book (id 7) has no stand
+  # spec of its own and is not checked here. No replay script exists for these books yet.
+  trend-retune-weekly:
+    book: trend_retune_3k
+    spec: specs/trend-retune-weekly.yaml
+    label: "Тренд, монеты выбирает код ($3000)"
+    paper_file: trend_retune_equity.csv
+    strategy_id: 6
+    sum_coins: false
 
 live_books:
   # FRAB, production strategy id 1 (`two_phase`), real money. Equity is

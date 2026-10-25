@@ -94,6 +94,18 @@ def _utc(ts_ms: int) -> datetime:
     return datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
 
 
+def as_utc(value) -> datetime | None:
+    """A config date or timestamp (`realised_from`) as an aware UTC datetime; None stays None."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+    parsed = datetime.fromisoformat(str(value))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def equity_curve(csv: Path, *, column: str = "equity", strategy_id: int | None = None,
                  sum_coins: bool = False) -> pd.Series:
     """One book's equity by timestamp (UTC index) from an export.
@@ -230,12 +242,21 @@ def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: dat
         return None, f"{label}: у стенда не задана дата начала проверки вперёд, сверка пропущена"
     start_ts = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
     end_ts = start_ts + timedelta(days=stand.forward_days) if stand is not None else None
+    # A book that replayed history at launch is paper only from `realised_from` on; the
+    # replayed part is the stand's own arithmetic and would "agree" with it trivially.
+    realised_from = as_utc(cfg.get("realised_from"))
+    paper_from = max(start_ts, realised_from) if realised_from is not None else start_ts
 
     curve = equity_curve(paper_csv, strategy_id=cfg.get("strategy_id"),
                          sum_coins=bool(cfg.get("sum_coins")))
-    paper = window_return(curve, start_ts, end_ts)
+    paper = window_return(curve, paper_from, end_ts) if end_ts is None or paper_from < end_ts \
+        else None
     if paper is None:
-        return None, (f"{label}: в выгрузке бумаги нет двух точек с {_fmt_day(start)}, "
+        if realised_from is not None and end_ts is not None and realised_from >= end_ts:
+            return None, (f"{label}: бумага идёт с {_fmt_day(realised_from.date(), year=True)}, "
+                          f"а проверка вперёд на стенде кончается "
+                          f"{_fmt_day(stand.end, year=True)} — общего отрезка пока нет")
+        return None, (f"{label}: в выгрузке бумаги нет двух точек с {_fmt_day(paper_from.date())}, "
                       f"сверка пропущена")
 
     replay = None
