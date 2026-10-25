@@ -1,5 +1,5 @@
-# The researcher, every night, on the four strategies it works on: Bv2, trend, FRAB and
-# XSMOM (qlab.agents.researcher, docs/NIGHT.md).
+# The researcher, every night, on the five strategies it works on: Bv2, trend, FRAB, XSMOM
+# and FRAB with the spot on Binance (qlab.agents.researcher, docs/NIGHT.md).
 #
 # Owner, 2026-10-24: «мне не нравится вердикт агента - просто ждать - нужно
 # думать как улучшить стратегию - это задача фреймворка».
@@ -98,3 +98,29 @@ strategies:
       - docs/CALIBRATION_2026-09-21.1__xsmom-honest-20legs.md
       - docs/FIT_VS_FORWARD.md
       - ../funding-rate-arbitrage/research/xsmom_live_recon/AUDIT_2026_09.md
+  # Owner, 2026-10-25: a NEW strategy, not a FRAB variant (its own code, so the registry's
+  # families keep it apart from `frab`; its own place among the 6 in night/limits.yaml).
+  # FRAB's live decisions with the spot bought on Binance and the short held on Hyperliquid,
+  # on every coin that has a perp and a Binance USDT pair. Context the researcher should
+  # read for it: the money moves between two venues at flat fees and the short's margin is
+  # topped up from the spot's gains (docs/FRAB_BINANCE_SPOT.md lists every number's source and
+  # what the stand simplifies); the comparison with FRAB live and the coin-count effect are
+  # in the same document; the stand's data for it begins in March 2026 because Hyperliquid
+  # serves only its last 5000 hourly candles, so a fix designed on its drawdowns is preliminary.
+  frab-binance-spot:
+    # The strategy, its five-coin variant, and the two HL-spot controls that the comparison in
+    # docs/FRAB_BINANCE_SPOT.md is made against (they belong to the `frab` family in the registry).
+    ideas: [frab-binance-spot, frab-binance-spot-five-coins, frab-live-own-spot,
+            frab-live-own-spot-five-coins]
+    owner_ideas:
+      - "можно в qlab запусить frab на более чем 4-5 монетах. я знаю что HL ограничен в количестве spot pairs. я бы хотел прогнать вариант когда спот открывается на binance а хеджируется на HL. - поидее это новая стратегия."
+    specs:
+      - specs/frab-binance-spot.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml
+      - specs/research/frab/frab-live-own-spot.yaml
+      - specs/research/frab/frab-live-own-spot-five-coins.yaml
+    docs:
+      - docs/FRAB_BINANCE_SPOT.md
+      - docs/FRAB_LIVE.md
+      - docs/VENUES.md
+      - docs/FIT_VS_FORWARD.md
