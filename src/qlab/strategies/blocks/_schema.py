@@ -57,12 +57,31 @@ def quantile_count(minimum: int) -> Callable[[str, object], int]:
     return check
 
 
+def fraction_up_to(maximum: float) -> Callable[[str, object], float]:
+    """A validator for a share of the coins: a real number in (0, `maximum`]."""
+
+    def check(label: str, value: object) -> float:
+        number = positive_number(label, value)
+        if number > maximum:
+            raise ValueError(f"{label} must be <= {maximum:g}, got {value!r}")
+        return number
+
+    return check
+
+
 @dataclass(frozen=True)
 class Block:
-    """A block function and the validators of its keyword parameters."""
+    """A block function and the validators of its keyword parameters.
+
+    `needs_spot` marks a portfolio block that holds a coin's spot market
+    against its perpetual (`spot_perp_carry`): `Composed` then only offers it
+    coins whose spot market is tradeable and priced, and mirrors its perpetual
+    weight into the spot column.
+    """
 
     fn: Callable
     params: Mapping[str, Callable[[str, object], float | int]]
+    needs_spot: bool = False
 
 
 def parse_block(

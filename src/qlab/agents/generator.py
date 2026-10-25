@@ -430,6 +430,16 @@ Rules:
   bottom fifth), so use `long_short_quantile` or `long_only_quantile` with the mechanism's
   portfolio.quantiles value. `top_n` (a count of coins) is allowed only if the mechanism's
   table has a portfolio.top_n row with a value.
+- Other blocks the catalogue's "blocks" field may name (their parameter paths are checked the
+  same way, against the mechanism's own row):
+  * portfolio `long_short_fraction` / `long_only_fraction` take portfolio.fraction, the SHARE
+    of the eligible coins per side ("the top and bottom 30%" is 0.3; at most 0.5 for
+    long_short_fraction, at most 1 for long_only_fraction);
+  * portfolio `spot_perp_carry` (a coin held against its perpetual to earn the funding) takes
+    portfolio.top_n, and needs `include_spot: true` in the spec's data block; pair it with
+    the `funding` signal;
+  * sizing `cap_weight` (coins of each side weighted by market capitalisation) takes only
+    sizing.gross, so it needs no catalogue number besides the framework's 1.0.
 - The one framework value: sizing.gross 1.0 (the whole capital, no leverage; this is how the
   stand accounts every portfolio, so no paper has to give it). Cite it as "{catalogue},
   framework value: gross 1 = the whole capital, no leverage". Any other sizing.gross is

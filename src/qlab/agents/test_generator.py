@@ -44,6 +44,7 @@ CATALOGUE_TEXT = """# Каталог механизмов (фикстура)
 | signal.lookback_days | 7, 14, 28 | [Author 2020](https://e.org/a), [Other 2021](https://e.org/b) |
 | portfolio.top_n | 3, 5 | [Author 2020](https://example.org/a) |
 | portfolio.quantiles | 5 | [Author 2020](https://example.org/a) |
+| portfolio.fraction | 30% | [Author 2020](https://example.org/a) |
 | universe.n | 10, 20 | [Author 2020](https://example.org/a) |
 | universe.window_days | 30 (в статье 45 дней) | [Author 2020](https://example.org/a) |
 | sizing.gross | 1 | [Author 2020](https://example.org/a) |
@@ -177,7 +178,7 @@ def test_catalogue_is_parsed_into_mechanisms_and_parameter_rows(repo) -> None:
     assert rows["signal.lookback_days"].values_text == "7, 14, 28"
     assert "Author 2020" in rows["signal.lookback_days"].source
     assert rows["sizing.target"].values == (5.0, 0.05)  # a percentage also reads as a fraction
-    assert len(first.params) == 8
+    assert len(first.params) == 9
     assert first.fully_expressed and first.sources == "Author 2020; Other 2021."
     second = mechanisms[1]
     assert not second.fully_expressed and "Сезонная" in second.unexpressed
@@ -308,6 +309,30 @@ def test_a_quantile_portfolio_with_the_rows_value_is_accepted(repo) -> None:
     assert any("portfolio.quantiles" in p and "not among" in p for p in problems)
     # top_n has a row in the fixture, so it is allowed here; without a row it would not be.
     assert "long_short_quantile" in gen.INSTRUCTIONS and "portfolio.quantiles" in gen.INSTRUCTIONS
+
+
+def test_the_fraction_cap_weight_and_carry_blocks_are_checked_by_their_parameter_path(repo) -> None:
+    base = _spec_text()
+    fraction = base.replace("block: long_short\n    top_n: 3",
+                            "block: long_short_fraction\n    fraction: 0.3").replace(
+        "row portfolio.top_n (Author 2020)", "row portfolio.fraction (Author 2020)")
+    item, problems = _check(repo, fraction)
+    assert problems == [] and item.spec.params["portfolio"]["fraction"] == 0.3
+    _, problems = _check(repo, fraction.replace("fraction: 0.3", "fraction: 0.2"))
+    assert any("portfolio.fraction" in p and "not among" in p for p in problems)
+    # cap_weight takes only sizing.gross, the framework's 1.0 (any other value is rejected)
+    capped = base.replace("block: equal", "block: cap_weight")
+    assert _check(repo, capped)[1] == []
+    doubled = _check(repo, capped.replace("gross: 1\n", "gross: 2\n"))[1]
+    assert any("sizing.gross" in p for p in doubled)
+    # spot_perp_carry takes portfolio.top_n, from the mechanism's own row
+    carry = base.replace("block: long_short\n", "block: spot_perp_carry\n")
+    assert _check(repo, carry)[1] == []
+    four = _check(repo, carry.replace("top_n: 3", "top_n: 4"))[1]
+    assert any("portfolio.top_n" in p for p in four)
+    for name in ("long_short_fraction", "long_only_fraction", "portfolio.fraction", "cap_weight",
+                 "spot_perp_carry", "portfolio.top_n"):
+        assert name in gen.INSTRUCTIONS
 
 
 def test_a_number_not_cited_to_the_catalogue_is_rejected(repo) -> None:

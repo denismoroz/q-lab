@@ -197,6 +197,9 @@ def test_history_gate_counts_known_price_bars() -> None:
         {"universe": {"rule": "top_volume", "n": 4, "window_days": 5}},
         {"portfolio": {"block": "long_short_quantile", "quantiles": 3}},
         {"portfolio": {"block": "long_only_quantile", "quantiles": 2}},
+        {"portfolio": {"block": "long_short_fraction", "fraction": 0.4}},
+        {"portfolio": {"block": "long_only_fraction", "fraction": 0.5},
+         "signal": {"block": "reversal", "lookback_days": 3}},
         {"portfolio": {"block": "time_series_sign"},
          "sizing": {"block": "vol_target", "window_days": 10, "target_daily": 0.02,
                     "leverage_cap": 2.0}},
@@ -291,3 +294,279 @@ def test_missing_or_unknown_param_raises_value_error(mutate, fragment: str) -> N
 def test_declares_name_and_intervals() -> None:
     assert Composed.name == "composed"
     assert Composed.valid_intervals == ("1d", "4h", "1h")
+
+
+# ---- fraction portfolios ---------------------------------------------------------
+
+
+def test_fraction_portfolio_holds_the_share_of_eligible_coins_on_each_side() -> None:
+    panel = _walk_panel()
+    weights = Composed().target_weights(
+        panel, _params(portfolio={"block": "long_short_fraction", "fraction": 0.4},
+                       min_history_days=3, rebalance_days=1))
+    validate_weights(panel, weights)
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 50
+    assert held.sum(axis=1).abs().max() < 1e-12
+    assert held.abs().sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
+    # 5 or 6 eligible coins * 0.4 -> 2 per side
+    assert set(((held > 0).sum(axis=1)).tolist()) == {2}
+    long_only_book = Composed().target_weights(
+        panel, _params(portfolio={"block": "long_only_fraction", "fraction": 0.5},
+                       min_history_days=3, rebalance_days=1))
+    held = long_only_book[long_only_book.abs().sum(axis=1) > 0]
+    assert held.sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
+    assert (long_only_book >= 0).all().all()
+
+
+# ---- cap weighting ----------------------------------------------------------------
+
+
+def _with_caps(panel: MarketPanel, seed: int = 6) -> MarketPanel:
+    """`panel` with market caps (known at each bar) in its meta: a stable size per coin."""
+    rng = np.random.default_rng(seed)
+    size = rng.uniform(1.0, 50.0, size=len(panel.prices.columns))
+    caps = pd.DataFrame(np.tile(size, (len(panel.prices), 1)), index=panel.prices.index,
+                        columns=panel.prices.columns)
+    caps = caps * (1.0 + 0.01 * np.arange(len(caps)))[:, None]  # caps drift with time
+    return MarketPanel(snapshot_id=panel.snapshot_id, prices=panel.prices, funding=panel.funding,
+                       tradeable=panel.tradeable, meta={"market_cap": caps}, volume=panel.volume)
+
+
+_CAP_PARAMS = {"portfolio": {"block": "long_short_fraction", "fraction": 0.5},
+               "sizing": {"block": "cap_weight", "gross": 1.0}, "rebalance_days": 5}
+
+
+def test_cap_weight_weights_coins_by_cap_inside_each_side() -> None:
+    panel = _with_caps(_walk_panel())
+    weights = Composed().target_weights(panel, _params(**_CAP_PARAMS))
+    validate_weights(panel, weights)
+    caps = panel.meta["market_cap"]
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 50
+    assert held.sum(axis=1).abs().max() < 1e-12  # neutral
+    assert held.abs().sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
+    row = held.iloc[0]
+    ts = held.index[0]
+    for side in (row[row > 0], -row[row < 0]):
+        assert side.sum() == pytest.approx(0.5)
+        # inside a side, weight is proportional to cap
+        ratio = side / caps.loc[ts, side.index]
+        assert ratio.to_numpy() == pytest.approx(np.full(len(side), ratio.iloc[0]))
+    assert row[row > 0].nunique() > 1  # not equal weights
+
+
+def test_cap_change_after_t_does_not_change_weights_at_t() -> None:
+    panel = _with_caps(_walk_panel(n=150))
+    params = _params(**_CAP_PARAMS)
+    base = Composed().target_weights(panel, params)
+    caps = panel.meta["market_cap"].copy()
+    later = caps.iloc[81:]
+    caps.iloc[81:] = later * np.random.default_rng(8).uniform(0.05, 20, later.shape)
+    changed = MarketPanel(snapshot_id="c", prices=panel.prices, funding=panel.funding,
+                          tradeable=panel.tradeable, meta={"market_cap": caps},
+                          volume=panel.volume)
+    again = Composed().target_weights(changed, params)
+    pd.testing.assert_frame_equal(base.iloc[:81], again.iloc[:81])
+    assert not base.iloc[81:].equals(again.iloc[81:])  # the later caps do matter later
+
+
+def test_cap_change_after_t_in_the_stored_snapshots_does_not_change_weights_at_t(
+        tmp_path, monkeypatch) -> None:
+    import json
+
+    from qlab.data.sources import coinmarketcap
+
+    panel = _walk_panel(n=100)  # daily bars from 2026-01-01
+    monkeypatch.setattr(coinmarketcap, "DEFAULT_STORE", tmp_path)
+
+    def snapshot(day: str, scale: float) -> None:
+        rows = [{"symbol": c, "cmcRank": i + 1, "market_cap_usd": scale * (10.0 + 7 * i),
+                 "tags": []} for i, c in enumerate(COLUMNS)]
+        (tmp_path / f"{day}.json").write_text(json.dumps({"date": day, "rows": rows}))
+
+    snapshot("2025-12-28", 1.0)
+    snapshot("2026-02-01", 1.0)
+    params = _params(**_CAP_PARAMS, min_history_days=3)
+    before = Composed().target_weights(panel, params)
+    assert before.abs().sum().sum() > 0
+    # A later snapshot is added, and an existing future one is rewritten: bars up to and
+    # including the snapshot date (2026-03-01 is bar 59) cannot change.
+    snapshot("2026-02-01", 5.0)
+    rows = [{"symbol": c, "cmcRank": i + 1, "market_cap_usd": 1000.0 - 90 * i, "tags": []}
+            for i, c in enumerate(COLUMNS)]
+    (tmp_path / "2026-03-01.json").write_text(json.dumps({"date": "2026-03-01", "rows": rows}))
+    after = Composed().target_weights(panel, params)
+    cut = panel.prices.index.get_loc(pd.Timestamp("2026-03-01", tz="UTC"))
+    pd.testing.assert_frame_equal(before.iloc[: cut + 1], after.iloc[: cut + 1])
+    assert not before.iloc[cut + 1 :].equals(after.iloc[cut + 1 :])
+
+
+def test_no_look_ahead_with_cap_weight() -> None:
+    panel = _with_caps(_walk_panel(n=150))
+    params = _params(**_CAP_PARAMS)
+    strategy = Composed()
+    weights = strategy.target_weights(panel, params)
+    assert weights.abs().sum().sum() > 0
+    assert lookahead_violation(strategy, panel, params, weights) is None
+
+
+def test_cap_weight_without_cap_data_says_how_to_get_it(tmp_path, monkeypatch) -> None:
+    from qlab.data.sources import coinmarketcap
+
+    monkeypatch.setattr(coinmarketcap, "DEFAULT_STORE", tmp_path / "none")
+    with pytest.raises(ValueError, match="cap_weight.*coin-attributes"):
+        Composed().target_weights(_walk_panel(), _params(**_CAP_PARAMS))
+
+
+# ---- spot_perp_carry: a coin against its perpetual -------------------------------------
+
+
+SPOT = SPOT_COLUMN_SUFFIX
+FUNDING_LEVEL = {"A": 1e-4, "B": 5e-4, "C": 3e-4, "D": -2e-4, "E": 2e-4, "F": 9e-4}
+
+
+def _carry_panel(n: int = 120, seed: int = 11, spot_coins: str = "ABCDE") -> MarketPanel:
+    """The walk panel plus a spot column for `spot_coins`; funding differs by coin so the
+    ranking is stable (B, C and E pay a short the most among coins that have spot)."""
+    base = _walk_panel(n=n, seed=seed)
+    rng = np.random.default_rng(seed + 1)
+    prices = base.prices.copy()
+    funding = base.funding.copy()
+    for coin, level in FUNDING_LEVEL.items():
+        funding[coin] = level + rng.normal(0.0, 1e-5, n)
+    for coin in spot_coins:
+        prices[f"{coin}{SPOT}"] = base.prices[coin] * (1.0 + rng.normal(0.0, 0.001, n))
+    funding = funding.reindex(columns=prices.columns)  # spot funding stays NaN
+    return MarketPanel(snapshot_id="carry", prices=prices, funding=funding,
+                       tradeable=prices.notna(), meta={}, volume=base.volume.reindex(
+                           columns=prices.columns))
+
+
+_CARRY = {"signal": {"block": "funding", "window_days": 5},
+          "portfolio": {"block": "spot_perp_carry", "top_n": 2},
+          "rebalance_days": 7, "min_history_days": 3}
+
+
+def test_carry_holds_spot_long_against_perp_short_of_the_highest_funding_coins() -> None:
+    panel = _carry_panel()
+    weights = Composed().target_weights(panel, _params(**_CARRY))
+    validate_weights(panel, weights)
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 80
+    # B and C pay a short the most among coins with a spot market (F pays more but has none)
+    assert held[["B", "C"]].to_numpy() == pytest.approx(-0.25)
+    assert held[[f"B{SPOT}", f"C{SPOT}"]].to_numpy() == pytest.approx(0.25)
+    others = [c for c in weights.columns if c not in ("B", "C", f"B{SPOT}", f"C{SPOT}")]
+    assert (weights[others] == 0.0).all().all()
+    assert held.sum(axis=1).abs().max() < 1e-12
+    assert held.abs().sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
+
+
+def test_carry_gross_scales_with_sizing_and_each_coin_is_market_neutral() -> None:
+    panel = _carry_panel()
+    weights = Composed().target_weights(
+        panel, _params(**_CARRY, sizing={"block": "equal", "gross": 2.0}))
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert held.abs().sum(axis=1).tolist() == pytest.approx([2.0] * len(held))
+    for coin in "BC":
+        assert (held[coin] + held[f"{coin}{SPOT}"]).abs().max() < 1e-12
+
+
+def test_carry_needs_both_markets_tradeable_and_priced_at_the_decision_bar() -> None:
+    panel = _carry_panel()
+    base = Composed().target_weights(panel, _params(**_CARRY))
+    # Row 14 is a rebalance row (0, 7, 14, ...). B's spot is untradeable there; C's spot has
+    # no price there: neither may be chosen, so the next best (E, then A) take their places.
+    tradeable = panel.tradeable.copy()
+    tradeable.loc[tradeable.index[14], f"B{SPOT}"] = False
+    prices = panel.prices.copy()
+    prices.loc[prices.index[14], f"C{SPOT}"] = np.nan
+    cut = MarketPanel(snapshot_id="cut", prices=prices, funding=panel.funding,
+                      tradeable=tradeable.where(prices.notna(), False), meta={},
+                      volume=panel.volume)
+    weights = Composed().target_weights(cut, _params(**_CARRY))
+    validate_weights(cut, weights)
+    # the weights decided on row 14 are carried to row 20
+    chosen = weights.iloc[15][weights.iloc[15] != 0].index.tolist()
+    assert sorted(chosen) == sorted(["E", "A", f"E{SPOT}", f"A{SPOT}"])
+    assert base.iloc[15][["B", "C"]].abs().sum() > 0  # and untouched, B and C were the picks
+
+
+def test_carry_closes_both_legs_when_one_market_stops_trading() -> None:
+    panel = _carry_panel()
+    base = Composed().target_weights(panel, _params(**_CARRY))
+    assert base.iloc[30]["B"] != 0.0  # row 28 decided; rows 29-31 only carry it
+    tradeable = panel.tradeable.copy()
+    tradeable.loc[tradeable.index[29:32], f"B{SPOT}"] = False  # spot halted, perpetual open
+    cut = MarketPanel(snapshot_id="halt", prices=panel.prices, funding=panel.funding,
+                      tradeable=tradeable, meta={}, volume=panel.volume)
+    weights = Composed().target_weights(cut, _params(**_CARRY))
+    validate_weights(cut, weights)
+    assert (weights.iloc[29:32][["B", f"B{SPOT}"]] == 0.0).all().all()  # no half-open pair
+    assert weights.iloc[32]["B"] == base.iloc[32]["B"]  # and it comes back, unchanged
+    assert weights.iloc[32][f"B{SPOT}"] == base.iloc[32][f"B{SPOT}"]
+
+
+def test_carry_without_spot_columns_asks_for_include_spot() -> None:
+    with pytest.raises(ValueError, match="include_spot"):
+        Composed().target_weights(_walk_panel(), _params(**_CARRY))
+
+
+def test_carry_needs_coins_with_a_spot_market() -> None:
+    panel = _carry_panel(spot_coins="D")  # only D has spot, and its funding is negative
+    weights = Composed().target_weights(panel, _params(**_CARRY))
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 50  # one eligible coin is enough: k = min(2, 1)
+    assert held["D"].tolist() == pytest.approx([-0.5] * len(held))
+    assert held[f"D{SPOT}"].tolist() == pytest.approx([0.5] * len(held))
+
+
+def test_spot_columns_stay_flat_for_every_other_portfolio_on_a_spot_panel() -> None:
+    panel = _carry_panel()
+    spot_columns = [c for c in panel.prices.columns if str(c).endswith(SPOT)]
+    for portfolio in ({"block": "long_short", "top_n": 2},
+                      {"block": "long_short_fraction", "fraction": 0.4},
+                      {"block": "time_series_sign"}):
+        weights = Composed().target_weights(panel, _params(portfolio=portfolio))
+        assert (weights[spot_columns] == 0.0).all().all()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"signal": {"block": "funding", "window_days": 3}, "rebalance_days": 3},
+        {"portfolio": {"block": "spot_perp_carry", "top_n": 1},
+         "sizing": {"block": "vol_target", "window_days": 10, "target_daily": 0.02,
+                    "leverage_cap": 2.0}},
+        {"universe": {"rule": "top_volume", "n": 4, "window_days": 5}},
+    ],
+)
+def test_no_look_ahead_for_carry(overrides: dict) -> None:
+    panel = _carry_panel(n=150)
+    params = _params(**{**_CARRY, **overrides})
+    strategy = Composed()
+    weights = strategy.target_weights(panel, params)
+    assert weights.abs().sum().sum() > 0
+    assert lookahead_violation(strategy, panel, params, weights) is None
+
+
+def test_carry_with_cap_weight_splits_the_perpetual_side_by_cap_and_mirrors_it_in_spot() -> None:
+    panel = _carry_panel()
+    caps = pd.DataFrame(np.tile([1.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                                (len(panel.prices), 1))[:, : len(panel.prices.columns)],
+                        index=panel.prices.index, columns=panel.prices.columns)
+    caps["C"] = 1.0  # B (the larger) is 3 : 1 against C
+    with_caps = MarketPanel(snapshot_id="cc", prices=panel.prices, funding=panel.funding,
+                            tradeable=panel.tradeable, meta={"market_cap": caps},
+                            volume=panel.volume)
+    weights = Composed().target_weights(
+        with_caps, _params(**_CARRY, sizing={"block": "cap_weight", "gross": 1.0}))
+    validate_weights(with_caps, weights)
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 80
+    assert held["B"].tolist() == pytest.approx([-0.375] * len(held))
+    assert held["C"].tolist() == pytest.approx([-0.125] * len(held))
+    assert held[f"B{SPOT}"].tolist() == pytest.approx([0.375] * len(held))
+    assert held[f"C{SPOT}"].tolist() == pytest.approx([0.125] * len(held))

@@ -7,7 +7,13 @@ how often to rebalance and how much price history a coin needs. See
 Semantics fixed here (the blocks themselves are in the sibling modules):
 
 - Only perpetual columns trade; any column ending with `SPOT_COLUMN_SUFFIX`
-  gets weight 0 always.
+  gets weight 0 always -- except under the portfolio block `spot_perp_carry`
+  (a block with `needs_spot`), the one exception: there each selected coin is
+  held as +w in its `<COIN>-SPOT` column against -w in its perpetual. Such a
+  block is offered only coins whose spot market is also tradeable and priced at
+  the bar, and a coin whose perpetual OR spot is not tradeable at a bar has BOTH
+  legs set to 0 at that bar (the pair is never left half-open). The spec must
+  have `data.include_spot: true`, or a `ValueError` says so.
 - A coin is eligible at bar t when it is tradeable at t, its price is known at
   t, it has at least `min_history_days` (converted to bars with `periods_for`)
   non-NaN price bars up to and including t, it is in the universe at t, and its
@@ -74,6 +80,47 @@ def _perp_panel(panel: MarketPanel, columns: list) -> MarketPanel:
     )
 
 
+def _spot_columns(panel: MarketPanel, perp_columns: list) -> dict:
+    """`{perp column: its spot column}` for the coins that have a spot market in the panel."""
+    present = set(panel.prices.columns)
+    spot_of = {c: f"{c}{SPOT_COLUMN_SUFFIX}" for c in perp_columns
+               if f"{c}{SPOT_COLUMN_SUFFIX}" in present}
+    if not spot_of:
+        raise ValueError(
+            "portfolio 'spot_perp_carry' holds a coin against its spot market, but the panel "
+            "has no spot columns; the spec must request them with data.include_spot: true"
+        )
+    return spot_of
+
+
+def _spot_ready(panel: MarketPanel, perp_columns: list, spot_of: dict) -> pd.DataFrame:
+    """True where the coin's spot market is tradeable and priced (False: no spot column)."""
+    ready = pd.DataFrame(False, index=panel.prices.index, columns=perp_columns)
+    for perp, spot in spot_of.items():
+        ready[perp] = panel.tradeable[spot].astype(bool) & panel.prices[spot].notna()
+    return ready
+
+
+def _with_spot_legs(sized: pd.DataFrame, spot_of: dict) -> pd.DataFrame:
+    """`sized` (perpetual columns) plus, per paired coin, a spot column of minus its weight."""
+    legs = {spot: -sized[perp] for perp, spot in spot_of.items()}
+    return pd.concat([sized, pd.DataFrame(legs, index=sized.index)], axis=1)
+
+
+def _pairs_tradeable(
+    panel: MarketPanel, perp_tradeable: pd.DataFrame, spot_of: dict
+) -> pd.DataFrame:
+    """Tradeable mask over perpetual and spot columns: both legs of a pair need both markets."""
+    both = {perp: perp_tradeable[perp] & panel.tradeable[spot].astype(bool)
+            for perp, spot in spot_of.items()}
+    mask = perp_tradeable.copy()
+    for perp, ok in both.items():
+        mask[perp] = ok
+    for perp, spot in spot_of.items():
+        mask[spot] = both[perp]
+    return mask
+
+
 class Composed:
     """A strategy built from universe / signal / portfolio / sizing blocks.
 
@@ -82,9 +129,11 @@ class Composed:
         universe: {rule: all} | {rule: top_volume, n, window_days}
         signal: {block: momentum | reversal, lookback_days}
                 | {block: funding | low_vol, window_days}
-        portfolio: {block: long_short | long_only, top_n}
+        portfolio: {block: long_short | long_only | spot_perp_carry, top_n}
+                   | {block: long_short_quantile | long_only_quantile, quantiles}
+                   | {block: long_short_fraction | long_only_fraction, fraction}
                    | {block: time_series_sign}
-        sizing: {block: equal, gross}
+        sizing: {block: equal | cap_weight, gross}
                 | {block: vol_target, window_days, target_daily, leverage_cap}
         rebalance_days: float
         min_history_days: float
@@ -129,15 +178,25 @@ class Composed:
             & scores.notna()
         )
 
+        spot_of: dict = {}
+        if PORTFOLIOS[params["portfolio"]["block"]].needs_spot:
+            spot_of = _spot_columns(panel, perp_columns)
+            eligible = eligible & _spot_ready(panel, perp_columns, spot_of)
+
         raw = portfolio_fn(scores, eligible, **portfolio_kw)
         sized = sizing_fn(raw, perp, **sizing_kw)
+        tradeable = perp.tradeable.astype(bool)
+        if spot_of:
+            # Mirror each perpetual weight into the coin's spot column (opposite sign).
+            sized = _with_spot_legs(sized, spot_of)
+            tradeable = _pairs_tradeable(panel, tradeable, spot_of)
 
         undecided = np.flatnonzero(~rebalance_rows(index, rebalance_days))
         carried = sized.copy()
         carried.iloc[undecided] = np.nan
         carried = carried.ffill().fillna(0.0)
-        carried = carried.where(perp.tradeable.astype(bool), 0.0)
+        carried = carried.where(tradeable, 0.0)
 
         weights = pd.DataFrame(0.0, index=index, columns=all_columns)
-        weights[perp_columns] = carried
+        weights[list(carried.columns)] = carried
         return weights
