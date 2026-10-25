@@ -37,6 +37,9 @@ strategies:
     # is reviewed in docs/BV2_SIGNAL_SEARCH_REVIEW.md.
     owner_ideas:
       - "закинь идею для researcher подумать о том как включать/отключать хеджирование почаще. может использовать более мелкий тайфрейм как основной"
+      # 2026-10-25, the owner on what Bv2 was meant to be (frab's earlier basket results and
+      # what they lack: docs/BV2_BASKETS.md).
+      - "основная идея это стратегии было - взять 10 самых ликвидных монет на рынке положить их в холодный кошелек и хеджировать через HL по необходимости. добавляя новые средства в монеты. можно ли использовать leverage для хеджирования?"
     specs:
       - specs/bv2-live.yaml
       - specs/bv2-binance.yaml
@@ -47,6 +50,7 @@ strategies:
       - docs/BV2_SIGNAL_SEARCH_REVIEW.md
       - docs/RETUNE.md
       - docs/FIT_VS_FORWARD.md
+      - docs/BV2_BASKETS.md
   trend:
     ideas: [trend-tsmom-crypto, trend-live, trend-retune-weekly, trend-research-skip-flat]
     # The owner's own ideas, verbatim. Context: the paper trend book at $3000 executed 281
