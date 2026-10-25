@@ -208,3 +208,43 @@ def test_a_spot_source_is_another_venue_priced_by_its_own_closes() -> None:
         StrategySpec.model_validate(_spec_dict(data={**mixed, "spot_source": "hyperliquid"}))
     with pytest.raises(ValidationError, match="asks for none"):
         StrategySpec.model_validate(_spec_dict(data={**mixed, "include_spot": False}))
+
+
+def test_the_binance_spot_strategy_runs_at_the_owners_three_budgets() -> None:
+    """Owner, 2026-10-25: «если нужно 300-400-1000 - давай считать на них». The main spec
+    is 1000, the variants 300 and 400, four slots each; apart from the idea and the
+    budget they are one spec, and the budget's source is his quote."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    paths = {
+        1000: repo / "specs/frab-binance-spot.yaml",
+        300: repo / "specs/research/frab-binance-spot/frab-binance-spot-300.yaml",
+        400: repo / "specs/research/frab-binance-spot/frab-binance-spot-400.yaml",
+    }
+    specs = {budget: load_spec(path) for budget, path in paths.items()}
+    for budget, spec in specs.items():
+        assert spec.params["budget_cap_usdc"] == budget and spec.params["concurrency_cap"] == 4
+        assert "блин 90$" in spec.sources["budget_cap_usdc"]
+        assert "300-400-1000" in (spec.params_fixed_evidence or "")
+        assert str(spec.params_fixed_at) == "2026-10-10"
+        assert spec.params["transfers"] == "batched"
+    rest = [{k: v for k, v in s.params.items() if k != "budget_cap_usdc"} for s in specs.values()]
+    assert rest[0] == rest[1] == rest[2]
+    assert specs[1000].data == specs[300].data == specs[400].data
+
+
+def test_the_all_binance_variant_is_one_spec_at_three_budgets() -> None:
+    from pathlib import Path
+
+    folder = Path(__file__).resolve().parents[3] / "specs/research/frab-binance-spot"
+    names = ["frab-binance-spot-allbinance", "frab-binance-spot-allbinance-300",
+             "frab-binance-spot-allbinance-400"]
+    specs = [load_spec(folder / f"{n}.yaml") for n in names]
+    assert [s.idea_id for s in specs] == names
+    assert [s.params["budget_cap_usdc"] for s in specs] == [1000, 300, 400]
+    for s in specs:
+        assert s.data.source == "binance" and s.data.spot_source is None
+        assert s.code_ref.endswith(":LiveFrabAllBinance")
+        assert s.params["binance_withdrawal_fee_usdc"] == 0
+        assert s.params["transfer_delay_hours"] == 0

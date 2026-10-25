@@ -114,14 +114,27 @@ strategies:
   # in the same document; the stand's data for it begins in March 2026 because Hyperliquid
   # serves only its last 5000 hourly candles, so a fix designed on its drawdowns is preliminary.
   frab-binance-spot:
-    # The strategy, its five-coin variant, and the two HL-spot controls that the comparison in
-    # docs/FRAB_BINANCE_SPOT.md is made against (they belong to the `frab` family in the registry).
-    ideas: [frab-binance-spot, frab-binance-spot-five-coins, frab-live-own-spot,
-            frab-live-own-spot-five-coins]
+    # The strategy at the owner's budgets (2026-10-25: «если нужно 300-400-1000 - давай считать на
+    # них»: 1000 in the main spec, 300 and 400 as variants, four slots each), its variants -- both
+    # legs on Binance (three budgets) and the five coins of live FRAB -- and the two HL-spot
+    # controls that the comparison in docs/FRAB_BINANCE_SPOT.md is made against (they belong to
+    # the `frab` family in the registry; their result does not depend on the budget).
+    ideas: [frab-binance-spot, frab-binance-spot-300, frab-binance-spot-400,
+            frab-binance-spot-allbinance, frab-binance-spot-allbinance-300,
+            frab-binance-spot-allbinance-400, frab-binance-spot-five-coins,
+            frab-live-own-spot, frab-live-own-spot-five-coins]
     owner_ideas:
       - "можно в qlab запусить frab на более чем 4-5 монетах. я знаю что HL ограничен в количестве spot pairs. я бы хотел прогнать вариант когда спот открывается на binance а хеджируется на HL. - поидее это новая стратегия."
+      - "блин 90$ это вот очем а? на текущем Frab - так получилось. если нужно 300-400-1000 - давай считать на них."
+      - "а если без вывода спота. просто купили - продали. оставили там USDC. вывод когда наберется сумма либо реинвестирование"
+      - "да, добавляй вариант всё на binance"
     specs:
       - specs/frab-binance-spot.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-300.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-400.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-allbinance.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-allbinance-300.yaml
+      - specs/research/frab-binance-spot/frab-binance-spot-allbinance-400.yaml
       - specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml
       - specs/research/frab/frab-live-own-spot.yaml
       - specs/research/frab/frab-live-own-spot-five-coins.yaml

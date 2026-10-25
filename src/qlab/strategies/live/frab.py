@@ -145,6 +145,11 @@ class LiveFrabHooks:
     fee_rate: float = 0.0
     n_bars: int = 0
 
+    def can_enter(self, coin: str, i: int) -> bool:
+        """A further condition on opening `coin` on bar i, beyond the panel's
+        tradeable mask and the signal. Always true here."""
+        return True
+
     def on_open(self, pos: _Position, i: int) -> None:
         """A position was opened on bar i (after the engine sized it)."""
 
@@ -204,11 +209,13 @@ class LiveFrab:
     def _simulate(self, panel: MarketPanel, p: FrabParams, universe: list[str],
                   leverage: dict[str, float],
                   make_hooks: Callable[[list[str], dict[str, np.ndarray], dict[str, np.ndarray],
-                                        dict[str, np.ndarray], dict[str, np.ndarray]],
+                                        dict[str, np.ndarray], dict[str, np.ndarray],
+                                        dict[str, np.ndarray]],
                                        LiveFrabHooks] | None) -> LiveFrabRun:
         """The live decisions over `universe`. `make_hooks` (given the coins and
-        their perp prices, spot marks, bar highs and funding rates) supplies the
-        venue's own handling of money; None is the plain driver."""
+        their perp prices, spot marks, bar highs, funding rates and the masks of
+        bars on which both legs can be traded) supplies the venue's own handling
+        of money; None is the plain driver."""
         index = panel.prices.index
         columns = panel.prices.columns
         n = len(index)
@@ -228,7 +235,7 @@ class LiveFrab:
             hooks.fee_rate = _constants.PERP_TAKER + _constants.SPOT_TAKER
         else:
             highs = {c: panel.high[c].to_numpy(dtype=float) for c in coins}
-            hooks = make_hooks(coins, px, sp, highs, rates)
+            hooks = make_hooks(coins, px, sp, highs, rates, ok)
         fee_rate = hooks.fee_rate
         eligible = np.zeros(n)
         held_count = np.zeros(n)
@@ -291,7 +298,8 @@ class LiveFrab:
                         int((p.budget_cap_usdc - len(open_) * footprint) // footprint))
             if slots > 0:
                 wanted = [(c, signal[c]) for c in coins
-                          if c not in open_ and ok[c][i] and _signals.decide_entry(
+                          if c not in open_ and ok[c][i] and hooks.can_enter(c, i)
+                          and _signals.decide_entry(
                               smoothed_signal_annual=signal[c],
                               entry_threshold=p.entry_threshold_apr)
                           == _signals.TwoPhaseDecision.OPEN]

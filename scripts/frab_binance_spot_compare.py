@@ -120,7 +120,8 @@ def grid() -> None:
 
     print(f"{'spec':<28}{'slots':>5}{'slot $':>8}  {'extra':<28}{'ann':>8}{'sharpe':>8}"
           f"{'maxdd':>8}{'funding':>9}{'costs':>8}{'held':>6}{'transfer $':>11}")
-    for which, slots, footprint, extra in g.CELLS:
+    cells = g.CELLS_1 if "--round1" in sys.argv else g.CELLS
+    for which, slots, footprint, extra in cells:
         r = measure(g.cell_spec(which, slots, footprint, extra))
         w = r["whole"]
         diag = r.get("diagnostics") or {}
@@ -131,7 +132,7 @@ def grid() -> None:
 
 
 def main(argv: list[str]) -> None:
-    if argv[:1] == ["--grid"]:
+    if argv[:1] in (["--grid"], ["--grid", "--round1"]):
         grid()
         return
     paths = [a for a in argv if not a.startswith("--set")]

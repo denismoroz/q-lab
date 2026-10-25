@@ -40,7 +40,8 @@ def _params(table: str, **over) -> dict:
         "binance_withdrawal_fee_usdc": 0.4, "binance_withdrawal_min_usdc": 3,
         "hl_withdrawal_fee_usdc": 1, "top_up_trigger": 2.0, "healthy_ratio": 3.0,
         "maintenance_over_initial": 0.5, "leverage_table": table,
-        "margin_return": "when_needed",
+        "transfers": "when_needed", "batch_share": 0.1, "idle_share": 0.25,
+        "entry_parity_tolerance": 0.03, "max_wait_hours": 24,
         "universe": ALL_PAIRED, "leverage": {"A": 10, "B": 10},
     }
     params.update(over)
@@ -169,7 +170,7 @@ def test_the_margin_deposit_is_the_only_transfer_when_the_margin_stays_on_hyperl
 
 
 def test_taking_the_margin_home_at_every_close_costs_hyperliquids_withdrawal_fee(table) -> None:
-    run = _round_trip(table, margin_return="on_close")
+    run = _round_trip(table, transfers="on_close")
     pos = run.positions[0]
     assert run.extra_costs.iloc[pos.opened] == pytest.approx(0.4 / BUDGET)
     assert run.extra_costs.iloc[pos.closed] == pytest.approx(1.0 / BUDGET)
@@ -181,7 +182,7 @@ def test_the_ledger_loses_only_fees_and_keeps_all_funding(table) -> None:
     """Flat prices: what is on Binance plus what is on Hyperliquid at the end is the
     budget plus the funding received minus every fee, to the cent."""
     for mode in ("when_needed", "on_close"):
-        run = _round_trip(table, margin_return=mode)
+        run = _round_trip(table, transfers=mode)
         pos = run.positions[0]
         end = run.diagnostics["binance_cash_end"] + run.diagnostics["hl_free_margin_end"]
         notional = pos.units * 100.0
@@ -287,11 +288,160 @@ def test_the_venue_params_are_all_required_and_ordered(table) -> None:
         SplitVenueParams.split({k: v for k, v in good.items() if k != "healthy_ratio"})
     with pytest.raises(ValueError, match="top_up_trigger < healthy_ratio"):
         SplitVenueParams.split({**good, "top_up_trigger": 3.0})
-    with pytest.raises(ValueError, match="at least one bar"):
-        SplitVenueParams.split({**good, "transfer_delay_hours": 0})
-    with pytest.raises(ValueError, match="margin_return must be one of"):
-        SplitVenueParams.split({**good, "margin_return": "sometimes"})
+    with pytest.raises(ValueError, match="cannot be negative"):
+        SplitVenueParams.split({**good, "transfer_delay_hours": -1})
+    with pytest.raises(ValueError, match="transfers must be one of"):
+        SplitVenueParams.split({**good, "transfers": "sometimes"})
 
 
 def test_the_leverage_table_reads_coin_and_max_leverage(table) -> None:
     assert read_leverage_table(table) == {"A": 10.0, "B": 10.0, "C": 3.0}
+
+
+# -- transfers: batched (owner, 2026-10-25) ----------------------------------------------
+
+
+def test_batched_has_nothing_to_batch_while_every_slot_is_funded(table) -> None:
+    """The slots' footprints add up to the whole budget, so the cash that would make a
+    bigger first deposit is the cash of the slots not yet filled: reserved, not spare.
+    Batching then deposits what an entry needs, as `when_needed` does."""
+    n = len(HOURS)
+    r = np.where((np.arange(n) // 240) % 2 == 0, 0.0002, -0.0002)
+    panel = _panel({"A": r, "B": r})
+    batched = LiveFrabBinanceSpot().run(panel, _params(table, transfers="batched",
+                                                       concurrency_cap=2, batch_share=0.5,
+                                                       idle_share=0.9))
+    needed = LiveFrabBinanceSpot().run(panel, _params(table, transfers="when_needed",
+                                                      concurrency_cap=2))
+    assert batched.diagnostics["deposits"] == needed.diagnostics["deposits"]
+    assert batched.diagnostics["transfer_fees_usd"] == needed.diagnostics["transfer_fees_usd"]
+
+
+def test_batched_top_up_takes_binance_cash_before_it_sells_any_spot(table) -> None:
+    """One position of two slots leaves half the budget as cash on Binance; a +25% rise
+    is covered from that cash, so no spot is sold and the book is not resized."""
+    panel = _panel(_rates(A=0.0002), perp={"A": _rising(100, 125.0, 20)})
+    params = _params(table, universe=["A"], concurrency_cap=2, transfers="batched")
+    run = LiveFrabBinanceSpot().run(panel, params)
+    assert run.diagnostics["top_ups"] >= 1
+    assert run.diagnostics["forced_spot_sales"] == 0
+    w = run.weights
+    changes = w[(w["A"] != w["A"].shift(1)) & (w["A"] != 0)]  # the position opens or is resized
+    assert len(changes) == 1  # opened once and never resized by the top-up
+    assert run.diagnostics["liquidations"] == 0
+
+
+def test_batched_with_no_cash_left_falls_back_to_selling_spot_and_says_so(table) -> None:
+    panel = _panel(_rates(A=0.0002), perp={"A": _rising(100, 125.0, 20)})
+    run = LiveFrabBinanceSpot().run(
+        panel, _params(table, universe=["A"], concurrency_cap=1, transfers="batched"))
+    assert run.diagnostics["forced_spot_sales"] >= 1  # every dollar is in the position
+
+
+def test_batched_takes_idle_money_home_in_one_withdrawal(table) -> None:
+    """After a position closes, its margin sits on Hyperliquid; above the idle cap it
+    is withdrawn down to one batch, for one withdrawal fee."""
+    n = len(HOURS)
+    r = np.full(n, 0.0002)
+    r[24 * 15:] = -0.0002
+    panel = _panel({"A": r})
+    run = LiveFrabBinanceSpot().run(
+        panel, _params(table, universe=["A"], concurrency_cap=1, transfers="batched",
+                       batch_share=0.05, idle_share=0.1))
+    assert run.diagnostics["idle_withdrawals"] == 1
+    assert run.diagnostics["hl_free_margin_end"] == pytest.approx(0.05 * BUDGET, abs=1e-6)
+
+
+def test_an_instant_transfer_lands_at_the_bar_it_is_sent(table) -> None:
+    panel = _panel(_rates(A=0.0002), perp={"A": _rising(100, 125.0, 20)})
+    run = LiveFrabBinanceSpot().run(
+        panel, _params(table, universe=["A"], concurrency_cap=1, transfer_delay_hours=0,
+                       binance_withdrawal_fee_usdc=0.0, binance_withdrawal_min_usdc=0.0))
+    assert run.diagnostics["top_ups"] >= 1
+    assert run.diagnostics["min_ratio"] > 1.0
+
+
+# -- both legs on Binance (owner, 2026-10-25) -------------------------------------------
+
+
+def _binance_panel(rates, **kw):
+    panel = _panel(rates, **kw)
+    meta = {**panel.meta, "venue": "binance"}
+    meta.pop("spot_source", None)
+    return MarketPanel(snapshot_id="t", prices=panel.prices, funding=panel.funding,
+                       tradeable=panel.tradeable, high=panel.high, meta=meta)
+
+
+def _free(table, **over):
+    return _params(table, spot_taker_fee=0.001, perp_taker_fee=0.0005,
+                   binance_withdrawal_fee_usdc=0.0, binance_withdrawal_min_usdc=0.0,
+                   hl_withdrawal_fee_usdc=0.0, transfer_delay_hours=0, transfers="batched",
+                   batch_share=0.0, idle_share=1.0, **over)
+
+
+def test_the_all_binance_strategy_runs_only_on_a_binance_panel(table) -> None:
+    from qlab.strategies.live.frab_binance_spot import LiveFrabAllBinance
+
+    mixed = _panel(_rates(A=0.0002))
+    with pytest.raises(ValueError, match="Binance panel with Binance's own spot"):
+        LiveFrabAllBinance().run(mixed, _free(table, universe=["A"]))
+    with pytest.raises(ValueError, match="mixed panel"):
+        LiveFrabBinanceSpot().run(_binance_panel(_rates(A=0.0002)), _free(table, universe=["A"]))
+    run = LiveFrabAllBinance().run(_binance_panel(_rates(A=0.0002)), _free(table, universe=["A"]))
+    assert run.positions
+
+
+def test_with_both_legs_on_one_venue_nothing_is_paid_for_moving_money(table) -> None:
+    from qlab.strategies.live.frab_binance_spot import LiveFrabAllBinance
+
+    perp = {"A": _rising(100, 125.0, 20)}
+    run = LiveFrabAllBinance().run(_binance_panel(_rates(A=0.0002), perp=perp),
+                                   _free(table, universe=["A"], concurrency_cap=2))
+    assert run.extra_costs.sum() == 0.0
+    assert run.diagnostics["top_ups"] >= 1  # the margin was still topped up, from the cash
+    assert run.diagnostics["transfer_fees_usd"] == 0.0
+    assert run.diagnostics["liquidations"] == 0
+
+
+def test_all_binance_sells_spot_for_margin_only_when_no_cash_is_left(table) -> None:
+    from qlab.strategies.live.frab_binance_spot import LiveFrabAllBinance
+
+    perp = {"A": _rising(100, 125.0, 20)}
+    full = LiveFrabAllBinance().run(_binance_panel(_rates(A=0.0002), perp=perp),
+                                    _free(table, universe=["A"], concurrency_cap=1))
+    assert full.diagnostics["forced_spot_sales"] >= 1
+    idle = LiveFrabAllBinance().run(_binance_panel(_rates(A=0.0002), perp=perp),
+                                    _free(table, universe=["A"], concurrency_cap=2))
+    assert idle.diagnostics["forced_spot_sales"] == 0
+
+
+# -- broken pairs ------------------------------------------------------------------------
+
+
+def test_a_pair_whose_spot_is_far_from_its_perp_is_not_entered(table) -> None:
+    """frab's parity rule at the moment of entry: a spot quoted at a fifth of its perp
+    (a delisting token) is no hedge."""
+    panel = _panel(_rates(A=0.0002, B=0.0002))
+    prices = panel.prices.copy()
+    prices["A-SPOT"] = prices["A-SPOT"] * 0.2
+    broken = MarketPanel(snapshot_id="t", prices=prices, funding=panel.funding,
+                         tradeable=panel.tradeable, high=panel.high, meta=panel.meta)
+    run = LiveFrabBinanceSpot().run(broken, _params(table, concurrency_cap=2))
+    assert {q.coin for q in run.positions} == {"B"}
+    assert run.weights["A"].abs().sum() == 0
+
+
+def test_a_held_pair_that_cannot_be_traded_for_long_is_closed_not_waited_for(table) -> None:
+    """The spot disappears for good after bar 300: the engine waits at most
+    `max_wait_hours`, then the position is closed at the last marks and its slot freed."""
+    panel = _panel(_rates(A=0.0002, B=0.0002))
+    prices = panel.prices.copy()
+    tradeable = panel.tradeable.copy()
+    prices.loc[HOURS[300]:, "A-SPOT"] = np.nan
+    tradeable.loc[HOURS[300]:, "A-SPOT"] = False
+    gone = MarketPanel(snapshot_id="t", prices=prices, funding=panel.funding,
+                       tradeable=tradeable, high=panel.high, meta=panel.meta)
+    run = LiveFrabBinanceSpot().run(gone, _params(table, concurrency_cap=2))
+    [a] = [q for q in run.positions if q.coin == "A"]
+    assert a.exit == "pair_lost" and a.closed == 300 + 24
+    assert run.diagnostics["pairs_lost"] == 1

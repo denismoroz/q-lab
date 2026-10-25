@@ -367,12 +367,23 @@ def fetch_instrument_history(
     candles = fetch_candles(client, instrument, interval, start, end)
     if candles.empty:
         raise ValueError(f"binance: no kline data for {instrument!r} in [{start}, {end}]")
-    prices = candles["price"]
     funding = fetch_funding(client, instrument, start, end)
 
     symbol = _symbol(instrument)
     info = exchange_info.get(symbol)
     is_delisted = info is None or info.get("status") != "TRADING"
+    if is_delisted:
+        # A contract that has been taken off the market keeps answering with flat,
+        # zero-trade candles at its settlement price (DENT, FIO, A2Z, 2026-04): they are
+        # not a market, and a strategy that read them would hold a short that no longer
+        # exists. Its life ends with its last bar that traded.
+        traded = candles.index[candles["trade_count"] > 0]
+        if len(traded) == 0:
+            raise ValueError(f"binance: no traded candle for {instrument!r} in [{start}, {end}]")
+        candles = candles.loc[:traded.max()]
+        if len(funding):
+            funding = funding[funding.index <= traded.max() + FUNDING_NATIVE_INTERVAL]
+    prices = candles["price"]
 
     onboard_date = info["onboard_date"] if info else None
     first_seen = prices.index.min()
@@ -441,17 +452,25 @@ _SPOT_ARCHIVE_ENTRY = re.compile(
 # any spot market, which quotes one unit.
 _THOUSAND_PREFIX = "k"
 THOUSAND = 1000.0
+# Binance's own USDT-margined contracts on cheap tokens are named with a numeric
+# prefix (1000PEPEUSDT, 1MBABYDOGEUSDT) and priced for that many units.
+_NUMERIC_PREFIXES = (("1000000", 1_000_000.0), ("1M", 1_000_000.0), ("10000", 10_000.0),
+                     ("1000", 1000.0))
 
 
 def spot_pair(coin: str) -> tuple[str, float]:
-    """The Binance spot base asset that stands for a Hyperliquid perp's coin,
-    and the multiplier that turns its one-unit price into the perp's unit:
-    ``BTC`` -> ``("BTC", 1.0)``, ``kPEPE`` -> ``("PEPE", 1000.0)``. A name
+    """The Binance spot base asset that stands for a perp's coin (Hyperliquid's
+    or Binance's own), and the multiplier that turns its one-unit price into the
+    perp's unit: ``BTC`` -> ``("BTC", 1.0)``, ``kPEPE`` -> ``("PEPE", 1000.0)``,
+    ``1000PEPE`` -> ``("PEPE", 1000.0)``. A name
     that is not the same asset on both venues (a renamed token, a different
     token under the same ticker) is not handled here: it either has no pair
     or fails the parity check on prices (`qlab.data.snapshot.spot_is_another_asset`)."""
     if len(coin) > 1 and coin.startswith(_THOUSAND_PREFIX) and coin[1:].isupper():
         return coin[1:], THOUSAND
+    for prefix, scale in _NUMERIC_PREFIXES:
+        if coin.startswith(prefix) and len(coin) > len(prefix):
+            return coin[len(prefix):], scale
     return coin, 1.0
 
 

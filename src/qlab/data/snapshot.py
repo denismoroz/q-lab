@@ -802,6 +802,15 @@ def build_snapshot(
                 # lists delisted pairs too, so the pairing is not survivors only.
                 discovered_spot = _SOURCES[spot_source]["pair_spot_universe"](
                     instruments_sorted, (start_ts, end_ts))
+            elif source_spec.get("discover_spot_universe") is None and \
+                    source_spec.get("pair_spot_universe") is not None:
+                # A venue that pairs its own perps with its own spot (Binance): the pair
+                # universe is the perps that have a spot pair, with those spots; a perp
+                # without one is no part of a spot-versus-perp strategy and is not fetched.
+                discovered_spot = source_spec["pair_spot_universe"](
+                    instruments_sorted, (start_ts, end_ts))
+                paired = {c[: -len(SPOT_COLUMN_SUFFIX)] for c in discovered_spot}
+                instruments_sorted = [c for c in instruments_sorted if c in paired]
             else:
                 discover_spot = source_spec.get("discover_spot_universe")
                 if discover_spot is None:

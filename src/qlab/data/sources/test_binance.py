@@ -133,6 +133,29 @@ def test_fetch_instrument_history_marks_delisted_when_absent_from_exchange_info(
     assert hist.last_seen == end
 
 
+@respx.mock
+def test_a_delisted_contracts_flat_zero_trade_candles_are_not_its_life():
+    """A contract taken off the market keeps answering with settlement-price candles that
+    never traded (DENT, FIO, 2026-04); its life ends with its last traded bar."""
+    start = pd.Timestamp("2024-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2024-01-01T04:00:00", tz="UTC")
+    klines = [_kline(start + pd.Timedelta(hours=h), 1.0 + 0.1 * h) for h in range(5)]
+    for k in klines[3:]:
+        k[8] = 0  # numberOfTrades: nothing traded
+    respx.get(f"{bn.BASE_URL}/fapi/v1/klines").mock(return_value=httpx.Response(200, json=klines))
+    respx.get(f"{bn.BASE_URL}/fapi/v1/fundingRate").mock(return_value=httpx.Response(200, json=[]))
+
+    with httpx.Client() as client:
+        gone = bn.fetch_instrument_history(client, "GONE", "1h", start, end, exchange_info={})
+        alive = bn.fetch_instrument_history(
+            client, "LIVE", "1h", start, end,
+            exchange_info={"LIVEUSDT": {"status": "TRADING", "onboard_date": None}})
+
+    assert gone.last_seen == start + pd.Timedelta(hours=2)
+    assert len(gone.prices) == 3
+    assert alive.last_seen == end and len(alive.prices) == 5  # a quiet hour is not a delisting
+
+
 _PAGE_1 = (
     "<ListBucketResult><NextMarker>data/futures/um/monthly/klines/ETHUSDT/</NextMarker>"
     "<CommonPrefixes><Prefix>data/futures/um/monthly/klines/BTCUSDT/</Prefix></CommonPrefixes>"
@@ -221,3 +244,18 @@ def test_spot_prices_of_a_thousand_unit_contract_are_scaled_to_its_unit(monkeypa
     assert list(pepe.volume) == pytest.approx([0.01, 0.01])  # 10 PEPE = 0.01 thousand
     assert list(btc.prices) == [0.004, 0.005]  # an ordinary coin is untouched
     assert not pepe.has_funding
+
+
+def test_binances_own_numeric_prefixes_map_to_the_one_unit_spot_token():
+    assert bn.spot_pair("1000PEPE") == ("PEPE", 1000.0)
+    assert bn.spot_pair("1000000MOG") == ("MOG", 1_000_000.0)
+    assert bn.spot_pair("1MBABYDOGE") == ("BABYDOGE", 1_000_000.0)
+    assert bn.spot_pair("10000SATS") == ("SATS", 10_000.0)
+    # An ordinary ticker that merely starts with a digit is untouched.
+    assert bn.spot_pair("1INCH") == ("1INCH", 1.0)
+    assert bn.spot_pair("1000") == ("1000", 1.0)
+
+
+def test_pairing_a_binance_perp_with_its_own_spot_uses_the_same_mapping(monkeypatch):
+    monkeypatch.setattr(bn, "spot_archive_symbols", lambda client: ["PEPEUSDT", "BTCUSDT"])
+    assert bn.pair_spot_universe(["1000PEPE", "BTC", "BTCDOM"]) == ["1000PEPE-SPOT", "BTC-SPOT"]

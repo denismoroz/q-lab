@@ -1215,3 +1215,33 @@ class TestSpotFromAnotherVenue:
         rate = pd.Series([1.0, 1.01], index=idx[:2])  # no rate for the last bar
         out = snap._in_usdc({"BTC-SPOT": hist}, rate)["BTC-SPOT"]
         assert list(out.prices) == pytest.approx([100.0, 101.0 / 1.01])
+
+
+class TestAVenuePairsItsOwnPerpsWithItsOwnSpot:
+    """Binance has no spot discovery of its own: its spot pairs are found for ITS perps
+    (`pair_spot_universe`). A perp without a spot pair is no part of a spot-versus-perp
+    book and is not fetched; nothing is priced from another venue."""
+
+    def test_only_paired_perps_and_their_spots_are_in_the_panel(
+        self, session, tmp_path, monkeypatch
+    ):
+        fetched = []
+
+        def fetch(instruments, start, end, interval, *, on_missing="raise"):
+            fetched.append(list(instruments))
+            return _fake_fetch_universe(instruments, start, end, interval, on_missing=on_missing)
+
+        monkeypatch.setitem(snap._SOURCES, "selfspot", {
+            "fetch": fetch,
+            "fetch_spot": _fake_fetch_spot_universe,
+            "pair_spot_universe": lambda perps, rng: [f"{c}-SPOT" for c in perps if c != "ETH"],
+            "funding_native_interval": pd.Timedelta(hours=1),
+            "discover_universe": lambda rng: ["BTC", "ETH", "DEADCOIN"],
+            "describe_universe": lambda: [("BTC", False), ("ETH", False), ("DEADCOIN", True)],
+        })
+        panel = snap.build_snapshot(
+            "selfspot", None, "2024-01-01", "2024-01-01T08:00:00", "1h", include_spot=True,
+            spot_prices="own", snapshots_dir=tmp_path, session=session)
+        assert set(panel.instruments) == {"BTC", "BTC-SPOT", "DEADCOIN", "DEADCOIN-SPOT"}
+        assert fetched == [["BTC", "DEADCOIN"]]  # ETH has no spot pair: never fetched
+        assert panel.meta["spot_source"] is None and panel.meta["universe_complete"] is True
