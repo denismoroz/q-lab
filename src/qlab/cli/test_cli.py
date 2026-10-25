@@ -268,3 +268,19 @@ def test_research_notes_import_is_idempotent_and_reports_skipped_strategies(cli_
     with session_scope() as session:
         row = session.query(ResearchNote).one()
         assert row.idea_id == "frab" and row.experiments[0]["trial_id"] == 7
+
+
+def test_generate_dry_run_prints_the_catalogue_without_spending(tmp_path, monkeypatch):
+    catalogue = tmp_path / "MECHANISMS.md"
+    catalogue.write_text(
+        "### xs-reversal-1w\n\n**Суть:** Откат.\n\n**Блоки:** signal reversal\n\n"
+        "**Параметры:**\n\n| параметр блока | значения из источника | источник |\n|---|---|---|\n"
+        "| signal.lookback_days | 7, 14, 28 | [Author 2020](https://example.org) |\n\n"
+        "**Чего блоки не выражают:** Сезонность.\n\n**Источники:** Author 2020.\n",
+        encoding="utf-8")
+    monkeypatch.setenv("QLAB_CLAUDE_BIN", "/nonexistent/claude")  # an agent call would raise
+    result = runner.invoke(app, ["generate", "--dry-run", "--catalogue", str(catalogue)])
+    assert result.exit_code == 0, result.output
+    assert "xs-reversal-1w: 1 parameter rows, partly expressed" in result.output
+    assert "signal.lookback_days: 7, 14, 28" in result.output
+    assert "1 mechanisms in" in result.output

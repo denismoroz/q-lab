@@ -658,6 +658,9 @@ def night_run_cmd(
     assess: bool = typer.Option(True, "--assess/--no-assess",
                                 help="The assessor's second opinion on changed verdicts and on "
                                 "paper/live ideas (tokens)"),
+    generate: bool | None = typer.Option(
+        None, "--generate/--no-generate",
+        help="The idea generator on night/generate.yaml (tokens; default: its weekly day)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
@@ -669,7 +672,7 @@ def night_run_cmd(
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
-               research=research,
+               research=research, generate=generate,
                noise_trials=noise_trials)
     typer.echo(f"report: {path}")
 
@@ -1028,6 +1031,71 @@ def research_cmd(
 
     typer.echo("\n".join(run_experiments(outcome.memo, outcome.specs, name=name,
                                          noise_trials=noise_trials)))
+
+
+@app.command("generate")
+def generate_cmd(
+    catalogue_path: Path = typer.Option(Path("docs/MECHANISMS.md"), "--catalogue",  # noqa: B008
+                                        help="The catalogue of published mechanisms"),
+    max_specs: int = typer.Option(3, "--max-specs"),
+    data_end: str | None = typer.Option(
+        None, "--data-end", help="Data end for the specs (default: the latest Binance snapshot)"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Only parse the catalogue and print its mechanisms (no tokens)"),
+    evaluate: bool = typer.Option(True, "--evaluate/--no-evaluate"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+) -> None:
+    """The idea generator writes up to --max-specs new specs under specs/generated/
+    from the mechanisms of docs/MECHANISMS.md (no new code); code guards every
+    number against the catalogue and the stand runs the specs that pass. A real
+    run spends tokens through the budget guard, like `qlab research`."""
+    from datetime import date as _date
+
+    from qlab.agents.generator import (
+        catalogue,
+        generate,
+        result_line,
+        run_generated,
+    )
+
+    if dry_run:
+        mechanisms = catalogue(catalogue_path)
+        for m in mechanisms:
+            expressed = "fully expressed" if m.fully_expressed else "partly expressed"
+            typer.echo(f"{m.id}: {len(m.params)} parameter rows, {expressed}")
+            typer.echo(f"    blocks: {m.blocks}")
+            for row in m.params:
+                typer.echo(f"    {row.param}: {', '.join(f'{v:g}' for v in row.values)}"
+                           f"  <- {row.source}")
+        typer.echo(f"{len(mechanisms)} mechanisms in {catalogue_path}")
+        return
+
+    from qlab.agents.generator import latest_binance_end
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+    from qlab.registry.models import Idea
+
+    with session_scope() as session:
+        end = _date.fromisoformat(data_end) if data_end else latest_binance_end(session)
+        if end is None:
+            typer.echo("no Binance snapshot in the registry: pass --data-end", err=True)
+            raise typer.Exit(1)
+        budget = open_candidate(session, None, Stage.SEARCH)
+        outcome = generate(budget=budget, session=session, catalogue_path=catalogue_path,
+                           max_specs=max_specs, data_end=end,
+                           registry_idea_ids=[i for (i,) in session.query(Idea.id)])
+        spent = budget.spent_tokens
+    typer.echo(f"generator: {len(outcome.accepted)} specs accepted, {len(outcome.rejected)} "
+               f"rejected; {spent:,} tokens\nagent: {outcome.reply or '-'}")
+    for problem in outcome.problems:
+        typer.echo(f"  problem: {problem}")
+    for r in outcome.rejected:
+        for problem in r.problems:
+            typer.echo(f"  rejected {r.path}: {problem}")
+    if not evaluate:
+        return
+    for result in run_generated(outcome.accepted, noise_trials=noise_trials):
+        typer.echo(result_line(result))
 
 
 research_notes_app = typer.Typer(help="The researcher's memos in the registry.",

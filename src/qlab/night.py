@@ -309,6 +309,27 @@ def write_report(day: date, state: dict) -> Path:
             if e.get("stopped"):
                 lines.append(f"    - остановлено: {e['stopped']}")
         lines.append("")
+    if gen := state.get("generate"):
+        from qlab.agents.generator import GeneratedResult, result_line
+
+        lines += ["## Генератор идей (раз в неделю)", "",
+                  "Агент берёт опубликованные механизмы из `docs/MECHANISMS.md` и пишет описания "
+                  "новых стратегий из готовых блоков; код проверяет каждое число по каталогу, "
+                  "стенд прогоняет прошедшие проверку. Вердикты выносит код.", ""]
+        if gen.get("skipped"):
+            lines.append(f"- не запускался — {gen['skipped']}")
+        if gen.get("stopped"):
+            lines.append(f"- остановлено: {gen['stopped']}; продолжит в следующую ночь")
+        if "accepted" in gen:
+            lines.append(f"- принято стратегий: {len(gen['accepted'])}, не принято: "
+                         f"{len(gen.get('rejected') or [])}; {gen.get('tokens', 0):,} токенов; "
+                         f"ответ агента: {gen.get('reply') or '—'}")
+        lines += [f"    - {p}" for p in gen.get("problems") or []]
+        for r in gen.get("rejected") or []:
+            lines += [f"    - не принято `{r['path']}`: {p}" for p in r["problems"]]
+        for r in gen.get("results") or []:
+            lines.append(f"- {result_line(GeneratedResult(**r))}")
+        lines.append("")
     if (events := state.get("events")) is not None:
         lines += ["## Площадки", ""]
         structural = [e for e in events if e["kind"] in
@@ -356,7 +377,7 @@ def _token_lines(day: date) -> str:
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
-        assess: bool = True, research: bool | None = None,
+        assess: bool = True, research: bool | None = None, generate: bool | None = None,
         noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -403,6 +424,11 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                         deployable_capital_usd=deployable_capital_usd)
     if search:
         search_stage(day, state)
+    if generate is True or (search and generate is None):
+        # Last: the search for new ideas is what the budget cuts first, and the
+        # generator is the most expensive part of it.
+        generate_stage(day, state, noise_trials=noise_trials,
+                       deployable_capital_usd=deployable_capital_usd, force=generate)
     return write_report(day, state)
 
 
@@ -587,6 +613,126 @@ def search_stage(day: date, state: dict) -> None:
     save_state(day, state)
 
 
+GENERATE = Path("night/generate.yaml")
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _weekday(value) -> int:
+    if isinstance(value, str) and value.strip().lower() in _WEEKDAYS:
+        return _WEEKDAYS.index(value.strip().lower())
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 6:
+        return value
+    raise ValueError(f"night/generate.yaml: weekday must be a day name or 0..6, got {value!r}")
+
+
+def generate_due(day: date, plan: dict) -> bool:
+    """Whether the idea generator runs tonight: enabled, and on its cadence
+    (daily, or weekly on `weekday`). A run the budget stopped before the agent
+    finished is continued the next night -- a stop is the normal mode
+    (CLAUDE.md), not a lost week."""
+    if not plan.get("enabled", False):
+        return False
+    if plan.get("cadence", "weekly") == "daily":
+        return True
+    if day.weekday() == _weekday(plan.get("weekday", "wednesday")):
+        return True
+    yesterday = load_state(day - timedelta(days=1))
+    return bool((yesterday.get("generate") or {}).get("stopped")
+                and "generate:agent" not in yesterday.get("done", {}))
+
+
+def _data_end_for_generation(session, day: date) -> date:
+    """The latest Binance snapshot end the registry knows, never later than
+    the last closed day."""
+    from qlab.agents.generator import latest_binance_end
+
+    closed = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+                             + timedelta(hours=12))
+    latest = latest_binance_end(session)
+    return min(latest, closed) if latest else closed
+
+
+def generate_stage(day: date, state: dict, *, noise_trials: int,
+                   deployable_capital_usd: float = 3000.0, config: Path = GENERATE,
+                   force: bool | None = None) -> None:
+    """The idea generator (`qlab.agents.generator`), in the search stage -- the
+    one CLAUDE.md cuts first: one agent call writes up to `max_specs` specs from
+    docs/MECHANISMS.md, code guards them, the stand runs those that pass.
+
+    Resumable: the agent's call and each spec's run have their own done-markers
+    in the night's state, so a restart goes on from where it stopped. `force`
+    overrides the config's cadence and `enabled` (the CLI's --generate)."""
+    from qlab.agents.generator import (
+        CATALOGUE,
+        GeneratedSpec,
+        generate,
+        run_generated_one,
+    )
+    from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea
+
+    if force is False:
+        return
+    if not config.is_file() and force is not True:
+        return
+    plan = yaml.safe_load(config.read_text(encoding="utf-8")) if config.is_file() else {}
+    plan = plan or {}
+    if force is None and not generate_due(day, plan):
+        return
+    gen = state.setdefault("generate", {})
+    catalogue_path = Path(plan.get("catalogue", CATALOGUE))
+
+    if "generate:agent" not in state["done"]:
+        if (state.get("scout") or {}).get("stopped"):
+            gen["stopped"] = "the night's budget ended in the search stage before this"
+            save_state(day, state)
+            return
+        if not catalogue_path.is_file():
+            gen["skipped"] = f"no catalogue of mechanisms at {catalogue_path}"
+            save_state(day, state)
+            return
+        gen.pop("skipped", None)
+        gen.pop("stopped", None)
+        with session_scope() as session:
+            try:
+                night_budget = NightBudget.open(session, probe(session).report.reading)
+                budget = night_budget.stage(Stage.SEARCH, candidates=1).candidate(None)
+                outcome = generate(
+                    budget=budget, session=session, catalogue_path=catalogue_path,
+                    max_specs=int(plan.get("max_specs", 3)),
+                    data_end=_data_end_for_generation(session, day),
+                    registry_idea_ids=[i for (i,) in session.query(Idea.id)])
+                gen.update(
+                    reply=outcome.reply, problems=outcome.problems, reverted=outcome.reverted,
+                    tokens=budget.spent_tokens,
+                    accepted=[{"idea_id": a.spec.idea_id, "path": str(a.path),
+                               "mechanism": a.mechanism} for a in outcome.accepted],
+                    rejected=[{"path": r.path, "problems": r.problems} for r in outcome.rejected])
+                state["done"]["generate:agent"] = datetime.now(UTC).isoformat()
+            except BudgetExhausted as stop:
+                gen["stopped"] = str(stop)
+            session.commit()
+        save_state(day, state)
+        if "generate:agent" not in state["done"]:
+            return
+
+    results = gen.setdefault("results", [])
+    for entry in gen.get("accepted") or []:
+        key = f"generate:run:{entry['idea_id']}"
+        if key in state["done"]:
+            continue
+        item = GeneratedSpec(path=Path(entry["path"]), spec=load_spec(Path(entry["path"])),
+                             mechanism=entry["mechanism"])
+        result = run_generated_one(item, noise_trials=noise_trials,
+                                   deployable_capital_usd=deployable_capital_usd)
+        results[:] = [r for r in results if r["idea_id"] != result.idea_id]
+        results.append(asdict(result))
+        if result.error is None:  # a failed run is tried again on the next restart
+            state["done"][key] = datetime.now(UTC).isoformat()
+        save_state(day, state)
+
+
 def implement_stage(day: date, state: dict, *, noise_trials: int,
                     deployable_capital_usd: float) -> None:
     """Stage 2 (CLAUDE.md order): cards from `night/implement_queue.yaml` not
@@ -661,5 +807,6 @@ def _ensure_idea(spec: StrategySpec, card: str) -> None:
                              notes=f"Implemented by the implementer agent from {card}.")
 
 
-__all__ = ["ItemResult", "evaluate_item", "graveyard_specs", "last_closed_day",
+__all__ = ["ItemResult", "evaluate_item", "generate_due", "generate_stage", "graveyard_specs",
+           "last_closed_day",
            "paper_reconciliation", "run", "with_end", "write_report"]
