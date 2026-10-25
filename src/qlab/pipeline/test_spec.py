@@ -192,3 +192,19 @@ def test_empty_required_instruments_rejected() -> None:
 def test_exploratory_must_say_why() -> None:
     with pytest.raises(ValidationError, match="say why"):
         StrategySpec.model_validate(_spec_dict(exploratory="   "))
+
+
+def test_spot_source_defaults_to_the_sources_own_markets() -> None:
+    assert StrategySpec.model_validate(_spec_dict()).data.spot_source is None
+
+
+def test_a_spot_source_is_another_venue_priced_by_its_own_closes() -> None:
+    data = dict(_BASE["data"])  # type: ignore[arg-type]
+    mixed = {**data, "include_spot": True, "spot_prices": "own", "spot_source": "binance"}
+    assert StrategySpec.model_validate(_spec_dict(data=mixed)).data.spot_source == "binance"
+    with pytest.raises(ValidationError, match="spot_prices: own"):
+        StrategySpec.model_validate(_spec_dict(data={**mixed, "spot_prices": "perp"}))
+    with pytest.raises(ValidationError, match="the source itself"):
+        StrategySpec.model_validate(_spec_dict(data={**mixed, "spot_source": "hyperliquid"}))
+    with pytest.raises(ValidationError, match="asks for none"):
+        StrategySpec.model_validate(_spec_dict(data={**mixed, "include_spot": False}))

@@ -236,6 +236,7 @@ def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries |
     fetched). No trial is written -- see the module docstring."""
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
+    from qlab.harness.strategy import own_costs
     from qlab.pipeline.evaluate import (
         _slice_rows,
         complete_book_window,
@@ -259,10 +260,13 @@ def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries |
         return Diagnosis(spec.idea_id, None, None, cut, 0, 0,
                          notes=["the cut leaves fewer than three bars before it"])
     seen = _slice_rows(panel, 0, cut_row - 1)  # the held-out part never reaches the strategy
-    weights = resolve_strategy(spec.code_ref).target_weights(seen, spec.params)
+    strategy = resolve_strategy(spec.code_ref)
+    weights = strategy.target_weights(seen, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    net_return = run_backtest(seen, weights, costs, seen.funding).net_return.iloc[first:]
+    net_return = run_backtest(seen, weights, costs, seen.funding,
+                              extra_cost=own_costs(strategy, seen, spec.params)
+                              ).net_return.iloc[first:]
     held_out = (index[last].date() - cut.day).days if cut_row <= last else 0
     return describe(net_return, idea_id=spec.idea_id,
                     cut=Cut(cut_row, cut.day, cut.source), held_out_days=max(held_out, 0),

@@ -145,9 +145,58 @@ def derive_venue_metrics(
     return {name: float(value) for name, value in raw.items() if value is not None}
 
 
+def derive_cross_venue_metrics(
+    perp_venue: VenueConfig | None,
+    spot_venue: VenueConfig | None,
+    *,
+    snapshot_source: str,
+    perp_venue_id: str,
+    simultaneous_legs: int,
+) -> dict[str, float]:
+    """The three preflight metrics for a book whose perp legs are on one venue
+    and whose spot legs are on another (`data.spot_source`, docs/FRAB_BINANCE_SPOT.md).
+
+    - `venue_supported`: we must be able to place orders on BOTH venues. One
+      known "no" is a "no"; otherwise one unknown is unknown; else yes.
+    - `data_forward_available`: free forward data on both venues, and the
+      snapshot taken from the perp venue (as for a single venue).
+    - `atomic_execution`: a leg stranded by a failure is recovered by the
+      engine that holds both legs on ONE venue (`uncovered_leg_recovery` of
+      the perp venue's config says how Hyperliquid's engine unwinds its spot
+      leg). Across two venues that mechanism does not reach the other venue's
+      leg, so the answer comes from the SPOT venue's own facts: a venue with
+      nothing recorded there is unknown, not a guessed yes.
+    """
+    supported = [venue_supported(perp_venue), venue_supported(spot_venue)]
+    if any(v is False for v in supported):
+        both_supported: bool | None = False
+    elif any(v is None for v in supported):
+        both_supported = None
+    else:
+        both_supported = True
+
+    forward = data_forward_available(
+        perp_venue, snapshot_source=snapshot_source, venue_id=perp_venue_id)
+    spot_free = None if spot_venue is None else spot_venue.free_public_data
+    if forward is False or spot_free is False:
+        forward_all: bool | None = False
+    elif forward is None or spot_free is None:
+        forward_all = None
+    else:
+        forward_all = True
+
+    raw: dict[str, bool | None] = {
+        "venue_supported": both_supported,
+        "data_forward_available": forward_all,
+        "atomic_execution": atomic_execution(spot_venue, simultaneous_legs=simultaneous_legs),
+    }
+    return {name: float(value) for name, value in raw.items() if value is not None}
+
+
 __all__ = [
     "atomic_execution",
     "data_forward_available",
+    "derive_cross_venue_metrics",
     "derive_venue_metrics",
     "venue_supported",
 ]

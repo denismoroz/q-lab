@@ -46,7 +46,7 @@ from qlab.harness.metrics import (
     periods_per_year,
 )
 from qlab.harness.run import run_backtest
-from qlab.harness.strategy import Strategy, validate_weights
+from qlab.harness.strategy import Strategy, own_costs, validate_weights
 from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
 from qlab.regimes import breakdown as regime_breakdown
@@ -66,7 +66,7 @@ from qlab.rules.schema import (
     ShortForwardUse,
 )
 from qlab.venues.config import load_venue
-from qlab.venues.derive import derive_venue_metrics
+from qlab.venues.derive import derive_cross_venue_metrics, derive_venue_metrics
 
 Route = Literal[
     "reject",
@@ -192,6 +192,7 @@ def _find_matching_snapshot(
     include_spot: bool,
     min_daily_volume_usd: float | None,
     spot_prices: str = "perp",
+    spot_source: str | None = None,
 ) -> str | None:
     """Find a `data_snapshot` already on disk that answers this exact data
     request, without ever hitting the network.
@@ -272,6 +273,10 @@ def _find_matching_snapshot(
         # key) was priced at the perp.
         if manifest.get("spot_prices", "perp") != spot_prices:
             continue
+        # Spot legs from another venue answer a different request than the
+        # source's own spot markets (no key in the manifest = the source's own).
+        if manifest.get("spot_source") != spot_source:
+            continue
         if wanted_instruments is None:
             # A discovered-universe request is answered by a discovered build:
             # complete, or incomplete ONLY because the venue erased delisted
@@ -322,6 +327,7 @@ def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
         spot_prices=data_block.spot_prices,
+        spot_source=data_block.spot_source,
     )
     if existing_id is not None:
         return load_snapshot(existing_id, session=session)
@@ -335,6 +341,7 @@ def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
         spot_prices=data_block.spot_prices,
+        spot_source=data_block.spot_source,
         session=session,
     )
 
@@ -354,6 +361,7 @@ def resolve_cached_panel(session: Session, data: StrategySpec) -> MarketPanel | 
         include_spot=data_block.include_spot,
         min_daily_volume_usd=data_block.min_daily_volume_usd,
         spot_prices=data_block.spot_prices,
+        spot_source=data_block.spot_source,
     )
     return None if existing_id is None else load_snapshot(existing_id, session=session)
 
@@ -375,6 +383,8 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
         # The default is not written, so the spec rows recorded before the
         # option existed still match and no idea grows a new version for it.
         del data_requirements["spot_prices"]
+    if data_requirements.get("spot_source") is None:
+        del data_requirements["spot_source"]  # same: no old spec row grows a version
     costs_model = spec.costs.model_dump(mode="json")
 
     existing = (
@@ -1192,6 +1202,11 @@ def evaluate_spec(
         costs = CostModel(
             taker_fee_bps=spec.costs.taker_fee_bps, slippage_bps=spec.costs.slippage_bps
         )
+        # Costs that are not a rate on turnover -- a flat fee per transfer of
+        # money between venues -- come from the strategy itself, as a share of
+        # its equity per bar (`extra_costs`, docs/FRAB_BINANCE_SPOT.md). A
+        # strategy without the method has none, as before.
+        extra_cost = own_costs(strategy, panel, spec.params)
         index = panel.prices.index
         bar = INTERVAL_TO_TIMEDELTA.get(spec.data.interval)
 
@@ -1202,7 +1217,8 @@ def evaluate_spec(
             else:
                 part_panel = _slice_rows(panel, lo, hi)
                 part_weights = weights.iloc[lo : hi + 1]
-            result = run_backtest(part_panel, part_weights, costs, part_panel.funding)
+            result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
+                                  extra_cost=extra_cost)
             measured = compute_metrics(result)
             measured.update(hold_benchmark(part_panel.prices, part_weights))
             # How the result splits across BTC's bull / flat / bear days
@@ -1248,14 +1264,28 @@ def evaluate_spec(
             # `metrics` here -- never guessed -- so `qlab.rules.engine.evaluate`
             # honestly reports the corresponding rule as unknown rather than
             # passing or failing it.
-            measured.update(
-                derive_venue_metrics(
-                    load_venue(spec.data.source),
-                    snapshot_source=str(panel.meta.get("venue", spec.data.source)),
-                    venue_id=spec.data.source,
-                    simultaneous_legs=spec.simultaneous_legs,
+            if spec.data.spot_source is not None:
+                # Perp legs on one venue, spot legs on another: both must have
+                # an adapter and free data, and the recovery of a stranded leg
+                # is the spot venue's own question (derive_cross_venue_metrics).
+                measured.update(
+                    derive_cross_venue_metrics(
+                        load_venue(spec.data.source),
+                        load_venue(spec.data.spot_source),
+                        snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+                        perp_venue_id=spec.data.source,
+                        simultaneous_legs=spec.simultaneous_legs,
+                    )
                 )
-            )
+            else:
+                measured.update(
+                    derive_venue_metrics(
+                        load_venue(spec.data.source),
+                        snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+                        venue_id=spec.data.source,
+                        simultaneous_legs=spec.simultaneous_legs,
+                    )
+                )
             return measured
 
         def _days(part: tuple[int, int]) -> float:

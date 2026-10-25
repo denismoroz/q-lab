@@ -56,6 +56,7 @@ this defect at 0.45 Sharpe.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import io
@@ -203,8 +204,12 @@ _SOURCES = {
         "discover_universe": binance_source.discover_universe,
         "describe_universe": binance_source.describe_universe,
         # Spot by explicit list only (Bv2 on Binance's history); no spot
-        # discovery is wired for Binance.
+        # discovery of its own is wired for Binance: its spot pairs are only
+        # discovered AS A PERP VENUE'S SPOT LEG (`spot_source: binance`), by
+        # `pair_spot_universe` over that venue's perps.
         "fetch_spot": binance_source.fetch_spot_universe,
+        "pair_spot_universe": binance_source.pair_spot_universe,
+        "spot_quote_rate": binance_source.fetch_quote_rate,
     },
     # Aster: USDT perpetuals, explicit instrument lists only -- the venue
     # cannot list its delisted contracts, so `describe_universe` is None and
@@ -234,6 +239,7 @@ def _canonical_manifest(
     no_funding_instruments: list[str],
     min_daily_volume_usd: float | None,
     spot_prices: str = "perp",
+    spot_source: str | None = None,
 ) -> dict:
     manifest = {
         "source": source,
@@ -263,6 +269,8 @@ def _canonical_manifest(
     # the default keeps the id it always had.
     if spot_prices != "perp":
         manifest["spot_prices"] = spot_prices
+    if spot_source is not None:
+        manifest["spot_source"] = spot_source
     return manifest
 
 
@@ -609,6 +617,23 @@ def _resolve_casing(source_spec, instruments, start_ts, end_ts) -> list[str]:
     return sorted({by_lower.get(i.lower(), i) for i in instruments})
 
 
+def _in_usdc(histories: dict[str, InstrumentHistory], usdt_per_usdc: pd.Series
+             ) -> dict[str, InstrumentHistory]:
+    """Spot histories quoted in USDT, re-quoted in USDC bar by bar: price and
+    high divided by what one USDC cost in USDT at the same bar (Binance's own
+    USDCUSDT close). Volume is in the token's units and stays. A bar with no
+    rate has no USDC price -- it is dropped, never filled with a neighbour's
+    rate."""
+    out = {}
+    for name, hist in histories.items():
+        rate = usdt_per_usdc.reindex(hist.prices.index)
+        high = None
+        if hist.high is not None:
+            high = (hist.high / usdt_per_usdc.reindex(hist.high.index)).dropna()
+        out[name] = dataclasses.replace(hist, prices=(hist.prices / rate).dropna(), high=high)
+    return out
+
+
 def build_snapshot(
     source: str,
     instruments: Sequence[str] | None,
@@ -619,6 +644,7 @@ def build_snapshot(
     include_spot: bool = False,
     min_daily_volume_usd: float | None = None,
     spot_prices: str = "perp",
+    spot_source: str | None = None,
     snapshots_dir: Path | str = DEFAULT_SNAPSHOTS_DIR,
     session: Session | None = None,
     recorded_dir: Path = DEFAULT_RECORDED_DIR,
@@ -667,6 +693,20 @@ def build_snapshot(
     спота: своя или контракта»). It is part of the manifest only when it is
     not the default, so no existing snapshot changes its id.
 
+    ``spot_source`` (docs/FRAB_BINANCE_SPOT.md) names ANOTHER venue whose spot
+    markets are the spot legs of this source's perpetuals -- Hyperliquid perps
+    held against Binance spot. Perp columns, highs and funding come from
+    ``source``; each ``<COIN>-SPOT`` column from ``spot_source``, priced in USDC
+    (the USDT close over Binance's own USDCUSDT close, bar by bar) at its own
+    closes. A coin is paired only if the spot venue has a pair for it
+    (`pair_spot_universe`), and a bar is tradeable for the pair only if BOTH
+    legs were trading then: the perp's tradeable mask and the spot column's own
+    listing, bad-print and parity checks, as for any spot column. Valid only
+    with ``spot_prices="own"`` (a spot leg on another venue marked at the
+    perp's price would hide the basis that is the point of the pair) and with
+    spot columns requested. ``None`` (the default) changes nothing, down to the
+    manifest bytes of every existing snapshot.
+
     ``include_spot=True`` additionally discovers and fetches the source's
     spot markets (``<COIN>-SPOT`` columns, see
     `qlab.data.sources.base.SPOT_COLUMN_SUFFIX`) alongside the perp universe
@@ -714,6 +754,22 @@ def build_snapshot(
         raise ValueError(f"min_daily_volume_usd must be > 0, got {min_daily_volume_usd}")
     if spot_prices not in SPOT_PRICES:
         raise ValueError(f"spot_prices must be one of {SPOT_PRICES}, got {spot_prices!r}")
+    if spot_source is not None:
+        if spot_source == source:
+            raise ValueError(f"spot_source {spot_source!r} is the source itself: omit it")
+        spot_spec_check = _SOURCES.get(spot_source)
+        if spot_spec_check is None:
+            raise ValueError(f"unknown spot_source {spot_source!r}; "
+                             f"expected one of {sorted(_SOURCES)}")
+        if "fetch_spot" not in spot_spec_check or "pair_spot_universe" not in spot_spec_check:
+            raise ValueError(f"{spot_source!r} cannot be a spot_source: it has no spot fetcher "
+                             "or no pairing of another venue's perps")
+        if spot_prices != "own":
+            raise ValueError("spot_source needs spot_prices='own': a spot leg on another venue "
+                             "is valued at its own closes, not at the perp's price")
+        if not include_spot and not any(i.endswith(SPOT_COLUMN_SUFFIX) for i in instruments or []):
+            raise ValueError("spot_source asks for spot columns: set include_spot or name "
+                             "'-SPOT' instruments")
 
     start_ts = _to_utc_timestamp(start)
     end_ts = _to_utc_timestamp(end)
@@ -741,10 +797,16 @@ def build_snapshot(
 
         spot_complete = True
         if include_spot:
-            discover_spot = source_spec.get("discover_spot_universe")
-            if discover_spot is None:
-                raise ValueError(f"{source!r} does not support spot markets")
-            discovered_spot = discover_spot((start_ts, end_ts))
+            if spot_source is not None:
+                # The other venue's pairs for THIS venue's perps; its archive
+                # lists delisted pairs too, so the pairing is not survivors only.
+                discovered_spot = _SOURCES[spot_source]["pair_spot_universe"](
+                    instruments_sorted, (start_ts, end_ts))
+            else:
+                discover_spot = source_spec.get("discover_spot_universe")
+                if discover_spot is None:
+                    raise ValueError(f"{source!r} does not support spot markets")
+                discovered_spot = discover_spot((start_ts, end_ts))
             if discovered_spot is None:
                 spot_complete = False
             else:
@@ -786,10 +848,15 @@ def build_snapshot(
             )
         )
     if spot_coins:
-        fetch_spot = source_spec.get("fetch_spot")
+        spot_spec = _SOURCES[spot_source] if spot_source is not None else source_spec
+        fetch_spot = spot_spec.get("fetch_spot")
         if fetch_spot is None:
             raise ValueError(f"{source!r} does not support spot markets (requested {spot_coins})")
-        histories.update(fetch_spot(spot_coins, start_ts, end_ts, interval, on_missing=on_missing))
+        spot_histories = fetch_spot(spot_coins, start_ts, end_ts, interval, on_missing=on_missing)
+        if spot_source is not None:
+            spot_histories = _in_usdc(spot_histories, spot_spec["spot_quote_rate"](
+                start_ts, end_ts, interval))
+        histories.update(spot_histories)
 
     if not histories:
         raise ValueError(
@@ -892,6 +959,7 @@ def build_snapshot(
         no_funding_instruments,
         min_daily_volume_usd,
         spot_prices,
+        spot_source,
     )
     if delisted_without_history:
         manifest["delisted_without_history"] = delisted_without_history
@@ -984,6 +1052,7 @@ def build_snapshot(
         "no_funding_instruments": no_funding_instruments,
         "min_daily_volume_usd": min_daily_volume_usd,
         "spot_prices": spot_prices,
+        "spot_source": spot_source,
         "delisted_without_history": delisted_without_history,
         "history_truncated": history_truncated,
     }
@@ -1055,6 +1124,7 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             "min_daily_volume_usd": manifest.get("min_daily_volume_usd"),
             # Absent from every snapshot built under the default.
             "spot_prices": manifest.get("spot_prices", "perp"),
+            "spot_source": manifest.get("spot_source"),
             # Absent from every snapshot that had no such instruments.
             "delisted_without_history": manifest.get("delisted_without_history", []),
             "history_truncated": manifest.get("history_truncated", {}),

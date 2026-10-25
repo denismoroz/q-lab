@@ -1,0 +1,14 @@
+{
+  "source": "https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll",
+  "read": "2026-10-25",
+  "note": "public endpoint behind https://www.binance.com/en/fee/cryptoFee; the USDC entry on the Arbitrum One network",
+  "entry": {
+    "coin": "USDC",
+    "network": "ARBITRUM",
+    "withdrawFee": "0.4",
+    "withdrawMin": "3",
+    "withdrawEnable": true,
+    "estimatedArrivalTime": 1,
+    "minConfirm": 120
+  }
+}

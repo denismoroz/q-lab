@@ -1721,3 +1721,75 @@ def test_with_no_selection_period_a_powerless_bar_waits_too() -> None:
         metrics={"forward_days": 400.0, "noise_power": 0.03, "min_capital_usd": 10.0})
     assert routing.route == "needs-forward"
     assert routing.reason.startswith("too early to tell: 400 days fail only shape_aware_edge")
+
+
+def test_spot_legs_from_another_venue_are_a_different_request(session, tmp_path) -> None:
+    """A snapshot is reused only for the spot venue it was built with; one with
+    no such key (every snapshot built before the option) used the source's own."""
+    _register_snapshot(session, tmp_path, snapshot_id="snap-venue", instruments=INSTRUMENTS,
+                       universe_complete=False)
+    manifest_path = tmp_path / "snap-venue" / "manifest.json"
+
+    def find(spot_source: str | None) -> str | None:
+        return _find_matching_snapshot(
+            session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+            end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=INSTRUMENTS,
+            include_spot=False, min_daily_volume_usd=None, spot_source=spot_source)
+
+    assert find(None) == "snap-venue" and find("binance") is None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["spot_source"] = "binance"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert find("binance") == "snap-venue" and find(None) is None
+
+
+def test_no_spot_source_is_not_written_into_the_spec_row(session) -> None:
+    """Spec rows recorded before the option existed must still match."""
+    from qlab.pipeline.evaluate import _get_or_create_spec_row
+
+    plain = _make_spec()
+    row = _get_or_create_spec_row(session, plain)
+    assert "spot_source" not in row.data_requirements
+    assert _get_or_create_spec_row(session, plain).id == row.id
+
+    mixed = _make_spec(data={**plain.data.model_dump(), "include_spot": True,
+                             "spot_prices": "own", "spot_source": "binance"})
+    mixed_row = _get_or_create_spec_row(session, mixed)
+    assert mixed_row.id != row.id and mixed_row.data_requirements["spot_source"] == "binance"
+
+
+class ToyWithFlatFees(ToyStrategy):
+    """The toy book that also pays a flat fee, as a share of equity, on bar 3."""
+
+    name = "toy-flat-fees"
+
+    def extra_costs(self, panel: MarketPanel, params) -> pd.Series:
+        fees = pd.Series(0.0, index=panel.prices.index)
+        fees.iloc[3] = float(params["flat_fee"])
+        return fees
+
+
+def test_a_strategys_own_costs_reach_the_net_return(session, tmp_path) -> None:
+    """Flat dollar fees (moving money between venues) are not a rate on turnover;
+    a strategy that has them says so with `extra_costs` and the run pays them."""
+    _register_discovered(session, tmp_path)
+    rules = _ruleset([CAPITAL_FIT_GENEROUS])
+
+    def run(**params):
+        spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:ToyWithFlatFees",
+                          params={"flat_fee": 0.0, **params},
+                          sources={"flat_fee": "owner 2026-01-01: test fixture",
+                                   "costs": "owner 2026-01-01: test fixture",
+                                   "min_leg_notional": "owner 2026-01-01: test fixture"})
+        return evaluate_spec(spec, session=session, ruleset=rules, deployable_capital_usd=1000.0,
+                             check_lookahead=False)
+
+    free = run()
+    paying = run(flat_fee=0.01)
+    assert paying.error is None
+    n_periods = free.metrics["n_periods"]
+    assert paying.metrics["ann_return_net"] < free.metrics["ann_return_net"]
+    # One bar paid 1% of equity: the total return fell by about that much.
+    total_free = (1 + free.metrics["ann_return_net"]) ** (n_periods / 8760.0) - 1
+    total_paying = (1 + paying.metrics["ann_return_net"]) ** (n_periods / 8760.0) - 1
+    assert total_free - total_paying == pytest.approx(0.01, rel=0.1)

@@ -458,6 +458,7 @@ def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Tim
     `qlab.diagnose.diagnose_spec` does."""
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
+    from qlab.harness.strategy import own_costs
     from qlab.night import with_end
     from qlab.pipeline.evaluate import (
         _slice_rows,
@@ -485,10 +486,13 @@ def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Tim
     if last - first < 3:
         raise StandHistoryMissing(f"{spec_path}: fewer than three bars before {cut:%Y-%m-%d}")
     seen = _slice_rows(panel, 0, last)  # the realised period never reaches the strategy
-    weights = resolve_strategy(spec.code_ref).target_weights(seen, spec.params)
+    strategy = resolve_strategy(spec.code_ref)
+    weights = strategy.target_weights(seen, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    return run_backtest(seen, weights, costs, seen.funding).net_return.iloc[first:]
+    return run_backtest(seen, weights, costs, seen.funding,
+                        extra_cost=own_costs(strategy, seen, spec.params)
+                        ).net_return.iloc[first:]
 
 
 # ---------------------------------------------------------------------------

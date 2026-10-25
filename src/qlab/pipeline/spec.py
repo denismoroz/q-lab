@@ -59,6 +59,13 @@ class SpecData(BaseModel):
     price. The default keeps every recorded verdict as it was; ``own`` is a
     separate run of the same idea, not a replacement.
     """
+    spot_source: str | None = None
+    """The venue whose spot markets are the spot legs, when it is not `source`
+    itself (docs/FRAB_BINANCE_SPOT.md): `source: hyperliquid` with
+    `spot_source: binance` is Hyperliquid perps held against Binance spot. The
+    spot columns are priced in USDC at the spot venue's own closes, so it needs
+    `spot_prices: own` and spot columns in the spec. `None` (the default) is the
+    source's own spot markets, as before."""
     start: date
     end: date
     instruments: list[str] | None = None
@@ -94,6 +101,19 @@ class SpecData(BaseModel):
         if value is not None and value <= 0:
             raise ValueError(f"min_daily_volume_usd must be > 0 when given, got {value}")
         return value
+
+    @model_validator(mode="after")
+    def _spot_source_is_another_venue_priced_by_itself(self) -> SpecData:
+        if self.spot_source is None:
+            return self
+        if self.spot_source == self.source:
+            raise ValueError("spot_source is the source itself: omit it")
+        if self.spot_prices != "own":
+            raise ValueError(
+                "spot_source: a spot leg on another venue is valued at its own closes: "
+                "set spot_prices: own"
+            )
+        return self
 
     @model_validator(mode="after")
     def _own_spot_prices_need_spot_columns(self) -> SpecData:

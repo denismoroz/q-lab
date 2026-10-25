@@ -243,3 +243,19 @@ def test_spot_hedge_shape_applies_hedge_conditionally() -> None:
     assert weights.loc[prices.index[1], "PERP"] == -1.0  # above threshold -> hedged
     assert weights.loc[prices.index[2], "PERP"] == 0.0  # NaN funding -> condition False
     assert weights.loc[prices.index[3], "PERP"] == 0.0  # below threshold again
+
+
+def test_own_costs_is_none_for_a_strategy_without_them_and_its_series_otherwise() -> None:
+    import pandas as pd
+
+    from qlab.harness.strategy import own_costs
+
+    class Plain:
+        pass
+
+    class Paying:
+        def extra_costs(self, panel, params):
+            return pd.Series([0.0, float(params["fee"])])
+
+    assert own_costs(Plain(), None, {}) is None
+    assert own_costs(Paying(), None, {"fee": 0.01}).iloc[1] == 0.01

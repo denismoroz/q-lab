@@ -1071,3 +1071,147 @@ class TestSpotPrices:
             snap.build_snapshot("hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
                                 include_spot=True, spot_prices="mid",
                                 snapshots_dir=tmp_path, session=session)
+
+
+# --------------------------------------------------------------------------
+# Spot legs on another venue (docs/FRAB_BINANCE_SPOT.md): Hyperliquid perps
+# against Binance spot, priced in USDC, a coin eligible only where both exist.
+# --------------------------------------------------------------------------
+
+USDT_PER_USDC = 1.001
+SPOT_PREMIUM = 1.002  # the other venue's spot sits 0.2% above the perps' ramp
+
+
+def _fake_other_venue_spot(coins, start, end, interval, *, on_missing="raise"):
+    full_index = pd.date_range(start, end, freq="1h", tz="UTC")
+    out = {}
+    for i, coin in enumerate(coins):
+        idx = full_index[3 * i:]  # each later coin lists three bars later
+        column = f"{coin}-SPOT"
+        prices = _ramp_prices(idx) * USDT_PER_USDC * SPOT_PREMIUM  # in USDT, a hair off the perp
+        out[column] = InstrumentHistory(
+            instrument=column, prices=prices, funding=pd.Series(dtype=float),
+            volume=pd.Series(_DEFAULT_VOLUME, index=idx),
+            trade_count=pd.Series(1, index=idx, dtype="int64"),
+            first_seen=idx[0], last_seen=idx[-1], is_delisted=False, has_funding=False,
+            high=prices * 1.001,
+        )
+    return out
+
+
+def _fake_quote_rate(start, end, interval):
+    index = pd.date_range(start, end, freq="1h", tz="UTC")
+    return pd.Series(USDT_PER_USDC, index=index)
+
+
+@pytest.fixture()
+def patched_other_venue(monkeypatch, patched_source):
+    """The perps are `patched_source`'s (BTC, ETH, DEADCOIN); the other venue
+    lists a spot pair for BTC and ETH only."""
+    monkeypatch.setitem(snap._SOURCES, "otherspot", {
+        "fetch_spot": _fake_other_venue_spot,
+        "pair_spot_universe": lambda perps, rng: [f"{c}-SPOT" for c in perps if c != "DEADCOIN"],
+        "spot_quote_rate": _fake_quote_rate,
+    })
+    return patched_source
+
+
+def _mixed(session, tmp_path, **kw):
+    return snap.build_snapshot(
+        "hyperliquid", None, "2024-01-01", "2024-01-01T08:00:00", "1h", include_spot=True,
+        spot_prices="own", spot_source="otherspot", snapshots_dir=tmp_path, session=session, **kw)
+
+
+class TestSpotFromAnotherVenue:
+    def test_perps_come_from_the_source_and_spots_from_the_other_venue_in_usdc(
+        self, session, patched_other_venue, tmp_path
+    ):
+        panel = _mixed(session, tmp_path)
+        assert {"BTC", "ETH", "BTC-SPOT", "ETH-SPOT"} <= set(panel.instruments)
+        assert panel.meta["spot_source"] == "otherspot"
+        # The spot is the other venue's USDT price over the USDT-per-USDC rate: its
+        # own price in dollars, not the perp's price and not the raw USDT price.
+        expected = _ramp_prices(panel.prices.index) * SPOT_PREMIUM
+        pd.testing.assert_series_equal(panel.prices["BTC-SPOT"], expected, check_names=False)
+        assert panel.high["BTC-SPOT"].iloc[0] == pytest.approx(expected.iloc[0] * 1.001)
+
+    def test_a_coin_the_other_venue_has_no_pair_for_gets_no_spot_column(
+        self, session, patched_other_venue, tmp_path
+    ):
+        panel = _mixed(session, tmp_path)
+        assert "DEADCOIN" in panel.instruments  # its perp is still in the panel
+        assert "DEADCOIN-SPOT" not in panel.instruments  # but it can never be a pair
+        assert panel.meta["universe_complete"] is True  # a perp with no pair is not a hole
+
+    def test_a_pair_is_tradeable_only_where_both_legs_are(
+        self, session, patched_other_venue, tmp_path
+    ):
+        """ETH's spot lists three bars after BTC's: before that the ETH pair is not
+        enterable even though the ETH perp trades."""
+        panel = _mixed(session, tmp_path)
+        eth_spot_first = panel.prices["ETH-SPOT"].first_valid_index()
+        assert eth_spot_first > panel.prices.index[0]
+        before = panel.tradeable.loc[:eth_spot_first].iloc[:-1]
+        assert not before["ETH-SPOT"].any()
+        assert before["ETH"].any()  # the perp alone trades there
+        pair = panel.tradeable["ETH"] & panel.tradeable["ETH-SPOT"]
+        assert not pair.loc[: eth_spot_first - pd.Timedelta(hours=1)].any()
+        assert pair.loc[eth_spot_first:].iloc[:-1].all()
+
+    def test_the_spot_column_is_never_marked_at_the_perp(
+        self, session, patched_other_venue, tmp_path
+    ):
+        panel = _mixed(session, tmp_path)
+        perp = panel.prices["BTC"]
+        assert not (panel.prices["BTC-SPOT"] == perp).all()
+
+    def test_the_snapshot_remembers_its_spot_venue_and_has_its_own_id(
+        self, session, patched_other_venue, tmp_path
+    ):
+        mixed = _mixed(session, tmp_path)
+        loaded = snap.load_snapshot(mixed.snapshot_id, session=session)
+        assert loaded.meta["spot_source"] == "otherspot"
+        assert loaded.meta["spot_prices"] == "own"
+
+    def test_an_ordinary_request_has_no_spot_source_and_keeps_its_manifest_bytes(
+        self, session, patched_source_with_spot, tmp_path
+    ):
+        panel = snap.build_snapshot(
+            "hyperliquid", None, "2024-01-01", "2024-01-01T05:00:00", "1h",
+            include_spot=True, snapshots_dir=tmp_path, session=session)
+        assert panel.meta["spot_source"] is None
+        manifest = (tmp_path / panel.snapshot_id / "manifest.json").read_text(encoding="utf-8")
+        assert "spot_source" not in manifest
+        args = ("hyperliquid", ["A"], pd.Timestamp("2026-01-01", tz="UTC"),
+                pd.Timestamp("2026-01-02", tz="UTC"), "1h", False, [], None)
+        assert "spot_source" not in snap._canonical_manifest(*args)
+        assert snap._canonical_manifest(*args, "own", "binance")["spot_source"] == "binance"
+
+    def test_the_request_is_refused_when_it_cannot_mean_what_it_says(
+        self, session, patched_other_venue, tmp_path
+    ):
+        def build(**kw):
+            args = dict(include_spot=True, spot_prices="own", snapshots_dir=tmp_path,
+                        session=session)
+            args.update(kw)
+            return snap.build_snapshot("hyperliquid", None, "2024-01-01",
+                                       "2024-01-01T05:00:00", "1h", **args)
+
+        with pytest.raises(ValueError, match="needs spot_prices='own'"):
+            build(spot_source="otherspot", spot_prices="perp")
+        with pytest.raises(ValueError, match="is the source itself"):
+            build(spot_source="hyperliquid")
+        with pytest.raises(ValueError, match="unknown spot_source"):
+            build(spot_source="nowhere")
+        with pytest.raises(ValueError, match="asks for spot columns"):
+            build(spot_source="otherspot", include_spot=False)
+        with pytest.raises(ValueError, match="cannot be a spot_source"):
+            build(spot_source="aster")
+
+    def test_a_bar_without_a_usdc_rate_has_no_price(self):
+        idx = pd.date_range("2026-01-01", periods=3, freq="1h", tz="UTC")
+        hist = _hist("BTC-SPOT", idx, False, prices=pd.Series([100.0, 101.0, 102.0], index=idx),
+                     has_funding=False)
+        rate = pd.Series([1.0, 1.01], index=idx[:2])  # no rate for the last bar
+        out = snap._in_usdc({"BTC-SPOT": hist}, rate)["BTC-SPOT"]
+        assert list(out.prices) == pytest.approx([100.0, 101.0 / 1.01])

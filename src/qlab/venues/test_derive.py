@@ -13,6 +13,7 @@ from qlab.venues.config import VenueConfig
 from qlab.venues.derive import (
     atomic_execution,
     data_forward_available,
+    derive_cross_venue_metrics,
     derive_venue_metrics,
     venue_supported,
 )
@@ -195,3 +196,34 @@ def test_derive_venue_metrics_single_leg_on_unconfigured_venue() -> None:
         None, snapshot_source="ghost", venue_id="ghost", simultaneous_legs=1
     )
     assert metrics == {"atomic_execution": 1.0}
+
+
+def _cross(perp, spot, **kw):
+    return derive_cross_venue_metrics(
+        perp, spot, snapshot_source="hyperliquid", perp_venue_id="hyperliquid",
+        simultaneous_legs=2, **kw)
+
+
+def test_a_book_across_two_venues_needs_an_adapter_on_both() -> None:
+    """Hyperliquid perps against Binance spot: frab can place orders on
+    Hyperliquid only, so the book is not supported, however well HL alone does."""
+    metrics = _cross(HYPERLIQUID_LIKE, BINANCE_LIKE)
+    assert metrics["venue_supported"] == 0.0
+    assert metrics["data_forward_available"] == 1.0
+
+
+def test_a_stranded_leg_across_venues_is_the_spot_venues_question() -> None:
+    """Hyperliquid's rollback unwinds Hyperliquid's own legs; with nothing
+    recorded for the spot venue the answer is unknown (the metric is absent),
+    not the perp venue's yes."""
+    assert "atomic_execution" not in _cross(HYPERLIQUID_LIKE, BINANCE_LIKE)
+    with_recovery = VenueConfig(id="spotx", title="X", execution_adapter=True,
+                                free_public_data=True,
+                                uncovered_leg_recovery="unwinds the perp leg")
+    both = _cross(HYPERLIQUID_LIKE, with_recovery)
+    assert both["atomic_execution"] == 1.0 and both["venue_supported"] == 1.0
+
+
+def test_an_unknown_spot_venue_leaves_support_unknown() -> None:
+    metrics = _cross(HYPERLIQUID_LIKE, None)
+    assert "venue_supported" not in metrics and "data_forward_available" not in metrics

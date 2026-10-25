@@ -22,12 +22,12 @@ REPO = Path(__file__).resolve().parents[2]
 # ---- night/research.yaml ----------------------------------------------------------------
 
 
-def test_the_research_plan_has_the_four_strategies_and_runs_nightly() -> None:
+def test_the_research_plan_has_the_five_strategies_and_runs_nightly() -> None:
     from qlab.pipeline.spec import load_spec
 
     plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
     assert plan["cadence"] == "nightly"
-    assert set(plan["strategies"]) == {"bv2", "trend", "frab", "xsmom"}
+    assert set(plan["strategies"]) == {"bv2", "trend", "frab", "xsmom", "frab-binance-spot"}
     for name, entry in plan["strategies"].items():
         assert entry["ideas"] and all(isinstance(i, str) for i in entry["ideas"]), name
         assert entry["specs"] and entry["docs"], name
@@ -351,3 +351,23 @@ def test_the_owners_ideas_reach_the_researcher_verbatim() -> None:
     assert "«включать/отключать хеджирование почаще»" in text and "hypothesis" in text
     plan = night.load_research_plan()
     assert any("хеджирование почаще" in i for i in plan["strategies"]["bv2"]["owner_ideas"])
+
+
+def test_five_researcher_strategies_leave_one_of_the_six_places_free() -> None:
+    """Owner, 2026-10-25: FRAB with the spot on Binance is a new strategy with its
+    own place; the five of night/research.yaml fit under night/limits.yaml's six."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from qlab.registry.models import Base
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool,
+                           connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as session:
+        free, cap, active = night.strategy_slots(
+            session, night.load_research_plan(REPO / "night/research.yaml"),
+            REPO / "night/limits.yaml")
+    assert cap == 6 and len(active) == 5 and free == 1
+    assert "frab-binance-spot" in active

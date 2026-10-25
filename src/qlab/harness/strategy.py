@@ -166,3 +166,13 @@ def validate_weights(panel: MarketPanel, weights: pd.DataFrame) -> None:
             f"non-zero weight on non-tradeable instrument(s), e.g. at "
             f"{first_row} in {first_cols}"
         )
+
+def own_costs(strategy: object, panel: MarketPanel, params: Mapping[str, object]
+              ) -> pd.Series | None:
+    """The costs a strategy pays that are not a rate on turnover -- a flat fee for
+    moving money between venues -- as a share of equity per bar, or None when it
+    has none (it defines no `extra_costs(panel, params)`). Every caller that
+    backtests a strategy asks this and hands the answer to
+    `qlab.harness.run.run_backtest(extra_cost=...)`."""
+    method = getattr(strategy, "extra_costs", None)
+    return method(panel, params) if callable(method) else None

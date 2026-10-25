@@ -432,6 +432,74 @@ def _spot_candles(client: httpx.Client, coin: str, interval: str, start: pd.Time
     return frame.sort_index()
 
 
+SPOT_ARCHIVE_PREFIX = "data/spot/monthly/klines/"
+_SPOT_ARCHIVE_ENTRY = re.compile(
+    r"<Prefix>" + re.escape(SPOT_ARCHIVE_PREFIX) + r"([^/<]+)/</Prefix>")
+
+# Hyperliquid names a contract on a thousand units of a cheap token with a
+# lowercase k (kPEPE, kBONK, kSHIB): its price is 1000 x the token's price on
+# any spot market, which quotes one unit.
+_THOUSAND_PREFIX = "k"
+THOUSAND = 1000.0
+
+
+def spot_pair(coin: str) -> tuple[str, float]:
+    """The Binance spot base asset that stands for a Hyperliquid perp's coin,
+    and the multiplier that turns its one-unit price into the perp's unit:
+    ``BTC`` -> ``("BTC", 1.0)``, ``kPEPE`` -> ``("PEPE", 1000.0)``. A name
+    that is not the same asset on both venues (a renamed token, a different
+    token under the same ticker) is not handled here: it either has no pair
+    or fails the parity check on prices (`qlab.data.snapshot.spot_is_another_asset`)."""
+    if len(coin) > 1 and coin.startswith(_THOUSAND_PREFIX) and coin[1:].isupper():
+        return coin[1:], THOUSAND
+    return coin, 1.0
+
+
+def spot_archive_symbols(client: httpx.Client) -> list[str]:
+    """Every symbol with a monthly spot kline folder in the public archive: the
+    pairs Binance ever listed on its spot market, delisted ones included."""
+    symbols: list[str] = []
+    marker = ""
+    while True:
+        params = {"delimiter": "/", "prefix": SPOT_ARCHIVE_PREFIX}
+        if marker:
+            params["marker"] = marker
+        resp = client.get(ARCHIVE_LIST_URL, params=params, timeout=30.0)
+        resp.raise_for_status()
+        symbols += _SPOT_ARCHIVE_ENTRY.findall(resp.text)
+        found = _NEXT_MARKER.search(resp.text)
+        if not found:
+            return sorted(set(symbols))
+        marker = found.group(1)
+        polite_sleep()
+
+
+def pair_spot_universe(perp_instruments: Sequence[str],
+                       as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None) -> list[str]:
+    """The ``<COIN>-SPOT`` columns for the Hyperliquid perps (`perp_instruments`)
+    that have, or ever had, a USDT spot pair on Binance -- delisted pairs
+    included, so the list is not survivors only. A perp without a pair gets no
+    spot column: it was never a spot-versus-perp pair (point-in-time truth, not
+    a hole in the list). ``as_of_range`` is accepted for symmetry with the other
+    discovery functions; the archive lists every pair ever, whatever the window."""
+    with httpx.Client() as client:
+        listed = set(spot_archive_symbols(client))
+    out = []
+    for coin in perp_instruments:
+        base, _scale = spot_pair(coin)
+        if f"{base.upper()}USDT" in listed:
+            out.append(f"{coin}{SPOT_COLUMN_SUFFIX}")
+    return sorted(out)
+
+
+def fetch_quote_rate(start: pd.Timestamp, end: pd.Timestamp, interval: str) -> pd.Series:
+    """How many USDT one USDC costs on Binance spot (``USDCUSDT`` closes), per
+    bar. A spot token bought for USDT is worth its USDT price divided by this in
+    USDC, the dollar the perpetual leg and the strategy's money are counted in."""
+    history = fetch_spot_universe(["USDC"], start, end, interval)[f"USDC{SPOT_COLUMN_SUFFIX}"]
+    return history.prices
+
+
 def fetch_spot_universe(
     coins: Sequence[str],
     start: pd.Timestamp,
@@ -446,14 +514,15 @@ def fetch_spot_universe(
     with httpx.Client() as client:
         def fetch_range(name: str, a: pd.Timestamp, b: pd.Timestamp) -> InstrumentHistory:
             coin = name[: -len(SPOT_COLUMN_SUFFIX)]
-            candles = _spot_candles(client, coin, interval, a, b)
+            base, scale = spot_pair(coin)
+            candles = _spot_candles(client, base, interval, a, b)
             if candles.empty:
                 raise ValueError(f"binance spot: no kline data for {coin!r} in [{a}, {b}]")
-            prices = candles["price"]
+            prices = candles["price"] * scale
             return InstrumentHistory(
                 instrument=name, prices=prices, funding=pd.Series(dtype=float),
-                volume=candles["volume"], trade_count=candles["trade_count"],
-                high=candles["high"], first_seen=prices.index.min(),
+                volume=candles["volume"] / scale, trade_count=candles["trade_count"],
+                high=candles["high"] * scale, first_seen=prices.index.min(),
                 last_seen=prices.index.max(), is_delisted=False, has_funding=False,
             )
 
@@ -507,6 +576,9 @@ __all__ = [
     "fetch_candles",
     "fetch_funding",
     "fetch_instrument_history",
+    "fetch_quote_rate",
     "fetch_spot_universe",
     "fetch_universe",
+    "pair_spot_universe",
+    "spot_pair",
 ]

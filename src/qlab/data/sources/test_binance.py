@@ -175,3 +175,49 @@ def test_fetch_instrument_history_raises_on_no_klines():
 
     with httpx.Client() as client, pytest.raises(ValueError, match="no kline data"):
         bn.fetch_instrument_history(client, "NOPE", "1h", start, end, exchange_info={})
+
+
+# --------------------------------------------------------------------------
+# Binance spot as the spot leg of Hyperliquid perps (docs/FRAB_BINANCE_SPOT.md)
+# --------------------------------------------------------------------------
+
+
+def test_a_thousand_unit_contract_maps_to_the_one_unit_token_with_a_scale():
+    assert bn.spot_pair("kPEPE") == ("PEPE", 1000.0)
+    assert bn.spot_pair("kBONK") == ("BONK", 1000.0)
+    assert bn.spot_pair("BTC") == ("BTC", 1.0)
+    # A lowercase k is only the thousand prefix in front of an upper-case ticker.
+    assert bn.spot_pair("kaito") == ("kaito", 1.0)
+    assert bn.spot_pair("k") == ("k", 1.0)
+
+
+def test_pairing_keeps_only_perps_that_have_a_usdt_spot_pair_delisted_ones_included(monkeypatch):
+    monkeypatch.setattr(bn, "spot_archive_symbols",
+                        lambda client: ["BTCUSDT", "SRMUSDT", "PEPEUSDT", "ETHBTC", "HYPEUSDC"])
+    found = bn.pair_spot_universe(["BTC", "SRM", "kPEPE", "PURR", "ETH", "HYPE"])
+    # PURR has no pair at all; ETH only an ETHBTC pair; HYPE only a USDC pair.
+    assert found == ["BTC-SPOT", "SRM-SPOT", "kPEPE-SPOT"]
+
+
+@respx.mock
+def test_spot_prices_of_a_thousand_unit_contract_are_scaled_to_its_unit(monkeypatch, tmp_path):
+    monkeypatch.setattr(bn, "fetch_universe_resumable",
+                        lambda columns, start, end, interval, **kw: {
+                            c: kw["fetch_one"](c) for c in columns})
+    start = pd.Timestamp("2026-01-01T00:00:00", tz="UTC")
+    end = pd.Timestamp("2026-01-01T01:00:00", tz="UTC")
+    seen = []
+
+    def answer(request):
+        seen.append(request.url.params["symbol"])
+        return httpx.Response(200, json=[_kline(start, 0.004), _kline(end, 0.005)])
+
+    respx.get(f"{bn.SPOT_BASE_URL}/api/v3/klines").mock(side_effect=answer)
+    histories = bn.fetch_spot_universe(["kPEPE", "BTC"], start, end, "1h")
+    assert seen == ["PEPEUSDT", "BTCUSDT"]  # the pair is PEPE's, not a "KPEPE" that does not exist
+    pepe, btc = histories["kPEPE-SPOT"], histories["BTC-SPOT"]
+    assert list(pepe.prices) == pytest.approx([4.0, 5.0])
+    assert list(pepe.high) == pytest.approx([4.0, 5.0])
+    assert list(pepe.volume) == pytest.approx([0.01, 0.01])  # 10 PEPE = 0.01 thousand
+    assert list(btc.prices) == [0.004, 0.005]  # an ordinary coin is untouched
+    assert not pepe.has_funding

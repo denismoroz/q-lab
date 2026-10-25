@@ -56,7 +56,7 @@ strategy's own trades, not hourly drift.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -117,12 +117,52 @@ class _Position:
     peak_funding: float = 0.0
     closed: int | None = None
     exit: str = ""
+    # What a venue hook keeps for the position (`LiveFrabHooks`); the plain
+    # driver never reads them.
+    entry_px: float = 0.0
+    cash: float = 0.0
 
 
 @dataclass(frozen=True)
 class LiveFrabRun:
     weights: pd.DataFrame
     positions: list[_Position] = field(default_factory=list)
+    # How many coins could be entered on each bar (both legs priced and
+    # tradeable, a signal known) and how many positions were open after it.
+    eligible: pd.Series | None = None
+    held: pd.Series | None = None
+    # Costs that are not a rate on turnover, as a share of the budget per bar
+    # (`LiveFrabHooks.extra_cost_usd`); None when the driver has none.
+    extra_costs: pd.Series | None = None
+    diagnostics: dict[str, float] = field(default_factory=dict)
+
+
+class LiveFrabHooks:
+    """What a driver adds around the live decisions without changing them: the
+    fee the engine counts a round trip at, and what happens to a position's
+    money. This one does nothing, which is `LiveFrab` as it has always run."""
+
+    fee_rate: float = 0.0
+    n_bars: int = 0
+
+    def on_open(self, pos: _Position, i: int) -> None:
+        """A position was opened on bar i (after the engine sized it)."""
+
+    def on_close(self, pos: _Position, i: int) -> None:
+        """A position was closed on bar i by the engine's decision."""
+
+    def on_bar(self, i: int, open_: dict[str, _Position], done: list[_Position]) -> bool:
+        """End of bar i, after exits and entries. May resize or close positions
+        (closed ones move from `open_` to `done`); True if it changed any."""
+        return False
+
+    def extra_cost_usd(self) -> np.ndarray | None:
+        """Dollar costs per bar that the harness's rate on turnover does not
+        cover, or None."""
+        return None
+
+    def diagnostics(self) -> dict[str, float]:
+        return {}
 
 
 def size_for(params: FrabParams, leverage: float) -> float:
@@ -159,10 +199,19 @@ class LiveFrab:
         universe = [str(c) for c in params.pop("universe")]
         leverage = {str(k): float(v) for k, v in dict(params.pop("leverage")).items()}
         p = FrabParams.from_dict(params)
+        return self._simulate(panel, p, universe, leverage, None)
+
+    def _simulate(self, panel: MarketPanel, p: FrabParams, universe: list[str],
+                  leverage: dict[str, float],
+                  make_hooks: Callable[[list[str], dict[str, np.ndarray], dict[str, np.ndarray],
+                                        dict[str, np.ndarray], dict[str, np.ndarray]],
+                                       LiveFrabHooks] | None) -> LiveFrabRun:
+        """The live decisions over `universe`. `make_hooks` (given the coins and
+        their perp prices, spot marks, bar highs and funding rates) supplies the
+        venue's own handling of money; None is the plain driver."""
         index = panel.prices.index
         columns = panel.prices.columns
         n = len(index)
-        fee_rate = _constants.PERP_TAKER + _constants.SPOT_TAKER
         coins = [c for c in universe if c in columns and f"{c}{SPOT_COLUMN_SUFFIX}" in columns]
         missing = sorted(set(universe) - set(coins))
         if missing:
@@ -174,6 +223,15 @@ class LiveFrab:
         rates = {c: panel.funding[c].to_numpy(dtype=float) for c in coins}
         ok = {c: (panel.tradeable[c] & panel.tradeable[f"{c}{SPOT_COLUMN_SUFFIX}"]).to_numpy(bool)
                  & ~np.isnan(px[c]) & ~np.isnan(sp[c]) for c in coins}
+        if make_hooks is None:
+            hooks = LiveFrabHooks()
+            hooks.fee_rate = _constants.PERP_TAKER + _constants.SPOT_TAKER
+        else:
+            highs = {c: panel.high[c].to_numpy(dtype=float) for c in coins}
+            hooks = make_hooks(coins, px, sp, highs, rates)
+        fee_rate = hooks.fee_rate
+        eligible = np.zeros(n)
+        held_count = np.zeros(n)
 
         exposure = np.zeros((n, len(columns)))
         col = {c: (columns.get_loc(c), columns.get_loc(f"{c}{SPOT_COLUMN_SUFFIX}")) for c in coins}
@@ -188,6 +246,7 @@ class LiveFrab:
                 if not np.isnan(rates[c][i]) and not np.isnan(px[c][i]):
                     pos.gross_funding += pos.units * px[c][i] * rates[c][i]
             signal = {c: signal_at(rates[c], i, p.signal_window_hours) for c in coins}
+            eligible[i] = sum(1 for c in coins if ok[c][i] and signal[c] is not None)
             # 2) exits, phase by phase, as the live states evaluate them
             for c in list(open_):
                 pos = open_[c]
@@ -225,6 +284,7 @@ class LiveFrab:
                 if decision != _signals.TwoPhaseDecision.NONE:
                     pos.closed, pos.exit = i, str(decision)
                     done.append(open_.pop(c))
+                    hooks.on_close(pos, i)
                     decided[i] = True
             # 3) entries into the slots left
             slots = min(p.concurrency_cap - len(open_),
@@ -244,8 +304,12 @@ class LiveFrab:
                             entry_signal_annual=s, safety_mult=p.safety_mult,
                             base_min_hold_hours=p.base_min_hold_hours,
                             cap_min_hold_hours=p.cap_min_hold_hours),
-                        total_fees=size * fee_rate * 2)
+                        total_fees=size * fee_rate * 2, entry_px=px[c][i])
+                    hooks.on_open(open_[c], i)
                     decided[i] = True
+            if hooks.on_bar(i, open_, done):
+                decided[i] = True
+            held_count[i] = len(open_)
             for c, pos in open_.items():
                 j_perp, j_spot = col[c]
                 price = px[c][i] if not np.isnan(px[c][i]) else px[c][pos.opened]
@@ -262,7 +326,13 @@ class LiveFrab:
         gaps = holdable_gaps(panel.prices, panel.funding,
                              panel.meta.get("no_funding_instruments", ()))
         weights = weights.where(panel.tradeable | gaps, 0.0)
-        return LiveFrabRun(weights=weights, positions=done + list(open_.values()))
+        extra_usd = hooks.extra_cost_usd()
+        extra = (None if extra_usd is None
+                 else pd.Series(extra_usd / p.budget_cap_usdc, index=index))
+        return LiveFrabRun(
+            weights=weights, positions=done + list(open_.values()),
+            eligible=pd.Series(eligible, index=index), held=pd.Series(held_count, index=index),
+            extra_costs=extra, diagnostics=hooks.diagnostics())
 
 
 __all__ = ["HOURS_PER_YEAR", "FrabParams", "LiveFrab", "LiveFrabRun", "signal_at", "size_for"]

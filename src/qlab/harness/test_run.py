@@ -239,3 +239,26 @@ def test_look_ahead_strategy_passes_validate_weights_but_shows_absurd_sharpe() -
     # sustains; an honest trailing-momentum strategy on pure noise does not.
     assert cheat_sharpe > 10.0
     assert cheat_sharpe > honest_sharpe + 5.0
+
+
+def test_extra_cost_is_a_cost_on_top_of_the_rate_on_turnover() -> None:
+    idx = pd.date_range("2026-01-01", periods=4, freq="1h", tz="UTC")
+    prices = pd.DataFrame({"A": [100.0, 100.0, 100.0, 100.0]}, index=idx)
+    panel = MarketPanel(
+        snapshot_id="t", prices=prices, funding=pd.DataFrame(0.0, index=idx, columns=["A"]),
+        tradeable=pd.DataFrame(True, index=idx, columns=["A"]), meta={})
+    weights = pd.DataFrame({"A": [0.0, 0.5, 0.5, 0.5]}, index=idx)
+    costs = CostModel(taker_fee_bps=10.0, slippage_bps=0.0)
+    base = run_backtest(panel, weights, costs, panel.funding)
+    extra = pd.Series({idx[1]: 0.002, idx[2]: 0.001})
+    withextra = run_backtest(panel, weights, costs, panel.funding, extra_cost=extra)
+    assert withextra.cost.iloc[0] == base.cost.iloc[0] == 0.0
+    assert withextra.cost.iloc[1] == pytest.approx(base.cost.iloc[1] + 0.002)
+    assert withextra.cost.iloc[2] == pytest.approx(0.001)
+    # The turnover and the identity net = gross + accrual - cost are untouched.
+    assert withextra.turnover.equals(base.turnover)
+    pd.testing.assert_series_equal(
+        withextra.net_return, withextra.gross_return + withextra.accrual - withextra.cost,
+        check_names=False)
+    with pytest.raises(ValueError, match="a cost, not a gain"):
+        run_backtest(panel, weights, costs, panel.funding, extra_cost=-extra)

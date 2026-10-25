@@ -56,6 +56,7 @@ def run_backtest(
     weights: pd.DataFrame,
     costs: CostModel,
     accrual: pd.DataFrame | object,
+    extra_cost: pd.Series | None = None,
 ) -> RunResult:
     """Simulate the book described by `weights` on `panel`.
 
@@ -75,6 +76,12 @@ def run_backtest(
             forwarded to `compute_accrual` so a column with structurally
             absent funding (a spot market) contributes zero accrual on a
             `NaN` bar instead of raising — see `qlab.harness.accrual`.
+
+        extra_cost: costs the strategy pays that are not a rate on turnover
+            (a flat fee for moving money between venues), as a share of
+            equity per decision bar, indexed like the weights. Added to
+            `cost`; a decision bar it does not name pays none. `None` (the
+            default) is no such costs, as before.
 
     Returns:
         A `RunResult` covering `panel.prices.index[:-1]`.
@@ -118,6 +125,10 @@ def run_backtest(
     prev_weights = weights.shift(1).fillna(0.0).loc[keep]
     turnover = (weights_kept - prev_weights).abs().sum(axis=1)
     cost = costs.cost_of_turnover(turnover)
+    if extra_cost is not None:
+        if (extra_cost < 0).any():
+            raise ValueError("extra_cost must be >= 0: a cost, not a gain")
+        cost = cost + extra_cost.reindex(keep).fillna(0.0)
 
     gross_return = (weights_kept * price_return_fwd).sum(axis=1)
 
