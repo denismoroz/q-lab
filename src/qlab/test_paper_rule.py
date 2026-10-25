@@ -97,6 +97,67 @@ def test_the_replay_scripts_output_is_read_per_book() -> None:
     assert paper_rule.parse_replay_lines(["export from the production host failed: x"]) == {}
 
 
+def test_the_retuned_books_blocks_are_read_each_under_its_own_name() -> None:
+    lines = [
+        *REPLAY_LINES[:-2],  # the two older books' blocks, and the trend block
+        "**Bv2 re-tuned monthly (book 8 = b2_retune)**",
+        "    book 8 (b2_retune: headroom 1.0 or 1.5 chosen monthly; live from 2026-10-25 14:00)",
+        "      matched hours 1, price mismatches 0",
+        "      paper and replay totals: not yet, no live hour has closed after the launch point",
+        "      daily return correlation not computed: n=0 complete UTC days, at least 14 needed",
+        "      history before launch: 3518 hours both sides, paper +7.96% replay +7.96%, "
+        "max |hourly equity diff| 0.0000 (0.00% of equity)",
+        "**trend_retune_3k**",
+        "    replay of strategy 6: history 662 daily bars to 2026-10-25, replay through "
+        "2026-10-25 13:00 UTC (paper's last bar 2026-10-25 13:00)",
+        "      matched hours 2",
+        "      paper  2999.64 -> 2999.40 (-0.01%)",
+        "      replay 2999.64 -> 2999.40 (-0.01%)",
+        "      max |hourly equity diff| 0.0000",
+        "      daily return correlation not computed: n=0 complete UTC days, at least 14 needed",
+    ]
+
+    blocks = paper_rule.parse_replay_lines(lines)
+
+    assert set(blocks) == {"book 3", "book 4", "trend", "book 8", "trend_retune_3k"}
+    # the old trend block keeps its own figures: the new header does not start it again
+    assert blocks["trend"].correlation == pytest.approx(0.9998)
+    assert blocks["trend_retune_3k"].paper == pytest.approx(-0.0001)
+    assert blocks["trend_retune_3k"].replay == pytest.approx(-0.0001)
+    # no correlation yet: unknown, never a match
+    assert blocks["trend_retune_3k"].correlation is None
+    assert blocks["trend_retune_3k"].matches() is None
+    assert blocks["book 8"].paper is None and blocks["book 8"].matches() is None
+
+
+def test_a_correlation_on_a_few_days_is_unknown_not_a_match() -> None:
+    lines = ["**trend_retune_3k**", "    paper  3000.00 -> 3003.00 (+0.10%)",
+             "    replay 3000.00 -> 3003.00 (+0.10%)",
+             "    daily return correlation 1.0000 (n=3)"]
+
+    figures = paper_rule.parse_replay_lines(lines)["trend_retune_3k"]
+
+    assert figures.correlation == 1.0 and figures.days == 3
+    assert figures.matches() is None
+    lines[-1] = "    daily return correlation 0.9000 (n=20)"
+    assert paper_rule.parse_replay_lines(lines)["trend_retune_3k"].matches() is True
+
+
+def test_a_book_with_a_young_replay_is_not_ready_even_after_four_weeks(session, tmp_path) -> None:
+    root = tmp_path / "paper"
+    _export(root / "2026-10-25", date(2026, 9, 13), 29)
+    lines = ["**trend**", "    paper  1.00 -> 1.01 (+1.00%)", "    replay 1.00 -> 1.01 (+1.00%)",
+             "    daily return correlation 1.0000 (n=2)"]
+
+    rule = paper_rule.paper_rule(
+        session, "trend-live", {"book": "trend", "paper_file": "trend_equity.csv",
+                                 "strategy_id": 5, "replay_block": "trend"},
+        root=root, replay_lines=lines)
+
+    assert rule.weeks >= paper_rule.MIN_WEEKS
+    assert rule.replay == "unknown" and rule.ready is False
+
+
 def test_a_low_correlation_is_not_a_match() -> None:
     # The preregistered bar is ">= 0.80" (seed/preregistration/2026-09-21-paper-bv2-trend.yaml).
     assert paper_rule.ReplayFigures(paper=0.01, replay=0.01, correlation=0.79).matches() is False

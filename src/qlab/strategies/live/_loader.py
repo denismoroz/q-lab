@@ -77,6 +77,22 @@ ALLOWED_MODULES: frozenset[str] = frozenset(
         # params module frab.strategy.two_phase.params is NOT allowed: its
         # package __init__ imports the strategy, the database and the exchange.
         "frab.engine.two_phase_signals",
+        # Added 2026-10-25 for the replay of the re-tuned paper books
+        # (scripts/replay_b2_retune_paper.py, scripts/replay_trend_retune_paper.py).
+        # Pure simulation modules: math, dataclasses, json and frab's own params/book
+        # modules. The `b2` ones also import `frab.strategy.b2.engine` for two
+        # constants; that module imports frab's database layer (SQLAlchemy models, no
+        # exchange client), checked: `hyperliquid` and `eth_account` stay unimported.
+        # The engines (`retune_engine`) are NOT allowed: they own the clients.
+        "frab.strategy.b2.retune",
+        "frab.strategy.b2.retune_params",
+        "frab.strategy.b2.retune_history",
+        "frab.strategy.trend.retune",
+        "frab.strategy.trend.retune_params",
+        "frab.strategy.trend.retune_backfill",
+        "frab.strategy.trend.retune_book",
+        "frab.strategy.trend.cap_history",
+        "frab.strategy.trend.coin_selector",
     }
 )
 

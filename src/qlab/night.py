@@ -191,6 +191,8 @@ def paper_reconciliation(day: date) -> list[str]:
     except (subprocess.SubprocessError, OSError) as exc:
         return [f"export from the production host failed: {exc}"]
     lines += _export_live_books(folder)
+    retune_lines, retune_runs = _retune_replay_runs(folder)
+    lines += retune_lines
     runs = {
         "Bv2 (book 3 = b2, sized as created with carry on; book 4 = b2_cold)": [
             "scripts/replay_bv2_paper.py", "--paper", str(folder / "b2_equity.csv"),
@@ -200,16 +202,77 @@ def paper_reconciliation(day: date) -> list[str]:
                   "--events", str(folder / "trend_events.csv"),
                   "--out", str(folder / "replay_trend.csv")],
     }
-    for label, args in runs.items():
-        done = subprocess.run(["uv", "run", "python", *args], capture_output=True, text=True,
-                              timeout=1800)
+    for label, args in {**runs, **retune_runs}.items():
+        try:
+            done = subprocess.run(["uv", "run", "python", *args], capture_output=True, text=True,
+                                  timeout=1800)
+        except subprocess.TimeoutExpired:
+            lines += [f"**{label}**", "    the replay did not finish in 30 minutes"]
+            continue
         keep = [ln for ln in done.stdout.splitlines()
-                if any(w in ln for w in ("book ", "correlation", "paper", "replay", "fills matched",
-                                         "matched hours", "max |"))]
+                if any(w in ln for w in REPLAY_KEYWORDS)]
         status = "" if done.returncode == 0 else f" (exit {done.returncode})"
         lines.append(f"**{label}**{status}")
         lines += [f"    {ln}" for ln in keep] or [f"    {done.stderr.strip()[-300:]}"]
     return lines + _paper_check_lines(day, folder)
+
+
+# The lines of a replay script's output that go into the report and into the night's state,
+# where `qlab.paper_rule` reads them back.
+REPLAY_KEYWORDS = ("book ", "correlation", "paper", "replay", "fills matched", "matched hours",
+                   "max |", "history", "universes")
+
+IDEA_B2_RETUNE = "bv2-research-headroom-retune"
+IDEA_TREND_RETUNE = "trend-retune-weekly"
+
+
+def _retune_replay_runs(folder: Path) -> tuple[list[str], dict[str, list[str]]]:
+    """Exports and replay commands of the two re-tuned paper books (night/paper_books.yaml):
+    `b2_retune` (scripts/replay_b2_retune_paper.py, live from the book's `realised_from`) and
+    `trend_retune_3k` (scripts/replay_trend_retune_paper.py). Everything is read-only on the
+    production host. A book missing from the mapping, or an export that fails, costs only
+    that book's replay and is a report line: the other replays and the night go on."""
+    from qlab.paper_check import as_utc, load_books
+
+    try:
+        books = load_books()
+    except (OSError, KeyError, ValueError) as exc:
+        return [f"re-tuned books not replayed: {type(exc).__name__}: {exc}"], {}
+    lines: list[str] = []
+    runs: dict[str, list[str]] = {}
+    b2 = books.get(IDEA_B2_RETUNE)
+    if b2 is not None:
+        sid = b2["strategy_id"]
+        try:
+            live_from = as_utc(b2["realised_from"]).isoformat()
+            _ssh_query(f"select params_json from strategies where id={sid}",
+                       folder / "b2_retune_params.json", header=False)
+            _ssh_query(f"select ts_ms, details_json from b2_events where strategy_id={sid} "
+                       "and kind='retune' order by ts_ms", folder / "b2_retune_events.csv")
+            runs[f"Bv2 re-tuned monthly (book {sid} = b2_retune)"] = [
+                "scripts/replay_b2_retune_paper.py", "--paper", str(folder / "b2_equity.csv"),
+                "--params", str(folder / "b2_retune_params.json"),
+                "--events", str(folder / "b2_retune_events.csv"), "--live-from", live_from,
+                "--out", str(folder / (b2.get("replay_file") or "replay_b2_retune.csv"))]
+        except (subprocess.SubprocessError, OSError, KeyError, AttributeError) as exc:
+            lines.append(f"b2_retune not replayed: {type(exc).__name__}: {exc}")
+    trend = books.get(IDEA_TREND_RETUNE)
+    if trend is not None:
+        sid = trend["strategy_id"]
+        try:
+            _ssh_query(f"select params_json from strategies where id={sid}",
+                       folder / "trend_retune_params.json", header=False)
+            _ssh_query(f"select * from trend_events where strategy_id={sid} order by ts_ms",
+                       folder / "trend_retune_events.csv")
+            runs[trend.get("replay_block") or "trend_retune"] = [
+                "scripts/replay_trend_retune_paper.py", "--paper",
+                str(folder / "trend_retune_equity.csv"), "--strategy-id", str(sid),
+                "--params", str(folder / "trend_retune_params.json"),
+                "--events", str(folder / "trend_retune_events.csv"),
+                "--out", str(folder / (trend.get("replay_file") or "replay_trend_retune.csv"))]
+        except (subprocess.SubprocessError, OSError, KeyError) as exc:
+            lines.append(f"trend retune book not replayed: {type(exc).__name__}: {exc}")
+    return lines, runs
 
 
 def _export_live_books(folder: Path) -> list[str]:

@@ -46,6 +46,13 @@ daily_return_correlation_paper_vs_bench_replay, predicted ">= 0.80"; rationale
 difference of total returns was ever declared, so none is used: without a
 correlation the match is unknown."""
 
+MIN_REPLAY_DAYS = 14
+"""Fewest complete UTC days of daily returns behind a correlation before the rule
+reads it. With two or three days a correlation is close to a coin toss (it is
++-1 for two points), so a figure from a young book is unknown, never a match.
+Not part of the preregistered bar (it declares only the 0.80); it keeps the
+bar from being "passed" by luck, and the 4-week minimum of the rule is longer."""
+
 PAPER_DIR = Path("data/paper")
 NIGHT_DIR = Path("data/night")
 
@@ -59,34 +66,42 @@ class ReplayFigures:
     paper: float | None = None
     replay: float | None = None
     correlation: float | None = None
+    days: int | None = None  # complete days behind the correlation, when the replay printed it
 
     def matches(self) -> bool | None:
         """True / False by the preregistered correlation bar, None without a
-        correlation (the totals alone decide nothing)."""
+        correlation (the totals alone decide nothing) and None when it rests on
+        fewer than `MIN_REPLAY_DAYS` days."""
         if self.correlation is None:
+            return None
+        if self.days is not None and self.days < MIN_REPLAY_DAYS:
             return None
         return self.correlation >= MIN_REPLAY_CORRELATION
 
 
 _BV2_RETURNS = re.compile(r"^paper\s+([+-]?\d+(?:\.\d+)?)%\s+replay\s+([+-]?\d+(?:\.\d+)?)%")
 _TREND_RETURN = re.compile(r"^(paper|replay)\b.*\(([+-]?\d+(?:\.\d+)?)%\)\s*$")
-_CORRELATION = re.compile(r"^daily return correlation\s+(-?\d+(?:\.\d+)?)")
+_CORRELATION = re.compile(r"^daily return correlation\s+(-?\d+(?:\.\d+)?)(?:\s+\(n=(\d+)\))?")
+_HEADER_WORD = re.compile(r"^\*\*(\w+)")
 _BOOK = re.compile(r"^book (\d+)\b")
 
 
 def parse_replay_lines(lines: list[str]) -> dict[str, ReplayFigures]:
     """The replay scripts' output as the night saved it -> figures per block.
 
-    Blocks are named `book <id>` (the Bv2 script prints one per book) and
-    `trend`; a line outside a block is ignored. Percentages become fractions."""
+    Blocks are named `book <id>` (the Bv2 scripts print one per book) and, for
+    the trend scripts, by the first word of their `**header**` line when it starts
+    with `trend` (`trend`, `trend_retune_3k`); a line outside a block is ignored.
+    Percentages become fractions."""
     blocks: dict[str, ReplayFigures] = {}
     current: ReplayFigures | None = None
     for raw in lines:
         line = raw.strip()
         if line.startswith("**"):
             current = None
-            if line.lower().startswith("**trend"):
-                current = blocks.setdefault("trend", ReplayFigures())
+            word = _HEADER_WORD.match(line)
+            if word and word.group(1).lower().startswith("trend"):
+                current = blocks.setdefault(word.group(1).lower(), ReplayFigures())
             continue
         if book := _BOOK.match(line):
             current = blocks.setdefault(f"book {book.group(1)}", ReplayFigures())
@@ -99,6 +114,7 @@ def parse_replay_lines(lines: list[str]) -> dict[str, ReplayFigures]:
             setattr(current, m.group(1), float(m.group(2)) / 100)
         elif m := _CORRELATION.match(line):
             current.correlation = float(m.group(1))
+            current.days = int(m.group(2)) if m.group(2) else None
     return blocks
 
 
@@ -268,6 +284,6 @@ def paper_rule_for_idea(session: Session, idea_id: str, *, books: dict[str, dict
         return None
 
 
-__all__ = ["MAX_WEEKS", "MIN_WEEKS", "PaperRule", "ReplayFigures", "book_age",
+__all__ = ["MAX_WEEKS", "MIN_REPLAY_DAYS", "MIN_WEEKS", "PaperRule", "ReplayFigures", "book_age",
            "latest_export", "latest_replay_lines", "paper_rule", "paper_rule_for_idea",
            "paper_rules", "parse_replay_lines", "report_lines", "rule_line"]
