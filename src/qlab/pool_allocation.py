@@ -411,7 +411,7 @@ def correlation_table(strategies: list[Strategy], lines: dict[str, Line], min_da
                         "correlation": float(joined.iloc[:, 0].corr(joined.iloc[:, 1]))})
     note = ""
     if hidden:
-        note = (f"{hidden} из пар общим окном короче {min_days} дней: связь на таком окне "
+        note = (f"пар с общим окном короче {min_days} дней: {hidden} — связь на таком окне "
                 "случайна, не показана")
     return out, note
 
@@ -494,6 +494,24 @@ def _decay_text(ln: Line) -> str | None:
     return text + "; порог тревоги владелец не задал, на доли это не влияет."
 
 
+def _held_warning(p: Proposal) -> list[str]:
+    """If a strategy now held for lack of days would, by the same formula, take most of the pool,
+    say so: that is where a ceiling decision matters."""
+    sigmas = {ln.root: ln.sigma for ln in p.lines
+              if ln.status in ("weighted", "held") and ln.sigma}
+    if len(sigmas) < 2:
+        return []
+    weights = inverse_volatility(sigmas)
+    out = []
+    for ln in p.lines:
+        if ln.status == "held" and weights.get(ln.root, 0) > 0.5:
+            out.append(f"    Потолок на стратегию особенно важен для «{ln.label}»: по имеющимся "
+                       f"{ln.days} дням её разброс так мал, что когда наберётся {p.min_days}, "
+                       f"формула отдаст ей около {_pct(weights[ln.root])} общей суммы, если "
+                       "потолка нет.")
+    return out
+
+
 def report_lines(proposal: Proposal, changes: list[str]) -> list[str]:
     """The proposal as the morning report's section."""
     p = proposal
@@ -520,15 +538,19 @@ def report_lines(proposal: Proposal, changes: list[str]) -> list[str]:
     for ln in p.lines:
         out.append(f"**{ln.label}** — {_ROLE[ln.role]}; данные: {_evidence_text(ln)}")
         if ln.status == "weighted":
-            out.append(f"    Предложено {_usd(ln.dollars)} ({_pct(ln.share)} от всей суммы). "
-                       f"Дневной разброс {ln.sigma:.2%}. Поровну было бы "
-                       f"{_usd(ln.equal_dollars)}, но тогда на неё пришлось бы "
-                       f"{_pct(ln.equal_risk_share)} общего разброса вместо "
-                       f"{_pct(ln.risk_share)}. Минимум, с которого её можно запустить, "
+            text = (f"    Предложено {_usd(ln.dollars)} ({_pct(ln.share)} от всей суммы). "
+                    f"Дневной разброс {ln.sigma:.2%}. ")
+            if sum(1 for x in p.lines if x.status == "weighted") > 1:
+                text += (f"Поровну было бы {_usd(ln.equal_dollars)}, но тогда на неё пришлось бы "
+                         f"{_pct(ln.equal_risk_share)} общего разброса вместо "
+                         f"{_pct(ln.risk_share)}. ")
+            out.append(text + f"Минимум, с которого её можно запустить, "
                        f"{_usd(ln.min_capital_usd)} — помещается.")
         elif ln.status == "held":
+            seen = (f" Дневной разброс по этим дням {ln.sigma:.3%} — как справка."
+                    if ln.sigma else "")
             out.append(f"    Остаётся {_usd(ln.dollars)} без изменений ({_pct(ln.share)}). "
-                       f"{ln.reason[0].upper()}{ln.reason[1:]}.")
+                       f"{ln.reason[0].upper()}{ln.reason[1:]}.{seen}")
         else:
             out.append(f"    Доля: 0. {ln.reason[0].upper()}{ln.reason[1:]}.")
         if ln.status == "weighted" and ln.current_capital_usd:
@@ -573,6 +595,7 @@ def report_lines(proposal: Proposal, changes: list[str]) -> list[str]:
                    + "; ".join(f"{label} — {_day(day)}" for day, label in soon) + ".")
     out += ["", "Нужно решение владельца (кодом не выбирается):"]
     out += [f"    {n}" for n in p.needs_decision]
+    out += _held_warning(p)
     out += [
         "    Общая сумма для стратегий: $1 000, $3 000, $5 000 или $15 000 (названные вами цифры "
         "разные; в расчёте $3 000).",
@@ -631,12 +654,27 @@ def book_evidence(idea_id: str, cfg: dict, *, root: Path | None = None) -> Evide
     return Evidence(kind=kind, returns=daily_returns(curve), source=f"{cfg['paper_file']}")
 
 
-def spec_path_for_idea(idea_id: str, specs: Path = Path("specs")) -> Path | None:
-    """The spec file whose `idea_id` is the given one (the newest by name when several)."""
+def spec_path_for_idea(idea_id: str, specs: Path = Path("specs"),
+                       watchlist: Path = Path("night/watchlist.yaml")) -> Path | None:
+    """The spec file whose `idea_id` is the given one. Several specs can name one idea (the
+    transcription and the live-code version): the one the night follows (night/watchlist.yaml)
+    wins, then one that states `params_fixed_at`, then the last by name."""
     pattern = re.compile(rf"^idea_id:\s*{re.escape(idea_id)}\s*$", re.M)
     found = sorted(p for p in specs.rglob("*.yaml")
                    if pattern.search(p.read_text(encoding="utf-8")))
-    return found[-1] if found else None
+    if not found:
+        return None
+    followed = set()
+    if watchlist.is_file():
+        followed = {Path(x) for x in (yaml.safe_load(watchlist.read_text(encoding="utf-8")) or {})
+                    .get("specs") or []}
+    for tier in ([p for p in found if p in followed],
+                 [p for p in found if re.search(r"^params_fixed_at:", p.read_text(encoding="utf-8"),
+                                                re.M)],
+                 found):
+        if tier:
+            return tier[-1]
+    return None
 
 
 def stand_forward_evidence(session, idea_id: str, *, end: date) -> Evidence | None:
@@ -790,10 +828,48 @@ def run_allocation(session, day: date, end: date, *, books: dict[str, dict] | No
             "changes": changes}
 
 
+def night_signals(session, state: dict | None, *, night_dir: Path | None = None,
+                  root: Path | None = None) -> tuple[list[dict], list]:
+    """The decay detector's results and the paper rule's states the proposal shows beside each
+    strategy: from tonight's `state` when it holds them, else from the newest saved night."""
+    state = state or {}
+    results = (state.get("decay") or {}).get("results")
+    if results is None:
+        results = []
+        for path in sorted((night_dir or NIGHT_DIR).glob("*.json"), reverse=True):
+            try:
+                found = (json.loads(path.read_text(encoding="utf-8")).get("decay") or {})
+            except (OSError, ValueError):
+                continue
+            if found.get("results"):
+                results = found["results"]
+                break
+    lines = state.get("paper") or paper_rule.latest_replay_lines(night_dir)
+    rules, _ = paper_rule.paper_rules(session, root=root, replay_lines=lines)
+    return results, rules
+
+
+def night_stage(day: date, end: date, state: dict, *, root: Path | None = None) -> None:
+    """The night's allocation proposal into `state["allocation"]` (report lines, the proposal,
+    the snapshot the next night compares with). A failure is a report line, never a failed
+    night. Reads exports, the registry and cached panels; writes nothing but the state."""
+    from qlab.registry.db import session_scope
+
+    try:
+        with session_scope() as session:
+            results, rules = night_signals(session, state, root=root)
+            state["allocation"] = run_allocation(session, day, end, root=root,
+                                                 decay_results=results, paper_rules=rules)
+    except Exception as exc:  # noqa: BLE001
+        state["allocation"] = {"lines": [f"не посчитано: {type(exc).__name__}: {exc}"],
+                               "proposal": None, "snapshot": {}, "changes": []}
+
+
 __all__ = [
     "CONFIG", "Evidence", "Line", "MoneyError", "Proposal", "SECTION_TITLE", "Strategy",
     "allocate", "assert_strategy_money", "book_evidence", "build_strategies", "changes_since",
     "correlation_table", "daily_returns", "daily_std", "inverse_volatility", "latest_allocation",
-    "latest_min_capital", "load_config", "max_strategies", "report_lines", "run_allocation",
+    "latest_min_capital", "load_config", "max_strategies", "night_signals", "night_stage",
+    "report_lines", "run_allocation",
     "snapshot", "stand_forward_evidence",
 ]

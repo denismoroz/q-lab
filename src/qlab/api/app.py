@@ -87,6 +87,15 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/allocation")
+    def allocation() -> dict[str, Any]:
+        """The latest night's capital-split PROPOSAL (qlab.pool_allocation): a calculation for the
+        owner, nothing is moved. `proposal` is null before the first night that computed it."""
+        from qlab.pool_allocation import latest_allocation
+
+        found = latest_allocation()
+        return found or {"at": None, "proposal": None, "lines": [], "changes": []}
+
     # ------------------------------------------------------------------
     # 1. Funnel
     # ------------------------------------------------------------------

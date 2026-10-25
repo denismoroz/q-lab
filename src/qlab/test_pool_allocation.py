@@ -227,7 +227,7 @@ def test_correlations_use_the_common_window_and_hide_short_ones() -> None:
     pair = result.correlations[0]
     assert (pair["a"], pair["b"], pair["n"]) == ("a", "b", 30)
     assert pair["correlation"] == pytest.approx(-1.0)
-    assert "2 из пар" in result.correlation_note
+    assert "пар с общим окном короче 28 дней: 2" in result.correlation_note
 
 
 # --- the strategy-money rule -----------------------------------------------------------------
@@ -410,3 +410,33 @@ def test_variants_of_one_strategy_are_one_strategy_and_the_run_writes_nothing(
     assert json.dumps(out)  # saved into the night's state as JSON
     after = session.execute(__import__("sqlalchemy").text("select count(*) from trial")).scalar()
     assert before == after  # no trial, no status: a proposal only
+
+
+def test_the_report_warns_when_a_held_strategy_would_take_most_of_the_pool() -> None:
+    live = _strategy("quiet", 0.0005, days=15, role="live", kind="live", current=90.0, minimum=92)
+    paper = _strategy("noisy", 0.01)
+    result = pool_allocation.allocate([live, paper], capital=3000, max_count=6, config=CONFIG)
+    text = "\n".join(pool_allocation.report_lines(result, []))
+    assert "Потолок на стратегию особенно важен для «QUIET»" in text and "95%" in text
+
+
+def test_the_morning_report_carries_the_section_and_a_failed_stage_is_a_line(
+        monkeypatch, tmp_path: Path) -> None:
+    from qlab import night
+
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path)
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    state = {"results": [], "allocation": {"lines": ["Код ничего не двигает."], "proposal": None,
+                                           "snapshot": {}, "changes": []}}
+    report = night.write_report(date(2026, 10, 25), state).read_text(encoding="utf-8")
+    assert f"## {pool_allocation.SECTION_TITLE}" in report and "Код ничего не двигает." in report
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no panel")
+
+    broken: dict = {}
+    monkeypatch.setattr(pool_allocation, "night_signals", lambda *a, **k: ([], []))
+    monkeypatch.setattr(pool_allocation, "run_allocation", boom)
+    pool_allocation.night_stage(date(2026, 10, 25), date(2026, 10, 24), broken,
+                                root=tmp_path / "none")
+    assert broken["allocation"]["lines"] == ["не посчитано: RuntimeError: no panel"]
