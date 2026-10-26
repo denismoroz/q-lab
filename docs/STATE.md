@@ -470,9 +470,14 @@ T50 (воронка и правило бумаги), T51 (вторая площ�
 
 ## Консоль
 
-Порты сменены 2026-10-24 (коммит «Console on 5890 and API on 8890»):
+Порты сменены 2026-10-24 (коммит «Console on 5890 and API on 8890»). С 2026-10-26 оба
+процесса — фоновые службы launchd (`ops/com.qlab.api.plist`, `ops/com.qlab.console.plist`,
+скрипты `ops/api.sh`, `ops/console.sh`): запускаются при входе в систему и поднимаются сами,
+если упали. Раньше их запускала панель браузера сессии Claude, и консоль пропадала, когда
+приложение закрывало панель. Журналы — `data/console/logs/`. Новый код API подхватывается
+перезапуском:
 
 ```bash
-uv run uvicorn qlab.api:app --reload --port 8890   # API
-cd web && npm run dev                              # http://localhost:5890
+launchctl kickstart -k gui/$(id -u)/com.qlab.api       # API, порт 8890
+launchctl kickstart -k gui/$(id -u)/com.qlab.console   # http://localhost:5890
 ```

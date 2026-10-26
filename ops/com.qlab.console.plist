@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  q-lab: the console, http://localhost:5890.
+  Runs ops/console.sh at login and restarts it if it stops (KeepAlive), so the
+  console does not depend on a Claude session's browser pane.
+  Install:   cp ops/com.qlab.console.plist ~/Library/LaunchAgents/ &&
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.console.plist
+  Restart:   launchctl kickstart -k gui/$(id -u)/com.qlab.console
+  Remove:    launchctl bootout gui/$(id -u)/com.qlab.console &&
+             rm ~/Library/LaunchAgents/com.qlab.console.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.qlab.console</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/d/prj/q-lab/ops/console.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/d/.local/share/fnm/aliases/default/bin:/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/d/prj/q-lab/data/console/logs/console.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/d/prj/q-lab/data/console/logs/console.err</string>
+</dict>
+</plist>

@@ -43,3 +43,4 @@ data/events/
 # publication feed hand-off files (the scout reads them; docs/NIGHT.md)
 data/publications/
 data/capital_floors/
+data/console/

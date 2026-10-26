@@ -3,25 +3,12 @@
   "configurations": [
     {
       "name": "console",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
-      "cwd": "web",
+      "url": "http://localhost:5890",
       "port": 5890
     },
     {
       "name": "api",
-      "runtimeExecutable": "uv",
-      "runtimeArgs": [
-        "run",
-        "uvicorn",
-        "qlab.api:app",
-        "--reload",
-        "--port",
-        "8890"
-      ],
+      "url": "http://localhost:8890",
       "port": 8890
     }
   ]

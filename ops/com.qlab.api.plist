@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  q-lab: the registry's API for the console (port 8890).
+  Runs ops/api.sh at login and restarts it if it stops (KeepAlive), so the
+  console does not depend on a Claude session's browser pane.
+  Install:   cp ops/com.qlab.api.plist ~/Library/LaunchAgents/ &&
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.api.plist
+  Restart:   launchctl kickstart -k gui/$(id -u)/com.qlab.api
+  Remove:    launchctl bootout gui/$(id -u)/com.qlab.api &&
+             rm ~/Library/LaunchAgents/com.qlab.api.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.qlab.api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/d/prj/q-lab/ops/api.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/d/.local/share/fnm/aliases/default/bin:/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/d/prj/q-lab/data/console/logs/api.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/d/prj/q-lab/data/console/logs/api.err</string>
+</dict>
+</plist>
