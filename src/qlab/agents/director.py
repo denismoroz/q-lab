@@ -527,12 +527,20 @@ catalogue_requests:
   - {{family: <family>, look_for: "<what a future catalogue agent should look for>", why: "<why>"}}
 data_requests:
   - {{what: "<data the lab lacks>", why: "<why>"}}
+code_requests:
+  - {{repo: frab|qlab, what: "<a capability the code lacks>", why: "<the direction it serves>",
+     strategy: <strategy name, optional>}}
 propose_close_family:
   - {{family: <a mechanism family or a researcher strategy>, why: "<why>"}}
 ```
 
 Rules for the block: mechanism ids, families and strategy names must be exactly those listed in
-the evidence file (an unknown one is rejected). A researcher `note` is plain text WITHOUT any
+the evidence file (an unknown one is rejected). A `code_requests` item is for a direction you
+judge worth testing that the code cannot express yet -- frab's live strategy code (`frab`: e.g.
+make a fixed part of a strategy's rule a setting) or q-lab's blocks (`qlab`: a block the catalogue
+needs). The programmer agent writes it on a branch with tests, the default behaviour unchanged,
+and the owner decides whether it is merged. Ask for a capability, never a value: no digit.
+A researcher `note` is plain text WITHOUT any
 digit (a digit is a parameter value; the note is dropped if it has one). The researcher reads
 the note as advice for where to look, next to the owner's own question; the generator reads the
 preferred and paused lists in its instructions, and code rejects a spec of a paused mechanism.
@@ -631,7 +639,7 @@ def _code_section(result: ApplyResult) -> list[str]:
         lines.append(f"- исследователь, {name}: важность {s.priority}"
                      + (f"; пометка: {s.note}" if s.note else ""))
     lines += [f"- просьб к каталогу: {len(d.catalogue_requests)}, просьб о данных: "
-              f"{len(d.data_requests)}",
+              f"{len(d.data_requests)}, запросов на код: {len(d.code_requests)}",
               f"- предложено закрыть (решает владелец, код этого не делает): "
               f"{', '.join(c.family for c in d.propose_close_family) or '—'}"]
     if result.problems:

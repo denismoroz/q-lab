@@ -1,0 +1,54 @@
+# The programmer agent (qlab.agents.programmer, docs/PROGRAMMER.md). Owner, 2026-10-26: «так
+# нам нужен еще один агент - который будет дописывать код если нужно»; «будет дописывать код
+# если руководитель посчитает что направление - следует проверить»; «да, делай
+# агента-программиста».
+#
+# It takes code requests (the research director's `code_requests`, approved with its
+# directions, or the owner's `qlab code request`), one a night, and writes them on a branch
+# `agent/<id>` in a separate worktree. Code then checks the changed paths, runs the tests and
+# asks a reviewer agent; a request that passes is committed ON ITS BRANCH and waits for the
+# owner. Nothing reaches a main branch, and nothing is pushed, without `qlab code merge <id>`
+# -- the owner's command.
+enabled: true
+model: sonnet        # docs/PLAN.md: the agents that write code run on sonnet
+reviewer_model: sonnet
+max_turns: 60
+per_night: 1
+max_attempts: 2      # a request that failed twice waits for the owner
+repos:
+  frab:
+    path: /Users/d/prj/funding-rate-arbitrage
+    base: main
+    # Only the pure strategy modules q-lab's stand runs (qlab.strategies.live._loader,
+    # ALLOWED_MODULES, without frab.constants and FRAB's live signals) and their tests: frab
+    # trades real money, and its engines, exchange and execution code are not the agent's.
+    allowed:
+      - src/frab/strategy/b2/params.py
+      - src/frab/strategy/b2/book.py
+      - src/frab/strategy/b2/retune.py
+      - src/frab/strategy/b2/retune_history.py
+      - src/frab/strategy/b2/retune_params.py
+      - src/frab/strategy/b2/tests/*
+      - src/frab/strategy/trend/params.py
+      - src/frab/strategy/trend/signals.py
+      - src/frab/strategy/trend/book.py
+      - src/frab/strategy/trend/coin_selector.py
+      - src/frab/strategy/trend/retune.py
+      - src/frab/strategy/trend/retune_params.py
+      - src/frab/strategy/trend/retune_book.py
+      - src/frab/strategy/trend/tests/*
+      - src/frab/strategy/xsmom/params.py
+      - src/frab/strategy/xsmom/evaluators/signal.py
+      - src/frab/strategy/xsmom/tests/*
+    test_command: [uv, run, pytest, -q, -p, no:cacheprovider, src/frab/strategy]
+    test_timeout_s: 1800
+  qlab:
+    path: .
+    base: main
+    # Strategy code and blocks only: the verdict machinery (harness, pipeline, rules, the
+    # registry) is never the agent's to change.
+    allowed:
+      - src/qlab/strategies/*
+      - docs/BLOCKS.md
+    test_command: [uv, run, pytest, -q, -p, no:cacheprovider, src/qlab]
+    test_timeout_s: 1800

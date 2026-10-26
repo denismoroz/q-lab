@@ -42,7 +42,8 @@ STOP_STAGES = {"recheck": "перепроверка списка наблюде�
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
-               "experiments": "эксперименты исследователя", "implement": "реализация карточек",
+               "experiments": "эксперименты исследователя", "programmer": "программист",
+               "implement": "реализация карточек",
                "search": "поиск", "generate": "генератор идей"}
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
@@ -494,6 +495,15 @@ def write_report(day: date, state: dict) -> Path:
                          f"{views.get(e['view'], e['view'])}{flag}; {e.get('tokens', 0):,} "
                          f"токенов. {e.get('summary', '')}")
         lines.append("")
+    if (coded := state.get("programmer")) is not None:
+        from qlab.agents.programmer import load_queue
+        from qlab.agents.programmer import report_lines as programmer_lines
+
+        lines += ["## Программист", "", *programmer_lines(coded.get("entries") or [],
+                                                           load_queue()), ""]
+        if coded.get("stopped"):
+            lines.append(f"- остановлено: {coded['stopped']}; продолжит в следующую ночь")
+            lines.append("")
     if implemented := state.get("implemented"):
         lines += ["## Реализация карточек агентом", ""]
         for e in implemented:
@@ -656,7 +666,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
         noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
-        stop_at: datetime | None = None) -> Path:
+        stop_at: datetime | None = None, programmer: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -732,6 +742,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         director_stage(day, state, force=director)
     if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
         research_stage(day, state, noise_trials=noise_trials, stop_at=stop_at)
+    if programmer and not past_stop(stop_at, state, "programmer"):
+        programmer_stage(day, state)
     if implement and not past_stop(stop_at, state, "implement"):
         implement_stage(day, state, noise_trials=noise_trials,
                         deployable_capital_usd=deployable_capital_usd)
@@ -745,6 +757,62 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                        deployable_capital_usd=deployable_capital_usd, force=generate)
     save_state(day, state)  # with the stop line, if the stop time cut the night
     return write_report(day, state)
+
+
+PROGRAMMER = Path("night/programmer.yaml")
+
+
+def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> None:
+    """The programmer agent (`qlab.agents.programmer`, docs/PROGRAMMER.md): the director's
+    approved code requests are queued, then up to `per_night` are attempted, each on its own
+    branch, in the implement stage's budget. Nothing is merged: a passed request waits for the
+    owner's `qlab code merge`. Resumable: an attempt done tonight is not repeated."""
+    from dataclasses import asdict
+
+    from qlab.agents import programmer as prog
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.directions import active_directions
+    from qlab.registry.db import session_scope
+
+    if not config.is_file():
+        return
+    cfg = prog.load_config(config)
+    if not cfg.get("enabled", False):
+        return
+    entry = state.setdefault("programmer", {"entries": []})
+    queue = prog.load_queue()
+    directions = active_directions()
+    for r in (directions.code_requests if directions is not None else ()):
+        prog.enqueue(queue, repo=r.repo, what=r.what, why=r.why, strategy=r.strategy,
+                     source=f"research director, directions of {directions.date}", day=day)
+    prog.save_queue(queue)
+    done = {e["id"] for e in entry["entries"]}
+    max_attempts = int(cfg.get("max_attempts", 2))
+    for _ in range(int(cfg.get("per_night", 1)) - len(done)):
+        req = next(
+            (r for r in queue if r.status in ("queued", "failed") and r.attempts < max_attempts
+             and r.id not in done), None)
+        if req is None:
+            break
+        try:
+            with session_scope() as session:
+                stage = NightBudget.open(session, probe(session).report.reading).stage(
+                    Stage.IMPLEMENT, candidates=1)
+                prog.run_request(req, cfg, budget=stage.candidate(None), session=session)
+        except (NightExhausted, BudgetExhausted) as stop:
+            entry["stopped"] = str(stop)
+            prog.save_queue(queue)
+            save_state(day, state)
+            return
+        except Exception as exc:  # noqa: BLE001 - a report line, the night goes on
+            req.problems.append(f"{type(exc).__name__}: {exc}")
+            req.status = "failed"
+        if req.status == "failed" and req.attempts >= max_attempts:
+            req.status = "blocked"
+            req.problems.append(f"{max_attempts} attempts failed: the owner decides")
+        entry["entries"].append(asdict(req))
+        prog.save_queue(queue)
+        save_state(day, state)
 
 
 def worth_assessing(session, results: list[dict]) -> list[dict]:

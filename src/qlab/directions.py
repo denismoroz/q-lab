@@ -19,6 +19,11 @@ What a direction can say -- and nothing else:
   and a plain-text `note`. A note with a digit in it is dropped: the director sets
   directions, not parameter values (a number in a note is a value to tune to);
 * `catalogue_requests`, `data_requests`: tasks for later; nothing acts on them yet;
+* `code_requests`: code the lab lacks to test a direction (owner, 2026-10-26: «будет дописывать
+  код если руководитель посчитает что направление - следует проверить»): which repository
+  (`frab` or `qlab`), what to make, why. The programmer agent (`qlab.agents.programmer`) takes
+  them one a night, on a branch; nothing reaches a main branch without the owner. Like a note,
+  a request has no digit in it: it asks for a capability, never a value;
 * `propose_close_family`: shown to the owner. **Code never acts on it**; closing a family
   of search is the owner's decision.
 
@@ -49,7 +54,9 @@ PRIORITIES = ("high", "normal", "low")
 """High first: the order the night walks the researcher's strategies in when the budget is short."""
 
 BLOCK_KEYS = ("generator", "researcher", "catalogue_requests", "data_requests",
-              "propose_close_family")
+              "code_requests", "propose_close_family")
+CODE_REPOS = ("frab", "qlab")
+"""Where the programmer agent may be asked to write (qlab.agents.programmer)."""
 
 _FENCE = re.compile(r"^```directions[ \t]*\r?\n(?P<body>.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
 _DIGIT = re.compile(r"\d")
@@ -94,6 +101,14 @@ class DataRequest:
 
 
 @dataclass(frozen=True)
+class CodeRequest:
+    repo: str
+    what: str
+    why: str
+    strategy: str | None = None
+
+
+@dataclass(frozen=True)
 class CloseProposal:
     family: str
     why: str
@@ -111,6 +126,7 @@ class Directions:
     data_requests: tuple[DataRequest, ...] = ()
     propose_close_family: tuple[CloseProposal, ...] = ()
     problems: tuple[str, ...] = ()
+    code_requests: tuple[CodeRequest, ...] = ()
     """What code rejected or dropped from the block (unknown ids, numbers in notes ...)."""
 
     def paused(self) -> dict[str, str]:
@@ -130,6 +146,8 @@ class Directions:
             "catalogue_requests": [{"family": r.family, "look_for": r.look_for, "why": r.why}
                                    for r in self.catalogue_requests],
             "data_requests": [{"what": r.what, "why": r.why} for r in self.data_requests],
+            "code_requests": [{"repo": r.repo, "what": r.what, "why": r.why,
+                               "strategy": r.strategy} for r in self.code_requests],
             "propose_close_family": [{"family": c.family, "why": c.why}
                                      for c in self.propose_close_family],
             "problems": list(self.problems),
@@ -154,7 +172,9 @@ class Directions:
                                 for r in raw.get("data_requests") or ()),
             propose_close_family=tuple(CloseProposal(c["family"], c["why"])
                                        for c in raw.get("propose_close_family") or ()),
-            problems=tuple(raw.get("problems") or ()))
+            problems=tuple(raw.get("problems") or ()),
+            code_requests=tuple(CodeRequest(r["repo"], r["what"], r["why"], r.get("strategy"))
+                                for r in raw.get("code_requests") or ()))
 
 
 # --------------------------------------------------------------------------
@@ -287,6 +307,21 @@ def parse_block(text: str, *, mechanism_ids: set[str] | frozenset[str],
             data_requests.append(DataRequest(what, why))
         else:
             problems.append(f"data_requests: {item!r} needs what and why: ignored")
+    code_requests: list[CodeRequest] = []
+    for item in _items(raw.get("code_requests"), "code_requests", problems):
+        repo, what, why = _text(item.get("repo")), _text(item.get("what")), _text(item.get("why"))
+        strategy = _text(item.get("strategy"))
+        if repo not in CODE_REPOS or not what or not why:
+            problems.append(f"code_requests: {item!r} needs repo ({'/'.join(CODE_REPOS)}), what "
+                            "and why: ignored")
+        elif _DIGIT.search(what) or _DIGIT.search(why):
+            problems.append(f"code_requests: {what!r} has a digit in it (a request asks for a "
+                            "capability, not a value): ignored")
+        elif strategy is not None and strategy not in strategy_names:
+            problems.append(f"code_requests: {strategy!r} is not a strategy of "
+                            "night/research.yaml: ignored")
+        else:
+            code_requests.append(CodeRequest(repo, what, why, strategy))
     closes: list[CloseProposal] = []
     known = set(family_names) | set(strategy_names)
     for item in _items(raw.get("propose_close_family"), "propose_close_family", problems):
@@ -303,7 +338,8 @@ def parse_block(text: str, *, mechanism_ids: set[str] | frozenset[str],
         date=day, memo=memo, pending_owner_review=pending_owner_review,
         prefer_mechanisms=tuple(prefer), pause_mechanisms=tuple(pauses), researcher=researcher,
         catalogue_requests=tuple(catalogue_requests), data_requests=tuple(data_requests),
-        propose_close_family=tuple(closes), problems=tuple(problems)), problems)
+        propose_close_family=tuple(closes), problems=tuple(problems),
+        code_requests=tuple(code_requests)), problems)
 
 
 # --------------------------------------------------------------------------

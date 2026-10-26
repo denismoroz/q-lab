@@ -971,6 +971,98 @@ def idea_set_parent(
         typer.echo(f"{idea_id}: {old or '(none)'} -> {parent_id}")
 
 
+code_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                       help="The programmer agent's code requests (docs/PROGRAMMER.md).")
+app.add_typer(code_app, name="code")
+
+
+def _code_request(request_id: str):
+    from qlab.agents import programmer as prog
+
+    queue = prog.load_queue()
+    req = next((r for r in queue if r.id == request_id), None)
+    if req is None:
+        typer.echo(f"unknown request: {request_id}", err=True)
+        raise typer.Exit(code=1)
+    return prog, queue, req
+
+
+@code_app.command("list")
+def code_list() -> None:
+    """Every code request and where it stands."""
+    from qlab.agents import programmer as prog
+
+    for r in prog.load_queue():
+        typer.echo(f"{r.id}  {r.repo:5s} {r.status:8s} attempts {r.attempts}  {r.what}"
+                   + (f"  [{r.branch}]" if r.branch else ""))
+        for problem in r.problems + [f"review: {g}" for g in r.review]:
+            typer.echo(f"    {problem.splitlines()[0]}")
+
+
+@code_app.command("request")
+def code_request(
+    repo: str = typer.Option(..., "--repo", help="frab or qlab"),
+    what: str = typer.Option(..., "--what", help="What to make"),
+    why: str = typer.Option(..., "--why", help="The direction it serves"),
+    strategy: str | None = typer.Option(None, "--strategy"),
+) -> None:
+    """Queue a request of the owner's own (the night takes one a night)."""
+    from datetime import UTC, datetime
+
+    from qlab.agents import programmer as prog
+
+    config = prog.load_config()
+    if repo not in (config.get("repos") or {}):
+        typer.echo(f"unknown repo {repo!r}: {sorted(config['repos'])}", err=True)
+        raise typer.Exit(code=1)
+    queue = prog.load_queue()
+    req = prog.enqueue(queue, repo=repo, what=what, why=why, strategy=strategy, source="owner",
+                       day=datetime.now(UTC).date())
+    prog.save_queue(queue)
+    typer.echo(f"queued {req.id}" if req else "the same request is already in the queue")
+
+
+@code_app.command("run")
+def code_run(request_id: str = typer.Argument(..., help="The request to attempt now")) -> None:
+    """Attempt one request now (tokens, through the budget guard), as the night would."""
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+    from qlab.registry.db import session_scope
+
+    prog, queue, req = _code_request(request_id)
+    config = prog.load_config()
+    with session_scope() as session:
+        prog.run_request(req, config, budget=open_candidate(session, None, Stage.IMPLEMENT),
+                         session=session)
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: {req.status}; {req.tokens:,} tokens; branch {req.branch}")
+    for problem in req.problems + [f"review: {g}" for g in req.review]:
+        typer.echo(f"  {problem}")
+
+
+@code_app.command("merge")
+def code_merge(request_id: str = typer.Argument(...)) -> None:
+    """THE OWNER'S COMMAND: merge a ready request's branch into its base and push."""
+    prog, queue, req = _code_request(request_id)
+    try:
+        head = prog.merge(req, prog.load_config())
+    except ValueError as exc:
+        typer.echo(f"not merged: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: merged, {req.repo} is at {head[:12]}")
+
+
+@code_app.command("reject")
+def code_reject(request_id: str = typer.Argument(...),
+                reason: str = typer.Option(..., "--reason")) -> None:
+    """THE OWNER'S COMMAND: drop a request, its branch and worktree."""
+    prog, queue, req = _code_request(request_id)
+    prog.reject(req, prog.load_config(), reason)
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: rejected")
+
+
 detectors_app = typer.Typer(help="Regime detectors' own trials (docs/REGIME_DETECT.md).",
                             no_args_is_help=True)
 app.add_typer(detectors_app, name="detectors")
