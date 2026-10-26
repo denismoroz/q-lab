@@ -6,6 +6,7 @@ venue: hyperliquid-xyz
 rule_version: 2026-10-25.1
 annotation_snapshots:
 - '2026-10-25'
+- '2026-10-26'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
