@@ -32,9 +32,10 @@ PINNED = {
         "rebalance_days": (1.0,), "min_history_days": (180.0,)},
     "cross-venue-funding-spread": {
         "signal.min_spread_bps": (20.0,), "rebalance_days": (), "min_history_days": ()},
+    # Month windows in days since the owner's «месяц = 30 дней» (2026-10-26).
     "classic-carry": {
-        "portfolio.fraction": (0.2, 0.25, 0.3), "signal.window_days": (),
-        "rebalance_days": (), "min_history_days": ()},
+        "portfolio.fraction": (0.2, 0.25, 0.3), "signal.window_days": (360.0,),
+        "rebalance_days": (30.0,), "min_history_days": ()},
     "crypto-variance-risk-premium": {"signal.window_days": ()},
 }
 
@@ -178,6 +179,7 @@ def test_classic_carry_accepts_the_published_fractions_only(
     problems = _blocks_problems(_check(tmp_path, mechanisms, text, name))
     about_fraction = [p for p in problems if "portfolio.fraction" in p]
     assert (not about_fraction) is accepted
-    # the month-based rows stay refused: the source gives no number of days for them
-    assert any("rebalance_days" in p and "no value" in p for p in problems)
-    assert any("signal.window_days" in p and "no value" in p for p in problems)
+    # a month is 30 days (owner, 2026-10-26): rebalance 30 is a value of its row now, while
+    # a window of 7 is still not one (the row gives 360, the 12-month average)
+    assert not any("rebalance_days" in p for p in problems)
+    assert any("signal.window_days" in p and "7" in p for p in problems)
