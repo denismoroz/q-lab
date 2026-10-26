@@ -40,7 +40,12 @@ repos:
       - src/frab/strategy/xsmom/params.py
       - src/frab/strategy/xsmom/evaluators/signal.py
       - src/frab/strategy/xsmom/tests/*
-    test_command: [uv, run, pytest, -q, -p, no:cacheprovider, src/frab/strategy]
+    test_command: [uv, run, pytest, -q, -rs, -p, no:cacheprovider, src/frab/strategy]
+    # Untracked data the tests read (gitignored, so a fresh worktree lacks it): linked from the
+    # main checkout, read only. Without research/data the B2 parity tests skip themselves.
+    link_ignored: [research/data]
+    # Tests that prove the default behaviour unchanged: a skip of any of them fails the request.
+    must_run: [test_book_parity.py, test_book_pool_parity.py]
     test_timeout_s: 1800
   qlab:
     path: .

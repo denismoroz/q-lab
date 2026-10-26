@@ -161,6 +161,33 @@ def make_worktree(repo_path: Path, base: str, req: Request, *,
     return path
 
 
+def link_ignored(repo_path: Path, worktree: Path, paths: list[str]) -> None:
+    """Link untracked data the tests read (e.g. frab's research/data) from the main checkout, and
+    keep the links out of git: a symlink does not match an ignore rule written for a directory
+    ("data/"), so each link is named in the repository's info/exclude (shared by its worktrees;
+    the path is ignored in the main checkout already)."""
+    if paths:
+        common = Path(_git(worktree, "rev-parse", "--git-common-dir").strip())
+        exclude = (common if common.is_absolute() else worktree / common) / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        have = exclude.read_text(encoding="utf-8").splitlines() if exclude.is_file() else []
+        missing = [f"/{rel}" for rel in paths if f"/{rel}" not in have]
+        if missing:
+            with exclude.open("a", encoding="utf-8") as fh:
+                fh.write("".join(f"{line}\n" for line in missing))
+    for rel in paths:
+        source, target = repo_path / rel, worktree / rel
+        if source.exists() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(source)
+
+
+def skipped_required(output: str, must_run: list[str]) -> list[str]:
+    """The required tests (`must_run`) the run skipped -- pytest -rs names each skip."""
+    return [name for name in must_run
+            if re.search(rf"^SKIPPED \[\d+\] \S*{re.escape(name)}", output, re.MULTILINE)]
+
+
 def changed_paths(worktree: Path) -> list[str]:
     """Every path changed or added in the worktree, relative to it."""
     out = _git(worktree, "status", "--porcelain", "--untracked-files=all")
@@ -192,8 +219,12 @@ def run_tests(worktree: Path, command: list[str], timeout_s: int) -> tuple[bool,
                              timeout=timeout_s, env=env)
     except subprocess.TimeoutExpired:
         return False, f"the tests did not finish in {timeout_s} s"
-    tail = "\n".join((out.stdout + out.stderr).strip().splitlines()[-15:])
-    return out.returncode == 0, tail
+    text = (out.stdout + out.stderr).strip()
+    return out.returncode == 0, text
+
+
+def _tail(output: str, lines: int = 15) -> str:
+    return "\n".join(output.splitlines()[-lines:])
 
 
 def diff_text(worktree: Path) -> tuple[str, str]:
@@ -215,7 +246,7 @@ unless the owner merges it.
 The request ({source}):
   what: {what}
   why: {why}{strategy}
-
+{previous}
 Rules -- code checks every one of them after you finish, and a broken rule fails the request:
 - Write ONLY files matching these patterns (relative to the repository root): {allowed}. A change
   anywhere else fails the request.{repo_rule}
@@ -274,15 +305,20 @@ def run_request(req: Request, config: dict, *, budget: CandidateBudget | Explici
     """One attempt at one request: worktree, agent, path check, tests, review, commit."""
     repo_cfg = config["repos"][req.repo]
     repo_path = _abs(Path(repo_cfg["path"]))
+    earlier = [*req.problems, *(f"reviewer: {g}" for g in req.review)]
     req.attempts += 1
     req.problems, req.review, req.reply = [], [], None
     worktree = make_worktree(repo_path, repo_cfg.get("base", "main"), req, root=worktrees)
+    link_ignored(repo_path, worktree, list(repo_cfg.get("link_ignored") or []))
     allowed = list(repo_cfg["allowed"])
     prompt = INSTRUCTIONS.format(
         repo=req.repo, worktree=worktree, branch=req.branch, source=req.source, what=req.what,
         why=req.why, strategy=f"\n  strategy: {req.strategy}" if req.strategy else "",
         allowed=", ".join(allowed), repo_rule=FRAB_RULE if req.repo == "frab" else "",
-        tests=" ".join(repo_cfg["test_command"]))
+        tests=" ".join(repo_cfg["test_command"]),
+        previous=("\nThe previous attempt (from scratch again now) failed on:\n"
+                  + "\n".join(f"  - {line}" for e in earlier for line in e.splitlines()[:20])
+                  + "\n" if earlier else ""))
     result = run_agent(budget, prompt, session=session, agent="programmer",
                        model=config.get("model", "sonnet"),
                        max_turns=int(config.get("max_turns", 60)), cwd=worktree,
@@ -296,10 +332,13 @@ def run_request(req: Request, config: dict, *, budget: CandidateBudget | Explici
     if req.problems:
         req.status = "failed"
         return req
-    passed, tail = run_tests(worktree, list(repo_cfg["test_command"]),
-                             int(repo_cfg.get("test_timeout_s", 1800)))
-    if not passed:
-        req.problems.append(f"the tests failed:\n{tail}")
+    passed, output = run_tests(worktree, list(repo_cfg["test_command"]),
+                               int(repo_cfg.get("test_timeout_s", 1800)))
+    skipped = skipped_required(output, list(repo_cfg.get("must_run") or []))
+    if not passed or skipped:
+        req.problems.append(
+            (f"tests that prove the default unchanged were skipped: {skipped}\n" if skipped
+             else "") + "the tests failed:\n" * (not passed) + _tail(output))
         req.status = "failed"
         return req
     diff, req.diffstat = diff_text(worktree)
@@ -341,10 +380,13 @@ def merge(req: Request, config: dict) -> str:
              if line.strip()]
     if dirty:
         raise ValueError(f"{repo_path} has uncommitted changes ({len(dirty)}): merge refused")
-    passed, tail = run_tests(Path(req.worktree), list(repo_cfg["test_command"]),
-                             int(repo_cfg.get("test_timeout_s", 1800)))
-    if not passed:
-        raise ValueError(f"the tests fail on {req.branch} now:\n{tail}")
+    link_ignored(repo_path, Path(req.worktree), list(repo_cfg.get("link_ignored") or []))
+    passed, output = run_tests(Path(req.worktree), list(repo_cfg["test_command"]),
+                               int(repo_cfg.get("test_timeout_s", 1800)))
+    skipped = skipped_required(output, list(repo_cfg.get("must_run") or []))
+    if not passed or skipped:
+        raise ValueError(f"the tests fail or skip {skipped} on {req.branch} now:\n"
+                         f"{_tail(output)}")
     _git(repo_path, "merge", "--no-ff", "-q", "-m",
          f"Merge {req.branch}: {req.what[:60]} (owner's merge of programmer request {req.id})",
          req.branch)

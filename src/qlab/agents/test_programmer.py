@@ -180,3 +180,38 @@ code_requests:
                                           "set the window to seven days"]
     assert any("has a digit" in p for p in result.problems)
     assert any("needs repo" in p for p in result.problems)
+
+
+def test_a_skipped_parity_test_is_named_and_ignored_data_is_linked(tmp_path):
+    out = ("SKIPPED [1] src/frab/strategy/b2/tests/test_book_parity.py:36: research data not "
+           "available\n1 passed, 1 skipped")
+    assert prog.skipped_required(out, ["test_book_parity.py", "test_other.py"]) == [
+        "test_book_parity.py"]
+    main = tmp_path / "main"
+    (main / "research" / "data").mkdir(parents=True)
+    (main / "research" / "data" / "BTC_1h.csv").write_text("x")
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    prog.link_ignored(main, wt, ["research/data", "missing/dir"])
+    assert (wt / "research" / "data" / "BTC_1h.csv").read_text() == "x"
+    assert not (wt / "missing").exists()
+    assert prog.changed_paths(wt) == []  # the link is not a change
+
+
+def test_a_retry_is_told_why_the_last_attempt_failed(repo, tmp_path, monkeypatch):
+    prompts = []
+
+    def fake(budget, prompt, *, session, agent, model, max_turns, cwd=None, extra_args=()):
+        prompts.append(prompt)
+        if agent == "programmer":
+            (Path(cwd) / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 14\nX = 1\n")
+        return SimpleNamespace(text="VERDICT: OK", exit_code=0)
+
+    monkeypatch.setattr(prog, "run_agent", fake)
+    req = _request([])
+    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert "previous attempt" not in prompts[0]
+    assert "previous attempt" in prompts[1] and "no test among the changes" in prompts[1]
