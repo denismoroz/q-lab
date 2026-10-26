@@ -440,3 +440,29 @@ def test_the_morning_report_carries_the_section_and_a_failed_stage_is_a_line(
     pool_allocation.night_stage(date(2026, 10, 25), date(2026, 10, 24), broken,
                                 root=tmp_path / "none")
     assert broken["allocation"]["lines"] == ["не посчитано: RuntimeError: no panel"]
+
+
+def test_the_owners_starting_sum_says_who_can_start() -> None:
+    """Owner, 2026-10-26: «будет начинать любая стратегия с 300»."""
+    from qlab.pool_allocation import Line, Proposal, start_lines
+
+    def line(label, role, minimum, ready, current=None):
+        return Line(root=label, idea_id=label, label=label, role=role, status="zero",
+                    evidence_kind=None, days=0, first=None, last=None, sigma=None, dollars=0.0,
+                    share=0.0, equal_dollars=None, risk_share=None, equal_risk_share=None,
+                    current_capital_usd=current, min_capital_usd=minimum, reason="",
+                    paper_ready=ready)
+
+    p = Proposal(version="v", capital=3000.0, pool=0.0, held=0.0, min_days=28,
+                 lines=[line("Bv2", "paper", 99.0, True), line("Trend", "paper", 2442.0, True),
+                        line("New", "stand", 128.0, False), line("FRAB", "live", 92.0, None, 90.0),
+                        line("Odd", "stand", None, None)],
+                 correlations=[], correlation_note="", ladder={}, needs_decision=[],
+                 start_capital=300.0)
+    text = "\n".join(start_lines(p))
+    assert "Старт — $300 на любую стратегию" in text
+    assert "Bv2: помещается (минимум $99) и по правилу бумаги готова" in text
+    assert "Trend: в $300 не помещается — нужно от $2 442" in text
+    assert "New: помещается (минимум $128), но по правилу бумаги ещё рано" in text
+    assert "FRAB: уже на настоящих деньгах, $90" in text and "Odd: минимум" in text
+    assert start_lines(Proposal(**{**p.to_dict(), "lines": [], "start_capital": None})) == []

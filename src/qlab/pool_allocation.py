@@ -220,6 +220,7 @@ class Proposal:
     correlation_note: str
     ladder: dict[str, dict[str, float]]
     needs_decision: list[str]
+    start_capital: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -387,7 +388,46 @@ def allocate(strategies: list[Strategy], *, capital: float, max_count: int | Non
     return Proposal(
         version=str(config.get("version")), capital=float(capital), pool=float(pool),
         held=float(held_total), min_days=min_days, lines=ordered, correlations=correlations,
-        correlation_note=corr_note, ladder=ladder, needs_decision=needs)
+        correlation_note=corr_note, ladder=ladder, needs_decision=needs,
+        start_capital=start_capital(config))
+
+
+def start_capital(config: dict) -> float | None:
+    """The money any strategy starts with (`start_capital_usd`), or None when unset."""
+    value = config.get("start_capital_usd")
+    if value is None:
+        return None
+    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"start_capital_usd must be a positive number, got {value!r}")
+    return float(value)
+
+
+def start_lines(p: Proposal) -> list[str]:
+    """Who could start with the owner's starting sum: a strategy whose measured minimum fits in
+    it, ready or not yet by the paper rule. A live strategy keeps what it has."""
+    if p.start_capital is None:
+        return []
+    start = _usd(p.start_capital)
+    out = [f"**Старт — {start} на любую стратегию** (решение владельца 26.10: «будет начинать "
+           f"любая стратегия с 300»). Кто может стартовать:"]
+    for ln in p.lines:
+        if ln.role == "live":
+            out.append(f"    {ln.label}: уже на настоящих деньгах, "
+                       f"{_usd(ln.current_capital_usd or ln.dollars)} — не трогается.")
+        elif ln.min_capital_usd is None:
+            out.append(f"    {ln.label}: минимум, с которого её можно запустить, не измерен — "
+                       "сказать нельзя.")
+        elif ln.min_capital_usd > p.start_capital:
+            out.append(f"    {ln.label}: в {start} не помещается — нужно от "
+                       f"{_usd(ln.min_capital_usd)}.")
+        elif ln.paper_ready:
+            out.append(f"    {ln.label}: помещается (минимум {_usd(ln.min_capital_usd)}) и по "
+                       "правилу бумаги готова — можно стартовать, решает владелец.")
+        else:
+            out.append(f"    {ln.label}: помещается (минимум {_usd(ln.min_capital_usd)}), но "
+                       "по правилу бумаги ещё рано.")
+    return [*out, "", "Ниже — как делились бы деньги, когда стратегий на деньгах станет "
+            "несколько и суммы вырастут.", ""]
 
 
 def correlation_table(strategies: list[Strategy], lines: dict[str, Line], min_days: int
@@ -519,6 +559,7 @@ def report_lines(proposal: Proposal, changes: list[str]) -> list[str]:
         "Код ничего не двигает и статусов не меняет: это расчёт «как можно поделить деньги», "
         "решение и перевод денег — за владельцем.",
         "",
+        *start_lines(p),
         f"Всего денег для стратегий: {_usd(p.capital)} — рабочее допущение (так считает ночной "
         "прогон), владелец не называл эту сумму; кто из стратегий помещается при других суммах — "
         "в конце раздела.",

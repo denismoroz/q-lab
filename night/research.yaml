@@ -141,6 +141,9 @@ strategies:
       - "блин 90$ это вот очем а? на текущем Frab - так получилось. если нужно 300-400-1000 - давай считать на них."
       - "а если без вывода спота. просто купили - продали. оставили там USDC. вывод когда наберется сумма либо реинвестирование"
       - "да, добавляй вариант всё на binance"
+      # 2026-10-26, asked whether to build Binance order execution in frab for this strategy:
+      # the owner waits for the researcher's confirmation that the strategy is worth it.
+      - "пока нет - пока исследователь не даст подтверждение"
     specs:
       - specs/frab-binance-spot.yaml
       - specs/research/frab-binance-spot/frab-binance-spot-300.yaml

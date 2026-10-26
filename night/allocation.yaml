@@ -6,7 +6,8 @@
 # seed/preregistration/2026-10-25-capital-allocation.yaml (the commit that first contains it
 # is the timestamp). Changing the method or a parameter below is a NEW version of this file,
 # not an edit: bump `version`, and say in the commit why.
-version: "2026-10-25.1"
+# 2026-10-26.1: `start_capital_usd` added (the owner's starting sum); the split is unchanged.
+version: "2026-10-26.1"
 preregistration: seed/preregistration/2026-10-25-capital-allocation.yaml
 
 # The method. `inverse_volatility` is the only method this version knows; the loader refuses
@@ -88,6 +89,11 @@ short_evidence:
 # shows the split at each of `capital_ladder_usd` as well, so the answer to "what if it is
 # 1000 / 5000 / 15000" is in front of the owner.
 deployable_capital_usd: 3000
+
+# The money ANY strategy starts with (owner, 2026-10-26: «будет начинать любая стратегия с
+# 300»). The report lists who fits in it (measured min_capital_usd) and who is ready by the
+# paper rule; the split below is kept for when several strategies are on money and sums grow.
+start_capital_usd: 300
 capital_ladder_usd: [1000, 5000, 15000]
 
 # What the proposal does when the decay detector flags a strategy (night/decay.yaml,
