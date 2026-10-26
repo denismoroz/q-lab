@@ -3,7 +3,6 @@
 # Edited by hand; a strategy leaves the list when the owner decides.
 specs:
   # Hyperliquid, what production trades or could
-  - specs/trend-live.yaml
   - specs/trend-live-top25-cap.yaml
   - specs/trend-retune-weekly.yaml
   - specs/trend-retune-daily.yaml

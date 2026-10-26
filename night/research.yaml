@@ -34,7 +34,7 @@ focus: "я предлагаю статус ждет проверку впере�
 strategies:
   bv2:
     ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune,
-            bv2-m-cold4, bv2-m-top10, bv2-m-top10-h05-pool-d6, bv2-m-top10-deposits]
+            bv2-m-cold4, bv2-m-top10]
     # The owner's own ideas for this strategy, verbatim (qlab.night.owner_ideas_focus).
     # Context the researcher should read for this one: the hedge rule today decides on
     # 14- and 30-day returns once an hour and lifts the hedge after 12 hours in a row of
@@ -56,14 +56,13 @@ strategies:
       - specs/research/bv2/bv2-research-headroom-retune.yaml
       # 2026-10-25: the stand can now express the owner's ideas above (a coin list re-chosen
       # from data before each rebalance, one margin pool for all coins, top-ups that arrive
-      # late, new money paid in); these four are the measurements that exist, the rest of the
+      # late, new money paid in); these are the measurements that exist (two more were removed
+      # on the researcher's DROP, owner 2026-10-26: «выводи 5»), the rest of the
       # grid is in specs/bv2-owner-ideas/ and the tables in docs/BV2_BASKETS.md and
       # docs/BV2_MARGIN.md. They are sensitivity measurements, not verdicts: the real
       # experiments, with fit and forward kept apart, are the researcher's to declare.
       - specs/bv2-owner-ideas/bv2-m-cold4.yaml
       - specs/bv2-owner-ideas/bv2-m-top10.yaml
-      - specs/bv2-owner-ideas/bv2-m-top10-h05-pool-d6.yaml
-      - specs/bv2-owner-ideas/bv2-m-top10-deposits.yaml
     docs:
       - cards/strategy-b-v2.yaml
       - docs/HEDGE_TIMING.md
@@ -73,7 +72,7 @@ strategies:
       - docs/BV2_BASKETS.md
       - docs/BV2_MARGIN.md
   trend:
-    ideas: [trend-tsmom-crypto, trend-live, trend-retune-weekly, trend-research-skip-flat]
+    ideas: [trend-tsmom-crypto, trend-retune-weekly]
     # The owner's own ideas, verbatim. Context: the paper trend book at $3000 executed 281
     # trades and skipped 701 adjustments under Hyperliquid's $10 minimum order
     # (data/paper/2026-10-25-afternoon/qx_trend_books.csv, `skipped_min_order`); the stand's
@@ -84,9 +83,7 @@ strategies:
     owner_ideas:
       - "еще я не совсем понимаю почему нужна такая огромная книга на 10к. можно же покупать монеты по-чуть чуть..."
     specs:
-      - specs/trend-live.yaml
       - specs/trend-retune-weekly.yaml
-      - specs/research/trend/trend-research-skip-flat.yaml
     docs:
       - docs/RETUNE.md
       - docs/REGIME_DETECT.md
@@ -138,7 +135,7 @@ strategies:
     ideas: [frab-binance-spot, frab-binance-spot-300, frab-binance-spot-400,
             frab-binance-spot-allbinance, frab-binance-spot-allbinance-300,
             frab-binance-spot-allbinance-400, frab-binance-spot-five-coins,
-            frab-live-own-spot, frab-live-own-spot-five-coins]
+            frab-live-own-spot]
     owner_ideas:
       - "можно в qlab запусить frab на более чем 4-5 монетах. я знаю что HL ограничен в количестве spot pairs. я бы хотел прогнать вариант когда спот открывается на binance а хеджируется на HL. - поидее это новая стратегия."
       - "блин 90$ это вот очем а? на текущем Frab - так получилось. если нужно 300-400-1000 - давай считать на них."
@@ -153,7 +150,6 @@ strategies:
       - specs/research/frab-binance-spot/frab-binance-spot-allbinance-400.yaml
       - specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml
       - specs/research/frab/frab-live-own-spot.yaml
-      - specs/research/frab/frab-live-own-spot-five-coins.yaml
     docs:
       - docs/FRAB_BINANCE_SPOT.md
       - docs/FRAB_LIVE.md
