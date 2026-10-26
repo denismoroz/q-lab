@@ -467,13 +467,18 @@ def write_report(day: date, state: dict) -> Path:
                 lines.append(f"- **{e['strategy']}**: записка `{e.get('memo')}`, экспериментов "
                              f"{len(e.get('specs') or [])}, {e.get('tokens', 0):,} токенов")
             lines += [f"    - не принято: {p}" for p in e.get("problems") or []]
+            lines += [f"    - предлагает вывести `{c['idea']}`, но он уже закрыт ({c['status']}): "
+                      "делать нечего" for c in e.get("closed") or []]
             lines += [f"    - {line}" for line in e.get("stand") or [] if line.startswith("- ")]
         lines.append("")
         if drops := [(e["strategy"], d) for e in studied for d in e.get("drops") or []]:
             lines += ["## Исследователь предлагает вывести варианты (решает владелец)", "",
                       "Это предложение агента, не решение: код статусов по его слову не меняет. "
                       "Вывести вариант — `qlab retire <идея> --reason '…'`.", ""]
-            lines += [f"- {strategy}: `{d['idea']}` — {d['why']}" for strategy, d in drops]
+            lines += [f"- {strategy}: `{d['idea']}` — {d['why']}"
+                      + (f" (идеи в реестре нет, это спек на скамейке `{d['spec']}`: убрать — "
+                         "удалить файл)" if d.get("spec") else "")
+                      for strategy, d in drops]
             lines.append("")
     if assessed := state.get("assessed"):
         views = {"agree": "согласен", "too_harsh": "вердикт слишком строгий",
@@ -895,12 +900,67 @@ def full_strategy_focus(name: str, cap: int, variants: list[str]) -> str:
             "`DROP: <idea_id> — <why>` (the owner decides; you cannot drop anything).")
 
 
-def split_drops(drops: list, variants: list[str]) -> tuple[list, list]:
-    """The researcher's DROP proposals split into those naming an active
-    variant of the strategy (kept for the owner) and the rest (ignored, said in
-    the report). Nothing here changes a status."""
-    return ([d for d in drops if d.idea_id in variants],
-            [d for d in drops if d.idea_id not in variants])
+def split_drops(session, drops: list, variants: list[str], root: str,
+                spec_dir: Path = Path("specs")) -> tuple[list[dict], list[dict], list[str]]:
+    """The researcher's DROP proposals sorted for the owner: (proposals, closed,
+    problems). Nothing here changes a status.
+
+    - an active idea of this strategy -> a proposal (`qlab retire`);
+    - a spec file on the bench whose idea is not in the registry (the bv2 owner-idea
+      measurements, specs/bv2-owner-ideas/) -> a proposal too, carrying the spec path
+      (removing the file is the owner's call);
+    - an idea the stand or the owner already closed -> `closed`: nothing to do (on
+      2026-10-26 four of six proposals were these, all reported as "not accepted");
+    - an idea of another strategy, or a name that is neither an idea nor a spec ->
+      a problem."""
+    from qlab.registry.models import Idea
+    from qlab.registry.strategies import ACTIVE_STATUSES, strategy_root
+
+    proposals: list[dict] = []
+    closed: list[dict] = []
+    problems: list[str] = []
+    specs: dict[str, str] | None = None
+    for d in drops:
+        idea = session.get(Idea, d.idea_id)
+        if idea is not None and strategy_root(session, d.idea_id) != root:
+            problems.append(f"DROP names `{d.idea_id}`, an idea of strategy "
+                            f"{strategy_root(session, d.idea_id)}: ignored")
+        elif d.idea_id in variants or (idea is not None and idea.status in ACTIVE_STATUSES
+                                       and d.idea_id != root):
+            proposals.append({"idea": d.idea_id, "why": d.why})
+        elif idea is not None and d.idea_id != root:
+            closed.append({"idea": d.idea_id, "status": str(idea.status.value)})
+        elif idea is not None:
+            problems.append(f"DROP names `{d.idea_id}`, the strategy itself: ignored")
+        else:
+            specs = spec_idea_paths(spec_dir) if specs is None else specs
+            if d.idea_id in specs:
+                proposals.append({"idea": d.idea_id, "why": d.why, "spec": specs[d.idea_id]})
+            else:
+                problems.append(f"DROP names `{d.idea_id}`, which is neither an idea in the "
+                                "registry nor a spec: ignored")
+    return proposals, closed, problems
+
+
+def spec_idea_paths(spec_dir: Path = Path("specs")) -> dict[str, str]:
+    """idea_id -> spec path for every spec file under `spec_dir` (first one wins)."""
+    import re
+
+    found: dict[str, str] = {}
+    for path in sorted(spec_dir.rglob("*.yaml")):
+        match = re.search(r"^idea_id:\s*['\"]?([\w.-]+)", path.read_text(encoding="utf-8"),
+                          re.MULTILINE)
+        if match:
+            found.setdefault(match.group(1), str(path))
+    return found
+
+
+def drop_focus(variants: list[str]) -> str:
+    """What a DROP line may name, told to the researcher on every run."""
+    return ("DROP lines may name: an active variant of this strategy ("
+            + (", ".join(variants) or "none") + "), or a spec file on the bench whose idea is "
+            "not in the registry. Ideas the stand or the owner already closed (rejected, "
+            "retired, on the graveyard) need no DROP line.")
 
 
 def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | None:
@@ -958,6 +1018,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
     from qlab.agents.researcher import research, run_experiments
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
     from qlab.registry.db import session_scope
+    from qlab.registry.strategies import strategy_root
 
     if not config.is_file():
         return
@@ -999,15 +1060,15 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                            owner_ideas_focus(e.get("owner_ideas")),
                                            researcher_focus(name, directions),
                                            full_strategy_focus(name, cap, variants)
-                                           if free == 0 else None])))
+                                           if free == 0 else drop_focus(variants)])))
                     session.commit()
-                    kept, stray = split_drops(outcome.drops, variants)
+                    kept, closed, stray = split_drops(
+                        session, outcome.drops, variants,
+                        strategy_root(session, e["ideas"][0]))
                     entry.update(memo=str(outcome.memo or ""),
                                  specs=[str(p) for p in outcome.specs],
-                                 problems=[*outcome.problems, *(
-                                     f"DROP names `{d.idea_id}`, which is not an active variant "
-                                     f"of {name}: ignored" for d in stray)],
-                                 drops=[{"idea": d.idea_id, "why": d.why} for d in kept],
+                                 problems=[*outcome.problems, *stray],
+                                 drops=kept, closed=closed,
                                  tokens=budget.spent_tokens)
                     state["done"][f"research:{name}"] = datetime.now(UTC).isoformat()
                 except NightExhausted as stop:

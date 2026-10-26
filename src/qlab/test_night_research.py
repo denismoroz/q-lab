@@ -203,8 +203,9 @@ def test_research_reads_drop_lines_after_the_run(tmp_path, monkeypatch) -> None:
     assert outcome.drops == [researcher.DropProposal("v1", "no better than v2")]
 
 
-def test_drops_are_kept_only_for_active_variants_and_change_no_status(
-        tmp_path, monkeypatch) -> None:
+def test_drops_are_sorted_for_the_owner_and_change_no_status(tmp_path, monkeypatch) -> None:
+    """2026-10-26: all six DROP lines were reported as "not accepted"; four named
+    ideas already closed, two named bench specs with no idea in the registry."""
     calls, config, db_module = _stage_env(tmp_path, monkeypatch)
     from qlab.registry.db import session_scope
     from qlab.registry.models import Idea, IdeaStatus
@@ -215,27 +216,41 @@ def test_drops_are_kept_only_for_active_variants_and_change_no_status(
                              ("i1-old", "rejected", "i1"), ("i2", "paper", None)])
     config.write_text("cadence: nightly\nstrategies:\n  s1: {ideas: [i1], specs: []}\n",
                       encoding="utf-8")
+    (tmp_path / "specs" / "owner").mkdir(parents=True)
+    (tmp_path / "specs" / "owner" / "i1-m.yaml").write_text("idea_id: i1-m\n", encoding="utf-8")
+    focus: list[str] = []
 
     def fake_research(name, **kw):
         calls.append(name)
+        focus.append(kw["focus"])
         return researcher.ResearchOutcome(
             memo=None, drops=[researcher.DropProposal("i1-v", "weak"),
                               researcher.DropProposal("i1-old", "already out"),
+                              researcher.DropProposal("i1-m", "measures nothing new"),
+                              researcher.DropProposal("i2", "another strategy"),
+                              researcher.DropProposal("ghost", "no such thing"),
                               researcher.DropProposal("i1", "the root")])
 
     monkeypatch.setattr(researcher, "research", fake_research)
     state = {"done": {}}
     night.research_stage(date(2026, 10, 26), state, noise_trials=1, config=config)
     entry = state["research"][0]
-    assert entry["drops"] == [{"idea": "i1-v", "why": "weak"}]
-    assert any("`i1-old`" in p and "not an active variant" in p for p in entry["problems"])
-    assert any("`i1`" in p for p in entry["problems"])
+    assert entry["drops"] == [{"idea": "i1-v", "why": "weak"},
+                              {"idea": "i1-m", "why": "measures nothing new",
+                               "spec": "specs/owner/i1-m.yaml"}]
+    assert entry["closed"] == [{"idea": "i1-old", "status": "rejected"}]
+    problems = " ".join(entry["problems"])
+    assert "`i2`, an idea of strategy i2" in problems
+    assert "`ghost`, which is neither" in problems and "`i1`, the strategy itself" in problems
+    assert "DROP lines may name" in focus[0] and "i1-v" in focus[0]
     with session_scope() as session:  # the agent's word moved nothing
         assert session.get(Idea, "i1-v").status == IdeaStatus.BENCH
     monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
     report = night.write_report(date(2026, 10, 26), state).read_text(encoding="utf-8")
     assert "предлагает вывести варианты" in report
     assert "- s1: `i1-v` — weak" in report
+    assert "спек на скамейке `specs/owner/i1-m.yaml`" in report
+    assert "`i1-old`, но он уже закрыт (rejected): делать нечего" in report
     db_module._engine = None
     db_module._SessionLocal = None
 
