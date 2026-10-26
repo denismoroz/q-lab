@@ -1,0 +1,88 @@
+# Researcher's experiment (docs/research/frab-2026-10-26.md, fix 1): FRAB without AVAX.
+#
+# Copy of specs/research/frab/frab-live-own-spot.yaml (FRAB live, spot leg valued at the
+# spot's own closes), which is its control. THE ONLY CHANGE: AVAX leaves the universe (and
+# the leverage map). Before the cut (2026-10-10) the control's three deepest drawdowns
+# (-5.6%, -3.7%, -3.2%) all fall between 2026-05-30 and 2026-06-08, within a month of the
+# UAVAX spot listing on 2026-05-06; the five-coin control without PURR shows the same three,
+# so PURR is not their source. docs/FRAB_LIVE.md traces the -5% to hourly jumps of the UAVAX
+# spot (a token trading in 44-49% of hours, 0.4-0.6% off its perp), not to the funding.
+# Spot prices stay `own`: under `perp` the jumps, and the fix, are invisible.
+
+idea_id: frab-research-no-avax
+title: "FRAB без AVAX: тонкий спот UAVAX даёт все три самые глубокие просадки до отреза (эксперимент исследователя, спот по своей цене)"
+code_ref: "qlab.strategies.live.frab:LiveFrab"
+
+params_fixed_at: 2026-10-10
+params_fixed_evidence: >
+  declared by the researcher on 2026-10-26: fix designed on the data before 2026-10-10;
+  hypothesis: the deepest drawdowns of FRAB with the spot leg at its own price come from the thin
+  UAVAX spot, so without AVAX the drawdown shrinks to the level of the coins with deep spot and the
+  return without the best 1% of days does not fall. Designed from the drawdown evidence of
+  frab-live-own-spot and frab-live-own-spot-five-coins before the cut
+  (data/research/frab-binance-spot-2026-10-26.md) and docs/FRAB_LIVE.md; no result after the cut
+  was read. The decision rule itself is unchanged since funding-rate-arbitrage commit a0f5b5e
+  (2026-10-10), the date of specs/frab-live.yaml.
+
+params:
+  entry_threshold_apr: 0.1
+  phase2_exit_threshold: -0.1
+  base_min_hold_hours: 24
+  cap_min_hold_hours: 720
+  safety_mult: 5
+  signal_window_hours: 8
+  concurrency_cap: 4
+  budget_cap_usdc: 90
+  margin_buffer_factor: 3
+  phase1_negative_patience: 24
+  phase1_breakeven_cap_hours: 720
+  neg_stop_threshold_apr: -0.15
+  neg_stop_patience_hours: 6
+  phase2_giveback_fee_mult: 1.0
+  # THE ONLY CHANGE against the control: AVAX removed.
+  universe: [BTC, ETH, HYPE, PURR, SOL]
+  leverage: {BTC: 40, ETH: 25, HYPE: 10, PURR: 3, SOL: 20}
+
+data:
+  source: hyperliquid
+  interval: "1h"   # the live engine decides on hourly ticks
+  include_spot: true
+  spot_prices: own
+  start: 2025-01-01
+  end: 2026-10-24
+
+# Same blended rate as specs/bv2-live.yaml: both legs open and close
+# together, so a turnover pays the spot and the perp taker in equal parts.
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+unexpressed_mechanisms: []
+
+# The coin list is the registry's minus AVAX, not FRAB's own choice to test: random books
+# for the noise bar trade the same coins (docs/HEDGE_TIMING.md).
+noise_universe: held
+
+sources:
+  "entry_threshold_apr": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase2_exit_threshold": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "base_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "cap_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "safety_mult": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "signal_window_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "concurrency_cap": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "budget_cap_usdc": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "margin_buffer_factor": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase1_negative_patience": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase1_breakeven_cap_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "neg_stop_threshold_apr": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "neg_stop_patience_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "phase2_giveback_fee_mult": "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py (TwoPhaseParams default; not in the live params_json)"
+  "universe": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only) minus AVAX: the drawdown evidence of frab-live-own-spot and frab-live-own-spot-five-coins before the cut 2026-10-10 (data/research/frab-binance-spot-2026-10-26.md: deepest drawdowns 2026-05-30 .. 2026-06-08 in both) and docs/FRAB_LIVE.md (UAVAX spot since 2026-05-06, trades in 44-49% of hours, 0.4-0.6% off the perp, the -5% drawdown is its price jumps)"
+  "leverage": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only), AVAX's row left out with the coin"
+  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params.min_order_usd: HL's own minimum order)"

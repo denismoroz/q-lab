@@ -1,0 +1,68 @@
+# Researcher's fix of 2026-10-26 for XSMOM (docs/research/xsmom-2026-10-26.md, hypothesis 1).
+# One of two experiments declared together before either ran (with xsmom-research-nobull-retune);
+# both are reported as a set.
+#
+# The copy of specs/xsmom-honest-20legs.yaml wrapped in RegimeGate; the inner strategy, its
+# params, the data and the costs are verbatim. The only change: hold nothing on days the
+# past-only detector (BTC's 30-day return against terciles of the days before it,
+# qlab.strategies.detectors.direction_terciles) calls a bull market.
+#
+# The loss it targets (drawdown evidence before the cut, data/research/xsmom-2026-10-26.md):
+# the bull regime is the one regime where ALL THREE xsmom variants lose before their cuts --
+# 20 legs -2.3% over 92 days, 148 legs -5.6% over 68 days, frozen 32 coins -8.7% over 92 days,
+# while BTC rose +64.5..+90.0% on those days. A dollar-neutral long/short book that shorts the
+# past losers is hit when the whole market rallies, because the losers it is short bounce
+# hardest. Flat and bear are positive for the 20-leg book (+32.0%, +12.7%), so they are kept.
+#
+# Judged on Hyperliquid after 2026-06-15 (97 days to 2026-09-20): a preliminary result, the
+# stand's own rule wants half of the 530-day selection period. The causal long-history test of
+# the same fix is xsmom-research-nobull-retune.
+
+idea_id: xsmom-research-nobull
+title: "XSMOM, честный универс, 20 ног: не держать книгу, когда рынок растёт (определитель режима только по прошлому)"
+code_ref: qlab.strategies.regime_gate:RegimeGate
+
+params_fixed_at: 2026-06-15
+params_fixed_evidence: >
+  declared by the researcher on 2026-10-26: fix designed on the data before 2026-06-15; the one
+  regime in which every xsmom variant lost money before its cut is the bull market (20 legs -2.3%,
+  148 legs -5.6%, frozen 32 coins -8.7%, data/research/xsmom-2026-10-26.md), because a
+  dollar-neutral book short the past losers is squeezed when the whole market rallies, so holding
+  nothing on the days the past-only detector calls bull removes that loss and keeps the flat and
+  bear days where the book earned. The data after 2026-06-15 is the fix's forward test.
+
+params:
+  trade_in:
+  - flat
+  - bear
+  inner_code_ref: qlab.strategies.xsmom:XsmomCrossSectionalMomentum
+  inner_params:
+    universe: null
+    lookbacks_days: [14, 21, 30, 45, 60]
+    rebalance_days: 7
+    anchor_dow: 3
+    n_positions: 20
+
+data:
+  source: hyperliquid
+  interval: "1d"
+  start: 2025-01-01
+  end: 2026-09-20
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 12.0
+simultaneous_legs: 1
+
+unexpressed_mechanisms: []
+
+sources:
+  "code_ref": "src/qlab/strategies/regime_gate.py (existing wrapper; default detector direction_terciles)"
+  "trade_in": "data/research/xsmom-2026-10-26.md, drawdown evidence before the cut: bull -2.3% over 92 days (xsmom-honest-20legs, BTC +90.0%), -5.6% over 68 days (xsmom), -8.7% over 92 days (xsmom-frozen-universe); flat +32.0% and bear +12.7% for xsmom-honest-20legs"
+  "inner_code_ref": "specs/xsmom-honest-20legs.yaml (unchanged)"
+  "inner_params": "specs/xsmom-honest-20legs.yaml params, unchanged; their own sources are listed there"
+  "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0"

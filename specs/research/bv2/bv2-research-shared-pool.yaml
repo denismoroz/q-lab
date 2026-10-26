@@ -1,0 +1,145 @@
+# Researcher's experiment (docs/research/bv2-2026-10-26.md, fix 1): one HL margin pool for all
+# four coins instead of one pool per coin -- the owner's «трюк с FRAB с плечем и страховкой»
+# (night/research.yaml, strategies.bv2.owner_ideas; docs/BV2_MARGIN.md, direction 1, which the
+# owner handed to the researcher: «давай»).
+#
+# Copy of specs/bv2-binance.yaml (the production b2 book, headroom 1.0, on Binance's long history).
+# THE ONLY CHANGE: shared_margin: true. The headroom stays production's 1.0 -- a lower one is
+# NOT part of this fix (see params_fixed_evidence). Window, costs, split dates are the base's, so
+# the run reads against the base trial on the same panel.
+
+idea_id: bv2-research-shared-pool
+title: 'Bv2 как на проде (запас 1.0), но залог один на все четыре монеты, Binance 2023–2026 (эксперимент
+  исследователя 26.10, исправление 1)'
+code_ref: qlab.strategies.live.bv2:LiveBv2
+params_fit_from: 2023-06-01
+params_fixed_at: 2025-06-01
+params_fixed_evidence: >
+  declared by the researcher on 2026-10-26: fix designed on the data before 2025-06-01; with one pool
+  for all coins a hedge that turns on after its spot grew above target (the ratchet lets it reach
+  1.5x while a 1.0 pool reserves margin for 1.0x) is opened in full from the other coins' idle
+  margin, so less spot falls unhedged and the book's drawdowns are shallower at the same money in
+  coins. The cut is the end of the base spec's fitting window (specs/bv2-binance.yaml): the evidence
+  file data/research/bv2-2026-10-26.md builds no Binance drawdown section (panel not cached) and
+  gives for Binance only the fitting period's regime breakdown, 2023-06 .. 2025-05, where the
+  flat regime is the weak one (-2.9% over 264 days, worst fall -11.2%). The design rests on that,
+  on the margin model's own comment (frab b2/params.py: «without a carry to cut, a 1.0 pool leaves
+  such hedges partial») and on the «выбор» (2023-06 .. 2025-05) columns of docs/BV2_MARGIN.md for
+  the ten-coin book (pool 1.0: drawdown -9.2% against -10.2%, Sharpe 1.58 against 1.48), which is
+  also why the headroom stays 1.0 rather than 0.5 (Sharpe 1.50 there). Disclosed: the researcher
+  has read that document's «вперёд» columns for the ten-coin book and the Hyperliquid drawdown
+  evidence of 2026-05 .. 2026-08, both inside this spec's forward stretch; neither was used to
+  choose the fix or a number.
+params:
+  coins:
+  - BTC
+  - ETH
+  - SOL
+  - AVAX
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage:
+    BTC: 3.0
+    ETH: 2.0
+    SOL: 1.5
+    AVAX: 1.5
+  default_leverage: 1.0
+  maint_margin_rate:
+    BTC: 0.0125
+    ETH: 0.02
+    SOL: 0.025
+    AVAX: 0.05
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+  # THE ONLY CHANGE against specs/bv2-binance.yaml.
+  shared_margin: true
+data:
+  source: binance
+  interval: 1h
+  # As in specs/bv2-binance.yaml: a fresh book at the start of the fitting window, 788 hours of
+  # warm-up before 2023-06-01.
+  start: '2023-04-28'
+  end: '2026-09-20'
+  instruments:
+  - AVAX
+  - AVAX-SPOT
+  - BTC
+  - BTC-SPOT
+  - ETH
+  - ETH-SPOT
+  - SOL
+  - SOL-SPOT
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+
+noise_universe: held
+measure_hedge_timing: true
+unexpressed_mechanisms: []
+required_instruments:
+- BTC-SPOT
+- ETH-SPOT
+- SOL-SPOT
+- AVAX-SPOT
+- BTC
+- ETH
+- SOL
+- AVAX
+regime_claim:
+  bull: earns
+  bear: beats_market
+sources:
+  costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
+    min_order_usd
+  coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  capital_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  hedge_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  sticky_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  ratchet_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_fraction: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_entry_apr: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  carry_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  slippage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  min_order_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  margin_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  short_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  default_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  default_maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  margin_buffer: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  hedge_margin_headroom: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  rebalance_at_im_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  mode: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  shared_margin: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «можно ли трюк с FRAB
+    с плечем и страховкой использовать на Bv2?»; docs/BV2_MARGIN.md, direction 1 «Один пул залога на все
+    монеты», handed to the researcher by the owner: «давай»'
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'

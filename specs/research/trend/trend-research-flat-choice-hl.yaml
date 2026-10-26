@@ -1,0 +1,150 @@
+# Researcher's fix of 2026-10-26 for trend (docs/research/trend-2026-10-26.md, hypothesis 1),
+# on the production configuration. One of two experiments declared together before either ran
+# (with trend-research-flat-choice); both are reported as a set.
+#
+# The production book since 2026-10-25 is trend-retune-weekly (coins and lookbacks chosen
+# weekly by code; night/paper_books.yaml, trend_retune_3k). This spec wraps exactly that spec,
+# unchanged, in RegimeGate and offers the gate to an outer monthly Retune next to the ungated
+# book: every month the outer wrapper keeps whichever of the two had the better Sharpe after
+# costs on the returns realised BEFORE that month (docs/RETUNE.md). Grid of two, declared whole:
+#
+#   always    -- trade_in bull, flat, bear: specs/trend-retune-weekly.yaml as it runs
+#   skip_flat -- trade_in bull, bear: the fix
+#
+# Unlike trend-research-skip-flat (monthly re-tuning, gate imposed, fixed 2026-10-25, no forward
+# test yet), the gate here is the code's own past-only choice on the weekly production book, so
+# the stand judges it on history at once. Preliminary: Hyperliquid history is short and the fix
+# was designed on its data before 2026-09-14 (see params_fixed_evidence).
+
+idea_id: trend-research-flat-choice-hl
+title: "Trend как на проде (монеты и сроки выбирает код раз в неделю): торговать ли в боковике, решает код раз в месяц только по прошлому"
+code_ref: qlab.strategies.retune:Retune
+
+params_fixed_at: 2025-08-01
+params_fixed_evidence: >
+  The outer wrapper's first causal choice (qlab.strategies.retune, docs/RETUNE.md): the data
+  starts 2025-01-01, where the whole book exists; the inner weekly Retune makes its first choice
+  on 2025-06-09 (specs/trend-retune-weekly.yaml: the live engine's warm-up of 151 daily closes
+  plus one whole weekly re-tuning period); an outer candidate is eligible after one whole monthly
+  re-tuning period, so the 2025-07-01 refit has none and the first choice is made at the
+  2025-08-01 refit. Warm-up arithmetic, not a result. The grid was declared by the researcher on
+  2026-10-26: fix designed on the data before 2026-09-14 (data/research/trend-2026-10-26.md);
+  hypothesis: trend's losses sit on flat days, so a past-only monthly choice to hold nothing on
+  days the detector calls flat keeps its return and cuts its drawdowns. The drawdown evidence
+  covered Hyperliquid up to 2026-09-13 (trend-live) and 2026-02-23 (trend-retune-weekly), so
+  only 2026-09-14 .. 2026-10-25 is data the grid's design did not see: the result is
+  preliminary.
+
+selects_causally: true
+
+params:
+  inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+      base_params:
+        coins: null
+        capital_usd: 3000.0
+        lookbacks:
+        - 30
+        - 60
+        - 90
+        - 120
+        vol_window: 30
+        vol_target_daily: 0.02
+        leverage_cap: 3.0
+        risk_scale: 0.2
+        book_vol_target_ann: 0.14
+        book_vol_window_days: 60
+        book_vol_min_days: 20
+        book_vol_scale_min: 0.25
+        book_vol_scale_max: 2.0
+        book_vol_prior_ann: 0.3
+        min_history_days: 151
+        top_k_requires_history: true
+      grid:
+        universe:
+          cap:
+            top_k_by_market_cap: 25
+            exclude_tags:
+            - stablecoin
+          volume:
+            top_k_by_volume: 25
+        lookbacks:
+          ens:
+            lookbacks:
+            - 30
+            - 60
+            - 90
+            - 120
+          l30:
+            lookbacks:
+            - 30
+          l60:
+            lookbacks:
+            - 60
+          l90:
+            lookbacks:
+            - 90
+          l120:
+            lookbacks:
+            - 120
+      refit_every: W
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 3.5
+        slippage_bps: 0.9
+  grid:
+    gate:
+      always:
+        trade_in: [bull, flat, bear]
+      skip_flat:
+        trade_in: [bull, bear]
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+
+data:
+  source: hyperliquid
+  interval: 1d
+  start: '2025-01-01'
+  end: '2026-10-25'
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 1
+
+unexpressed_mechanisms: []
+
+# How the source says the strategy behaves in each BTC regime (docs/REGIMES.md),
+# declared before the run; nothing is claimed for the flat regime, the source
+# says nothing about it.
+regime_claim:
+  bull: earns
+  bear: earns
+
+sources:
+  "code_ref": "src/qlab/strategies/retune.py (existing wrapper)"
+  "inner_code_ref": "src/qlab/strategies/regime_gate.py (existing wrapper; default detector direction_terciles)"
+  "base_params": "specs/trend-retune-weekly.yaml params, unchanged; their own sources are listed there"
+  "grid.gate.always": "specs/trend-retune-weekly.yaml: the production book, every regime traded"
+  "grid.gate.skip_flat": "data/research/trend-2026-10-26.md, drawdown evidence before the cut: flat -1.3% over 182 days (trend-retune-weekly, before 2026-02-24); flat -4.9% over 291 days, worst fall -13.4% (trend-live, before 2026-09-14); bull and bear are where the source says trend earns (funding-rate-arbitrage/research/trend_following/FINDINGS.md: «2021 +65%», «2022 +5%»)"
+  "refit_every": "владелец 2026-10-02: «раз в неделю/день или месяц» (docs/RETUNE.md); monthly, as the detector reads 30 days of BTC"
+  "window": "docs/RETUNE.md (expanding window: no number introduced)"
+  "objective": "docs/RETUNE.md (Sharpe after costs)"
+  "score_costs": "specs/trend-retune-weekly.yaml costs: the spec's own costs (docs/RETUNE.md: scores use the spec's costs)"
+  "data.start": "specs/trend-retune-weekly.yaml (the same window start)"
+  "data.end": "data/research/trend-2026-10-26.md: the trend-live panel extended to 2026-10-25 (Hyperliquid daily data to that day)"
+  "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults), min_order_usd: HL's own minimum order"
+  "regime_claim.bull": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"

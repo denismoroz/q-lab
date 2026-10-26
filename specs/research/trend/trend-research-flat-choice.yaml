@@ -1,0 +1,123 @@
+# Researcher's fix of 2026-10-26 for trend (docs/research/trend-2026-10-26.md, hypothesis 1),
+# tested on Binance's long history. One of two experiments declared together before either ran
+# (with trend-research-flat-choice-hl); both are reported as a set.
+#
+# Where trend loses before the cut (data/research/trend-2026-10-26.md, drawdown evidence): flat
+# days lose in every variant -- -4.9% over 291 days for trend-live before 2026-09-14, -1.3% over
+# 182 days for trend-retune-weekly before 2026-02-24. The fix -- hold nothing on days the
+# past-only detector calls flat -- is offered to the Retune wrapper next to the unchanged book,
+# not imposed: every month the wrapper keeps whichever of the two had the better Sharpe after
+# costs on the returns realised BEFORE that month, so every day from its first choice is a
+# forward test of the choice (docs/RETUNE.md). Grid of two, declared whole:
+#
+#   always    -- trade_in bull, flat, bear: the book of specs/trend-binance-cap.yaml
+#   skip_flat -- trade_in bull, bear: the fix
+#
+# Why Binance: the fix was designed on Hyperliquid 2025-01 .. 2026-09; Binance from 2019-09
+# holds the 2020-2021 bull market and the 2022 bear. Binance is a DATA proxy, as in
+# specs/trend-binance-cap.yaml: costs and the minimum leg stay Hyperliquid's, funding is
+# Binance's own.
+
+idea_id: trend-research-flat-choice
+title: "Trend по капитализации на истории Binance 2019–2026: торговать ли в боковике, решает код раз в месяц только по прошлому"
+code_ref: qlab.strategies.retune:Retune
+
+params_fixed_at: 2020-04-01
+params_fixed_evidence: >
+  The wrapper's first causal choice (qlab.strategies.retune, docs/RETUNE.md): the data starts
+  2019-09-08 with BTC; BTC completes the 151 daily closes the live engine needs before trading a
+  coin (min_history_days) on 2020-02-05 (the BTC detector is known from November 2019,
+  specs/research/xsmom/xsmom-research-nobull-retune.yaml); a candidate is eligible after one
+  whole monthly re-tuning period, so the 2020-03-01 refit has none and the first choice is made
+  at the 2020-04-01 refit. Warm-up arithmetic, not a result; if BTC's signal was zero on its
+  first day the first choice moves to a later month and the days between hold nothing. The grid
+  was declared by the researcher on 2026-10-26: fix designed on the data before 2026-09-14
+  (data/research/trend-2026-10-26.md); hypothesis: trend's losses sit on flat days, so a
+  past-only monthly choice to hold nothing on days the detector calls flat keeps its return and
+  cuts its drawdowns. In-sample for this run: trend's own signal params (frab fitted them on
+  2020-2026 data), and the whole-window result of the imposed gate on Binance
+  (trend-binance-cap-gated, docs/REGIME_DETECT.md), known when the grid was declared. What the
+  run adds is the timing: whether a choice from the past alone would have picked the gate when
+  it mattered. Data after 2026-09-20 was seen by no trend run on Binance.
+
+selects_causally: true
+
+params:
+  inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+  base_params:
+    inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+    inner_params:
+      coins: null
+      top_k_by_market_cap: 25
+      exclude_tags:
+      - stablecoin
+      top_k_requires_history: true
+      capital_usd: 3000.0
+      lookbacks:
+      - 30
+      - 60
+      - 90
+      - 120
+      vol_window: 30
+      vol_target_daily: 0.02
+      leverage_cap: 3.0
+      risk_scale: 0.2
+      book_vol_target_ann: 0.14
+      book_vol_window_days: 60
+      book_vol_min_days: 20
+      book_vol_scale_min: 0.25
+      book_vol_scale_max: 2.0
+      book_vol_prior_ann: 0.3
+      min_history_days: 151
+  grid:
+    gate:
+      always:
+        trade_in: [bull, flat, bear]
+      skip_flat:
+        trade_in: [bull, bear]
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-10-24'
+
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+simultaneous_legs: 1
+
+unexpressed_mechanisms: []
+
+# How the source says the strategy behaves in each BTC regime (docs/REGIMES.md),
+# declared before the run; nothing is claimed for the flat regime, the source
+# says nothing about it.
+regime_claim:
+  bull: earns
+  bear: earns
+
+sources:
+  "code_ref": "src/qlab/strategies/retune.py (existing wrapper)"
+  "inner_code_ref": "src/qlab/strategies/regime_gate.py (existing wrapper; default detector direction_terciles)"
+  "base_params": "specs/trend-binance-cap.yaml params, unchanged; their own sources are listed there"
+  "grid.gate.always": "specs/trend-binance-cap.yaml: the unchanged book, every regime traded"
+  "grid.gate.skip_flat": "data/research/trend-2026-10-26.md, drawdown evidence before the cut: flat -4.9% over 291 days, worst fall -13.4% (trend-live, before 2026-09-14); flat -1.3% over 182 days (trend-retune-weekly, before 2026-02-24); bull and bear are where the source says trend earns (funding-rate-arbitrage/research/trend_following/FINDINGS.md: «2021 +65%», «2022 +5%»)"
+  "refit_every": "владелец 2026-10-02: «раз в неделю/день или месяц» (docs/RETUNE.md); monthly, as the detector reads 30 days of BTC"
+  "window": "docs/RETUNE.md (expanding window: no number introduced)"
+  "objective": "docs/RETUNE.md (Sharpe after costs)"
+  "score_costs": "specs/trend-binance-cap.yaml costs: the spec's own costs (docs/RETUNE.md: scores use the spec's costs)"
+  "data.start": "docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»"
+  "data.end": "specs/generated/gen-xsmom-borri-capweight.yaml: the lab's Binance daily archive used to 2026-10-24"
+  "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
+  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
+  "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults), min_order_usd: HL's own minimum order"
+  "regime_claim.bull": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва»"
