@@ -442,27 +442,39 @@ def test_the_morning_report_carries_the_section_and_a_failed_stage_is_a_line(
     assert broken["allocation"]["lines"] == ["не посчитано: RuntimeError: no panel"]
 
 
-def test_the_owners_starting_sum_says_who_can_start() -> None:
-    """Owner, 2026-10-26: «будет начинать любая стратегия с 300»."""
-    from qlab.pool_allocation import Line, Proposal, start_lines
+def test_each_strategy_says_from_what_sum_it_works() -> None:
+    """Owner, 2026-10-26: «на каждую стратегию выводить минимум возможный - чтобы стратегия
+    работала и будем отталкиваться от него. минимум должен быть обоснованный»."""
+    from qlab.capital_floor import Floor, Step
+    from qlab.pool_allocation import Line, Proposal, start_lines, working_minimum
 
-    def line(label, role, minimum, ready, current=None):
+    def step(usd, below=0.0, corr=0.99, net=0.05):
+        return Step(usd=usd, dropped_positions=0.0, below_minimum=below, correlation=corr,
+                    net_return=net, works=below == 0 and corr >= 0.8 and net > 0)
+
+    bv2 = Floor(idea_id="bv2", floor_usd=150.0, position_floor_usd=99.0, money_in_params=True,
+                window=("2026-03-09", "2026-09-30"),
+                steps=[step(100, below=0.02), step(150), step(10_000, corr=1.0)], note="")
+    weights_only = Floor(idea_id="w", floor_usd=640.0, position_floor_usd=640.0,
+                         money_in_params=False, window=("2025-01-01", "2026-09-01"), steps=[],
+                         note="")
+
+    def line(label, role, floor, ready=None, current=None):
         return Line(root=label, idea_id=label, label=label, role=role, status="zero",
                     evidence_kind=None, days=0, first=None, last=None, sigma=None, dollars=0.0,
                     share=0.0, equal_dollars=None, risk_share=None, equal_risk_share=None,
-                    current_capital_usd=current, min_capital_usd=minimum, reason="",
-                    paper_ready=ready)
+                    current_capital_usd=current, min_capital_usd=None, reason="",
+                    paper_ready=ready, floor=floor)
 
     p = Proposal(version="v", capital=3000.0, pool=0.0, held=0.0, min_days=28,
-                 lines=[line("Bv2", "paper", 99.0, True), line("Trend", "paper", 2442.0, True),
-                        line("New", "stand", 128.0, False), line("FRAB", "live", 92.0, None, 90.0),
-                        line("Odd", "stand", None, None)],
-                 correlations=[], correlation_note="", ladder={}, needs_decision=[],
-                 start_capital=300.0)
+                 lines=[line("Bv2", "paper", bv2.to_dict(), ready=True),
+                        line("W", "stand", weights_only.to_dict()),
+                        line("FRAB", "live", None, current=90.0)],
+                 correlations=[], correlation_note="", ladder={}, needs_decision=[])
     text = "\n".join(start_lines(p))
-    assert "Старт — $300 на любую стратегию" in text
-    assert "Bv2: помещается (минимум $99) и по правилу бумаги готова" in text
-    assert "Trend: в $300 не помещается — нужно от $2 442" in text
-    assert "New: помещается (минимум $128), но по правилу бумаги ещё рано" in text
-    assert "FRAB: уже на настоящих деньгах, $90" in text and "Odd: минимум" in text
-    assert start_lines(Proposal(**{**p.to_dict(), "lines": [], "start_capital": None})) == []
+    assert "Bv2: работает от $150" in text and "все позиции не меньше минимального ордера" in text
+    assert "— от $150" in text and "По правилу бумаги готова" in text
+    assert "W: код не знает своей суммы" in text and "$640" in text
+    assert "FRAB: минимум, при котором она работает, не измерен. Сейчас на настоящих деньгах $90" \
+        in text
+    assert working_minimum(bv2.to_dict(), 99.0) == 150.0 and working_minimum(None, 99.0) == 99.0

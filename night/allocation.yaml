@@ -7,7 +7,11 @@
 # is the timestamp). Changing the method or a parameter below is a NEW version of this file,
 # not an edit: bump `version`, and say in the commit why.
 # 2026-10-26.1: `start_capital_usd` added (the owner's starting sum); the split is unchanged.
-version: "2026-10-26.1"
+# 2026-10-26.2: the flat starting sum replaced by each strategy's measured working minimum
+# (qlab.capital_floor; owner, 2026-10-26: «на каждую стратегию выводить минимум возможный -
+# чтобы стратегия работала и будем отталкиваться от него. минимум должен быть обоснованный»).
+# The split uses that minimum where it was measured, the stand's position floor elsewhere.
+version: "2026-10-26.2"
 preregistration: seed/preregistration/2026-10-25-capital-allocation.yaml
 
 # The method. `inverse_volatility` is the only method this version knows; the loader refuses
@@ -90,10 +94,6 @@ short_evidence:
 # 1000 / 5000 / 15000" is in front of the owner.
 deployable_capital_usd: 3000
 
-# The money ANY strategy starts with (owner, 2026-10-26: «будет начинать любая стратегия с
-# 300»). The report lists who fits in it (measured min_capital_usd) and who is ready by the
-# paper rule; the split below is kept for when several strategies are on money and sums grow.
-start_capital_usd: 300
 capital_ladder_usd: [1000, 5000, 15000]
 
 # What the proposal does when the decay detector flags a strategy (night/decay.yaml,

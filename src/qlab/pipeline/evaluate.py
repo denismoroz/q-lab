@@ -377,6 +377,24 @@ def resolve_cached_panel(session: Session, data: StrategySpec) -> MarketPanel | 
     return None if existing_id is None else load_snapshot(existing_id, session=session)
 
 
+def cut_truncated_history(panel: MarketPanel) -> MarketPanel:
+    """The panel from the bar where every instrument's served history begins.
+
+    The venue served only its last N candles (T25): before the latest truncated
+    instrument's first served bar, instruments that were alive are missing.
+    Cutting the judged window is not enough -- a strategy's own warm-up would
+    still start early on whatever history happened to be served further back,
+    which is the history of instruments that died sooner. So EVERY instrument
+    starts at the same bar: the panel itself begins there, before any weight is
+    computed. A panel without truncated history is returned as it is."""
+    truncated = dict(panel.meta.get("history_truncated") or {})
+    if not truncated:
+        return panel
+    honest_from = pd.Timestamp(max(truncated.values()))
+    cut = int(panel.prices.index.searchsorted(honest_from))
+    return _slice_rows(panel, cut, len(panel.prices.index) - 1)
+
+
 def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     """Find an existing registry `spec` row with identical content for this
     `idea_id`, or append a new version.
@@ -1135,16 +1153,7 @@ def evaluate_spec(
 
     truncated = dict(panel.meta.get("history_truncated") or {})
     if truncated:
-        # The venue served only its last N candles (T25): before the latest
-        # truncated instrument's first served bar, instruments that were
-        # alive are missing. Cutting the judged window is not enough -- a
-        # strategy's own warm-up would still start early on whatever history
-        # happened to be served further back, which is the history of
-        # instruments that died sooner. So EVERY instrument starts at the same
-        # bar: the panel itself begins there, before any weight is computed.
-        honest_from = pd.Timestamp(max(truncated.values()))
-        cut = int(panel.prices.index.searchsorted(honest_from))
-        panel = _slice_rows(panel, cut, len(panel.prices.index) - 1)
+        panel = cut_truncated_history(panel)
         range_start = panel.prices.index[0].date()
     started_at = datetime.now(UTC)
     config_hash = _config_hash(spec.params)

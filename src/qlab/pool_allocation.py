@@ -171,6 +171,7 @@ class Strategy:
     decay_percentile: float | None = None
     paper_ready: bool | None = None
     excluded: str | None = None  # a plain reason the strategy takes no part at all
+    floor: dict | None = None  # the measured working minimum (qlab.capital_floor.Floor)
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +207,7 @@ class Line:
     decay_percentile: float | None = None
     paper_ready: bool | None = None
     other_books: list[str] = field(default_factory=list)
+    floor: dict | None = None
 
 
 @dataclass
@@ -220,7 +222,6 @@ class Proposal:
     correlation_note: str
     ladder: dict[str, dict[str, float]]
     needs_decision: list[str]
-    start_capital: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -291,7 +292,7 @@ def allocate(strategies: list[Strategy], *, capital: float, max_count: int | Non
             equal_dollars=None, risk_share=None, equal_risk_share=None,
             current_capital_usd=s.current_capital_usd, min_capital_usd=s.min_capital_usd,
             reason=reason, decay_alert=s.decay_alert, decay_percentile=s.decay_percentile,
-            paper_ready=s.paper_ready, other_books=list(s.other_books))
+            paper_ready=s.paper_ready, other_books=list(s.other_books), floor=s.floor)
         for key, value in kw.items():
             setattr(line, key, value)
         lines[s.root] = line
@@ -388,46 +389,52 @@ def allocate(strategies: list[Strategy], *, capital: float, max_count: int | Non
     return Proposal(
         version=str(config.get("version")), capital=float(capital), pool=float(pool),
         held=float(held_total), min_days=min_days, lines=ordered, correlations=correlations,
-        correlation_note=corr_note, ladder=ladder, needs_decision=needs,
-        start_capital=start_capital(config))
+        correlation_note=corr_note, ladder=ladder, needs_decision=needs)
 
 
-def start_capital(config: dict) -> float | None:
-    """The money any strategy starts with (`start_capital_usd`), or None when unset."""
-    value = config.get("start_capital_usd")
-    if value is None:
-        return None
-    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
-        raise ValueError(f"start_capital_usd must be a positive number, got {value!r}")
-    return float(value)
+_CRITERIA = {"positions": "все позиции не меньше минимального ордера и ни одна не выпала",
+             "tracking": "дневной доход на доллар совпадает с книгой на $10 000 (корреляция "
+                         "не ниже 0.80)",
+             "earns": "доход после всех издержек выше нуля"}
+
+
+def floor_text(floor: dict | None) -> str:
+    """One strategy's working minimum and what sets it, in plain words."""
+    from qlab.capital_floor import Floor
+
+    if not floor:
+        return "минимум, при котором она работает, не измерен"
+    f = Floor.from_dict(floor)
+    if not f.money_in_params:
+        return (f"код не знает своей суммы, поэтому известен только минимум по позициям: "
+                f"{_usd(f.floor_usd)} (самая маленькая позиция не меньше минимального ордера)"
+                if f.floor_usd else "минимум не измерен: код не знает своей суммы")
+    if f.floor_usd is None:
+        return "не работает даже на $10 000: " + f.note
+    parts = [f"{_CRITERIA[k]} — от {_usd(v)}" for k, v in f.reasons_below().items()]
+    exact = (f"; точнее, все позиции помещаются от {_usd(f.position_floor_usd)}"
+             if f.position_floor_usd and f.position_floor_usd > f.floor_usd * 0.75 else "")
+    return (f"работает от {_usd(f.floor_usd)} (проверено на её же коде и данных "
+            f"{_day(f.window[0])}–{_day(f.window[1])}: " + "; ".join(parts) + exact + ")")
 
 
 def start_lines(p: Proposal) -> list[str]:
-    """Who could start with the owner's starting sum: a strategy whose measured minimum fits in
-    it, ready or not yet by the paper rule. A live strategy keeps what it has."""
-    if p.start_capital is None:
+    """Each strategy's measured working minimum -- what it starts from (owner, 2026-10-26)."""
+    if not p.lines:
         return []
-    start = _usd(p.start_capital)
-    out = [f"**Старт — {start} на любую стратегию** (решение владельца 26.10: «будет начинать "
-           f"любая стратегия с 300»). Кто может стартовать:"]
+    out = ["**С какой суммы стратегия работает** (решение владельца 26.10: «на каждую стратегию "
+           "выводить минимум возможный - чтобы стратегия работала и будем отталкиваться от "
+           "него»). Её код прогоняется на суммах от $50 до $10 000 с минимальным ордером "
+           "площадки и всеми издержками; минимум — наименьшая сумма, с которой и на всех "
+           "больших выполнены три условия: " + "; ".join(_CRITERIA.values()) + "."]
     for ln in p.lines:
+        tail = ""
         if ln.role == "live":
-            out.append(f"    {ln.label}: уже на настоящих деньгах, "
-                       f"{_usd(ln.current_capital_usd or ln.dollars)} — не трогается.")
-        elif ln.min_capital_usd is None:
-            out.append(f"    {ln.label}: минимум, с которого её можно запустить, не измерен — "
-                       "сказать нельзя.")
-        elif ln.min_capital_usd > p.start_capital:
-            out.append(f"    {ln.label}: в {start} не помещается — нужно от "
-                       f"{_usd(ln.min_capital_usd)}.")
+            tail = f" Сейчас на настоящих деньгах {_usd(ln.current_capital_usd or ln.dollars)}."
         elif ln.paper_ready:
-            out.append(f"    {ln.label}: помещается (минимум {_usd(ln.min_capital_usd)}) и по "
-                       "правилу бумаги готова — можно стартовать, решает владелец.")
-        else:
-            out.append(f"    {ln.label}: помещается (минимум {_usd(ln.min_capital_usd)}), но "
-                       "по правилу бумаги ещё рано.")
-    return [*out, "", "Ниже — как делились бы деньги, когда стратегий на деньгах станет "
-            "несколько и суммы вырастут.", ""]
+            tail = " По правилу бумаги готова — решает владелец."
+        out.append(f"    {ln.label}: {floor_text(ln.floor)}.{tail}")
+    return [*out, ""]
 
 
 def correlation_table(strategies: list[Strategy], lines: dict[str, Line], min_days: int
@@ -675,6 +682,29 @@ def latest_min_capital(session, idea_id: str) -> float | None:
     return None
 
 
+def floor_for(session, spec: str | None, problems: list[str], label: str, *,
+              enabled: bool = True) -> dict | None:
+    """The spec's measured working minimum (qlab.capital_floor, cached per spec), or None with a
+    report line when it could not be measured."""
+    if not enabled or not spec or not Path(spec).is_file():
+        return None
+    from qlab.capital_floor import cached
+
+    try:
+        return cached(session, spec).to_dict()
+    except Exception as exc:  # noqa: BLE001 - a report line, the others go on
+        problems.append(f"{label}: минимум денег не измерен ({type(exc).__name__}: {exc})")
+        return None
+
+
+def working_minimum(floor: dict | None, position_minimum: float | None) -> float | None:
+    """The minimum the split uses: the measured working floor when there is one, else the
+    stand's position floor (`min_capital_usd` of the latest trial)."""
+    if floor and floor.get("floor_usd"):
+        return float(floor["floor_usd"])
+    return position_minimum
+
+
 def book_evidence(idea_id: str, cfg: dict, *, root: Path | None = None) -> Evidence | None:
     """The realised daily returns of one book on its own money; None when the book has no export
     yet. Refuses (MoneyError) a book that is not on strategy money."""
@@ -759,7 +789,7 @@ def stand_forward_evidence(session, idea_id: str, *, end: date) -> Evidence | No
 def build_strategies(session, *, books: dict[str, dict] | None = None, root: Path | None = None,
                      decay_results: list[dict] | None = None,
                      paper_rules: list | None = None, end: date | None = None,
-                     stand_fn=None) -> tuple[list[Strategy], list[str]]:
+                     stand_fn=None, floors: bool = True) -> tuple[list[Strategy], list[str]]:
     """The pool's strategies from the books, the registry and the stand, and report lines for
     anything that could not be read (one failing book does not stop the others)."""
     from qlab.registry.models import Idea, IdeaStatus
@@ -796,10 +826,13 @@ def build_strategies(session, *, books: dict[str, dict] | None = None, root: Pat
             excluded = f"стратегия в статусе «{root_idea.status}»: в пул не входит"
         decayed = alerts.get(idea_id) or {}
         rule = rules.get(idea_id)
+        floor = floor_for(session, cfg.get("spec"), problems, cfg.get("label", idea_id),
+                          enabled=floors)
         strategies.append(Strategy(
             root=root_id, idea_id=idea_id, label=cfg.get("label", idea_id),
             role="live" if cfg.get("live") else "paper", evidence=evidence,
-            min_capital_usd=latest_min_capital(session, idea_id),
+            min_capital_usd=working_minimum(floor, latest_min_capital(session, idea_id)),
+            floor=floor,
             current_capital_usd=(float(cfg["strategy_capital_usd"]) if cfg.get("live") else None),
             other_books=[cfg2.get("label", i2) for i2, cfg2, _ in group[1:]],
             decay_alert=decayed.get("alert"),
@@ -825,9 +858,13 @@ def build_strategies(session, *, books: dict[str, dict] | None = None, root: Pat
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{idea.id}: ряд стенда не построен ({type(exc).__name__}: {exc})")
             continue
+        spec = spec_path_for_idea(idea.id)
+        floor = floor_for(session, str(spec) if spec else None, problems, idea.id,
+                          enabled=floors)
         strategies.append(Strategy(
             root=root_id, idea_id=idea.id, label=idea.id, role="stand", evidence=evidence,
-            min_capital_usd=latest_min_capital(session, idea.id)))
+            min_capital_usd=working_minimum(floor, latest_min_capital(session, idea.id)),
+            floor=floor))
     return strategies, problems
 
 
