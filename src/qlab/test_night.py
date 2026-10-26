@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+import time
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import qlab.night as night
@@ -801,3 +802,48 @@ def test_the_report_carries_the_agents_funnel_and_the_paper_rule(tmp_path, monke
             "(бумага не судит о доходности — судит стенд)") in report
     db_module._engine = None
     db_module._SessionLocal = None
+
+
+# ---- stop time --------------------------------------------------------------------------
+
+
+def test_stop_time_is_today_on_the_local_clock() -> None:
+    now = datetime(2026, 10, 26, 0, 25, tzinfo=UTC)
+    stop = night.stop_time("07:10", now)
+    assert stop.astimezone().strftime("%H:%M") == "07:10"
+    assert stop.astimezone().date() == now.astimezone().date()
+
+
+def test_nothing_starts_after_the_stop_time_and_the_report_says_where(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: [a.yaml, b.yaml]\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    monkeypatch.setattr(night, "load_spec",
+                        lambda p: _spec().model_copy(update={"idea_id": str(p)}))
+    calls = []
+
+    def fake_eval(kind, spec, **kw):
+        calls.append(spec.idea_id)
+        time.sleep(0.3)  # the stop time passes while a started item runs; it still finishes
+        return ItemResult(kind=kind, name=spec.idea_id, route="needs-forward")
+
+    monkeypatch.setattr(night, "evaluate_item", fake_eval)
+    report = night.run(date(2026, 10, 3), graveyard=False, paper=False, implement=False,
+                       search=False, detectors=False, assess=False, research=False,
+                       waiting=False, stop_at=datetime.now(UTC) + timedelta(seconds=0.2))
+    assert calls == ["a.yaml"]
+    assert night.load_state(date(2026, 10, 3))["stopped_at"]["before"] == "recheck"
+    assert "Ночь остановлена по сроку" in report.read_text()
+
+
+def test_past_stop_records_only_the_first_cut_stage() -> None:
+    state: dict = {}
+    late = datetime.now(UTC) - timedelta(minutes=1)
+    assert night.past_stop(None, state, "recheck") is False
+    assert night.past_stop(datetime.now(UTC) + timedelta(hours=1), state, "recheck") is False
+    assert "stopped_at" not in state
+    assert night.past_stop(late, state, "waiting") and night.past_stop(late, state, "director")
+    assert state["stopped_at"]["before"] == "waiting"

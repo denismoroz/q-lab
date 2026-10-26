@@ -380,3 +380,28 @@ def test_a_decided_focus_is_passed_as_a_rule_not_a_question() -> None:
     assert plan_focus({}) is None
     ruled = plan_focus({"focus": "q?", "focus_decided": "2026-10-25"})
     assert "«q?»" in ruled and "do not answer" in ruled and "2026-10-25" in ruled
+
+
+def test_experiments_cut_by_the_stop_time_run_first_on_the_next_night(
+        tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch)
+    ran: list[str] = []
+    monkeypatch.setattr(researcher, "run_experiments", lambda memo, specs, **kw: (
+        ran.append(str(memo)) or ["- ok"]))
+    monkeypatch.setattr(night, "record_research_note", lambda entry, plan: entry.update(noted=1))
+    monday = {"done": {}, "research": [{"strategy": "s1", "memo": "m1.md", "specs": ["x.yaml"]}]}
+    late = datetime.now(UTC) - timedelta(minutes=1)
+    night.research_stage(date(2026, 10, 26), monday, noise_trials=1, config=config, stop_at=late)
+    assert calls == [] and ran == [] and monday["stopped_at"]["before"] == "research:s1"
+    night.save_state(date(2026, 10, 26), monday)
+    tuesday = {"done": {}}
+    night.research_stage(date(2026, 10, 27), tuesday, noise_trials=1, config=config)
+    assert ran == ["m1.md"]  # yesterday's memo's experiments, then tonight's agents
+    assert tuesday["research"][0]["carried_from"] == "2026-10-26"
+    assert tuesday["research"][0]["noted"] == 1
+    night.research_stage(date(2026, 10, 27), tuesday, noise_trials=1, config=config)
+    assert ran == ["m1.md"]  # carried once
+    db_module._engine = None
+    db_module._SessionLocal = None

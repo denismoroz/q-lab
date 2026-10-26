@@ -743,18 +743,23 @@ def night_run_cmd(
         True, "--waiting/--no-waiting",
         help="Re-run the ideas waiting for data that are not on the watch list (no tokens)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
+    stop_at: str | None = typer.Option(
+        None, "--stop-at",
+        help="HH:MM on this machine's clock: nothing new starts after it, the rest goes to "
+        "the next night (ops/night.sh passes it)"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
     sweep the graveyard by regime on Sundays, reconcile paper, write the
     morning report. Spends no tokens; resumes where a stopped run left off."""
     from datetime import date as _date
 
-    from qlab.night import run
+    from qlab.night import run, stop_time
 
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               director=director, waiting=waiting, noise_trials=noise_trials)
+               director=director, waiting=waiting, noise_trials=noise_trials,
+               stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
 
 

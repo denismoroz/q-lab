@@ -37,6 +37,14 @@ PAPER_DIR = Path("data/paper")
 PROD = "dis@10.8.0.5"
 PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's state
 
+#: Stage names in the morning report's stop line (`past_stop`).
+STOP_STAGES = {"recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
+               "paper": "сверка бумаги", "decay": "детектор угасания",
+               "allocation": "распределение капитала", "assess": "второе мнение",
+               "director": "руководитель исследований", "research": "исследователь",
+               "experiments": "эксперименты исследователя", "implement": "реализация карточек",
+               "search": "поиск", "generate": "генератор идей"}
+
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
                "fit_ann_return_net", "fit_sharpe_net", "fit_max_dd", "selection_days")
@@ -81,6 +89,28 @@ def save_state(day: date, state: dict) -> None:
     tmp = _state_path(day).with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=1, default=str))
     tmp.replace(_state_path(day))
+
+
+def stop_time(hhmm: str, now: datetime | None = None) -> datetime:
+    """`HH:MM` today on this machine's clock, as an aware time: the night's
+    stop time (`qlab night run --stop-at`). Owner, 2026-10-26: the night must
+    not run into the working day and must be over before 08:00 Minsk."""
+    now = (now or datetime.now(UTC)).astimezone()
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def past_stop(stop_at: datetime | None, state: dict, stage: str) -> bool:
+    """Whether the stop time has passed, checked before each piece of work so a
+    started one always finishes. The first stage it cuts goes into the state
+    (`stopped_at`) for the morning report; what was cut runs on the next night
+    (the rechecks are redone every night anyway; unrun experiments carry over,
+    `carried_research`)."""
+    if stop_at is None or datetime.now(UTC) < stop_at:
+        return False
+    state.setdefault("stopped_at", {"time": datetime.now(UTC).isoformat(),
+                                    "stop_at": stop_at.isoformat(), "before": stage})
+    return True
 
 
 def previous_route(session, idea_id: str, before: int) -> str | None:
@@ -369,6 +399,13 @@ def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
 def write_report(day: date, state: dict) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [f"# Ночной прогон {day.isoformat()}", ""]
+    if stop := state.get("stopped_at"):
+        lines += [f"**Ночь остановлена по сроку "
+                  f"{datetime.fromisoformat(stop['stop_at']).astimezone():%H:%M}** перед этапом "
+                  f"«{STOP_STAGES.get(stop['before'].split(':')[0], stop['before'])}» "
+                  f"({stop['before']}). Начатое доделано, остальное — в следующую ночь: "
+                  "перепроверки она делает заново, невыполненные эксперименты исследователя "
+                  "переносятся.", ""]
     items = [ItemResult(**r) for r in state.get("results", [])]
     for kind, title in (("watch", "Стратегии на проверке вперёд"),
                         ("graveyard", "Кладбище по режимам")):
@@ -423,8 +460,12 @@ def write_report(day: date, state: dict) -> Path:
             if e.get("stopped"):
                 lines.append(f"- {e['strategy']}: остановлено — {e['stopped']}")
                 continue
-            lines.append(f"- **{e['strategy']}**: записка `{e.get('memo')}`, экспериментов "
-                         f"{len(e.get('specs') or [])}, {e.get('tokens', 0):,} токенов")
+            if e.get("carried_from"):
+                lines.append(f"- **{e['strategy']}**: эксперименты записки `{e.get('memo')}` "
+                             f"от {e['carried_from']}, перенесённые остановкой по сроку")
+            else:
+                lines.append(f"- **{e['strategy']}**: записка `{e.get('memo')}`, экспериментов "
+                             f"{len(e.get('specs') or [])}, {e.get('tokens', 0):,} токенов")
             lines += [f"    - не принято: {p}" for p in e.get("problems") or []]
             lines += [f"    - {line}" for line in e.get("stand") or [] if line.startswith("- ")]
         lines.append("")
@@ -609,19 +650,22 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
-        noise_trials: int = 200, deployable_capital_usd: float = 3000.0) -> Path:
+        noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
+        stop_at: datetime | None = None) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
     (the research director, docs/DIRECTOR.md) runs on its own cadence unless
     given, and not at all on a night with `research=False` (it steers the
     researcher and the generator; a night without the researcher is a partial
-    one)."""
+    one). Nothing new starts after `stop_at` (`past_stop`); the report says
+    where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
     state = load_state(day)
     state.setdefault("results", [])
+    state.pop("stopped_at", None)  # a resumed night gets its own stop time
     if detectors and "detectors" not in state:
         # Before the watch list: strategies on it read these files
         # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.
@@ -639,6 +683,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         key = f"{kind}:{path}"
         if key in state["done"]:
             continue
+        if past_stop(stop_at, state, "recheck"):
+            break
         result = evaluate_item(kind, load_spec(path), end=end, noise_trials=noise_trials,
                                deployable_capital_usd=deployable_capital_usd)
         state["results"] = [r for r in state["results"]
@@ -647,7 +693,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         if result.error is None:  # a failed item is tried again on the next run
             state["done"][key] = datetime.now(UTC).isoformat()
         save_state(day, state)
-    if waiting:
+    if waiting and not past_stop(stop_at, state, "waiting"):
         # Recheck too: ideas waiting for data that are not on the watch list (qlab.waiting).
         from qlab.waiting import followed_ideas, waiting_stage
 
@@ -656,38 +702,43 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         followed = followed_ideas(state.get("waiting"))
         state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
         save_state(day, state)
-    if paper and "paper" not in state:
+    if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
         state["paper"] = paper_reconciliation(day)
         save_state(day, state)
-    if (decay if decay is not None else paper) and "decay" not in state:
+    if (decay if decay is not None else paper) and "decay" not in state \
+            and not past_stop(stop_at, state, "decay"):
         # After the watch list: the stand's panels are cached by then.
         decay_stage(day, end, state)
         save_state(day, state)
-    if "decay" in state and "allocation" not in state:
+    if "decay" in state and "allocation" not in state \
+            and not past_stop(stop_at, state, "allocation"):
         # The capital split is a proposal for the owner (qlab.pool_allocation): it reads the
         # decay results and the paper rule's states and moves nothing.
         from qlab.pool_allocation import night_stage
 
         night_stage(day, end, state)
         save_state(day, state)
-    if assess:
+    if assess and not past_stop(stop_at, state, "assess"):
         assess_stage(day, state)
-    if director if director is not None else research is not False:
+    if (director if director is not None else research is not False) \
+            and not past_stop(stop_at, state, "director"):
         # Before the researcher and the generator it steers; in the implement stage's
         # budget, and skipped (not the rechecks) when that budget is short.
         director_stage(day, state, force=director)
     if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
-        research_stage(day, state, noise_trials=noise_trials)
-    if implement:
+        research_stage(day, state, noise_trials=noise_trials, stop_at=stop_at)
+    if implement and not past_stop(stop_at, state, "implement"):
         implement_stage(day, state, noise_trials=noise_trials,
                         deployable_capital_usd=deployable_capital_usd)
-    if search:
+    if search and not past_stop(stop_at, state, "search"):
         search_stage(day, state)
-    if generate is True or (search and generate is None):
+    if (generate is True or (search and generate is None)) \
+            and not past_stop(stop_at, state, "generate"):
         # Last: the search for new ideas is what the budget cuts first, and the
         # generator is the most expensive part of it.
         generate_stage(day, state, noise_trials=noise_trials,
                        deployable_capital_usd=deployable_capital_usd, force=generate)
+    save_state(day, state)  # with the stop line, if the stop time cut the night
     return write_report(day, state)
 
 
@@ -868,6 +919,18 @@ def unfinished_research(day: date, plan: dict) -> list[str]:
             if f"research:{name}" not in yesterday.get("done", {})]
 
 
+def carried_research(day: date, out: list[dict]) -> list[dict]:
+    """The previous night's research entries the stop time cut after the memo:
+    experiments not run on the stand, or the memo not yet noted in the registry.
+    They run tonight before tonight's own, once (marked `carried_from`)."""
+    yesterday = day - timedelta(days=1)
+    have = {(e["strategy"], e.get("memo")) for e in out}
+    return [{**e, "carried_from": yesterday.isoformat()}
+            for e in load_state(yesterday).get("research", [])
+            if e.get("memo") and (e["strategy"], e["memo"]) not in have
+            and ("noted" not in e or (e.get("specs") and "stand" not in e))]
+
+
 def research_due(day: date, plan: dict, *, sweep: bool) -> bool:
     """Whether the researcher runs tonight. `cadence: nightly` in
     night/research.yaml: every night. `weekly` (the default): on the weekly day
@@ -884,13 +947,14 @@ def research_due(day: date, plan: dict, *, sweep: bool) -> bool:
 
 
 def research_stage(day: date, state: dict, *, noise_trials: int,
-                   config: Path = RESEARCH) -> None:
+                   config: Path = RESEARCH, stop_at: datetime | None = None) -> None:
     """The researcher on each strategy of `night/research.yaml`, on its cadence
     (`research_due`), in the implement stage's budget (CLAUDE.md order: after
     rechecks, before the search for new ideas); the stand then runs its
     experiments. Each strategy is researched at most once per night (the
     night's `done` marker); one the budget stopped goes first on the next
-    night that runs the stage."""
+    night that runs the stage. Nothing new starts after `stop_at`; experiments
+    the stop left unrun run first on the next night (`carried_research`)."""
     from qlab.agents.researcher import research, run_experiments
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
     from qlab.registry.db import session_scope
@@ -899,6 +963,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         return
     plan = yaml.safe_load(config.read_text(encoding="utf-8"))
     out = state.setdefault("research", [])
+    out[:0] = carried_research(day, out)
     from qlab.directions import active_directions, order_strategies, researcher_focus
 
     strategies = plan.get("strategies") or {}
@@ -908,53 +973,58 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
     waiting = [name for name in strategies if f"research:{name}" not in state["done"]]
     todo = {name: strategies[name]
             for name in order_strategies(waiting, directions, unfinished_research(day, plan))}
-    if not todo:
-        return
-    # A run stopped earlier tonight tries again now: its old stop line goes.
-    out[:] = [e for e in out if not (e.get("stopped") and e["strategy"] in todo)]
-    with session_scope() as session:
-        stage = NightBudget.open(session, probe(session).report.reading).stage(
-            Stage.IMPLEMENT, candidates=len(todo))
-        for name, e in todo.items():
-            entry = {"strategy": name}
-            free, cap, variants = variant_slots(session, e)
-            docs = [Path(d) for d in e.get("docs") or [] if Path(d).is_file()]
-            if (memo := latest_memo(name)) is not None:
-                docs.append(memo)
-            try:
-                budget = stage.candidate(None)
-                outcome = research(name, idea_ids=list(e["ideas"]),
-                                   specs=[Path(p) for p in e["specs"]], docs=docs,
-                                   budget=budget, session=session,
-                                   max_experiments=min(int(plan.get("max_experiments", 2)), free),
-                                   focus="\n\n".join(filter(None, [
-                                       plan_focus(plan),
-                                       owner_ideas_focus(e.get("owner_ideas")),
-                                       researcher_focus(name, directions),
-                                       full_strategy_focus(name, cap, variants)
-                                       if free == 0 else None])))
-                session.commit()
-                kept, stray = split_drops(outcome.drops, variants)
-                entry.update(memo=str(outcome.memo or ""), specs=[str(p) for p in outcome.specs],
-                             problems=[*outcome.problems, *(
-                                 f"DROP names `{d.idea_id}`, which is not an active variant of "
-                                 f"{name}: ignored" for d in stray)],
-                             drops=[{"idea": d.idea_id, "why": d.why} for d in kept],
-                             tokens=budget.spent_tokens)
-                state["done"][f"research:{name}"] = datetime.now(UTC).isoformat()
-            except NightExhausted as stop:
-                entry["stopped"] = f"night budget: {stop}"
+    if todo:
+        # A run stopped earlier tonight tries again now: its old stop line goes.
+        out[:] = [e for e in out if not (e.get("stopped") and e["strategy"] in todo)]
+        with session_scope() as session:
+            stage = NightBudget.open(session, probe(session).report.reading).stage(
+                Stage.IMPLEMENT, candidates=len(todo))
+            for name, e in todo.items():
+                if past_stop(stop_at, state, f"research:{name}"):
+                    break
+                entry = {"strategy": name}
+                free, cap, variants = variant_slots(session, e)
+                docs = [Path(d) for d in e.get("docs") or [] if Path(d).is_file()]
+                if (memo := latest_memo(name)) is not None:
+                    docs.append(memo)
+                try:
+                    budget = stage.candidate(None)
+                    outcome = research(name, idea_ids=list(e["ideas"]),
+                                       specs=[Path(p) for p in e["specs"]], docs=docs,
+                                       budget=budget, session=session,
+                                       max_experiments=min(
+                                           int(plan.get("max_experiments", 2)), free),
+                                       focus="\n\n".join(filter(None, [
+                                           plan_focus(plan),
+                                           owner_ideas_focus(e.get("owner_ideas")),
+                                           researcher_focus(name, directions),
+                                           full_strategy_focus(name, cap, variants)
+                                           if free == 0 else None])))
+                    session.commit()
+                    kept, stray = split_drops(outcome.drops, variants)
+                    entry.update(memo=str(outcome.memo or ""),
+                                 specs=[str(p) for p in outcome.specs],
+                                 problems=[*outcome.problems, *(
+                                     f"DROP names `{d.idea_id}`, which is not an active variant "
+                                     f"of {name}: ignored" for d in stray)],
+                                 drops=[{"idea": d.idea_id, "why": d.why} for d in kept],
+                                 tokens=budget.spent_tokens)
+                    state["done"][f"research:{name}"] = datetime.now(UTC).isoformat()
+                except NightExhausted as stop:
+                    entry["stopped"] = f"night budget: {stop}"
+                    out.append(entry)
+                    break
+                except BudgetExhausted as stop:
+                    entry["stopped"] = f"candidate budget: {stop}"
                 out.append(entry)
-                break
-            except BudgetExhausted as stop:
-                entry["stopped"] = f"candidate budget: {stop}"
-            out.append(entry)
-            save_state(day, state)
+                save_state(day, state)
     save_state(day, state)
     # The stand runs the experiments, each in its own transactions; then the
     # finished memo goes into the registry, one note per idea of the strategy.
     for entry in out:
         if entry.get("memo") and entry.get("specs") and "stand" not in entry:
+            if past_stop(stop_at, state, "experiments"):
+                break
             entry["stand"] = run_experiments(Path(entry["memo"]), [Path(p) for p in entry["specs"]],
                                              name=entry["strategy"], noise_trials=noise_trials)
             save_state(day, state)
