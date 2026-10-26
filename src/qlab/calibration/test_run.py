@@ -438,3 +438,50 @@ def test_noise_does_not_repeat_the_references_hedge_timing() -> None:
     noise = build_noise_spec(series="dollar_neutral", generator="random_signs", seed=1,
                              reference=reference)
     assert noise.measure_hedge_timing is False
+
+
+def test_noise_books_in_worker_processes_give_the_same_numbers(tmp_path, monkeypatch):
+    """Owner, 2026-10-26: «делай параллельно на 10 ядрах». A pool of workers, each
+    with its own registry session on the same file, writes one trial per book
+    and gives exactly the numbers of a run in one process."""
+    import qlab.registry.db as db_module
+    from qlab.calibration.run import NOISE_WORKERS_ENV
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    Base.metadata.create_all(db_module.get_engine())
+
+    def run(workers: int, offset: int) -> list:
+        monkeypatch.setenv(NOISE_WORKERS_ENV, str(workers))
+        with db_module.session_scope() as s:
+            if s.get(Idea, REFERENCE_IDEA_ID) is None:
+                repo.upsert_idea(s, id=REFERENCE_IDEA_ID, title="Toy reference idea",
+                                 source_type=SourceType.INTERNAL,
+                                 asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
+                repo.add_data_snapshot(
+                    s, id=SNAPSHOT_ID, source=SOURCE,
+                    instruments=dict.fromkeys(sorted(INSTRUMENTS), True),
+                    range_start=START, range_end=END, path=str(tmp_path / SNAPSHOT_ID),
+                    rows=60, fetched_at=datetime.now(UTC))
+            return run_noise_series(series="dollar_neutral", n_trials=6, session=s,
+                                    ruleset=_permissive_ruleset(),
+                                    deployable_capital_usd=1_000_000.0,
+                                    reference=_reference_spec(), seed_offset=offset)
+
+    import qlab.calibration.run as run_module
+
+    pools: list[int] = []
+    real_pool = run_module._run_parallel
+    monkeypatch.setattr(run_module, "_run_parallel", lambda jobs, **kw: (
+        pools.append(kw["workers"]) or real_pool(jobs, **kw)))
+    serial = run(1, 500)
+    pooled = run(3, 500)
+    assert pools == [3]
+    assert [(t.generator, t.seed) for t in pooled] == [(t.generator, t.seed) for t in serial]
+    assert [t.evaluation.metrics for t in pooled] == [t.evaluation.metrics for t in serial]
+    assert all(t.evaluation.error is None for t in pooled)
+    assert len({t.evaluation.trial_id for t in serial + pooled}) == 12
+    db_module.get_engine().dispose()
+    db_module._engine = None
+    db_module._SessionLocal = None

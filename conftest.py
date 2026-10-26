@@ -14,3 +14,12 @@ from qlab.budget.agent import CLAUDE_BIN_ENV
 @pytest.fixture(autouse=True)
 def _no_real_agent(monkeypatch) -> None:
     monkeypatch.setenv(CLAUDE_BIN_ENV, "/usr/bin/false")
+
+
+@pytest.fixture(autouse=True)
+def _noise_in_process(monkeypatch) -> None:
+    """Noise books run in this process in tests (qlab.calibration.run); the one
+    test of the worker pool sets its own count."""
+    from qlab.calibration.run import NOISE_WORKERS_ENV
+
+    monkeypatch.setenv(NOISE_WORKERS_ENV, "1")

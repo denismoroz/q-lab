@@ -13,7 +13,10 @@ this module.
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from multiprocessing import get_context
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -57,6 +60,12 @@ REAL_SPEC_PATHS: dict[str, Path] = {
 SERIES: tuple[str, ...] = ("dollar_neutral", "unconstrained")
 
 GENERATOR_NAMES: tuple[str, ...] = tuple(GENERATORS)
+
+# Noise books are independent of each other, so they run in worker processes
+# (owner, 2026-10-26: «да, делай параллельно на 10 ядрах»). The environment
+# variable overrides the count; 1 runs them in this process, as before.
+NOISE_WORKERS_ENV = "QLAB_NOISE_WORKERS"
+DEFAULT_NOISE_WORKERS = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,31 +196,90 @@ def run_noise_series(
     for generator in GENERATOR_NAMES:
         ensure_noise_idea(session, series=series, generator=generator)
 
+    jobs = [
+        (series, GENERATOR_NAMES[i % len(GENERATOR_NAMES)], seed_offset + i)
+        for i in range(n_trials)
+    ]
+    workers = min(noise_workers(), n_trials)
+    if workers > 1 and _shared_database(session):
+        return _run_parallel(jobs, workers=workers, session=session, ruleset=ruleset,
+                             deployable_capital_usd=deployable_capital_usd, reference=reference)
     trials: list[NoiseTrial] = []
-    for i in range(n_trials):
-        generator = GENERATOR_NAMES[i % len(GENERATOR_NAMES)]
-        seed = seed_offset + i
+    for series_, generator, seed in jobs:
         spec = build_noise_spec(
-            series=series, generator=generator, seed=seed, reference=reference
+            series=series_, generator=generator, seed=seed, reference=reference
         )
-        evaluation = evaluate_spec(
-            spec,
-            session=session,
-            ruleset=ruleset,
-            deployable_capital_usd=deployable_capital_usd,
-            # A noise idea is a measuring instrument, not a candidate: its
-            # status must never move (docs/TASKS.md T31).
-            update_idea_status=False,
-            # Its generators are q-lab's own and tested; the candidate it is
-            # matched to is checked on its own run (docs/LOOKAHEAD.md).
-            check_lookahead=False,
-            # Noise params (generator, seed) are the instrument's own.
-            check_sources=False,
-        )
-        trials.append(
-            NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)
-        )
+        trials.append(NoiseTrial(
+            series=series_, generator=generator, seed=seed,
+            evaluation=_evaluate_noise(spec, session, ruleset, deployable_capital_usd)))
     return trials
+
+
+def noise_workers() -> int:
+    """How many processes run the noise books (`QLAB_NOISE_WORKERS`, default 10)."""
+    return max(1, int(os.environ.get(NOISE_WORKERS_ENV, DEFAULT_NOISE_WORKERS)))
+
+
+def _shared_database(session: Session) -> bool:
+    """Whether worker processes, each opening the registry from `QLAB_DB`, would
+    write to the same file this session writes to. An in-memory database or a
+    session bound elsewhere (tests) runs the books in this process."""
+    from qlab.registry.db import get_database_url
+
+    url = session.get_bind().url
+    return url.database not in (None, "", ":memory:") and \
+        url.render_as_string(hide_password=False) == get_database_url()
+
+
+def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
+                    deployable_capital_usd: float) -> Evaluation:
+    return evaluate_spec(
+        spec,
+        session=session,
+        ruleset=ruleset,
+        deployable_capital_usd=deployable_capital_usd,
+        # A noise idea is a measuring instrument, not a candidate: its
+        # status must never move (docs/TASKS.md T31).
+        update_idea_status=False,
+        # Its generators are q-lab's own and tested; the candidate it is
+        # matched to is checked on its own run (docs/LOOKAHEAD.md).
+        check_lookahead=False,
+        # Noise params (generator, seed) are the instrument's own.
+        check_sources=False,
+    )
+
+
+def _noise_job(job: tuple[str, str, int, StrategySpec, RuleSet, float]) -> NoiseTrial:
+    """One noise book in a worker process, in its own registry session."""
+    from qlab.registry.db import session_scope
+
+    series, generator, seed, reference, ruleset, deployable_capital_usd = job
+    spec = build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
+    with session_scope() as session:
+        evaluation = _evaluate_noise(spec, session, ruleset, deployable_capital_usd)
+    return NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)
+
+
+def _run_parallel(jobs: list[tuple[str, str, int]], *, workers: int, session: Session,
+                  ruleset: RuleSet, deployable_capital_usd: float,
+                  reference: StrategySpec) -> list[NoiseTrial]:
+    """The noise books in `workers` processes. The numbers are the same as in one
+    process: each book is fixed by (series, generator, seed). What is shared is
+    written here first: every book's `spec` row (versions are numbered per idea,
+    so two workers adding one would collide), then a commit, so the workers --
+    each writing only its own trial and verdict rows -- never wait on this
+    session's lock. That commit also commits what the caller wrote before."""
+    from qlab.pipeline.evaluate import ensure_spec_rows
+
+    ensure_spec_rows(session, [
+        build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
+        for series, generator, seed in jobs])
+    session.commit()
+    with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as pool:
+        return list(pool.map(
+            _noise_job,
+            [(series, generator, seed, reference, ruleset, deployable_capital_usd)
+             for series, generator, seed in jobs]))
 
 
 def run_real_strategies(
@@ -247,6 +315,7 @@ __all__ = [
     "ensure_noise_idea",
     "load_reference_spec",
     "noise_idea_id",
+    "noise_workers",
     "run_noise_series",
     "run_real_strategies",
 ]

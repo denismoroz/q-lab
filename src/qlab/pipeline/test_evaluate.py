@@ -1913,3 +1913,23 @@ def test_extra_not_evaluable_reasons_write_a_not_evaluable_trial_and_run_nothing
     assert trial.status == TrialStatus.NOT_EVALUABLE
     assert session.query(Verdict).filter(Verdict.trial_id == result.trial_id).count() == 0
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE  # never "rejected"
+
+
+def test_a_list_that_names_spot_columns_finds_the_snapshot_built_for_it(
+        session, tmp_path) -> None:
+    """specs/bv2-binance.yaml lists BTC-SPOT itself and leaves include_spot off.
+    The snapshot built for that request carries spot columns; it must be found,
+    or every run (each noise book too) refetches and rebuilds it (2026-10-26)."""
+    listed = ["BTC", "BTC-SPOT", "ETH", "ETH-SPOT"]
+    _register_snapshot(session, tmp_path, snapshot_id="snap-listed", instruments=listed,
+                       universe_complete=False)
+
+    def find(instruments: list[str], include_spot: bool) -> str | None:
+        return _find_matching_snapshot(
+            session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+            end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=instruments,
+            include_spot=include_spot, min_daily_volume_usd=None)
+
+    assert find(listed, include_spot=False) == "snap-listed"
+    assert find(listed, include_spot=True) == "snap-listed"
+    assert find(["BTC", "ETH"], include_spot=False) is None  # a perp-only request

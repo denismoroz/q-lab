@@ -221,6 +221,13 @@ def _find_matching_snapshot(
     wanted_instruments = (
         sorted({i.upper() for i in instruments}) if instruments is not None else None
     )
+    # Spot asked for either by the flag or by naming spot columns in the list
+    # (specs/bv2-binance.yaml lists BTC-SPOT itself and leaves the flag off).
+    # Read from the flag alone, such a request never matched the snapshot built
+    # for it, and every run -- each of 200 noise books too -- refetched and
+    # rebuilt it: ~20 s a run, most of a night (2026-10-26).
+    wants_spot = include_spot or any(
+        name.endswith(SPOT_COLUMN_SUFFIX) for name in wanted_instruments or [])
 
     candidates = (
         session.query(DataSnapshot)
@@ -260,7 +267,7 @@ def _find_matching_snapshot(
         # "-SPOT" name answers this without a separate field.
         names = manifest.get("instruments", [])
         has_spot = any(str(name).endswith(SPOT_COLUMN_SUFFIX) for name in names)
-        if has_spot != include_spot:
+        if has_spot != wants_spot:
             continue
         # A liquidity-filtered snapshot and an unfiltered one answer
         # different requests even when source/range/interval/instruments all
@@ -382,15 +389,7 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     available proxy; a strategy with a genuinely different rebalance cadence
     from its data interval should say so in `params` instead.
     """
-    data_requirements = spec.data.model_dump(mode="json")
-    if data_requirements.get("spot_prices") == "perp":
-        # The default is not written, so the spec rows recorded before the
-        # option existed still match and no idea grows a new version for it.
-        del data_requirements["spot_prices"]
-    if data_requirements.get("spot_source") is None:
-        del data_requirements["spot_source"]  # same: no old spec row grows a version
-    costs_model = spec.costs.model_dump(mode="json")
-
+    data_requirements, costs_model = _spec_row_content(spec)
     existing = (
         session.query(SpecRow)
         .filter(SpecRow.idea_id == spec.idea_id)
@@ -398,12 +397,7 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
         .all()
     )
     for row in existing:
-        if (
-            row.code_ref == spec.code_ref
-            and row.params == spec.params
-            and row.data_requirements == data_requirements
-            and row.costs_model == costs_model
-        ):
+        if _same_content(row, spec, data_requirements, costs_model):
             return row
 
     next_version = (existing[0].version + 1) if existing else 1
@@ -425,6 +419,44 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     if strategy_key(spec.code_ref, spec.params) is not None:
         assign_parents(session)
     return row
+
+
+def _spec_row_content(spec: StrategySpec) -> tuple[dict, dict]:
+    """The `data_requirements` and `costs_model` a spec row stores for `spec`."""
+    data_requirements = spec.data.model_dump(mode="json")
+    if data_requirements.get("spot_prices") == "perp":
+        # The default is not written, so the spec rows recorded before the
+        # option existed still match and no idea grows a new version for it.
+        del data_requirements["spot_prices"]
+    if data_requirements.get("spot_source") is None:
+        del data_requirements["spot_source"]  # same: no old spec row grows a version
+    return data_requirements, spec.costs.model_dump(mode="json")
+
+
+def _same_content(row: SpecRow, spec: StrategySpec, data_requirements: dict,
+                  costs_model: dict) -> bool:
+    return (row.code_ref == spec.code_ref and row.params == spec.params
+            and row.data_requirements == data_requirements
+            and row.costs_model == costs_model)
+
+
+def ensure_spec_rows(session: Session, specs: Sequence[StrategySpec]) -> None:
+    """`_get_or_create_spec_row` for many specs, reading each idea's versions
+    once. Used before noise books run in parallel (`qlab.calibration.run`): the
+    rows exist before any worker looks for them, so no two workers number a
+    version at once."""
+    missing: list[StrategySpec] = []
+    by_idea: dict[str, list[SpecRow]] = {}
+    for spec in specs:
+        if spec.idea_id not in by_idea:
+            by_idea[spec.idea_id] = session.query(SpecRow).filter(
+                SpecRow.idea_id == spec.idea_id).all()
+        data_requirements, costs_model = _spec_row_content(spec)
+        if not any(_same_content(row, spec, data_requirements, costs_model)
+                   for row in by_idea[spec.idea_id]):
+            missing.append(spec)
+    for spec in missing:
+        by_idea[spec.idea_id].append(_get_or_create_spec_row(session, spec))
 
 
 def _code_sha() -> str:

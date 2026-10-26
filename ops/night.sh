@@ -7,8 +7,9 @@
 # Owner, 2026-10-26: the night must not run into the working day and must be over
 # before 08:00 Minsk. It cannot start earlier: the night reads the last closed
 # daily candle, and that closes at 00:00 UTC (03:00 Minsk). Nothing new starts
-# after STOP_AT; a started piece of work finishes (the longest seen, a bv2 run on
-# Binance hourly data, ~46 min), the rest goes to the next night.
+# after STOP_AT; a started piece of work finishes (the longest seen was a bv2 run
+# on Binance hourly data, ~46 min, before the snapshot-matching fix and the noise
+# worker pool of 2026-10-26 made it ~30 s), the rest goes to the next night.
 STOP_AT="07:10"
 set -u
 cd "$(dirname "$0")/.." || exit 1
