@@ -1,14 +1,16 @@
 # The idea generator (qlab.agents.generator, docs/BLOCKS.md, docs/MECHANISMS.md).
 #
-# One agent call a week reads the catalogue of published mechanisms and writes up
+# One agent call a night reads the catalogue of published mechanisms and writes up
 # to `max_specs` new strategy specs under specs/generated/ -- composed of ready
 # blocks, no new code. Code checks every number against the catalogue and runs
 # the specs that pass on the stand. It is part of the search stage, the one the
 # token budget cuts first (CLAUDE.md), and runs after the scout. A stop by the
 # budget is continued the next night. Run by hand: `qlab generate`, or
 # `qlab night run --generate`.
-enabled: false  # on after the owner-reviewed catalogue and a first manual run (2026-10-25)
-cadence: weekly        # weekly | daily
-weekday: wednesday     # the day of the week for the weekly cadence (the researcher has Sunday)
+# Owner, 2026-10-26: «есть место для проверки - запускать хоть каждую ночь». Every night;
+# a night with no free strategy place (night/limits.yaml) skips it and says so.
+enabled: true
+cadence: daily         # weekly | daily
+weekday: wednesday     # used only by the weekly cadence
 max_specs: 3
 catalogue: docs/MECHANISMS.md
