@@ -21,3 +21,5 @@ specs:
   - specs/trend-retune-monthly.yaml                   # passed every rule; waits for capital
   - specs/research/trend/trend-research-gate-hl.yaml  # the simple gate on the venue production trades
   - specs/research/bv2/bv2-research-headroom.yaml     # the configuration production's b2_cold runs
+  # Added 2026-10-26 (owner: «Добавить b2_retune в список наблюдения ... - хорошо»).
+  - specs/research/bv2/bv2-research-headroom-retune.yaml  # production's b2_retune
