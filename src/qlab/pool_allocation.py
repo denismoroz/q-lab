@@ -527,11 +527,14 @@ def _evidence_text(ln: Line) -> str:
 def _decay_text(ln: Line) -> str | None:
     if ln.decay_percentile is None:
         return None
-    text = (f"Сверка с историей стенда: результат хуже, чем у {ln.decay_percentile:.0f} из 100 "
-            "таких же отрезков")
+    # The percentile is the share of the stand's same-length windows that did WORSE than the
+    # realised result (qlab.decay); until 2026-10-26 this line said the opposite.
+    text = (f"Сверка с историей стенда: хуже нынешнего результата были {ln.decay_percentile:.0f} "
+            "из 100 таких же отрезков")
     if ln.decay_alert:
-        return text + "; детектор затухания отметил стратегию."
-    return text + "; порог тревоги владелец не задал, на доли это не влияет."
+        return text + "; детектор затухания поднял тревогу (на доли это не влияет, пока владелец " \
+            "не скажет исключать)."
+    return text + "; тревоги нет."
 
 
 def _held_warning(p: Proposal) -> list[str]:

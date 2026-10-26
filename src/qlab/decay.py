@@ -35,9 +35,9 @@ stand's, and nothing else:
   long.
 
 **No verdict is written here.** CLAUDE.md: verdicts are code, thresholds are
-declared, never invented. No threshold on the percentile has been declared:
-`alert_percentile` in `night/decay.yaml` is null and the owner sets it. While it
-is null, nothing is labelled good or bad. Preregistration 2026-09-21 PREDICTION 0
+declared, never invented. The threshold on the percentile is the owner's:
+`alert_percentile` in `night/decay.yaml` (7 since 2026-10-26, «пускай порог будет 7»;
+while it was null nothing was labelled good or bad). Preregistration 2026-09-21 PREDICTION 0
 still holds: a paper return over weeks says nothing about profitability, so this
 module describes behaviour ("does it look like its own history"), never value.
 

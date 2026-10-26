@@ -306,7 +306,7 @@ def test_the_shipped_mapping_and_config_are_consistent() -> None:
         assert (root / cfg["spec"]).is_file()
 
     config = decay.load_config(root / "night" / "decay.yaml")
-    assert config["alert_percentile"] is None  # the owner sets it; nothing is invented
+    assert config["alert_percentile"] == 7  # the owner set it, 2026-10-26: «пускай порог будет 7»
     for idea in config["preregistered"]:
         assert idea in books
         for band in decay.bands_for(config, idea):

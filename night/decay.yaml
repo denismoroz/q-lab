@@ -8,7 +8,8 @@
 # 10, a result in the worst tenth of same-length stand windows is flagged. While
 # it is null nothing is labelled good or bad (CLAUDE.md: thresholds are declared,
 # never invented). Only the return is flagged by it.
-alert_percentile: null
+# Owner, 2026-10-26: «пускай порог будет 7».
+alert_percentile: 7
 
 # Bands that seed/preregistration/*.yaml declared, quoted with their source,
 # keyed by the idea whose book they are about. The preregistration files are not
