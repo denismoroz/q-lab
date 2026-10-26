@@ -24,6 +24,11 @@
 cadence: nightly
 
 max_experiments: 2
+# The owner's question below was answered on 2026-10-25 and became the working rule
+# (researchers ignore needs-forward as a blocker; fixes are designed on data before the cut
+# date and judged after it). `focus_decided` makes the night pass it as a rule, not a
+# question (qlab.night.plan_focus): on 2026-10-26 all five memos re-answered it.
+focus_decided: 2026-10-25
 focus: "я предлагаю статус ждет проверку вперед - для reserchera - игнорировать. а сформулировать так - 4 стратегии где он может работать. - если он по этим стратегиям может улучшить - отлично - пускай улучшает. я не совсем понимаю - статус - ждет проверку вперед - нужен ли он вообще - данные есть - отлично - проверили - если данных мало - смотрим где стратегия плохо работает - основные просадки и их пытаемся исправить... как тебе такая идея?"
 
 strategies:

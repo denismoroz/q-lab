@@ -371,3 +371,12 @@ def test_five_researcher_strategies_leave_one_of_the_six_places_free() -> None:
             REPO / "night/limits.yaml")
     assert cap == 6 and len(active) == 5 and free == 1
     assert "frab-binance-spot" in active
+
+
+def test_a_decided_focus_is_passed_as_a_rule_not_a_question() -> None:
+    from qlab.night import plan_focus
+
+    assert plan_focus({"focus": "q?"}) == "q?"
+    assert plan_focus({}) is None
+    ruled = plan_focus({"focus": "q?", "focus_decided": "2026-10-25"})
+    assert "«q?»" in ruled and "do not answer" in ruled and "2026-10-25" in ruled

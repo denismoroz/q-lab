@@ -813,6 +813,17 @@ def variant_slots(session, strategy: dict, limits: Path = LIMITS) -> tuple[int, 
     return max(0, cap - len(variants)), cap, variants
 
 
+def plan_focus(plan: dict) -> str | None:
+    """The plan's general focus. When `focus_decided` names a date, the quote is a decision
+    the owner already took (and the researcher already answered): it is passed as a rule to
+    work by, so nightly memos stop spending their first section re-answering it."""
+    focus = plan.get("focus")
+    if not focus or not plan.get("focus_decided"):
+        return focus
+    return (f"The owner's standing decision of {plan['focus_decided']}, already answered and in "
+            f"effect -- work by it, do not answer or discuss it again in the memo: «{focus}»")
+
+
 def owner_ideas_focus(ideas: list[str] | None) -> str | None:
     """The owner's own ideas for one strategy (night/research.yaml
     `owner_ideas`), verbatim, for the researcher to work through."""
@@ -917,7 +928,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                    budget=budget, session=session,
                                    max_experiments=min(int(plan.get("max_experiments", 2)), free),
                                    focus="\n\n".join(filter(None, [
-                                       plan.get("focus"),
+                                       plan_focus(plan),
                                        owner_ideas_focus(e.get("owner_ideas")),
                                        researcher_focus(name, directions),
                                        full_strategy_focus(name, cap, variants)
