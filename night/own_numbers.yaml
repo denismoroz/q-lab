@@ -14,7 +14,10 @@
 # Changing a list is a NEW version of this file, never an edit: bump `version` and say
 # why in the commit. Values are round on purpose: a coarse grid is the one the data can
 # afford; the windows and the rebalance are the examples the owner approved.
-version: "2026-10-26.1"
+# 2026-10-26.2: two Bv2 lists (owner, 2026-10-26, «да, делай оба варианта» -- the hedge signal's
+# short window and the partial hedge; frab 7304000 made both params). The short window takes the
+# windows list above; the share of a sideways hedge is half or whole (whole = today's books).
+version: "2026-10-26.2"
 lists:
   signal.window_days: [3, 7, 14, 30]
   signal.lookback_days: [3, 7, 14, 30]
@@ -22,6 +25,8 @@ lists:
   portfolio.fraction: [0.1, 0.2, 0.3]
   portfolio.top_n: [3, 5, 10]
   universe.n: [20, 50]
+  short_window_days: [3, 7, 14, 30]
+  partial_hedge_share: [0.5, 1.0]
 # The most candidates one spec may offer (the product of its lists' lengths): each is a
 # trial, and the more there are, the higher the bar the best of them has to clear.
 max_candidates: 8

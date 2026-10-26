@@ -65,3 +65,16 @@ def test_composed_strategies_are_not_grouped_by_module() -> None:
 
     assert strategy_key("qlab.strategies.blocks:Composed", {"signal": {}}) is None
     assert strategy_key("qlab.strategies.trend:TrendTSMOMEnsemble", {}) == "trend"
+
+
+def test_a_variant_set_under_another_member_stays_there(session) -> None:
+    """The same variant on other data sits under that variant (`qlab idea set-parent`); the
+    family pass used to flatten it under the root, and it took a place of its own."""
+    _idea(session, "strategy-b-v2", IdeaStatus.PAPER, "qlab.strategies.live.bv2:LiveBv2", day=0)
+    _idea(session, "bv2-pool", IdeaStatus.CANDIDATE, "qlab.strategies.live.bv2:LiveBv2", day=1)
+    _idea(session, "bv2-pool-hl", IdeaStatus.BENCH, "qlab.strategies.live.bv2:LiveBv2", day=2)
+    assign_parents(session)
+    session.get(Idea, "bv2-pool-hl").parent_id = "bv2-pool"
+    assert assign_parents(session) == {}
+    assert session.get(Idea, "bv2-pool-hl").parent_id == "bv2-pool"
+    assert session.get(Idea, "bv2-pool").parent_id == "strategy-b-v2"

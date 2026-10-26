@@ -181,6 +181,24 @@ def to_retune(spec: StrategySpec, config: dict, config_path: Path = CONFIG) -> S
     })
 
 
+def prepare(spec: StrategySpec, session, ruleset, *, deployable_capital_usd: float,
+            config_path: Path = CONFIG) -> tuple[StrategySpec, dict]:
+    """A spec with open numbers made ready for the stand: every candidate written as a trial,
+    then the one-choice spec to evaluate. Returns it and what to report (the candidate trials,
+    the cut). A spec without open numbers comes back as it is."""
+    if not open_params(spec, config_path):
+        return spec, {}
+    config = load_config(config_path)
+    found = problems(spec, config, config_path)
+    if found:
+        raise ValueError("; ".join(found))
+    trials = record_candidates(spec, session, ruleset,
+                               deployable_capital_usd=deployable_capital_usd,
+                               config_path=config_path)
+    retune = to_retune(spec, config, config_path)
+    return retune, {"candidate_trials": trials, "cut": retune.params_fixed_at.isoformat()}
+
+
 def chosen_params(retune_spec: StrategySpec, session) -> dict | None:
     """The candidate the one-choice spec chose at its cut (its params), or None if it chose
     none. Read from the stand's own run of it (the wrapper's cache makes this cheap)."""
@@ -223,4 +241,4 @@ def record_candidates(spec: StrategySpec, session, ruleset, *, deployable_capita
 
 
 __all__ = ["CONFIG", "candidates", "chosen_params", "cut_date", "fixed_at_choice",
-           "load_config", "open_params", "problems", "record_candidates", "to_retune"]
+           "load_config", "open_params", "prepare", "problems", "record_candidates", "to_retune"]

@@ -34,7 +34,7 @@ focus: "я предлагаю статус ждет проверку впере�
 strategies:
   bv2:
     ideas: [strategy-b-v2, bv2-binance, bv2-research-headroom, bv2-research-headroom-retune,
-            bv2-m-cold4, bv2-m-top10]
+            bv2-m-cold4, bv2-m-top10, bv2-research-short-window, bv2-research-partial-hedge]
     # The owner's own ideas for this strategy, verbatim (qlab.night.owner_ideas_focus).
     # Context the researcher should read for this one: the hedge rule today decides on
     # 14- and 30-day returns once an hour and lifts the hedge after 12 hours in a row of
@@ -54,6 +54,10 @@ strategies:
       - specs/bv2-live.yaml
       - specs/bv2-binance.yaml
       - specs/research/bv2/bv2-research-headroom-retune.yaml
+      # 2026-10-26, the owner's «почаще ... более мелкий тайфрейм» and the researcher's partial
+      # hedge, now params of frab (7304000), each value chosen before the cut (qlab.own_numbers).
+      - specs/research/bv2/bv2-research-short-window.yaml
+      - specs/research/bv2/bv2-research-partial-hedge.yaml
       # 2026-10-25: the stand can now express the owner's ideas above (a coin list re-chosen
       # from data before each rebalance, one margin pool for all coins, top-ups that arrive
       # late, new money paid in); these are the measurements that exist (two more were removed

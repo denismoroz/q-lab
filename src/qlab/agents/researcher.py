@@ -295,6 +295,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
     """Run declared experiments on the stand (matched noise, every rule) and
     append their results to the memo -- numbers written by code, not by the
     researcher."""
+    from qlab import own_numbers
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
@@ -320,14 +321,23 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
                                      source_type=SourceType.INTERNAL,
                                      asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
                                      notes=f"Declared by the researcher ({name}).")
+                # Open numbers (qlab.own_numbers, owner 2026-10-26): every value a trial,
+                # then the spec that chooses one at the cut and is judged after it.
+                judged, opened = own_numbers.prepare(
+                    experiment, session, load_latest(),
+                    deployable_capital_usd=deployable_capital_usd)
                 result = evaluate_spec_with_shape_aware_bar(
-                    experiment, session=session, ruleset=load_latest(),
+                    judged, session=session, ruleset=load_latest(),
                     deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials).candidate
             m = result.metrics or {}
+            own = (f" [свои числа: {len(opened['candidate_trials'])} вариантов записаны "
+                   f"испытаниями, выбор на данных до {opened['cut']}, вердикт — по дням с него]"
+                   if opened else "")
             regimes = ", ".join(f"{r}: {m[f'regime_{r}_return']:+.1%}" for r in
                                 ("bull", "flat", "bear") if f"regime_{r}_return" in m)
             lines.append(
-                f"- `{experiment.idea_id}` (прогон {result.trial_id}): {result.routing.route} — "
+                f"- `{experiment.idea_id}` (прогон {result.trial_id}){own}: "
+                f"{result.routing.route} — "
                 f"в год {m.get('ann_return_net', float('nan')):+.1%}, "
                 f"Шарп {m.get('sharpe_net', float('nan')):.2f}, "
                 f"просадка {m.get('max_dd', float('nan')):.1%}, "

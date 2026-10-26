@@ -59,7 +59,8 @@ def family_keys(session: Session) -> dict[str, str]:
 def assign_parents(session: Session) -> dict[str, str]:
     """Point every family member at its parent; returns the changes made
     (idea id -> parent id). Idempotent; a parent is never re-chosen away from
-    an idea already serving as one unless a more established member exists."""
+    an idea already serving as one unless a more established member exists, and a member
+    set under another member (a variant of a variant) stays there."""
     keys = family_keys(session)
     by_key: dict[str, list[Idea]] = {}
     for idea_id, key in keys.items():
@@ -73,8 +74,12 @@ def assign_parents(session: Session) -> dict[str, str]:
         parent = min(members, key=lambda i: (_STATUS_RANK.get(i.status, 2), i.created_at, i.id))
         if parent.parent_id is not None:
             parent.parent_id = None
+        ids = {i.id for i in members}
         for idea in members:
-            if idea is not parent and idea.parent_id != parent.id:
+            # A member already under ANOTHER member keeps it: that is a variant of a variant,
+            # the same variant on other data (`qlab idea set-parent`, qlab.registry.strategies
+            # .active_branches), and flattening it made it take a place of its own (2026-10-26).
+            if idea is not parent and idea.parent_id != parent.id and idea.parent_id not in ids:
                 idea.parent_id = parent.id
                 changed[idea.id] = parent.id
     session.flush()
