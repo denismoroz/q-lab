@@ -58,6 +58,9 @@ from qlab.harness.run import run_backtest
 _REQUIRED = ("inner_code_ref", "base_params", "grid", "refit_every", "window", "objective",
              "score_costs")
 _PERIODS = {"D": "D", "W": "W-SUN", "M": "M"}
+#: `refit_every: once` -- one choice, at the first bar on or after `choose_at`, held to the
+#: end (qlab.own_numbers: a value chosen on data before the cut, judged after it).
+ONCE = "once"
 _OBJECTIVES = ("sharpe_net", "total_return_net")
 
 _CACHE: dict[tuple, RetuneRun] = {}
@@ -83,19 +86,36 @@ def expand_grid(base: Mapping[str, object], grid: Mapping[str, Mapping[str, Mapp
             raise ValueError(f"retune grid axis {axis!r} has no options")
     out = {}
     for combo in itertools.product(*[list(options.items()) for _, options in axes]):
-        params = dict(base)
+        params = json.loads(json.dumps(dict(base)))  # a deep copy: overrides may be nested
         for _, overrides in combo:
-            params.update(dict(overrides))
+            for key, value in dict(overrides).items():
+                # A dotted key sets one nested value ("signal.window_days"), so a grid
+                # axis can vary one field of a block without restating the block.
+                *parents, leaf = str(key).split(".")
+                node = params
+                for name in parents:
+                    node = node.setdefault(name, {})
+                node[leaf] = value
         out["/".join(label for label, _ in combo)] = params
     if len(out) < 2:
         raise ValueError("retune needs at least two candidates to choose between")
     return out
 
 
-def refit_rows(index: pd.DatetimeIndex, refit_every: str) -> np.ndarray:
+def refit_rows(index: pd.DatetimeIndex, refit_every: str,
+               choose_at: object | None = None) -> np.ndarray:
     """True on the first bar of every re-tuning period (calendar day, week
     ending Sunday, or month, UTC). The very first bar is not one: nothing has
-    been realised yet."""
+    been realised yet. `once`: only the first bar on or after `choose_at`."""
+    if refit_every == ONCE:
+        if choose_at is None:
+            raise ValueError("refit_every: once needs choose_at")
+        at = pd.Timestamp(str(choose_at), tz="UTC")
+        rows = np.zeros(len(index), dtype=bool)
+        first = int(index.searchsorted(at))
+        if 0 < first < len(index):
+            rows[first] = True
+        return rows
     if refit_every not in _PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(_PERIODS)}, got {refit_every!r}")
     periods = index.tz_convert("UTC").tz_localize(None).to_period(_PERIODS[refit_every])
@@ -171,7 +191,9 @@ class Retune:
             first_active[name] = active.idxmax() if bool(active.any()) else None
         returns = pd.DataFrame(returns_by)
 
-        refits = np.flatnonzero(refit_rows(index, str(params["refit_every"])))
+        once = str(params["refit_every"]) == ONCE
+        refits = np.flatnonzero(refit_rows(index, str(params["refit_every"]),
+                                           params.get("choose_at")))
         choices: dict[pd.Timestamp, str | None] = {}
         out = np.zeros((len(index), len(panel.prices.columns)))
         for n, row in enumerate(refits):
@@ -183,8 +205,10 @@ class Retune:
             best, best_score = None, -np.inf
             for name in candidates:
                 started = first_active[name]
-                # Eligible only after trading through one whole period.
-                if started is None or previous_refit is None or started >= previous_refit:
+                # Eligible only after trading through one whole period; a single choice
+                # (once) needs only to have traded before it.
+                if started is None or (once and started >= tau) or (
+                        not once and (previous_refit is None or started >= previous_refit)):
                     continue
                 score = _score(past[name][past.index >= started], objective)
                 if not np.isnan(score) and score > best_score:

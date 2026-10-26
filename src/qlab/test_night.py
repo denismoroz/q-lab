@@ -351,7 +351,8 @@ def test_generator_stage_runs_once_resumes_and_reports(tmp_path, monkeypatch) ->
     generator, _, config, fake_night = _generator_env(tmp_path, monkeypatch)
     calls = {"agent": 0, "stand": []}
 
-    def fake_generate(*, budget, session, catalogue_path, max_specs, data_end, registry_idea_ids):
+    def fake_generate(*, budget, session, catalogue_path, max_specs, data_end, registry_idea_ids,
+                      max_own=1):
         calls["agent"] += 1
         calls["args"] = (max_specs, data_end, list(registry_idea_ids), catalogue_path)
         item = generator.GeneratedSpec(
@@ -420,7 +421,7 @@ def test_generator_stage_retries_only_the_second_stage_and_reports_both(
     generator, _, config, _ = _generator_env(tmp_path, monkeypatch)
     calls = {"stand": 0, "second": 0}
 
-    def fake_generate(*, budget, session, catalogue_path, max_specs, data_end,
+    def fake_generate(*, budget, session, catalogue_path, max_specs, data_end, max_own=1,
                       registry_idea_ids):
         item = generator.GeneratedSpec(
             path=Path("specs/generated/gen-a.yaml"),

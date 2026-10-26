@@ -145,6 +145,27 @@ class SpecCosts(BaseModel):
         return value
 
 
+class OwnMechanism(BaseModel):
+    """What a self-made mechanism rests on, written before any run (StrategySpec.own_mechanism)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    idea: str
+    """The idea in plain words: what the strategy buys and sells, and when."""
+    why: str
+    """Why it should earn: who pays, what risk it carries or what behaviour it uses."""
+    idea_from: str
+    """Where the idea came from: an owner's quote, a publication of the feed, a mechanism
+    of the catalogue it varies, an observation in a named report."""
+
+    @model_validator(mode="after")
+    def _all_written(self) -> OwnMechanism:
+        for name in ("idea", "why", "idea_from"):
+            if len(getattr(self, name).strip()) < 20:
+                raise ValueError(f"own_mechanism.{name} must say it in a sentence")
+        return self
+
+
 class StrategySpec(BaseModel):
     """One strategy spec, as formalized in a `<spec>.yaml` file.
 
@@ -206,6 +227,12 @@ class StrategySpec(BaseModel):
     own `idea_id` with an empty list here (the same move T19 asks for with
     "соседний кандидат").
     """
+
+    own_mechanism: OwnMechanism | None = None
+    """A mechanism the idea generator thought up itself, from an idea rather than a
+    paper (owner, 2026-10-26: «придумать свой механизм основываясь на идее"). Set only
+    with the `# mechanism: own` header; its numbers come from the owner's lists of own
+    values (night/own_numbers.yaml), chosen on data before the cut (qlab.own_numbers)."""
 
     differs_from_source: list[str] = Field(default_factory=list)
     """How a strategy built "after" a published source differs from what the

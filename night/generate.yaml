@@ -13,4 +13,7 @@ enabled: true
 cadence: daily         # weekly | daily
 weekday: wednesday     # used only by the weekly cadence
 max_specs: 3
+# Own mechanisms (`# mechanism: own`, owner 2026-10-26: «придумать свой механизм основываясь на
+# идее») per run, out of max_specs: each is a new strategy with every number left open.
+max_own: 1
 catalogue: docs/MECHANISMS.md

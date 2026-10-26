@@ -1,0 +1,32 @@
+# Numbers taken from q-lab's own data when no paper gives them (qlab.own_numbers,
+# docs/OWN_NUMBERS.md). Owner, 2026-10-26, on the rule proposed with these four limits:
+# «Разрешить с этими четырьмя ограничениями ... откроются механизмы про фандинг. - еще я бы
+# довавил правило - придумать свой механизм основываясь на идее».
+#
+# The four limits, as code applies them:
+#   1. the list of values is declared HERE, before any run that uses it; a spec offers a
+#      parameter's whole list, never a subset it picked;
+#   2. the value is chosen by code on data BEFORE the cut only (qlab.strategies.retune,
+#      refit_every: once);
+#   3. the verdict is the stand's on data FROM the cut, which the choice never saw;
+#   4. every value of the list is a trial of its own in the ledger (deflation counts it).
+#
+# Changing a list is a NEW version of this file, never an edit: bump `version` and say
+# why in the commit. Values are round on purpose: a coarse grid is the one the data can
+# afford; the windows and the rebalance are the examples the owner approved.
+version: "2026-10-26.1"
+lists:
+  signal.window_days: [3, 7, 14, 30]
+  signal.lookback_days: [3, 7, 14, 30]
+  rebalance_days: [1, 7]
+  portfolio.fraction: [0.1, 0.2, 0.3]
+  portfolio.top_n: [3, 5, 10]
+  universe.n: [20, 50]
+# The most candidates one spec may offer (the product of its lists' lengths): each is a
+# trial, and the more there are, the higher the bar the best of them has to clear.
+max_candidates: 8
+# Where the cut falls: the owner's split of the window, «поделить 2/3 и 1/3 ... оставшуюся 1/3
+# для прогона вперед» (rules/2026-10-24.1.yaml, holdout_share 1/3) -- the value is chosen on
+# the first two thirds, judged on the last third; later only if the spec's own sources were
+# published later (params_fixed_at).
+forward_share: 0.3333333333333333

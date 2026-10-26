@@ -1347,6 +1347,7 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
                 outcome = generate(
                     budget=budget, session=session, catalogue_path=catalogue_path,
                     max_specs=min(int(plan.get("max_specs", 3)), free),
+                    max_own=int(plan.get("max_own", 1)),
                     data_end=_data_end_for_generation(session, day),
                     registry_idea_ids=[i for (i,) in session.query(Idea.id)])
                 gen.update(

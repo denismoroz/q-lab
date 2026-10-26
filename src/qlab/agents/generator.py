@@ -27,6 +27,14 @@ nothing. Code then guards what it wrote and runs what passes:
    researcher's experiments (matched noise, every rule); a spec that fails a
    guard is reported and not run. Every run writes its trial.
 
+Two ways past a paper that gives no number (owner, 2026-10-26, «Разрешить с этими четырьмя
+ограничениями ... - еще я бы довавил правило - придумать свой механизм основываясь на
+идее»; `qlab.own_numbers`, docs/OWN_NUMBERS.md): a parameter the mechanism's row leaves
+empty may be left OPEN -- given as the whole list `night/own_numbers.yaml` declares for it,
+chosen by code on data before the cut and judged after it, every value a trial; and a spec
+may carry `# mechanism: own` with `own_mechanism` (the idea, why it should earn, where it came
+from) when no catalogue mechanism expresses the idea -- all its numbers are then open ones.
+
 The research director (`qlab.agents.director`) may steer the generator through
 `night/directions.yaml`: the mechanisms it prefers are named in the instructions,
 and a spec of a mechanism it paused is rejected by the guard (`paused`). Both apply
@@ -64,6 +72,8 @@ DATA_START = date(2019, 9, 8)
 """The first day Binance USDT perpetuals exist in the archive; the reference
 Binance specs start here."""
 TOOLS = "Read,Glob,Grep,Write"
+OWN = "own"
+"""The `# mechanism:` header of a self-made mechanism (StrategySpec.own_mechanism)."""
 MECHANISM_HEADER = re.compile(r"^#\s*mechanism:\s*(\S+)\s*$", re.MULTILINE)
 RESULT_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                   "min_capital_usd", "forward_days", "forward_days_needed")
@@ -250,7 +260,9 @@ def _in(number: float, values) -> bool:
 
 
 def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_path: Path,
-                                 catalogue_text: str) -> list[str]:
+                                 catalogue_text: str, *, open_params: Mapping | None = None,
+                                 own_values: tuple[float, ...] = (),
+                                 own: bool = False) -> list[str]:
     """Every numeric leaf of `params` is a value the spec's mechanism gives in the
     table row for exactly that parameter path, or a `FRAMEWORK_VALUES` entry. A
     parameter the table has no row for cannot be used, even if its number
@@ -272,11 +284,19 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
         values.setdefault(r.param, []).extend(r.values)
         if r.values:
             texts.setdefault(r.param, []).append(r.values_text)
-    mechanism_values = tuple(v for vs in values.values() for v in vs)
-    name = mechanism.id if mechanism else "?"
+    mechanism_values = tuple(v for vs in values.values() for v in vs) + tuple(own_values)
+    name = mechanism.id if mechanism else ("own" if own else "?")
+    open_params = open_params or {}
     for path, value in _param_leaves("", spec.params):
         numbers = _numbers(value)
         if not numbers:
+            continue
+        if path in open_params:
+            # Left open for code to choose (qlab.own_numbers): only where no paper gives a
+            # number -- the mechanism's row for it is absent or empty -- or in an own mechanism.
+            if values.get(path):
+                problems.append(f"{path}: {name} gives values for it ({'; '.join(texts[path])}); "
+                                "a parameter is left open only where the catalogue gives none")
             continue
         key = covering_key(path, spec.sources)
         citation = spec.sources.get(key, "") if key else ""
@@ -287,11 +307,16 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
             continue
         if derived:
             operands = [float(n) for n in _NUMBER.findall(derived.group(1))]
-            if mechanism is not None:
+            if mechanism is not None or own:
                 absent = [n for n in operands if not _in(n, mechanism_values)]
                 if absent:
                     problems.append(f"{path}: derived from numbers that are not values in any "
                                     f"row of {name} in {catalogue_path}: {absent}")
+            continue
+        if own:
+            if not _in(numbers[0], FRAMEWORK_VALUES.get(path, ())) or len(numbers) != 1:
+                problems.append(f"{path} = {value!r}: an own mechanism takes its numbers from "
+                                "night/own_numbers.yaml (left open) or the framework values only")
             continue
         if str(catalogue_path) not in citation:
             problems.append(f"{path} = {value!r} does not cite {catalogue_path}: the numbers come "
@@ -342,11 +367,17 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
         problems.append(f"code_ref is {spec.code_ref!r}, must be exactly {CODE_REF!r}")
     mechanism_id = mechanism_of(_abs(path).read_text(encoding="utf-8"))
     mechanism = next((m for m in mechanisms if m.id == mechanism_id), None)
-    if mechanism is None:
+    own = mechanism_id == OWN
+    if own and spec.own_mechanism is None:
+        problems.append("'# mechanism: own' needs own_mechanism: the idea, why it should earn, "
+                        "and where it came from")
+    elif spec.own_mechanism is not None and not own:
+        problems.append("own_mechanism is only for '# mechanism: own'")
+    if mechanism is None and not own:
         problems.append("no '# mechanism: <id>' header naming a mechanism of the catalogue"
                         if mechanism_id is None
                         else f"mechanism {mechanism_id!r} is not in the catalogue")
-    elif paused and mechanism.id in paused:
+    elif mechanism is not None and paused and mechanism.id in paused:
         problems.append(f"mechanism {mechanism.id} is paused by the research director "
                         f"(night/directions.yaml): {paused[mechanism.id]}")
 
@@ -384,8 +415,18 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
     if (other := (other_params or {}).get(key)) is not None and other != spec.idea_id:
         problems.append(f"same params as the already existing {other}")
 
+    from qlab import own_numbers
+
+    own_config = own_numbers.load_config()
+    opened = own_numbers.open_params(spec)
+    problems += own_numbers.problems(spec, own_config)
+    if own and not opened:
+        problems.append("an own mechanism leaves its numbers open (night/own_numbers.yaml)")
+    own_values = tuple(float(v) for vs in (own_config.get("lists") or {}).values() for v in vs)
     catalogue_text = _abs(catalogue_path).read_text(encoding="utf-8")
-    problems += _catalogue_citation_problems(spec, mechanism, catalogue_path, catalogue_text)
+    problems += _catalogue_citation_problems(
+        spec, mechanism, catalogue_path, catalogue_text, open_params=opened,
+        own_values=own_values if opened else (), own=own)
     problems += [f"source: {p}" for p in source_problems(spec)]
     return GeneratedSpec(path=path, spec=spec, mechanism=mechanism_id or ""), problems
 
@@ -507,6 +548,26 @@ Rules:
   whole history into selection data. params_fixed_evidence says which sources and which dates
   gave the day.
 
+Two ways past a paper that gives no number (owner, 2026-10-26):
+- OPEN NUMBERS. Where the chosen mechanism's row for a parameter is ABSENT or EMPTY ("—"), you
+  may leave that parameter open: write the WHOLE list {own_numbers} declares for it, as a YAML
+  list (e.g. `window_days: [3, 7, 14, 30]`), and cite it as "{own_numbers}, the declared list
+  for <path>; owner 2026-10-26". Never a subset, never a list for a parameter the row gives
+  values for, never a parameter {own_numbers} has no list for. The product of the open lists'
+  lengths may not exceed its max_candidates. Code chooses the value on data before the cut and
+  judges only after it; every value is a trial. min_history_days may then be "derived: <the
+  longest open window>; ..." with an operand from the open list.
+- AN OWN MECHANISM. If an idea is worth a trial but no catalogue mechanism expresses it, write
+  the first line `# mechanism: {own}` and the field
+    own_mechanism:
+      idea: <what it buys and sells, and when -- a sentence or more>
+      why: <why it should earn: who pays, which risk or behaviour -- a sentence or more>
+      idea_from: <where it came from: an owner's idea in night/research.yaml, a publication of
+                  the feed (data/publications/), a catalogue mechanism it varies, a report>
+  Its numbers are ALL open ones (lists of {own_numbers}) or the framework's sizing.gross 1;
+  no catalogue number, since no paper backs this mechanism. At most {max_own} such spec per
+  run. differs_from_source stays empty.
+
 {directions}Reply with one line per spec: idea_id, the mechanism id, and the params_fixed_at you
 chose with the reason in a few words (or "no spec: <reason>")."""
 
@@ -546,7 +607,7 @@ def existing_generated(spec_dir: Path = SPEC_DIR) -> dict[str, tuple[str, str]]:
 
 
 def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: date,
-             catalogue_path: Path = CATALOGUE, max_specs: int = 3,
+             catalogue_path: Path = CATALOGUE, max_specs: int = 3, max_own: int = 1,
              registry_idea_ids: list[str] | tuple[str, ...] = (), model: str = MODEL,
              max_turns: int = 40) -> GenerateOutcome:
     """One agent call that writes up to `max_specs` new specs, then every
@@ -581,7 +642,8 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
         code_ref=CODE_REF, catalogue=catalogue_path, reference=REFERENCE_SPEC,
         context_path=context_path, max_specs=max_specs, spec_dir=spec_dir,
         data_source=DATA_SOURCE, data_interval=DATA_INTERVAL, data_start=DATA_START,
-        data_end=data_end, today=today)
+        data_end=data_end, today=today, own_numbers="night/own_numbers.yaml", own=OWN,
+        max_own=max_own)
     result = run_agent(budget, prompt, session=session, agent="generator", model=model,
                        max_turns=max_turns, cwd=QLAB_ROOT,
                        extra_args=("--allowedTools", TOOLS, "--disallowedTools", "Bash,Edit"))
@@ -627,6 +689,10 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
         if len(outcome.accepted) >= max_specs:
             outcome.rejected.append(Rejected(str(path), [f"more than {max_specs} specs"]))
             continue
+        if mechanism_of(_abs(path).read_text(encoding="utf-8")) == OWN and sum(
+                1 for a in outcome.accepted if a.mechanism == OWN) >= max_own:
+            outcome.rejected.append(Rejected(str(path), [f"more than {max_own} own mechanism"]))
+            continue
         generated, problems = check_generated(
             path, mechanisms=mechanisms, catalogue_path=catalogue_path, data_end=data_end,
             registry_idea_ids=registry, other_params=seen, paused=paused)
@@ -655,6 +721,12 @@ class GeneratedResult:
     reason: str | None = None
     metrics: dict = field(default_factory=dict)
     error: str | None = None
+    candidate_trials: list[int] = field(default_factory=list)
+    """Trials of the values an open parameter could take (qlab.own_numbers), one each."""
+    cut: str | None = None
+    """Where an open parameter's value was chosen; the verdict is on the days from it."""
+    chosen: dict | None = None
+    """The params of the value chosen at the cut: what the second stage carries."""
     stage2: dict | None = None
     """The second stage (`qlab.pipeline.stage2.Stage2Result` as a dict): the same
     mechanism on Hyperliquid, run when this stage-1 result survived. None before it
@@ -668,10 +740,16 @@ def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_tria
     a failure is in it as `status == "error"`, never raised."""
     from dataclasses import asdict
 
+    from qlab import own_numbers
     from qlab.pipeline.stage2 import run_stage2
 
+    spec = item.spec
+    if result.cut is not None:  # the spec left numbers open (qlab.own_numbers)
+        if not result.chosen:  # nothing was chosen at the cut: nothing to carry over
+            return
+        spec = own_numbers.fixed_at_choice(spec, result.chosen, date.fromisoformat(result.cut))
     result.stage2 = asdict(run_stage2(
-        item.spec, stage1_route=result.route, stage1_trial_id=result.trial_id,
+        spec, stage1_route=result.route, stage1_trial_id=result.trial_id,
         noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd))
 
 
@@ -679,6 +757,7 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
                       deployable_capital_usd: float = 3000.0) -> GeneratedResult:
     """One generated spec on the stand in its own transaction (matched noise,
     every rule, the trial written like every stand run's)."""
+    from qlab import own_numbers
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.registry import repo
     from qlab.registry.db import session_scope
@@ -691,10 +770,21 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
     try:
         with session_scope() as session:
             if session.get(Idea, spec.idea_id) is None:
+                notes = (f"An own mechanism of the generator: {spec.own_mechanism.idea}"
+                         if spec.own_mechanism is not None
+                         else f"Generated from {CATALOGUE} ({item.mechanism})")
                 repo.upsert_idea(
                     session, id=spec.idea_id, title=spec.title, source_type=SourceType.INTERNAL,
-                    asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
-                    notes=f"Generated from {CATALOGUE} ({item.mechanism})")
+                    asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER, notes=notes)
+            if own_numbers.open_params(spec):
+                # Open numbers (qlab.own_numbers): every value a trial of its own, then the
+                # spec that chooses one at the cut and is judged after it.
+                config = own_numbers.load_config()
+                result.candidate_trials = own_numbers.record_candidates(
+                    spec, session, load_latest(), deployable_capital_usd=deployable_capital_usd)
+                spec = own_numbers.to_retune(spec, config)
+                result.cut = spec.params_fixed_at.isoformat()
+                result.chosen = own_numbers.chosen_params(spec, session)
             out = evaluate_spec_with_shape_aware_bar(
                 spec, session=session, ruleset=load_latest(),
                 deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials).candidate
@@ -740,7 +830,12 @@ def result_line(r: GeneratedResult) -> str:
         return f"{v:+.1%}" if isinstance(v, int | float) and v == v else "—"
 
     sharpe = m.get("sharpe_net")
-    return (f"`{r.idea_id}` (механизм {r.mechanism}, прогон {r.trial_id}): {r.route} — "
+    own = ""
+    if r.candidate_trials:
+        own = (f" [свои числа: {len(r.candidate_trials)} вариантов записаны отдельными "
+               f"испытаниями, выбор на данных до {r.cut}, вердикт — по дням с него]")
+    return (f"`{r.idea_id}` (механизм {'свой' if r.mechanism == OWN else r.mechanism}, "
+            f"прогон {r.trial_id}){own}: {r.route} — "
             f"в год {pct('ann_return_net')}, "
             f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}, "
             f"просадка {pct('max_dd')}, "
