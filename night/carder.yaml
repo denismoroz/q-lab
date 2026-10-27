@@ -13,7 +13,16 @@
 enabled: true
 model: sonnet        # docs/PLAN.md: the agents that write run on sonnet
 reviewer_model: sonnet
-max_turns: 40
+max_turns: 40        # a full writing of a draft (the first attempt, or a missing draft)
+# A retry does not write the draft again: it EDITS the draft of the earlier attempt, changing only
+# what the numbered remarks name (the full writing cost 0.5-0.8M tokens a round, 2026-10-27).
+# The same short edit pass is used once for the wording notes of an accepted draft.
+edit_max_turns: 15
+fix_notes: true      # an accepted draft with wording notes gets ONE edit pass for them (the
+                     # result is checked by code; a failed pass leaves the draft as it was)
 per_night: 1
-max_attempts: 2      # an idea refused twice waits for the owner (status needs-owner)
+# An idea refused three times waits for the owner (status needs-owner). Was 2: two attempts were
+# one write and one retry, and a fresh retry bred fresh problems. A retry is an edit now, a
+# fraction of a writing, so a third attempt is affordable and usually the one that converges.
+max_attempts: 3
 nearest: 3           # tried.yaml entries nearest to the idea that the card must address

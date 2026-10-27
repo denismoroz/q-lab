@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[3]
 IDEA = ("Bv3: включать страховку не по цене, а по объёму торгов: когда оборот растёт, а цена "
         "стоит, это признак скорого падения")
 REGISTRY = tried.load_tried()
-CONFIG = {"nearest": 3, "max_attempts": 2, "model": "sonnet"}
+CONFIG = {"nearest": 3, "max_attempts": 3, "model": "sonnet"}
 
 SUMMARY = (
     "Стратегия держит две крупные монеты, биткоин и эфир, и по каждой из них отдельно решает, "
@@ -298,15 +298,37 @@ def world(tmp_path, monkeypatch):
     return SimpleNamespace(root=root, queue=queue, session=session, inbox=inbox, entry=entry)
 
 
-def _agent(monkeypatch, draft: dict | None, review: str = "VERDICT: OK") -> list[dict]:
+DRAFT_FILE = "cards/drafts/idea-0001.yaml"
+
+
+def _write_draft(target: Path, change) -> None:
+    """What a faked writer does to the draft: a dict is written as the draft, a str as raw text
+    (to break the YAML), a callable is handed the path and may do anything."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if callable(change):
+        change(target)
+    elif isinstance(change, str):
+        target.write_text(change, encoding="utf-8")
+    elif change is not None:
+        target.write_text(yaml.safe_dump(change, allow_unicode=True), encoding="utf-8")
+
+
+def _agent(monkeypatch, draft: dict | None, review: str = "VERDICT: OK", *, edit=None,
+           notes=None) -> list[dict]:
+    """Fake `run_agent`. The full writer (`carder`) writes `draft`; the edit pass (`carder-edit`)
+    does `edit`, by default the same as `draft`; the notes pass (`carder-notes`) does `notes`,
+    by default nothing. Each call is recorded with whether the draft was on disk when it began."""
     calls: list[dict] = []
 
     def fake(budget, prompt, *, session, agent, model, max_turns, cwd=None, extra_args=()):
-        calls.append({"agent": agent, "prompt": prompt, "args": extra_args})
-        if agent == "carder" and draft is not None:
-            target = Path(cwd) / "cards/drafts/idea-0001.yaml"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(yaml.safe_dump(draft, allow_unicode=True), encoding="utf-8")
+        target = Path(cwd) / DRAFT_FILE
+        calls.append({"agent": agent, "prompt": prompt, "args": extra_args,
+                      "max_turns": max_turns, "draft_existed": target.is_file(),
+                      "draft_before": target.read_text(encoding="utf-8") if target.is_file()
+                      else None})
+        change = {"carder": draft, "carder-edit": draft if edit is None else edit,
+                  "carder-notes": notes}.get(agent)
+        _write_draft(target, change)
         return SimpleNamespace(text=review if agent.endswith("review") else "DRAFT: ok",
                                exit_code=0)
 
@@ -314,9 +336,19 @@ def _agent(monkeypatch, draft: dict | None, review: str = "VERDICT: OK") -> list
     return calls
 
 
-def _run(world) -> dict:
-    return carder.run_idea(world.entry, world.inbox, CONFIG, budget=ExplicitNoBudget("test"),
-                           session=world.session, day=DAY, registry=REGISTRY, root=world.root)
+def _run(world, config: dict | None = None) -> dict:
+    return carder.run_idea(world.entry, world.inbox, config or CONFIG,
+                           budget=ExplicitNoBudget("test"), session=world.session, day=DAY,
+                           registry=REGISTRY, root=world.root)
+
+
+def _retitle(title: str):
+    """A faked edit that changes the title of the draft on disk and nothing else."""
+    def change(target: Path) -> None:
+        draft = yaml.safe_load(target.read_text(encoding="utf-8"))
+        draft["title"] = title
+        target.write_text(yaml.safe_dump(draft, allow_unicode=True), encoding="utf-8")
+    return change
 
 
 def test_the_brief_holds_the_idea_the_tried_registry_and_the_graveyard(world, monkeypatch) -> None:
@@ -363,7 +395,7 @@ def test_a_question_goes_to_the_owner(world, monkeypatch) -> None:
     assert "вопрос владельцу" in world.entry["notes"]
 
 
-def test_a_draft_code_refuses_is_retried_and_after_the_second_failure_waits_for_the_owner(
+def test_a_draft_code_refuses_is_retried_and_after_the_third_failure_waits_for_the_owner(
         world, monkeypatch) -> None:
     bad = _good(plain_summary="Слишком коротко.")
     calls = _agent(monkeypatch, bad)
@@ -373,14 +405,92 @@ def test_a_draft_code_refuses_is_retried_and_after_the_second_failure_waits_for_
     assert world.entry["problems"] == first["problems"]
     calls = _agent(monkeypatch, bad)
     second = _run(world)
-    assert "too short" in calls[0]["prompt"] or "previous attempt" in calls[0]["prompt"]
+    assert [c["agent"] for c in calls] == ["carder-edit"]
+    assert "too short" in calls[0]["prompt"]
     brief = (world.root / "data/carder/brief-idea-0001.md").read_text(encoding="utf-8")
     assert "Why the previous attempt at this idea was refused" in brief and "too short" in brief
-    assert second["status"] == "needs-owner" and world.entry["attempts"] == 2
+    assert second["status"] == "new" and world.entry["attempts"] == 2  # a third attempt is left
+    assert ideas.oldest_new(world.inbox, max_attempts=3) is world.entry
+    calls = _agent(monkeypatch, bad)
+    third = _run(world)
+    assert [c["agent"] for c in calls] == ["carder-edit"] and world.entry["attempts"] == 3
+    assert third["status"] == "needs-owner" and "3 попыток" in world.entry["notes"]
     assert "qlab idea retry" in world.entry["notes"]
-    assert ideas.oldest_new(world.inbox, max_attempts=2) is None
+    assert ideas.oldest_new(world.inbox, max_attempts=3) is None
     ideas.retry(world.inbox, "idea-0001")
-    assert ideas.oldest_new(world.inbox, max_attempts=2) is world.entry
+    assert ideas.oldest_new(world.inbox, max_attempts=3) is world.entry
+
+
+def test_a_retry_edits_the_draft_of_the_earlier_attempt_instead_of_writing_it_again(
+        world, monkeypatch) -> None:
+    bad = _good(plain_summary="Слишком коротко.")
+    _agent(monkeypatch, bad)
+    first = _run(world)
+    assert any("too short" in p for p in first["problems"]) and first["mode"] == "write"
+    drafts = world.root / "cards/drafts"
+    world.entry["review_notes"] = ["the title is clumsy"]
+    calls = _agent(monkeypatch, _good(), edit=_good())
+    out = _run(world, {**CONFIG, "edit_max_turns": 9})
+    assert [c["agent"] for c in calls] == ["carder-edit", "carder-review"]
+    edit = calls[0]
+    assert out["mode"] == "edit" and out["status"] == "carded"
+    # the old draft was on disk when the editor began: it was not deleted first
+    assert edit["draft_existed"] and "Слишком коротко." in edit["draft_before"]
+    assert edit["max_turns"] == 9
+    # Edit allowed, Write and Bash not; the repository of the owner stays readable
+    assert edit["args"][0:2] == ("--allowedTools", "Read,Glob,Grep,Edit")
+    assert edit["args"][2:4] == ("--disallowedTools", "Bash,Write") and "--add-dir" in edit["args"]
+    prompt = edit["prompt"]
+    assert "cards/drafts/idea-0001.yaml" in prompt and "brief-idea-0001.md" in prompt
+    assert "1. " in prompt and "plain_summary is too short" in prompt  # the numbered remark
+    assert "- the title is clumsy" in prompt and "optional" in prompt
+    assert "byte for byte" in prompt and "Do NOT reread the brief" in prompt
+    # the rules a full writing has are the same text in the edit prompt
+    assert carder.YAML_RULE in prompt and carder.PLAIN_RULE in prompt
+    assert carder.READINGS_RULE.format(cap=8) in prompt and "DRAFT: <verdict>" in prompt
+    assert carder.YAML_RULE in carder.INSTRUCTIONS.format(
+        brief="b", draft="d", idea="i", frab="f", jargon="j", venues="v", intervals="n", cap=8,
+        yaml_rule=carder.YAML_RULE, plain_rule="p", readings_rule="r", earlier="")
+    assert not (drafts / "idea-0001.yaml").exists()  # accepted: moved to cards/
+
+
+def test_the_first_attempt_and_a_missing_draft_still_write_the_draft_in_full(
+        world, monkeypatch) -> None:
+    drafts = world.root / "cards/drafts"
+    drafts.mkdir(parents=True)
+    (drafts / "idea-0001.yaml").write_text("stale: draft\n", encoding="utf-8")
+    calls = _agent(monkeypatch, _good(plain_summary="Слишком коротко."))
+    out = _run(world)
+    # a stale draft before the first attempt is removed, not edited
+    assert calls[0]["agent"] == "carder" and not calls[0]["draft_existed"]
+    assert out["mode"] == "write"
+    assert calls[0]["args"][0:2] == ("--allowedTools", "Read,Glob,Grep,Write")
+    assert calls[0]["max_turns"] == 40
+    # second attempt, but the draft is gone: a full write again
+    (drafts / "idea-0001.yaml").unlink()
+    calls = _agent(monkeypatch, _good())
+    out = _run(world)
+    assert world.entry["attempts"] == 2
+    assert [c["agent"] for c in calls] == ["carder", "carder-review"] and out["mode"] == "write"
+    assert out["status"] == "carded"
+
+
+def test_an_edit_that_breaks_the_yaml_is_a_refused_attempt_without_a_rewrite(
+        world, monkeypatch) -> None:
+    _agent(monkeypatch, _good(plain_summary="Слишком коротко."))
+    _run(world)
+    calls = _agent(monkeypatch, _good(), edit="title: [unclosed\nverdict: card: broken\n")
+    out = _run(world)
+    assert [c["agent"] for c in calls] == ["carder-edit"]  # no fallback to a full write
+    assert out["status"] == "new" and any("is not YAML" in p for p in out["problems"])
+    # an edit that loses required fields is refused the same way, by the code checks
+    world.entry["attempts"] = 1
+    lost = _good()
+    del lost["carder"]["new_block"]
+    calls = _agent(monkeypatch, _good(), edit=lost)
+    out = _run(world)
+    assert [c["agent"] for c in calls] == ["carder-edit"]
+    assert any("new_block is missing" in p for p in out["problems"])
 
 
 def test_a_reviewer_block_refuses_the_card_and_keeps_the_draft_for_the_next_round(
@@ -419,6 +529,134 @@ def test_a_reply_with_notes_only_accepts_the_card_and_keeps_the_notes(world, mon
     text = "\n".join(carder.report_lines({"entries": [{**out, "tokens": 5}]}, world.inbox, []))
     assert "замечания по словам (не блокируют): the word «залог»" in text
     assert "a second number" in text
+
+
+NOTE_REVIEW = ("NOTE: the title is clumsy\nNOTE: the word «залог» is not explained at first use\n"
+               "VERDICT: OK")
+NEW_TITLE = "Страховка включается по обороту торгов, а не по цене"
+
+
+def test_a_notes_only_accept_runs_one_edit_pass_and_accepts_the_edited_draft(
+        world, monkeypatch) -> None:
+    calls = _agent(monkeypatch, _good(), NOTE_REVIEW, notes=_retitle(NEW_TITLE))
+    out = _run(world)
+    assert [c["agent"] for c in calls] == ["carder", "carder-review", "carder-notes"]
+    notes = calls[2]
+    assert notes["draft_existed"] and out["notes_pass"] == "fixed" and out["status"] == "carded"
+    assert notes["args"][0:2] == ("--allowedTools", "Read,Glob,Grep,Edit")
+    assert notes["args"][2:4] == ("--disallowedTools", "Bash,Write")
+    assert notes["max_turns"] == 15
+    # only the notes are in the prompt, as the task; nothing blocking
+    assert "- the title is clumsy" in notes["prompt"] and "- the word «залог»" in notes["prompt"]
+    assert "- none\n\nWording notes" in notes["prompt"] and "do not touch it" in notes["prompt"]
+    # the edited draft became the card; no second reviewer round
+    card = yaml.safe_load((world.root / "cards/bv3-volume-hedge.yaml").read_text(encoding="utf-8"))
+    assert card["title"] == NEW_TITLE and sum(c["agent"] == "carder-review" for c in calls) == 1
+    assert out["notes"] == ["the title is clumsy", "the word «залог» is not explained at first use"]
+    assert world.entry["attempts"] == 1 and "notes_tokens" in out
+    text = "\n".join(carder.report_lines({"entries": [{**out, "tokens": 5}]}, world.inbox, []))
+    assert "замечания по словам поправлены отдельной короткой правкой" in text
+
+
+def test_a_notes_pass_that_breaks_a_code_check_is_reverted_and_the_original_is_accepted(
+        world, monkeypatch) -> None:
+    broken = _good(title=NEW_TITLE, plain_summary="Слишком коротко.")
+    _agent(monkeypatch, _good(), NOTE_REVIEW, notes=broken)
+    out = _run(world)
+    assert out["status"] == "carded" and out["problems"] == []
+    assert out["notes_pass"].startswith("reverted: ") and "too short" in out["notes_pass"]
+    card = yaml.safe_load((world.root / "cards/bv3-volume-hedge.yaml").read_text(encoding="utf-8"))
+    assert card["title"] == _good()["title"] and card["plain_summary"] == SUMMARY
+    assert world.entry["attempts"] == 1
+    text = "\n".join(carder.report_lines({"entries": [{**out, "tokens": 5}]}, world.inbox, []))
+    assert "правка по замечаниям не принята и отменена" in text
+    # a pass that leaves broken YAML, or changes the meaning (a grid value), is put back too
+    for bad in ("title: [unclosed\n",
+                _carder(_good(), grid=[{"param": "volume_window_days", "values": [3, 30],
+                                        "meaning_ru": "За сколько дней сравнивать оборот.",
+                                        "source_ru": "Круглые значения."},
+                                       _good()["carder"]["grid"][1]])):
+        world.entry["status"] = "new"
+        world.entry["attempts"] = 0
+        (world.root / "cards/bv3-volume-hedge.yaml").unlink()
+        world.queue.write_text("# queue\ncards: []\n", encoding="utf-8")
+        _agent(monkeypatch, _good(), NOTE_REVIEW, notes=bad)
+        again = _run(world)
+        assert again["status"] == "carded" and again["notes_pass"].startswith("reverted: ")
+        assert yaml.safe_load((world.root / "cards/bv3-volume-hedge.yaml").read_text(
+            encoding="utf-8"))["carder"]["grid"][0]["values"] == [3, 7]
+
+
+def test_fix_notes_false_and_no_notes_skip_the_pass(world, monkeypatch) -> None:
+    calls = _agent(monkeypatch, _good(), NOTE_REVIEW, notes=_retitle(NEW_TITLE))
+    out = _run(world, {**CONFIG, "fix_notes": False})
+    assert [c["agent"] for c in calls] == ["carder", "carder-review"]
+    assert out["status"] == "carded" and out["notes_pass"] == "skipped"
+    assert out["notes"]  # the notes are still kept and shown
+    world.entry["status"] = "new"
+    (world.root / "cards/bv3-volume-hedge.yaml").unlink()
+    world.queue.write_text("# queue\ncards: []\n", encoding="utf-8")
+    calls = _agent(monkeypatch, _good(), "VERDICT: OK", notes=_retitle(NEW_TITLE))
+    again = _run(world)
+    assert [c["agent"] for c in calls] == ["carder", "carder-review"]
+    assert again["status"] == "carded" and again["notes_pass"] == "skipped"
+    text = "\n".join(carder.report_lines({"entries": [{**out, "tokens": 5}]}, world.inbox, []))
+    assert "поправлены" not in text and "не принята" not in text
+
+
+def test_a_notes_pass_writing_outside_the_draft_or_failing_is_reverted(
+        world, monkeypatch) -> None:
+    def sneaky(target: Path) -> None:
+        _retitle(NEW_TITLE)(target)
+        world.queue.write_text("cards: [cards/sneaky.yaml]\n", encoding="utf-8")
+
+    _agent(monkeypatch, _good(), NOTE_REVIEW, notes=sneaky)
+    out = _run(world)
+    assert out["status"] == "carded" and "outside its draft" in out["notes_pass"]
+    assert carder.load_queue(world.queue) == ["cards/bv3-volume-hedge.yaml"]
+    card = yaml.safe_load((world.root / "cards/bv3-volume-hedge.yaml").read_text(encoding="utf-8"))
+    assert card["title"] == _good()["title"]  # the retitle done in the same call is undone too
+    # a file elsewhere in the repository, seen by git status, is reverted and counts the same
+    world.entry["status"] = "new"
+    world.entry["attempts"] = 0
+    (world.root / "cards/bv3-volume-hedge.yaml").unlink()
+    reverted, seen = [], iter([[], [], [], ["src/qlab/night.py"]])
+    monkeypatch.setattr(carder, "_changed_paths", lambda: next(seen))
+    monkeypatch.setattr(carder, "_revert", reverted.append)
+    _agent(monkeypatch, _good(), NOTE_REVIEW, notes=_retitle(NEW_TITLE))
+    again = _run(world)
+    assert reverted == ["src/qlab/night.py"] and "outside its draft" in again["notes_pass"]
+    assert again["status"] == "carded"
+    # the call itself fails (a budget stop, a crash): the draft stands, the idea is not failed
+    world.entry["status"] = "new"
+    world.entry["attempts"] = 0
+    (world.root / "cards/bv3-volume-hedge.yaml").unlink()
+    monkeypatch.setattr(carder, "_changed_paths", lambda: [])
+    calls = _agent(monkeypatch, _good(), NOTE_REVIEW)
+    inner = carder.run_agent
+
+    def failing(budget, prompt, **kwargs):
+        if kwargs["agent"] == "carder-notes":
+            raise RuntimeError("the call failed")
+        return inner(budget, prompt, **kwargs)
+
+    monkeypatch.setattr(carder, "run_agent", failing)
+    crashed = _run(world)
+    assert crashed["status"] == "carded" and crashed["notes_pass"].startswith(
+        "reverted: the call failed: RuntimeError")
+    assert [c["agent"] for c in calls] == ["carder", "carder-review"]
+
+
+def test_recheck_calls_no_writer_and_runs_no_notes_pass(world, monkeypatch) -> None:
+    drafts = world.root / "cards/drafts"
+    drafts.mkdir(parents=True)
+    (drafts / "idea-0001.yaml").write_text(yaml.safe_dump(_good(), allow_unicode=True),
+                                           encoding="utf-8")
+    calls = _agent(monkeypatch, None, NOTE_REVIEW, notes=_retitle(NEW_TITLE))
+    out = carder.recheck_idea(world.entry, CONFIG, budget=ExplicitNoBudget("test"),
+                              session=world.session, day=DAY, root=world.root)
+    assert [c["agent"] for c in calls] == ["carder-review"]
+    assert out["status"] == "carded" and "notes_pass" not in out and out["recheck"]
 
 
 def test_a_block_of_an_unknown_kind_is_a_note_and_says_so(world, monkeypatch) -> None:
@@ -491,15 +729,15 @@ def test_a_code_refusal_between_review_rounds_keeps_the_open_remarks(world, monk
     _agent(monkeypatch, _good(), review="BLOCK: narrowed: new: a reading is dropped\n"
                                         "VERDICT: BLOCK")
     _run(world)
-    world.entry["attempts"] = 0
-    _agent(monkeypatch, _good(plain_summary="Слишком коротко."))
+    _agent(monkeypatch, _good(), edit=_good(plain_summary="Слишком коротко."))
     out = _run(world)
     assert any("too short" in p for p in out["problems"])
     assert "reviewer: narrowed: a reading is dropped" in out["problems"]
     assert world.entry["review_blocks"][0]["kind"] == "narrowed"
     # the reviewer's next look is still held to the old remark and the old draft
-    calls = _agent(monkeypatch, _good(title="Страховка по обороту торгов, а не по цене"))
+    calls = _agent(monkeypatch, None, edit=_good(title="Страховка по обороту торгов, а не по цене"))
     _run(world)
+    assert [c["agent"] for c in calls] == ["carder-edit", "carder-review"]
     assert "1. [narrowed] a reading is dropped" in calls[1]["prompt"]
 
 
@@ -582,8 +820,9 @@ def test_the_report_names_what_came_what_was_carded_duplicates_and_questions() -
 
 def test_the_config_and_the_queue_of_the_repository_are_well_formed() -> None:
     config = carder.load_config()
-    assert config["enabled"] is True and config["per_night"] == 1 and config["max_attempts"] == 2
-    assert config["model"] == "sonnet"
+    assert config["enabled"] is True and config["per_night"] == 1 and config["max_attempts"] == 3
+    assert config["model"] == "sonnet" and config["edit_max_turns"] == 15
+    assert config["fix_notes"] is True
     inbox = yaml.safe_load((ROOT / "ideas/inbox.yaml").read_text(encoding="utf-8"))["ideas"]
     assert isinstance(inbox, list)
     assert all(e["status"] in ideas.STATUSES and e["text"] for e in inbox)
