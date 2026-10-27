@@ -22,3 +22,22 @@ slow_twin_minutes: 20
 # first measurement (2026-10-27, frab-binance-spot-research-sw24-causal) took about 25 seconds
 # per instrument for roughly 800 instruments, i.e. hours (qlab.twin_stage.heavy_data). The
 # report names them; `qlab twins run --only IDEA --allow-heavy` runs one by hand.
+
+# An hourly twin of an idea that trades a BOUNDED set of coins carries that set as its instrument
+# list (qlab.twin.chosen_list), so only those columns are fetched. The list comes from, in this
+# order: the spec's own data.instruments, its required_instruments, a coin list in its params
+# (the parameters named in coin_list_params below); then the same three of the base spec. Every
+# list is cited in the twin's sources and marked as chosen with hindsight (instruments_chosen_at).
+# A spec that names no such set (FRAB's `universe: all_paired`) stays heavy.
+#
+# Fetching one column's hourly history since 2019 takes about this many seconds (measured
+# 2026-10-27, 20 to 25 seconds, the twin of frab-binance-spot-research-sw24).
+seconds_per_instrument: 25
+
+# An hourly twin with more columns than this is heavy as well (a spot column is one column, so
+# a coin held with its spot is two): 40 columns is 40 x 25 s, about 17 minutes, under the
+# slow_twin_minutes bound of one twin above.
+max_hourly_instruments: 40
+
+# Parameters that name the book's coins as a list of tickers: FRAB's `universe`, Bv2's `coins`.
+coin_list_params: [universe, coins]

@@ -1540,7 +1540,8 @@ def twin_cmd(
     code every month from the past only, on Binance's history from 2019, so the stand can
     judge it the same night instead of waiting for new data. Prints the twin's YAML, or the
     plain reason why none can be made. Code only: no agent, no tokens, no database."""
-    from qlab.twin import causal_twin, twin_yaml, write_twin
+    from qlab import twin_stage
+    from qlab.twin import causal_twin, needs_listing, twin_yaml, write_twin
 
     try:
         spec = load_spec(spec_path)
@@ -1548,12 +1549,32 @@ def twin_cmd(
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: invalid spec: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    result = causal_twin(spec, base=base, spec_path=spec_path, base_path=base_path)
+    config = twin_stage.load_config() or twin_stage.Config(True, 4, 20.0)
+    names = None
+    if needs_listing(spec, base, coin_params=config.coin_list_params):
+        try:  # the names of the coins are the original venue's; Binance's listing maps them
+            names = twin_stage._binance_listing()
+        except Exception as exc:  # noqa: BLE001 - the network: say so and stop
+            typer.echo(f"error: Binance listing not read: {type(exc).__name__}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+    result = causal_twin(spec, base=base, spec_path=spec_path, base_path=base_path,
+                         venue_names=names, coin_params=config.coin_list_params,
+                         seconds_per_instrument=config.seconds_per_instrument)
     if result.spec is None:
         typer.echo(f"no twin for {spec.idea_id}: {result.reason}")
         if base is None:
             typer.echo("(an experiment on another spec needs --base SPEC: the spec it modifies)")
         return
+    heavy = twin_stage.heavy_data(result.spec, config.slow_twin_minutes,
+                                  config.max_hourly_instruments, config.seconds_per_instrument)
+    if result.instruments:
+        typer.echo(f"# instrument list: {len(result.instruments)} columns from "
+                   f"{result.list_source}; hourly fetch about "
+                   f"{(result.fetch_seconds or 0) / 60:.0f} min; "
+                   f"{'HEAVY for the night: ' + heavy if heavy else 'within the night bound'}",
+                   err=True)
+    elif heavy:
+        typer.echo(f"# HEAVY for the night: {heavy}", err=True)
     if write:
         try:
             typer.echo(str(write_twin(spec_path, result.spec, spec.idea_id)))

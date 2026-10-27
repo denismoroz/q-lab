@@ -18,6 +18,16 @@ What the code chooses between is DECLARED, never invented:
    `qlab.own_numbers` does, within `max_candidates`;
 3. nothing of the two: no twin, and the reason says so.
 
+Hourly candles are fetched from Binance one instrument at a time (about 25 seconds each), so
+a twin of an hourly idea must not ask for all ~900 perpetuals. When the original trades a
+BOUNDED set of coins, the twin carries that set as `data.instruments` (`chosen_list`). The list
+comes, in this order, from the spec's own `data.instruments`, its `required_instruments`, a coin
+list in its params (`COIN_LIST_PARAMS`: FRAB's `universe`, Bv2's `coins`), then the same three of
+the base spec; each is cited in the twin's `sources`. No list anywhere is no list: the stage
+(`qlab.twin_stage.heavy_data`) then refuses the twin as heavy. A list chosen today and applied to
+history from 2019 knows which coins survived, so the twin says so (`instruments_chosen_at`,
+`params_fixed_evidence`, `differs_from_source`) and the stand does not call it point-in-time.
+
 No agent is called, no token is spent, no database is touched: the module only reads specs and
 the declared lists, and writes a spec file when asked.
 """
@@ -51,6 +61,14 @@ VENUES_DOC = "docs/VENUES.md"
 MONEY_SIZES = ("budget_cap_usdc", "capital_usd", "strategy_capital_usd")
 """Parameters that say how much money the book is: the owner chooses them (CLAUDE.md, the
 strategy's money), code does not pick them by the Sharpe they happened to give."""
+SPOT_SUFFIX = "-SPOT"
+COIN_LIST_PARAMS = ("universe", "coins")
+"""Parameters that name the coins a book trades, as a list of tickers (FRAB's `universe`, Bv2's
+`coins`); `night/twins.yaml` (`coin_list_params`) overrides it. A value that is not a list of
+tickers (FRAB's `all_paired`) names no bounded set."""
+SECONDS_PER_INSTRUMENT = 25.0
+"""Binance's hourly candles from 2019: 20 to 25 seconds per instrument, measured 2026-10-27
+(the twin of frab-binance-spot-research-sw24); `night/twins.yaml` (`seconds_per_instrument`)."""
 PERIODS = {"M": ("month", "раз в месяц"), "W": ("week", "раз в неделю"),
            "D": ("day", "каждый день")}
 NO_ALTERNATIVE = ("the numbers were picked by hand and there is no declared alternative; the "
@@ -68,6 +86,11 @@ class TwinResult:
     `lists` (the whole declared lists of night/own_numbers.yaml)."""
     candidates: tuple[str, ...] = ()
     origin: str | None = None
+    instruments: tuple[str, ...] = ()
+    """The columns the twin fetches when it carries an instrument list."""
+    list_source: str | None = None
+    fetch_seconds: float | None = None
+    """The estimated time to fetch those columns' hourly history (`fetch_estimate`)."""
 
     def __post_init__(self) -> None:
         if (self.spec is None) == (self.reason is None):
@@ -510,33 +533,176 @@ def _refusal(spec: StrategySpec) -> str | None:
     return None
 
 
-def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None
-               ) -> tuple[SpecData | None, list[str] | None, str | None, list[str]]:
-    """(the twin's data, the mapped required instruments, a refusal, the dropped names)."""
+@dataclass(frozen=True)
+class ChosenList:
+    """The instrument list a twin carries and where it comes from (`chosen_list`)."""
+
+    names: tuple[str, ...]
+    """Binance's column names; a spot column is `<COIN>-SPOT`."""
+    kind: str
+    """`data.instruments`, `required_instruments` or `params.<path>` of `owner`."""
+    owner: str
+    """The idea id of the spec the list was read from (the original or its base)."""
+    cite: str
+    chosen_at: date
+    """The latest day the list can have been chosen: the owner's `params_fixed_at`, else the
+    end of its data (a list of a spec with no date may know everything up to there)."""
+    dated_by: str = "params_fixed_at"
+    dropped: tuple[str, ...] = ()
+
+
+def fetch_estimate(columns: int, seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> float:
+    """Seconds to fetch `columns` instruments' hourly history one after the other. The cost is
+    per instrument, not per bar: the archive is read file by file (measured,
+    `SECONDS_PER_INSTRUMENT`)."""
+    return columns * seconds_per_instrument
+
+
+def _coin_param(spec: StrategySpec, coin_params: Collection[str]) -> tuple[str, list[str]] | None:
+    """(the parameter's dotted path, its tickers) of the first listed parameter that names the
+    book's coins as a list of tickers; also inside a regime gate's `inner_params`."""
+    wrapped = normalize_ref(spec.code_ref) == REGIME_GATE
+    for name in coin_params:
+        for path in (name, f"inner_params.{name}") if wrapped else (name,):
+            found, value = _get(spec.params, path)
+            if (found and isinstance(value, list) and value
+                    and all(isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9]+", v)
+                            for v in value)):
+                return path, list(value)
+    return None
+
+
+def _named_columns(spec: StrategySpec, coin_params: Collection[str], *, derive: bool
+                   ) -> tuple[list[str], str] | None:
+    """(the spec's own column names, where it names them) or None. The explicit list is always
+    read; `required_instruments` and the params' coin list only when `derive`: a twin of a
+    daily idea fetches the whole universe quickly, and that universe is point-in-time."""
+    if spec.data.instruments:
+        return list(spec.data.instruments), "data.instruments"
+    if not derive:
+        return None
+    if spec.required_instruments:
+        return list(spec.required_instruments), "required_instruments"
+    found = _coin_param(spec, coin_params)
+    if found is None:
+        return None
+    path, coins = found
+    columns = [column for coin in coins
+               for column in ((coin, f"{coin}{SPOT_SUFFIX}") if spec.data.include_spot
+                              else (coin,))]
+    return columns, f"params.{path}"
+
+
+def needs_listing(spec: StrategySpec, base: StrategySpec | None = None, *,
+                  coin_params: Collection[str] = COIN_LIST_PARAMS) -> bool:
+    """Whether `chosen_list` has to map names of another venue, i.e. needs Binance's listing."""
+    derive = spec.data.interval != "1d"
+    return any(owner is not None and owner.data.source != TWIN_VENUE
+               and _named_columns(owner, coin_params, derive=derive) is not None
+               for owner in (spec, base))
+
+
+def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
+                spec_cite: str = RETUNE_DOC, base_cite: str = RETUNE_DOC,
+                venue_names: Collection[str] | None = None,
+                coin_params: Collection[str] = COIN_LIST_PARAMS
+                ) -> tuple[ChosenList | None, str | None]:
+    """(the list the twin carries, None), (None, why no twin can be made) or (None, None) when
+    the spec names no bounded set of coins.
+
+    The first that exists wins: the spec's own `data.instruments`, its `required_instruments`,
+    a coin list in its params; then the same three of the base spec. Only an hourly idea looks
+    beyond `data.instruments`: with no list its twin would fetch every Binance perpetual (hours).
+
+    Names map to Binance's columns (`qlab.pipeline.stage2.venue_name`) when the owner is on
+    another venue and `venue_names` (Binance's listing) is given. An explicit `data.instruments`
+    list loses the coins Binance lacks, as docs/TWO_STAGE.md says of a coin list in a spec; a
+    list read from `required_instruments` or from params does not: the strategy needs exactly
+    those coins and its parameters are copied unchanged (the same document), so a missing coin
+    is a refusal that names it."""
     from qlab.pipeline.stage2 import map_instruments, venue_name
 
+    derive = spec.data.interval != "1d"
+    for owner, cite in ((spec, spec_cite), (base, base_cite)):
+        if owner is None:
+            continue
+        found = _named_columns(owner, coin_params, derive=derive)
+        if found is None:
+            continue
+        names, kind = found
+        dropped: list[str] = []
+        if owner.data.source != TWIN_VENUE:
+            if venue_names is None:
+                return None, (f"{owner.idea_id} names its coins by {owner.data.source}'s columns "
+                              f"({kind}) and the Binance listing is needed to map them "
+                              "(venue_names)")
+            if kind == "data.instruments":
+                names, dropped = map_instruments(names, venue_names)
+                if not names:
+                    return None, "none of the named instruments is listed on Binance"
+            else:
+                mapped = [venue_name(n, venue_names) for n in names]
+                missing = list(dict.fromkeys(
+                    n.removesuffix(SPOT_SUFFIX) for n, m in zip(names, mapped, strict=True)
+                    if m is None))
+                if missing:
+                    return None, (
+                        f"{owner.idea_id} names {', '.join(missing)} in {kind}, which Binance "
+                        "does not list: the strategy needs exactly these coins and its "
+                        "parameters are copied unchanged (docs/TWO_STAGE.md), so a twin on "
+                        "Binance's data cannot hold the same book; dropping a coin would be a "
+                        "change of the strategy's numbers, which is the owner's to make")
+                names = [m for m in mapped if m is not None]
+        return ChosenList(
+            names=tuple(dict.fromkeys(names)), kind=kind, owner=owner.idea_id,
+            cite=f"{cite}: {kind} of {owner.idea_id}, the coins its book trades",
+            chosen_at=owner.params_fixed_at or owner.data.end,
+            dated_by="params_fixed_at" if owner.params_fixed_at else "data.end",
+            dropped=tuple(dropped)), None
+    return None, None
+
+
+def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None,
+               chosen: ChosenList | None = None
+               ) -> tuple[SpecData, list[str] | None]:
+    """(the twin's data, the mapped required instruments)."""
+    from qlab.pipeline.stage2 import venue_name
+
     data = spec.data
-    instruments, required, dropped = data.instruments, spec.required_instruments, []
-    if data.source != TWIN_VENUE and instruments is not None:
-        if venue_names is None:
-            return None, None, (f"the spec names instruments by {data.source}'s columns and the "
-                                "Binance listing is needed to map them (venue_names)"), []
-        instruments, dropped = map_instruments(instruments, venue_names)
-        if not instruments:
-            return None, None, "none of the named instruments is listed on Binance", dropped
+    required = spec.required_instruments
     if data.source != TWIN_VENUE and required is not None and venue_names is not None:
         required = list(dict.fromkeys(venue_name(n, venue_names) or n for n in required))
     start = min(data.start, BINANCE_ARCHIVE_START) if data.source == TWIN_VENUE \
         else BINANCE_ARCHIVE_START
+    # A named list already holds the spot columns (`<COIN>-SPOT`): the snapshot builder refuses
+    # a list together with the venue's spot markets.
     return SpecData(
-        source=TWIN_VENUE, interval=data.interval, include_spot=data.include_spot,
+        source=TWIN_VENUE, interval=data.interval,
+        include_spot=data.include_spot and chosen is None,
         spot_prices=data.spot_prices, spot_source=None, start=start, end=data.end,
-        instruments=instruments, min_daily_volume_usd=data.min_daily_volume_usd,
-    ), required, None, dropped
+        instruments=None if chosen is None else list(chosen.names),
+        min_daily_volume_usd=data.min_daily_volume_usd,
+    ), required
+
+
+def _list_evidence(chosen: ChosenList, start: date, seconds: float | None) -> str:
+    cost = ("" if seconds is None else
+            f" (hourly candles of every Binance perpetual take hours; these take about "
+            f"{seconds / 60:.0f} minutes)")
+    return (
+        f"The instrument list is not point-in-time. The twin trades only the {len(chosen.names)} "
+        f"columns {', '.join(chosen.names)} ({chosen.kind} of {chosen.owner}){cost}. A list "
+        f"chosen by {chosen.chosen_at} and applied to history from {start} knows which coins "
+        f"existed and survived up to {chosen.chosen_at}, which the days before it did not; a "
+        "coin Binance listed later has no candles before its listing day and enters then. So "
+        f"`instruments_chosen_at` is {chosen.chosen_at}: the stand reports "
+        "point_in_time_universe 0 on every judged day before it, and the rule honest_universe "
+        "judges the twin as it judges any list chosen with hindsight (docs/FIT_VS_FORWARD.md)")
 
 
 def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: str,
-              dates: tuple[date, date, date], refit_every: str) -> str:
+              dates: tuple[date, date, date], refit_every: str,
+              listed: str | None = None) -> str:
     active, first, choice = dates
     period = PERIODS[refit_every][0]
     return (
@@ -551,11 +717,12 @@ def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: 
         "for history), the true first choice is later and the days before it are judged as "
         "flat days. The grid is " + grid.description + ". What this does not prove: "
         + grid.caveat + (f" (the spec's own date for its numbers: {spec.params_fixed_at})"
-                         if spec.params_fixed_at else "") + ".")
+                         if spec.params_fixed_at else "") + "."
+        + (f" {listed}." if listed else ""))
 
 
-def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str
-             ) -> dict[str, str]:
+def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
+             chosen: ChosenList | None = None) -> dict[str, str]:
     period = PERIODS[refit_every][0]
     sources = {
         "code_ref": "src/qlab/strategies/retune.py (existing wrapper)",
@@ -568,6 +735,11 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str
         "data.end": f"{spec_cite}: the same window end",
     }
     sources.update(grid.sources)
+    if chosen is not None:
+        sources["data.instruments"] = chosen.cite
+        sources["instruments_chosen_at"] = (
+            f"{chosen.cite.split(':')[0]}: {chosen.dated_by} = {chosen.chosen_at}, the latest "
+            f"day the list of {chosen.owner} can have been chosen")
     for name in ("taker_fee_bps", "slippage_bps"):
         cost = spec.sources.get(f"costs.{name}") or spec.sources.get("costs")
         sources[f"score_costs.{name}"] = cost or f"{RETUNE_DOC}: scores use the spec's costs"
@@ -582,13 +754,15 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str
 def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 spec_path: Path | str | None = None, base_path: Path | str | None = None,
                 config_path: Path = CONFIG, venue_names: Collection[str] | None = None,
-                refit_every: str = "M") -> TwinResult:
+                refit_every: str = "M", coin_params: Collection[str] = COIN_LIST_PARAMS,
+                seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
     `spec_path` and `base_path` are cited as the places the candidates' numbers come from.
     `venue_names` (Binance's listing) is needed only to map instruments a Hyperliquid spec
-    names. `refit_every` is `M`, `W` or `D`, as `Retune`'s."""
+    names. `refit_every` is `M`, `W` or `D`, as `Retune`'s. `coin_params` and
+    `seconds_per_instrument` are `chosen_list`'s and `fetch_estimate`'s (night/twins.yaml)."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
@@ -612,9 +786,16 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     if grid is None:
         return TwinResult(None, "; ".join(dict.fromkeys(reasons)))
 
-    data, required, why, dropped = _twin_data(spec, venue_names)
-    if data is None:
+    chosen, why = chosen_list(
+        spec, base if grid.kind != "lists" else None, spec_cite=_text(spec_path) or RETUNE_DOC,
+        base_cite=_text(base_path) or RETUNE_DOC, venue_names=venue_names,
+        coin_params=coin_params)
+    if why:
         return TwinResult(None, why)
+    data, required = _twin_data(spec, venue_names, chosen)
+    dropped = list(chosen.dropped) if chosen is not None else []
+    seconds = None if chosen is None else fetch_estimate(len(chosen.names),
+                                                         seconds_per_instrument)
     warm, label = warmup_days(grid.trees, spec.data.interval)
     dates = first_choice(data.start, warm, refit_every)
     if dates[2] >= data.end:
@@ -644,6 +825,13 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     if dropped:
         notes.append(f"{len(dropped)} named instrument(s) are not listed on Binance and are "
                      f"not traded: {', '.join(dropped)}.")
+    if chosen is not None:
+        notes.append(
+            f"The twin trades only {len(chosen.names)} named columns ({', '.join(chosen.names)}), "
+            f"the {chosen.kind} of {chosen.owner}, not the whole market: the list was chosen by "
+            f"{chosen.chosen_at} and is applied to history from {data.start}, so it knows which "
+            "coins survived (survivorship); the stand does not call it point-in-time "
+            "(instruments_chosen_at, docs/FIT_VS_FORWARD.md).")
     update = {
         "idea_id": f"{spec.idea_id}{TWIN_SUFFIX}",
         "title": f"{spec.title}: числа выбирает код {PERIODS[refit_every][1]} только по "
@@ -656,10 +844,12 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "judged_from": None,
         "params_fit_from": None,
         "params_fixed_at": dates[2],
-        "params_fixed_evidence": _evidence(spec, grid, data.start, warm, label, dates,
-                                           refit_every),
+        "params_fixed_evidence": _evidence(
+            spec, grid, data.start, warm, label, dates, refit_every,
+            None if chosen is None else _list_evidence(chosen, data.start, seconds)),
         "selects_causally": True,
-        "sources": _sources(spec, grid, refit_every, _text(spec_path) or RETUNE_DOC),
+        "sources": _sources(spec, grid, refit_every, _text(spec_path) or RETUNE_DOC, chosen),
+        "instruments_chosen_at": None if chosen is None else chosen.chosen_at,
         "differs_from_source": [*spec.differs_from_source, *notes],
     }
     if "execution_venue" in StrategySpec.model_fields:
@@ -667,7 +857,11 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
             spec.data.source if spec.data.source != TWIN_VENUE else None)
     update["data"] = data.model_dump(mode="python")
     twin = StrategySpec.model_validate({**spec.model_dump(mode="python"), **update})
-    return TwinResult(twin, None, grid.kind, tuple(grid.candidates), spec.idea_id)
+    return TwinResult(
+        twin, None, grid.kind, tuple(grid.candidates), spec.idea_id,
+        instruments=() if chosen is None else chosen.names,
+        list_source=None if chosen is None else f"{chosen.kind} of {chosen.owner}",
+        fetch_seconds=seconds)
 
 
 def _text(path: Path | str | None) -> str | None:
@@ -753,5 +947,7 @@ def write_twin(spec_path: Path, twin: StrategySpec, origin: str) -> Path:
     return target
 
 
-__all__ = ["BINANCE_ARCHIVE_START", "BaseChoice", "TwinResult", "causal_twin", "find_base",
-           "first_choice", "twin_path", "twin_yaml", "warmup_days", "write_twin"]
+__all__ = ["BINANCE_ARCHIVE_START", "BaseChoice", "COIN_LIST_PARAMS", "ChosenList",
+           "SECONDS_PER_INSTRUMENT", "TwinResult", "causal_twin", "chosen_list", "fetch_estimate",
+           "find_base", "first_choice", "needs_listing", "twin_path", "twin_yaml", "warmup_days",
+           "write_twin"]

@@ -399,6 +399,32 @@ class StrategySpec(BaseModel):
     What stays in-sample is the grid the spec author offered; the evidence
     must say where its values come from."""
 
+    instruments_chosen_at: date | None = None
+    """The day the explicit `data.instruments` list was chosen, when that is later than
+    the start of the part of the data the book is judged on.
+
+    A fixed list is a point-in-time universe on the forward test BECAUSE it was fixed
+    before that test began (docs/FIT_VS_FORWARD.md): it cannot know the future of days
+    it did not see. A causal twin (`qlab.twin`) breaks that premise: its list is
+    chosen today, from coins that exist and survived today, and is applied to Binance's
+    history from 2019, so every judged day before the choice is one the list knew the
+    outcome of. With this date set, `point_in_time_universe` is 1 on the judged part
+    only if the part starts on or after it; before, it is 0 and the rule
+    `honest_universe` applies as it does to any list chosen with hindsight. `None`
+    (the default) keeps the old reading: the list was fixed at `params_fixed_at`.
+    Needs `data.instruments` and a citation in `sources["instruments_chosen_at"]`."""
+
+    @model_validator(mode="after")
+    def _chosen_list_needs_a_list_and_a_source(self) -> StrategySpec:
+        if self.instruments_chosen_at is None:
+            return self
+        if self.data.instruments is None:
+            raise ValueError("instruments_chosen_at dates a list: set data.instruments")
+        if not (self.sources.get("instruments_chosen_at") or "").strip():
+            raise ValueError("instruments_chosen_at needs sources['instruments_chosen_at']: "
+                             "say where the date comes from")
+        return self
+
     @model_validator(mode="after")
     def _causal_selection_needs_a_start(self) -> StrategySpec:
         if self.selects_causally and self.params_fixed_at is None:

@@ -1406,6 +1406,37 @@ def test_conclusive_failure_on_the_selection_period_rejects(session, tmp_path) -
     assert "capital_fit" in result.routing.reason
 
 
+LIST_SOURCES = {"weight": "owner 2026-01-01: test fixture",
+                "costs": "owner 2026-01-01: test fixture",
+                "min_leg_notional": "owner 2026-01-01: test fixture",
+                "instruments_chosen_at": "owner 2026-01-01: test fixture"}
+
+
+def test_a_list_chosen_after_the_judged_part_began_is_not_point_in_time(session, tmp_path) -> None:
+    """A causal twin's list is chosen today and applied to older history
+    (`instruments_chosen_at`): it knows how those days ended."""
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test",
+        instruments_chosen_at=date(2026, 3, 1), sources=LIST_SOURCES)
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.metrics["judged_on_forward"] == 1.0
+    assert result.metrics["point_in_time_universe"] == 0.0  # the list is younger than the days
+
+
+def test_a_list_chosen_when_the_judged_part_began_is_point_in_time(session, tmp_path) -> None:
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test",
+        instruments_chosen_at=date(2026, 1, 6), sources=LIST_SOURCES)
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.metrics["point_in_time_universe"] == 1.0  # fixed when the forward test began
+
+
 def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_path) -> None:
     spec = _explicit_long(
         session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"

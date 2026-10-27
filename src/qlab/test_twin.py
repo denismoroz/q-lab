@@ -19,7 +19,10 @@ from qlab.strategies.retune import expand_grid
 from qlab.twin import (
     BINANCE_ARCHIVE_START,
     NO_ALTERNATIVE,
+    SECONDS_PER_INSTRUMENT,
     causal_twin,
+    chosen_list,
+    fetch_estimate,
     find_base,
     first_choice,
     twin_path,
@@ -56,6 +59,11 @@ def frab_base() -> StrategySpec:
 @pytest.fixture(scope="module")
 def frab_experiment() -> StrategySpec:
     return _load("research", "frab-binance-spot", "frab-binance-spot-research-sw24.yaml")
+
+
+def _listing(*coins: str) -> list[str]:
+    """What Binance lists: each coin as a perpetual and as a spot pair (`_binance_listing`)."""
+    return [*coins, *(f"{coin}-SPOT" for coin in coins)]
 
 
 def _own_problems(spec: StrategySpec) -> list[str]:
@@ -115,7 +123,8 @@ def test_two_specs_of_the_same_code_differing_in_a_few_leaves_are_two_candidates
 def test_a_dropped_key_is_said_by_replacing_the_dict_that_held_it():
     base = _load("research", "frab", "frab-live-own-spot.yaml")
     experiment = _load("research", "frab", "frab-research-no-avax.yaml")
-    result = causal_twin(experiment, base=base)
+    result = causal_twin(experiment, base=base,
+                         venue_names=_listing("BTC", "ETH", "HYPE", "PURR", "SOL"))
     assert result.reason is None
     overrides = result.spec.params["grid"]["variant"]["experiment"]
     assert set(overrides) == {"universe", "leverage"}
@@ -303,8 +312,14 @@ def test_a_hyperliquid_spec_that_names_instruments_needs_the_binance_listing(xsm
 
 
 def test_required_instruments_keep_their_names_and_say_so_without_a_listing():
-    twin = causal_twin(_load("research", "bv2", "bv2-research-shared-pool-hl.yaml"),
-                       base=_load("bv2-live.yaml")).spec
+    """A daily idea keeps the whole universe; its required names are only noted (no list is
+    derived, so no listing is needed)."""
+    bv2 = _load("research", "bv2", "bv2-research-shared-pool-hl.yaml")
+    daily = bv2.model_copy(update={"data": bv2.data.model_copy(update={"interval": "1d"})})
+    live = _load("bv2-live.yaml")
+    daily_base = live.model_copy(update={"data": live.data.model_copy(update={"interval": "1d"})})
+    twin = causal_twin(daily, base=daily_base).spec
+    assert twin.data.instruments is None and twin.instruments_chosen_at is None
     assert twin.required_instruments == ["BTC-SPOT", "ETH-SPOT", "SOL-SPOT", "AVAX-SPOT",
                                          "BTC", "ETH", "SOL", "AVAX"]
     assert any("keep the original venue's names" in n for n in twin.differs_from_source)
@@ -467,3 +482,164 @@ def test_a_spec_that_leaves_numbers_open_is_twinned_on_its_declared_lists_not_as
     assert result.spec is not None and result.kind == "lists"
     assert set(result.candidates) == {"partial_hedge_share=0.5", "partial_hedge_share=1"}
     assert isinstance(result.spec.params["base_params"]["partial_hedge_share"], int | float)
+
+
+# --------------------------------------------------------------------------
+# A bounded set of coins: the twin fetches only those columns
+
+
+BV2_COLUMNS = ["BTC-SPOT", "ETH-SPOT", "SOL-SPOT", "AVAX-SPOT", "BTC", "ETH", "SOL", "AVAX"]
+BV2_POOL = ("research", "bv2", "bv2-research-shared-pool-hl.yaml")
+BV2_POOL_PATH = "specs/research/bv2/bv2-research-shared-pool-hl.yaml"
+
+
+@pytest.fixture(scope="module")
+def bv2_twin() -> StrategySpec:
+    result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
+                         spec_path=SPECS / "research" / "bv2" / BV2_POOL[-1],
+                         venue_names=_listing("BTC", "ETH", "SOL", "AVAX", "DOGE"))
+    assert result.reason is None
+    return result.spec
+
+
+def test_an_hourly_idea_that_names_its_columns_gets_a_twin_that_fetches_only_those(bv2_twin):
+    data = bv2_twin.data
+    assert data.source == "binance" and data.interval == "1h"
+    assert data.instruments == BV2_COLUMNS
+    assert not data.include_spot  # a named list carries its spot columns; both is refused
+    assert bv2_twin.required_instruments == BV2_COLUMNS
+    assert bv2_twin.data.start == BINANCE_ARCHIVE_START
+
+
+def test_the_list_is_cited_and_every_source_of_the_twin_checks(bv2_twin):
+    assert bv2_twin.sources["data.instruments"].startswith(BV2_POOL_PATH)
+    assert "required_instruments" in bv2_twin.sources["data.instruments"]
+    assert bv2_twin.sources["instruments_chosen_at"].startswith(BV2_POOL_PATH)
+    assert "params_fixed_at = 2026-08-28" in bv2_twin.sources["instruments_chosen_at"]
+    assert _own_problems(bv2_twin) == []
+
+
+def test_the_list_is_marked_as_chosen_with_hindsight_in_the_data_and_in_words(bv2_twin):
+    assert bv2_twin.instruments_chosen_at == date(2026, 8, 28)  # the original's params_fixed_at
+    evidence = bv2_twin.params_fixed_evidence
+    assert "not point-in-time" in evidence and "survived" in evidence
+    assert "8 columns" in evidence and "3 minutes" in evidence
+    notes = " ".join(bv2_twin.differs_from_source)
+    assert "survivorship" in notes and "8 named columns" in notes
+
+
+def test_the_result_says_how_many_columns_where_from_and_what_the_fetch_costs():
+    result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
+                         venue_names=_listing("BTC", "ETH", "SOL", "AVAX"))
+    assert result.instruments == tuple(BV2_COLUMNS)
+    assert result.list_source == "required_instruments of bv2-research-shared-pool-hl"
+    assert result.fetch_seconds == 8 * SECONDS_PER_INSTRUMENT == fetch_estimate(8)
+    assert fetch_estimate(10, 30.0) == 300.0
+
+
+def test_a_named_list_of_another_venue_needs_the_binance_listing():
+    result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"))
+    assert result.spec is None and "venue_names" in result.reason
+
+
+def test_a_required_coin_binance_lacks_is_a_refusal_that_names_it_not_a_silent_drop():
+    result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
+                         venue_names=_listing("BTC", "ETH", "SOL"))
+    assert result.spec is None
+    assert "AVAX" in result.reason and "required_instruments" in result.reason
+    assert "does not list" in result.reason
+
+
+def test_a_coin_list_in_the_params_gives_the_coin_and_its_spot_column_and_missing_coins_refuse():
+    experiment = _load("research", "frab", "frab-research-no-avax.yaml")
+    base = _load("research", "frab", "frab-live-own-spot.yaml")
+    listing = _listing("BTC", "ETH", "HYPE", "PURR", "SOL")
+    twin = causal_twin(experiment, base=base, venue_names=listing)
+    assert twin.reason is None
+    assert twin.spec.data.instruments == [
+        "BTC", "BTC-SPOT", "ETH", "ETH-SPOT", "HYPE", "HYPE-SPOT", "PURR", "PURR-SPOT",
+        "SOL", "SOL-SPOT"]
+    assert twin.list_source == "params.universe of frab-research-no-avax"
+    # HYPE and PURR are not on Binance's perpetual list: the book cannot be held there.
+    refused = causal_twin(experiment, base=base, venue_names=_listing("BTC", "ETH", "SOL"))
+    assert refused.spec is None
+    assert "HYPE, PURR" in refused.reason and "params.universe" in refused.reason
+
+
+def test_a_universe_that_is_not_a_list_of_coins_names_no_bounded_set(frab_experiment, frab_base):
+    """frab-binance-spot trades every coin Hyperliquid and Binance both list: `all_paired`."""
+    assert chosen_list(frab_experiment, frab_base, venue_names=_listing("BTC")) == (None, None)
+    twin = causal_twin(frab_experiment, base=frab_base).spec
+    assert twin.data.instruments is None and twin.data.include_spot  # the stage calls it heavy
+    assert twin.instruments_chosen_at is None
+
+
+def test_the_specs_own_list_comes_first_then_required_then_params_then_the_bases():
+    bv2 = _load(*BV2_POOL)
+    live = _load("bv2-live.yaml")
+    listing = _listing("BTC", "ETH", "SOL", "AVAX")
+    named = bv2.model_copy(update={"data": bv2.data.model_copy(
+        update={"instruments": ["BTC", "ETH"]})})
+    chosen, _ = chosen_list(named, live, venue_names=listing)
+    assert chosen.kind == "data.instruments" and chosen.names == ("BTC", "ETH")
+    chosen, _ = chosen_list(bv2, live, venue_names=listing)
+    assert chosen.kind == "required_instruments" and chosen.names == tuple(BV2_COLUMNS)
+    no_required = bv2.model_copy(update={"required_instruments": None})
+    chosen, _ = chosen_list(no_required, live, venue_names=listing)
+    assert chosen.kind == "params.coins"
+    assert chosen.names == ("BTC", "BTC-SPOT", "ETH", "ETH-SPOT", "SOL", "SOL-SPOT", "AVAX",
+                            "AVAX-SPOT")
+    # the spec names nothing: the base's list is used, and says whose it is
+    experiment = _load("research", "frab-binance-spot", "frab-binance-spot-research-sw24.yaml")
+    chosen, _ = chosen_list(experiment, live, venue_names=listing)
+    assert chosen.owner == live.idea_id and chosen.kind == "required_instruments"
+    assert chosen.chosen_at == (live.params_fixed_at or live.data.end)
+
+
+def test_a_daily_idea_keeps_the_whole_universe_which_is_cheap_and_point_in_time(xsmom_base):
+    required = xsmom_base.model_copy(update={"required_instruments": ["BTC", "ETH"]})
+    assert chosen_list(required, venue_names=_listing("BTC", "ETH")) == (None, None)
+    twin = causal_twin(required).spec
+    assert twin.data.instruments is None and twin.instruments_chosen_at is None
+
+
+def test_an_explicit_list_of_the_original_is_marked_too_and_loses_the_coins_binance_lacks(
+        xsmom_base):
+    data = xsmom_base.data.model_copy(update={"instruments": ["BTC", "ETH", "SOL"]})
+    named = xsmom_base.model_copy(update={"data": data})
+    twin = causal_twin(named, venue_names=["BTC", "ETH"]).spec
+    assert twin.data.instruments == ["BTC", "ETH"]
+    assert twin.instruments_chosen_at is not None
+    assert "data.instruments" in twin.sources["data.instruments"]
+    assert any("SOL" in note and "not listed" in note for note in twin.differs_from_source)
+
+
+def test_the_twin_with_a_list_survives_the_file_and_the_cli_prints_it(tmp_path, monkeypatch):
+    from qlab import twin_stage
+
+    monkeypatch.setattr(twin_stage, "_binance_listing",
+                        lambda: _listing("BTC", "ETH", "SOL", "AVAX"))
+    result = runner.invoke(app, ["twin", str(SPECS.joinpath(*BV2_POOL)),
+                                 "--base", str(SPECS / "bv2-live.yaml")])
+    assert result.exit_code == 0, result.output
+    assert "instruments_chosen_at: '2026-08-28'" in result.output
+    assert "8 columns from required_instruments" in result.output
+    assert "within the night bound" in result.output
+    assert str(ROOT) not in result.output
+    path = tmp_path / "twin.yaml"
+    twin = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
+                       venue_names=_listing("BTC", "ETH", "SOL", "AVAX")).spec
+    path.write_text(twin_yaml(twin, "bv2-research-shared-pool-hl"), encoding="utf-8")
+    assert load_spec(path) == twin
+
+
+def test_a_list_date_needs_a_list_and_a_source():
+    raw = _load("bv2-live.yaml").model_dump(mode="python")
+    raw["instruments_chosen_at"] = date(2026, 1, 1)
+    with pytest.raises(ValueError, match="set data.instruments"):
+        StrategySpec.model_validate(raw)
+    named = {**raw, "data": {**raw["data"], "instruments": ["BTC"], "include_spot": False}}
+    with pytest.raises(ValueError, match="sources"):
+        StrategySpec.model_validate(named)
+    named["sources"] = {**named["sources"], "instruments_chosen_at": "docs/RETUNE.md: a test"}
+    assert StrategySpec.model_validate(named).instruments_chosen_at == date(2026, 1, 1)
