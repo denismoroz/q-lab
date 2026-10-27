@@ -118,6 +118,8 @@ def _researcher(day: str, st: dict) -> Run | None:
                 details.append(f"{e['strategy']}: {line[2:].replace('`', '')}")
                 if m := _ROUTE_IN_LINE.search(line):
                     routes.append(m.group(1))
+            elif line.startswith("  - "):  # the experiment's second stage, under its line
+                details.append(f"{e['strategy']}: {line[4:].replace('`', '')}")
         details += [f"{e['strategy']}: не принято — {p}" for p in e.get("problems") or []]
         details += [f"{e['strategy']}: предлагает вывести {d}" for d in e.get("drops") or []]
     experiments = sum(len(e.get("specs") or []) for e in entries)

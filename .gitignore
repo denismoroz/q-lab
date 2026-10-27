@@ -48,3 +48,6 @@ data/programmer/
 
 # the cataloguer agent: its ledger, paper texts and work folders (docs/CATALOGUER.md)
 data/cataloguer/
+
+# the twins stage: its ledger of ideas with no twin and the hand runs' state (docs/NIGHT.md)
+data/twins/

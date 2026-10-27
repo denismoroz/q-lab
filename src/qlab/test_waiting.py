@@ -428,8 +428,25 @@ def test_a_first_stage_that_still_waits_is_re_run_and_then_its_second_stage(
 def test_a_second_stage_is_not_run_while_stage_1_decided_nothing(
         tmp_path, registry, stand) -> None:
     _generated(tmp_path, registry, stage1="needs-more-data", child=None)
+    stand.results["gen-x"] = ItemResult(kind="waiting", name="gen-x", trial_id=900,
+                                        route="needs-more-data", previous_route="needs-more-data")
     _stage(tmp_path)
     assert [c[0] for c in stand.calls] == ["idea"]  # only the first stage is retried
+
+
+def test_an_idea_whose_rerun_makes_it_a_survivor_gets_its_second_stage_the_same_night(
+        tmp_path, registry, stand) -> None:
+    # stuck on a missing metric, the re-run supplies it and the idea survives stage 1: the plan
+    # was made from the old route, but its second stage does not wait for another night
+    _generated(tmp_path, registry, stage1="needs-more-data", child=None)
+    stand.results["gen-x"] = ItemResult(kind="waiting", name="gen-x", trial_id=901,
+                                        route="paper", previous_route="needs-more-data")
+    state = _stage(tmp_path)
+    assert [c[0] for c in stand.calls] == ["idea", "stage2"]
+    assert stand.calls[1][3:] == ("paper", 901)  # told the route and trial of tonight's run
+    assert [(e["idea"], e["step"]) for e in state["waiting"]] == [("gen-x", "idea"),
+                                                                  ("gen-x", "stage2")]
+    assert "waiting:gen-x:stage2" in state["done"]
 
 
 def test_a_second_stage_switched_off_in_its_config_is_not_run(
@@ -533,3 +550,67 @@ def test_an_idea_whose_last_run_crashed_stays_in_the_plan_and_is_due(tmp_path, r
         _trial(s, "fresh", "error", ago=0, metrics=None, status=TrialStatus.ERROR)
     plan = _plans(tmp_path, registry)[("fresh", "idea")]
     assert plan.due and plan.why == "прошлый прогон не дал исхода"
+
+
+# ---- experiments on Binance's history, twins, a hand run ---------------------------------------
+
+
+def _experiment(tmp_path: Path, idea_id: str, source: str, folder: str = "research/x") -> Path:
+    """A spec file of `idea_id` on `source`, in a folder of `specs/`."""
+    path = tmp_path / "specs" / folder / f"{idea_id}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    spec = StrategySpec.model_validate({
+        "idea_id": idea_id, "title": idea_id, "code_ref": "a:b", "params": {"lookback": 14},
+        "data": {"source": source, "interval": "1d", "start": "2025-01-01", "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+        "unexpressed_mechanisms": []})
+    path.write_text(yaml.safe_dump(spec.model_dump(mode="json", exclude_none=True)),
+                    encoding="utf-8")
+    return path
+
+
+def test_a_researchers_experiment_on_binance_that_survived_stage_1_gets_its_second_stage(
+        tmp_path, registry) -> None:
+    with registry.session_scope() as s:
+        for idea in ("exp-binance", "exp-hl", "plain-binance", "exp-binance-failed"):
+            _idea(s, idea, IdeaStatus.BENCH)
+            _trial(s, idea, "needs-forward" if idea != "exp-binance-failed" else "needs-more-data",
+                   ago=90)
+    _experiment(tmp_path, "exp-binance", "binance")
+    _experiment(tmp_path, "exp-hl", "hyperliquid")
+    _experiment(tmp_path, "exp-binance-failed", "binance")
+    _experiment(tmp_path, "plain-binance", "binance", folder=".")
+    plans = _plans(tmp_path, registry, stage2_config=STAGE2_CONFIG)
+    assert ("exp-binance", "stage2") in plans
+    assert plans[("exp-binance", "stage2")].due
+    assert plans[("exp-binance", "stage2")].why == "второй этап ещё не проведён"
+    assert ("exp-hl", "stage2") not in plans  # it already runs on Hyperliquid
+    assert ("plain-binance", "stage2") not in plans  # not a researcher's experiment
+    assert ("exp-binance-failed", "stage2") not in plans  # stage 1 decided nothing
+    assert ("exp-binance", "stage2") not in _plans(tmp_path, registry)  # stage 2 switched off
+
+
+def test_a_twin_is_an_ordinary_idea_for_the_waiting_plan(tmp_path, registry) -> None:
+    with registry.session_scope() as s:
+        _idea(s, "exp-causal", IdeaStatus.BENCH)
+        _trial(s, "exp-causal", "needs-forward", ago=90)
+    _spec("exp-causal", tmp_path)
+    plans = _plans(tmp_path, registry)
+    assert plans[("exp-causal", "idea")].due and plans[("exp-causal", "idea")].skip is None
+
+
+def test_a_hand_run_limits_the_plan_to_the_named_ideas_and_forces_them(
+        tmp_path, registry, stand) -> None:
+    _world(tmp_path, registry)
+    state = {"done": {}}
+    waiting.waiting_stage(DAY, END, state, noise_trials=1, spec_dir=tmp_path / "specs", watch=[],
+                          only={"fresh", "on-the-watch-list"}, force=True)
+    assert sorted(c[1] for c in stand.calls if c[0] == "idea") == ["fresh", "on-the-watch-list"]
+    rows = {e["idea"]: e for e in state["waiting"]}
+    assert set(rows) == {"fresh", "on-the-watch-list"} and rows["fresh"]["action"] == "rerun"
+    # without force the day that can change the route has not come for `fresh`
+    stand.calls.clear()
+    other = {"done": {}}
+    waiting.waiting_stage(DAY, END, other, noise_trials=1, spec_dir=tmp_path / "specs", watch=[],
+                          only={"fresh"})
+    assert stand.calls == [] and other["waiting"][0]["action"] == "wait"

@@ -40,6 +40,8 @@ PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's s
 #: Stage names in the morning report's stop line (`past_stop`).
 STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
+               "twins": "двойники и вторая ступень",
+               "twins-research": "двойники экспериментов исследователя",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
@@ -459,6 +461,12 @@ def write_report(day: date, state: dict) -> Path:
 
         lines += [f"## {WAITING_TITLE}", "",
                   *waiting_lines(state.get("waiting") or [], state.get("waiting_notes")), ""]
+    if state.get("twins"):
+        from qlab.twin_stage import SECTION_TITLE as TWINS_TITLE
+        from qlab.twin_stage import report_lines as twins_lines
+
+        if body := twins_lines(state["twins"]):
+            lines += [f"## {TWINS_TITLE}", "", *body, ""]
     if idle := state.get("unwatched_bench"):
         lines += ["## На скамейке, но не в списке наблюдения", "",
                   "Проверка вперёд у этих идей не растёт: либо добавить в `night/watchlist.yaml`, "
@@ -495,7 +503,9 @@ def write_report(day: date, state: dict) -> Path:
             lines += [f"    - не принято: {p}" for p in e.get("problems") or []]
             lines += [f"    - предлагает вывести `{c['idea']}`, но он уже закрыт ({c['status']}): "
                       "делать нечего" for c in e.get("closed") or []]
-            lines += [f"    - {line}" for line in e.get("stand") or [] if line.startswith("- ")]
+            # an experiment's line, and under it its second stage (indented, docs/TWO_STAGE.md)
+            lines += [f"    {line}" if line.startswith("  ") else f"    - {line[2:]}"
+                      for line in e.get("stand") or [] if line.startswith(("- ", "  - "))]
         lines.append("")
         if drops := [(e["strategy"], d) for e in studied for d in e.get("drops") or []]:
             lines += ["## Исследователь предлагает вывести варианты (решает владелец)", "",
@@ -700,7 +710,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
-        noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
+        twins: bool | None = None, noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -709,8 +719,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     (the research director, docs/DIRECTOR.md) runs on its own cadence unless
     given, and not at all on a night with `research=False` (it steers the
     researcher and the generator; a night without the researcher is a partial
-    one). Nothing new starts after `stop_at` (`past_stop`); the report says
-    where the night stopped."""
+    one). `twins` (causal twins and the second stage, `qlab.twin_stage`) follows `waiting`
+    unless given: it is the cheap, high-value part of the recheck, and runs right after the
+    waiting stage and once more after the researcher. Nothing new starts after `stop_at`
+    (`past_stop`); the report says where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
@@ -761,6 +773,15 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         followed = followed_ideas(state.get("waiting"))
         state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
         save_state(day, state)
+    run_twins = twins if twins is not None else waiting
+    if run_twins and not past_stop(stop_at, state, "twins"):
+        # Ideas that wait for forward data get an answer from the history that exists: their
+        # causal twin on Binance, then the second stage (qlab.twin_stage). Code only.
+        from qlab.twin_stage import twins_stage
+
+        guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
+                deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+        save_state(day, state)
     if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
         reconciled = guarded(day, state, "paper", paper_reconciliation, day)
         if reconciled is not None:
@@ -789,6 +810,14 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
         guarded(day, state, "research", research_stage, day, state, noise_trials=noise_trials,
                 stop_at=stop_at)
+        if run_twins and not past_stop(stop_at, state, "twins-research"):
+            # The experiments the researcher has just run get their twins the same night.
+            from qlab.twin_stage import twins_stage
+
+            guarded(day, state, "twins-research", twins_stage, day, end, state,
+                    noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                    stop_at=stop_at, label="twins-research")
+            save_state(day, state)
     if programmer and not past_stop(stop_at, state, "programmer"):
         guarded(day, state, "programmer", programmer_stage, day, state)
     if implement and not past_stop(stop_at, state, "implement"):

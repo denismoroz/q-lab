@@ -596,7 +596,12 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         return TwinResult(None, refusal)
     reasons: list[str] = []
     grid = None
-    if base is not None:
+    if base is not None and (open_params(spec, config_path) or open_params(base, config_path)):
+        # A spec that leaves numbers open (qlab.own_numbers) has declared its candidates already:
+        # the whole lists are the choice, and a list is not a number a pair could override.
+        reasons.append("no pair with the base: a spec that leaves numbers open (night/"
+                       "own_numbers.yaml) offers its declared lists, not a base and one override")
+    elif base is not None:
         grid, why = _pair_grid(spec, base, _text(spec_path), _text(base_path))
         if grid is None:
             reasons.append(f"no pair with the base: {why}")
@@ -701,16 +706,18 @@ def find_base(spec: StrategySpec, candidates: list[StrategySpec]) -> BaseChoice:
             continue
         distance = _distance(spec, candidate)
         if distance is not None:
-            scored.append((distance, candidate))
+            # A candidate on other data or costs cannot be the other half of a pair
+            # (`_setup_mismatch`): one that can is nearer, whatever the numbers.
+            scored.append(((_setup_mismatch(spec, candidate) is not None, distance), candidate))
     if not scored:
         return BaseChoice(None, f"none of the {len(candidates)} candidate specs runs the same "
                                 f"code as {spec.idea_id}")
-    best = min(distance for distance, _ in scored)
-    nearest = [c for distance, c in scored if distance == best]
+    best = min(key for key, _ in scored)
+    nearest = [c for key, c in scored if key == best]
     if len(nearest) > 1:
         names = ", ".join(c.idea_id for c in nearest)
         return BaseChoice(None, f"{names} are equally near to {spec.idea_id} "
-                                f"({best} differing parameter(s)): the base is not clear")
+                                f"({best[1]} differing parameter(s)): the base is not clear")
     return BaseChoice(nearest[0])
 
 

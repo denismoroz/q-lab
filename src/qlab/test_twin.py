@@ -445,3 +445,25 @@ def test_cli_write_makes_the_file_next_to_the_spec(tmp_path):
     target.write_text("idea_id: other\n", encoding="utf-8")
     refused = runner.invoke(app, ["twin", str(spec), "--write"])
     assert refused.exit_code == 1
+
+
+def test_find_base_prefers_the_candidate_that_can_be_the_other_half_of_a_pair():
+    """frab-research-no-avax is as near (2 numbers) to frab-live as to frab-live-own-spot, but
+    only the second runs on the same data: a pair needs one data set, so it is the base."""
+    experiment = _load("research", "frab", "frab-research-no-avax.yaml")
+    live = _load("frab-live.yaml")
+    own_spot = _load("research", "frab", "frab-live-own-spot.yaml")
+    assert find_base(experiment, [live, own_spot]).base.idea_id == "frab-live-own-spot"
+    assert find_base(experiment, [own_spot, live]).base.idea_id == "frab-live-own-spot"
+
+
+def test_a_spec_that_leaves_numbers_open_is_twinned_on_its_declared_lists_not_as_a_pair():
+    """bv2-research-partial-hedge offers partial_hedge_share as a list (night/own_numbers.yaml):
+    the pair builder would carry the list into a number's place and the stand would refuse the
+    twin; the whole declared list is its choice."""
+    experiment = _load("research", "bv2", "bv2-research-partial-hedge.yaml")
+    base = _load("bv2-binance.yaml")
+    result = causal_twin(experiment, base=base)
+    assert result.spec is not None and result.kind == "lists"
+    assert set(result.candidates) == {"partial_hedge_share=0.5", "partial_hedge_share=1"}
+    assert isinstance(result.spec.params["base_params"]["partial_hedge_share"], int | float)

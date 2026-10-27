@@ -742,6 +742,10 @@ def night_run_cmd(
     waiting: bool = typer.Option(
         True, "--waiting/--no-waiting",
         help="Re-run the ideas waiting for data that are not on the watch list (no tokens)"),
+    twins: bool | None = typer.Option(
+        None, "--twins/--no-twins",
+        help="Causal twins and the second stage for ideas waiting for forward data "
+        "(no tokens; default: with --waiting)"),
     programmer: bool = typer.Option(
         True, "--programmer/--no-programmer",
         help="The programmer agent on its queue (tokens; docs/PROGRAMMER.md)"),
@@ -764,10 +768,66 @@ def night_run_cmd(
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               director=director, waiting=waiting, programmer=programmer,
+               director=director, waiting=waiting, twins=twins, programmer=programmer,
                catalogue=catalogue,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
+
+
+twins_app = typer.Typer(help="Causal twins and the second stage (docs/NIGHT.md).",
+                        no_args_is_help=True)
+app.add_typer(twins_app, name="twins")
+
+
+@twins_app.command("run")
+def twins_run_cmd(
+    only: list[str] = typer.Option(  # noqa: B008
+        [], "--only", help="Handle these ideas (repeat the option); without it: the night's "
+        "own selection, capped"),
+    max_new: int | None = typer.Option(
+        None, "--max-new", help="At most this many new twins (default: the night's cap, "
+        "none with --only)"),
+    waiting: bool = typer.Option(
+        True, "--waiting/--no-waiting",
+        help="With --only: first re-run the ideas' own first stage and their second stage the "
+        "way the waiting stage does (in the stage's own plan, whatever the watch list says)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be done, do nothing"),
+    allow_heavy: bool = typer.Option(
+        False, "--allow-heavy", help="Run twins whose data takes hours to fetch (hourly candles "
+        "of every Binance perpetual)"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+    capital: float = typer.Option(3000.0, "--capital"),
+) -> None:
+    """The night's twins stage by hand (src/qlab/twin_stage.py): the causal twin of each idea
+    that waits for forward data, run on the stand, then its second stage. Trials are written to
+    the registry like any run (deflation counts them). Code only: no agent, no tokens. The state
+    of a hand run is kept apart in data/twins/runs/, never in a night's."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import night, twin_stage
+    from qlab import waiting as waiting_module
+
+    night.STATE_DIR = _Path("data/twins/runs")  # a hand run never touches a night's state
+    day, end = _date.today(), night.last_closed_day()
+    state = night.load_state(day)
+    state.pop("twins", None)  # this call reports itself; the day's done-markers stay
+    state.pop("waiting", None)
+    ideas = set(only) or None
+    if waiting and ideas and not dry_run:
+        waiting_module.waiting_stage(day, end, state, watch=[], noise_trials=noise_trials,
+                                     deployable_capital_usd=capital, only=ideas,
+                                     force=True)
+        for line in waiting_module.report_lines(state.get("waiting") or [],
+                                                state.get("waiting_notes")):
+            typer.echo(line)
+    twin_stage.twins_stage(day, end, state, noise_trials=noise_trials,
+                           deployable_capital_usd=capital, only=ideas, max_new=max_new,
+                           dry_run=dry_run, allow_heavy=allow_heavy)
+    for line in twin_stage.report_lines(state.get("twins")):
+        typer.echo(line)
+    for name, text in (state.get("stage_errors") or {}).items():
+        typer.echo(f"error in {name}: {text}", err=True)
 
 
 regimes_app = typer.Typer(help="Market regimes: BTC bull / flat / bear (docs/REGIMES.md).",

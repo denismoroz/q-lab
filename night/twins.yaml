@@ -1,0 +1,24 @@
+# The night's "twins and second stage" stage (qlab.twin_stage, docs/NIGHT.md).
+#
+# Owner, 2026-10-27: «чем быстрее результат - тем понятнее куда дальше двигаться. а не ждать
+# по пол года». An idea whose forward test is too short is not left to wait for months: its
+# causal twin (qlab.twin, docs/RETUNE.md) is built and judged on Binance's history from 2019
+# the same night, and a twin or an experiment that survives goes on to the second stage
+# (qlab.pipeline.stage2). Code only: no agent, no tokens, outside the budget guard.
+
+enabled: true
+
+# At most this many NEW twins a night (a twin is a stand run with 200 random books, and every
+# run is a trial that deflation counts). What does not fit waits for the next night; the report
+# names it. An explicit `qlab twins run --only IDEA` is not capped.
+max_new_twins_per_night: 4
+
+# A twin whose stand run takes longer than this many minutes is reported as slow (the stage
+# never cuts a run it has started; it only checks the night's stop time between ideas).
+slow_twin_minutes: 20
+
+# Twins whose data is hourly candles of every Binance perpetual (no instrument list in the spec)
+# are not run by the night: Binance's candles are fetched one instrument at a time, and the
+# first measurement (2026-10-27, frab-binance-spot-research-sw24-causal) took about 25 seconds
+# per instrument for roughly 800 instruments, i.e. hours (qlab.twin_stage.heavy_data). The
+# report names them; `qlab twins run --only IDEA --allow-heavy` runs one by hand.

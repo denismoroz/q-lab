@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths, _revert
@@ -297,11 +297,53 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     return outcome
 
 
+def second_stage_lines(experiment, judged, opened: dict, result, *, noise_trials: int,
+                       deployable_capital_usd: float) -> list[str]:
+    """The second stage of an experiment that survived stage 1 on Binance's history, as nested
+    report lines (docs/TWO_STAGE.md). The same call the generator makes after a stage 1
+    survivor (`qlab.pipeline.stage2.run_stage2`, not a measurement): the same mechanism and
+    numbers on Hyperliquid, the idea's status moved by both stages together. Code only, no
+    tokens. `judged` and `opened` are `own_numbers.prepare`'s: an experiment with open numbers
+    carries to the second stage the value chosen at its cut. Empty when the experiment does not
+    go on (stage 1 did not survive, or it already runs on Hyperliquid); a failure is a line,
+    never raised -- stage 1 is on record and stays so."""
+    from dataclasses import asdict
+
+    from qlab import own_numbers
+    from qlab.pipeline import stage2
+    from qlab.registry.db import session_scope
+    from qlab.twin_stage import goes_to_stage2
+
+    route = str(result.routing.route)
+    try:
+        config = stage2.load_config()
+        if not config.enabled or not stage2.survives(route, config) \
+                or not goes_to_stage2(experiment):
+            return []
+        spec = experiment
+        if opened:
+            with session_scope() as session:
+                chosen = own_numbers.chosen_params(judged, session)
+            if not chosen:
+                return ["  - второй этап: на отрезе не выбрано ни одного значения, нести на "
+                        "Hyperliquid нечего"]
+            spec = own_numbers.fixed_at_choice(experiment, chosen,
+                                               date.fromisoformat(opened["cut"]))
+        outcome = stage2.run_stage2(
+            spec, stage1_route=route, stage1_trial_id=result.trial_id, noise_trials=noise_trials,
+            deployable_capital_usd=deployable_capital_usd, config=config)
+        return [f"  - {line}" for line in stage2.report_lines({"route": route}, asdict(outcome))]
+    except Exception as exc:  # noqa: BLE001 - one line in the memo, the other experiments run
+        return [f"  - второй этап: сбой {type(exc).__name__}: {exc}"]
+
+
 def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_trials: int = 200,
                     deployable_capital_usd: float = 3000.0) -> list[str]:
     """Run declared experiments on the stand (matched noise, every rule) and
     append their results to the memo -- numbers written by code, not by the
-    researcher."""
+    researcher. An experiment that survives stage 1 on Binance's history goes on to the
+    second stage on Hyperliquid at once (`second_stage_lines`); its lines follow the
+    experiment's, indented."""
     from qlab import own_numbers
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.sources import source_problems
@@ -350,6 +392,9 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
                 f"просадка {m.get('max_dd', float('nan')):.1%}, "
                 f"обгоняет шум {m.get('noise_return_percentile', float('nan')):.0%}, "
                 f"нужно капитала ${m.get('min_capital_usd', float('nan')):,.0f}; {regimes}")
+            lines += second_stage_lines(experiment, judged, opened, result,
+                                        noise_trials=noise_trials,
+                                        deployable_capital_usd=deployable_capital_usd)
         except Exception as exc:  # noqa: BLE001
             lines.append(f"- `{experiment.idea_id}`: прогон упал: {type(exc).__name__}: {exc}")
     with memo.open("a", encoding="utf-8") as fh:
@@ -358,4 +403,5 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
 
 
 __all__ = ["CUT_SENTENCE", "MODEL", "DropProposal", "ResearchOutcome", "build_context",
-           "drawdown_evidence", "parse_drop_proposals", "research", "run_experiments"]
+           "drawdown_evidence", "parse_drop_proposals", "research", "run_experiments",
+           "second_stage_lines"]

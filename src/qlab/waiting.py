@@ -50,7 +50,9 @@ is refitted, so the days that arrive are forward days by construction.
 
 from __future__ import annotations
 
+import dataclasses
 import math
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -212,6 +214,19 @@ def watched_idea_ids(watch: list[str]) -> set[str]:
     return out
 
 
+def _stage2_experiment(path: Path | None) -> bool:
+    """Whether the spec file is an experiment (a `research` folder) on Binance's history."""
+    from qlab.pipeline.spec import load_spec
+    from qlab.twin_stage import goes_to_stage2
+
+    if path is None or "research" not in path.parts:
+        return False
+    try:
+        return goes_to_stage2(load_spec(path))
+    except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
+        return False
+
+
 # --------------------------------------------------------------------------
 # The plan
 
@@ -278,9 +293,13 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
             plans.append(_plan_for(idea.id, "idea", path, skip, read_basis(session, idea.id),
                                    end, coverage_days, current_rules))
         child = stage2_child(session, idea.id)
-        two_stage = stage2_config is not None and stage2_config.enabled and (
-            is_generator_idea(idea.id) or child is not None)
-        if not two_stage or route is None or not survives(route, stage2_config):
+        survivor = (stage2_config is not None and stage2_config.enabled and route is not None
+                    and survives(route, stage2_config))
+        # A researcher's experiment on Binance's history goes to the second stage as a
+        # generated idea does (it is run right after the experiment; this catches the ones
+        # that never were, and the twins): `qlab.twin_stage.goes_to_stage2`.
+        if not survivor or not (is_generator_idea(idea.id) or child is not None
+                                or _stage2_experiment(path)):
             continue
         child_routed = latest_routed(session, child.id) if child is not None else None
         if child_routed is None:  # the second stage never finished
@@ -342,8 +361,8 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
     """The second stage on the fresh tail. `stage1` is tonight's re-run of the first
     stage when there was one; otherwise stage 1's latest outcome in the registry."""
     from qlab import night, own_numbers
+    from qlab.pipeline import stage2
     from qlab.pipeline.spec import load_spec
-    from qlab.pipeline.stage2 import run_stage2
     from qlab.registry.db import session_scope
     from qlab.registry.stages import latest_routed
 
@@ -363,7 +382,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             return {**_entry(plan, end), "action": "wait", "due_end": None,
                     "why": "на отрезе не выбрано ни одного значения: второму этапу нечего нести"}
         spec = own_numbers.fixed_at_choice(spec, chosen, retune.params_fixed_at)
-    outcome = run_stage2(night.with_end(spec, end),
+    outcome = stage2.run_stage2(night.with_end(spec, end),
                          stage1_route=route, stage1_trial_id=trial_id, noise_trials=noise_trials,
                          deployable_capital_usd=deployable_capital_usd, config=config)
     m = outcome.metrics or {}
@@ -377,14 +396,19 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             "forward_days": m.get("forward_days"),
             "forward_days_needed": m.get("forward_days_needed"),
             "combined": outcome.combined_route, "status": outcome.parent_status
-            or _status(plan.idea_id), "data_end": outcome.data_end, "why": plan.why}
+            or _status(plan.idea_id), "data_end": outcome.data_end, "why": plan.why,
+            "lines": stage2.report_lines({"route": route}, dataclasses.asdict(outcome))}
 
 
 def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_trials: int = 200,
-                  deployable_capital_usd: float = 3000.0, spec_dir: Path = SPEC_DIR) -> None:
+                  deployable_capital_usd: float = 3000.0, spec_dir: Path = SPEC_DIR,
+                  only: Collection[str] | None = None, force: bool = False) -> None:
     """Re-run the ideas that wait for data and are due tonight; write what happened (and
     what waits until when) to `state["waiting"]` for the morning report. Resumable: a
-    finished re-run has a done-marker, a failed one is tried again on the next run."""
+    finished re-run has a done-marker, a failed one is tried again on the next run. `only`
+    (by hand, `qlab twins run --only`) limits the plan to those ideas, and `force` runs them
+    whether or not a day has come that can change the route (a spec file edited since the
+    last run, for one)."""
     from qlab import night
     from qlab.pipeline import stage2
     from qlab.registry.db import session_scope
@@ -407,15 +431,22 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
             f"список ждущих идей не составлен: {type(exc).__name__}: {exc}")
         night.save_state(day, state)
         return
+    if only is not None:
+        plans = [p for p in plans if p.idea_id in only]
     entries: list[dict] = state.setdefault("waiting", [])
     ran: dict[str, dict] = {}
-    for plan in plans:
+    queue = list(plans)
+    planned = {(p.idea_id, p.step) for p in plans}
+    at = 0
+    while at < len(queue):
+        plan = queue[at]
+        at += 1
         key = f"waiting:{plan.idea_id}:{plan.step}"
         if key in state["done"]:
             continue  # re-run earlier tonight: its row stays
         entries[:] = [e for e in entries if not (e["idea"] == plan.idea_id
                                                   and e["step"] == plan.step)]
-        if not plan.due:
+        if plan.skip is not None or not (plan.due or force):
             entries.append(_entry(plan, end))
             continue
         stage1 = ran.get(plan.idea_id)
@@ -434,11 +465,36 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
                      "route_before": plan.route, "error": f"{type(exc).__name__}: {exc}"}
         if plan.step == "idea":
             ran[plan.idea_id] = entry
+            if follow := _new_survivor(plan, entry, stage2_config, planned):
+                queue.insert(at, follow)  # its second stage runs right after, tonight
+                planned.add((follow.idea_id, follow.step))
         entries.append(entry)
         if entry["action"] != "error":
             state["done"][key] = datetime.now(UTC).isoformat()
         night.save_state(day, state)
     night.save_state(day, state)
+
+
+def _new_survivor(plan: Plan, entry: dict, stage2_config, planned: set) -> Plan | None:
+    """The second-stage plan of an idea whose re-run tonight made it a survivor of stage 1
+    (the plan was made before the re-run, from the old route): its second stage does not
+    wait for another night."""
+    from qlab.night import is_generator_idea
+    from qlab.pipeline.stage2 import survives
+    from qlab.registry.db import session_scope
+    from qlab.registry.stages import stage2_child
+
+    if (stage2_config is None or not stage2_config.enabled or entry["action"] != "rerun"
+            or (plan.idea_id, "stage2") in planned or plan.spec_path is None
+            or not survives(entry.get("route_after"), stage2_config)):
+        return None
+    with session_scope() as session:
+        has_child = stage2_child(session, plan.idea_id) is not None
+    if not (is_generator_idea(plan.idea_id) or has_child
+            or _stage2_experiment(Path(plan.spec_path))):
+        return None
+    return Plan(plan.idea_id, "stage2", plan.spec_path, entry.get("route_after"), True,
+                "первый этап сегодня стал выжившим: второй ещё не проведён")
 
 
 def followed_ideas(entries: list[dict] | None) -> set[str]:
@@ -496,6 +552,9 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
                 "skip": e["why"]}[e["action"]]
         lines.append(f"| {e['idea']} | {step[e['step']]} | {_days(e)} | {route} | "
                      f"{e.get('status') or '—'} | {when} |")
+    for e in sorted(entries, key=lambda e: e["idea"]):
+        if e["step"] == "stage2" and e["action"] == "rerun" and e.get("lines"):
+            lines += ["", f"Второй этап `{e['idea']}`, подробно:", *[f"- {x}" for x in e["lines"]]]
     if any("**(изменился)**" in ln for ln in lines):
         lines += ["", "Исход изменился там, где стоит пометка; статус идеи меняет код по правилам "
                   "(`qlab.registry.lifecycle`), а отказ второго этапа уводит идею на кладбище с "
