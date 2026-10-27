@@ -366,9 +366,69 @@ def test_hourly_candles_of_every_binance_perpetual_are_too_heavy_for_a_night() -
     assert twin_stage.heavy_data(_plain_spec("hl", interval="1h"), 20) is None
 
 
+def test_an_hourly_list_is_heavy_past_the_columns_the_night_allows_and_costs_the_fetch() -> None:
+    hourly = _plain_spec("hourly", interval="1h", source="binance",
+                         instruments=[f"C{i}" for i in range(41)])
+    assert twin_stage.heavy_data(hourly, 20) is None  # no bound given: only the missing list
+    reason = twin_stage.heavy_data(hourly, 20, 40, 25.0)
+    assert "41 instruments" in reason and "17 minutes" in reason and "40 instruments" in reason
+    fits = hourly.model_copy(update={"data": hourly.data.model_copy(
+        update={"instruments": [f"C{i}" for i in range(40)]})})
+    assert twin_stage.heavy_data(fits, 20, 40, 25.0) is None  # 40 x 25 s is under the 20 minutes
+    # the daily panel of the whole universe is cached: a long list costs nothing there
+    daily = _plain_spec("daily", source="binance", instruments=[f"C{i}" for i in range(99)])
+    assert twin_stage.heavy_data(daily, 20, 40, 25.0) is None
+
+
+def test_the_real_config_carries_the_threshold_the_seconds_and_the_coin_parameters() -> None:
+    config = twin_stage.load_config(ROOT / "night" / "twins.yaml")
+    assert config.max_hourly_instruments == 40 and config.seconds_per_instrument == 25.0
+    assert config.coin_list_params == ("universe", "coins")
+    # 40 columns at the measured rate fit one twin's bound (the reason for the number 40)
+    assert 40 * config.seconds_per_instrument < config.slow_twin_minutes * 60
+
+
+def test_a_ledger_entry_of_the_old_rules_is_not_kept(world) -> None:
+    assert twin_stage.fingerprint(world.experiment, None).startswith(
+        f"v{twin_stage.LEDGER_VERSION}:")
+
+
+def _bv2_result():
+    from qlab.twin import causal_twin
+
+    names = ["BTC", "ETH", "SOL", "AVAX", "BTC-SPOT", "ETH-SPOT", "SOL-SPOT", "AVAX-SPOT"]
+    return causal_twin(load_spec(SPECS / "research" / "bv2" / "bv2-research-shared-pool-hl.yaml"),
+                       base=load_spec(SPECS / "bv2-live.yaml"), venue_names=names)
+
+
+def test_a_twin_with_an_instrument_list_is_run_and_the_report_names_the_list(
+        world, monkeypatch) -> None:
+    monkeypatch.setattr(twin_stage, "_causal_twin", lambda *a, **k: _bv2_result())
+    state = _stage(world)
+    entry = state["twins"]["entries"][0]
+    assert entry["action"] == "made" and len(entry["instruments"]) == 8
+    assert entry["list_source"] == "required_instruments of bv2-research-shared-pool-hl"
+    assert entry["fetch_minutes"] == 3.3
+    assert [c[0] for c in world.calls] == ["stand", "stage2"]
+    text = "\n".join(twin_stage.entry_lines(entry))
+    assert "только 8 столбцами" in text and "задним числом" in text
+
+
+def test_a_list_past_the_threshold_is_recorded_as_heavy_with_its_size(world, monkeypatch) -> None:
+    monkeypatch.setattr(twin_stage, "_causal_twin", lambda *a, **k: _bv2_result())
+    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
+                            "max_hourly_instruments: 5\n", encoding="utf-8")
+    state = _stage(world)
+    entry = state["twins"]["entries"][0]
+    assert entry["action"] == "heavy" and world.calls == []
+    assert "8 instruments" in entry["reason"] and "5 instruments" in entry["reason"]
+    text = "\n".join(twin_stage.entry_lines(entry))
+    assert "8 столбцов" in text and "max_hourly_instruments" in text
+
+
 def test_a_heavy_twin_is_not_written_or_run_but_recorded_and_a_hand_run_can_allow_it(
         world, monkeypatch) -> None:
-    monkeypatch.setattr(twin_stage, "heavy_data", lambda spec, minutes: "too heavy")
+    monkeypatch.setattr(twin_stage, "heavy_data", lambda spec, minutes, *rest: "too heavy")
     state = _stage(world)
     entry = state["twins"]["entries"][0]
     assert entry["action"] == "heavy" and world.calls == []

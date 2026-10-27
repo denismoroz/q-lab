@@ -1351,8 +1351,14 @@ def evaluate_spec(
             # point-in-time universe by construction (docs/FIT_VS_FORWARD.md).
             # A discovered universe keeps the panel's own answer, which also
             # covers instruments the venue erased.
+            # A list chosen later than the part starts (`instruments_chosen_at`,
+            # a causal twin's) knows how those days ended: not point-in-time.
+            list_precedes = (
+                spec.instruments_chosen_at is None
+                or index[lo].date() >= spec.instruments_chosen_at
+            )
             honest = bool(panel.meta.get("universe_complete")) or (
-                forward_part and spec.data.instruments is not None
+                forward_part and spec.data.instruments is not None and list_precedes
             )
             measured["point_in_time_universe"] = 1.0 if honest else 0.0
             # This pipeline always runs the backtest with the panel's real

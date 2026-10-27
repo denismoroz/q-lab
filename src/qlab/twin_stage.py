@@ -47,6 +47,7 @@ from pathlib import Path
 import yaml
 
 from qlab.pipeline.spec import StrategySpec
+from qlab.twin import COIN_LIST_PARAMS, SECONDS_PER_INSTRUMENT, fetch_estimate, needs_listing
 
 CONFIG = Path("night/twins.yaml")
 LEDGER = Path("data/twins/ledger.json")
@@ -70,6 +71,10 @@ class Config:
     enabled: bool
     max_new_twins_per_night: int
     slow_twin_minutes: float
+    max_hourly_instruments: int = 40
+    """An hourly twin may fetch at most this many columns (night/twins.yaml)."""
+    seconds_per_instrument: float = SECONDS_PER_INSTRUMENT
+    coin_list_params: tuple[str, ...] = COIN_LIST_PARAMS
 
 
 def load_config(path: Path = CONFIG) -> Config | None:
@@ -79,9 +84,14 @@ def load_config(path: Path = CONFIG) -> Config | None:
         return None
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     try:
-        return Config(enabled=bool(raw["enabled"]),
-                      max_new_twins_per_night=int(raw["max_new_twins_per_night"]),
-                      slow_twin_minutes=float(raw["slow_twin_minutes"]))
+        return Config(
+            enabled=bool(raw["enabled"]),
+            max_new_twins_per_night=int(raw["max_new_twins_per_night"]),
+            slow_twin_minutes=float(raw["slow_twin_minutes"]),
+            max_hourly_instruments=int(raw.get("max_hourly_instruments", 40)),
+            seconds_per_instrument=float(raw.get("seconds_per_instrument",
+                                                 SECONDS_PER_INSTRUMENT)),
+            coin_list_params=tuple(raw.get("coin_list_params") or COIN_LIST_PARAMS))
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
 
@@ -103,16 +113,32 @@ HEAVY_REASON = (
     "measurement (2026-10-27, the twin of frab-binance-spot-research-sw24) fetched them at about "
     "25 seconds per instrument for roughly 800 instruments, hours against the night's "
     "{minutes:g}-minute bound for one twin (night/twins.yaml); it needs a short instrument list "
-    "in the spec or a cached panel, or a hand run with --allow-heavy")
+    "in the spec (data.instruments, required_instruments or a coin list in its params), or a "
+    "cached panel, or a hand run with --allow-heavy")
+BIG_LIST_REASON = (
+    "the twin carries {columns} instruments and its hourly candles since 2019 take about "
+    "{minutes:.0f} minutes to fetch at {seconds:g} seconds each, more than the {limit} "
+    "instruments night/twins.yaml allows a night (max_hourly_instruments) against its "
+    "{bound:g}-minute bound for one twin; a hand run with --allow-heavy")
 
 
-def heavy_data(spec: StrategySpec, minutes: float) -> str | None:
+def heavy_data(spec: StrategySpec, minutes: float, max_instruments: int | None = None,
+               seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> str | None:
     """Why the twin's data is too heavy to fetch within a night, or None. Binance's candles
     are fetched one instrument at a time (data/raw/binance); a daily panel of the whole
-    universe is cached and quick, an hourly one of the whole universe is not."""
+    universe is cached and quick, an hourly one of the whole universe is not, and an hourly
+    one of a named list costs `qlab.twin.fetch_estimate` -- heavy past `max_instruments`
+    columns (a spot column counts as one)."""
     data = spec.data
-    if data.source == BINANCE and data.interval != "1d" and not data.instruments:
+    if data.source != BINANCE or data.interval == "1d":
+        return None
+    if not data.instruments:
         return HEAVY_REASON.format(minutes=minutes)
+    if max_instruments is not None and len(data.instruments) > max_instruments:
+        return BIG_LIST_REASON.format(
+            columns=len(data.instruments), limit=max_instruments, bound=minutes,
+            minutes=fetch_estimate(len(data.instruments), seconds_per_instrument) / 60,
+            seconds=seconds_per_instrument)
     return None
 
 
@@ -146,9 +172,16 @@ def save_ledger(ledger: dict, path: Path = LEDGER) -> None:
     tmp.replace(path)
 
 
+LEDGER_VERSION = 2
+"""Bumped when the rules that decide "no twin" change, so a reason recorded under the old
+rules is not kept for ever (version 2, 2026-10-27: a bounded hourly idea now gets a twin with
+an instrument list instead of being refused as heavy)."""
+
+
 def fingerprint(spec_path: Path, base_path: Path | None) -> str:
-    """What a recorded "no twin" depends on: the idea's spec file and its base's."""
-    return f"{_sha(_read(spec_path))}:{_sha(_read(base_path))}"
+    """What a recorded "no twin" depends on: the idea's spec file and its base's, and the
+    version of the rules that refused it."""
+    return f"v{LEDGER_VERSION}:{_sha(_read(spec_path))}:{_sha(_read(base_path))}"
 
 
 # --------------------------------------------------------------------------
@@ -485,8 +518,7 @@ class _Run:
         if choice is not None and base is None:
             entry["base_reason"] = choice.reason
         names = None
-        if cand.spec.data.source != BINANCE and (
-                cand.spec.data.instruments or cand.spec.required_instruments):
+        if needs_listing(cand.spec, base, coin_params=self.config.coin_list_params):
             if self.venue_names is None:
                 try:
                     self.venue_names = _binance_listing()
@@ -496,7 +528,7 @@ class _Run:
                     self.finish(cand, entry, counted=False)
                     return None
             names = self.venue_names
-        result = _causal_twin(cand, base, base_file, names)
+        result = _causal_twin(cand, base, base_file, names, self.config)
         if result.spec is None:
             entry.update(action="none", reason=result.reason)
             if not self.dry_run:
@@ -508,8 +540,12 @@ class _Run:
             return None
         entry.update(action="made", kind=result.kind, candidates=list(result.candidates),
                      twin=result.spec.idea_id, twin_spec=existing.as_posix())
+        if result.instruments:
+            entry.update(instruments=list(result.instruments), list_source=result.list_source,
+                         fetch_minutes=round((result.fetch_seconds or 0) / 60, 1))
         heavy = None if self.allow_heavy else heavy_data(
-            result.spec, self.config.slow_twin_minutes)
+            result.spec, self.config.slow_twin_minutes, self.config.max_hourly_instruments,
+            self.config.seconds_per_instrument)
         if heavy:
             entry.update(action="heavy", reason=heavy)
             if not self.dry_run:
@@ -533,11 +569,13 @@ class _Run:
         return None
 
 
-def _causal_twin(cand: Candidate, base: StrategySpec | None, base_file: Path | None, names):
+def _causal_twin(cand: Candidate, base: StrategySpec | None, base_file: Path | None, names,
+                 config: Config):
     from qlab.twin import causal_twin
 
     return causal_twin(cand.spec, base=base, spec_path=cand.path, base_path=base_file,
-                       venue_names=names)
+                       venue_names=names, coin_params=config.coin_list_params,
+                       seconds_per_instrument=config.seconds_per_instrument)
 
 
 # --------------------------------------------------------------------------
@@ -586,21 +624,37 @@ def entry_lines(e: Mapping) -> list[str]:
         return [f"- {head}: двойника нет — причина (слова кода): {e.get('reason')}.{why} "
                 "Больше не пробуем, пока не изменится файл спека."]
     if e["action"] == "heavy":
+        if e.get("instruments"):
+            return [f"- {head}: двойник сделать можно{base}, но не прогнан: его список из "
+                    f"{len(e['instruments'])} столбцов ({e.get('list_source')}) качается около "
+                    f"{e.get('fetch_minutes')} мин, это больше предела ночи "
+                    "(`max_hourly_instruments` в `night/twins.yaml`); вручную — `qlab twins run "
+                    f"--only {e['idea']} --allow-heavy`. Больше не пробуем, пока не изменится "
+                    "файл спека."]
         return [f"- {head}: двойник сделать можно{base}, но не прогнан: ему нужны часовые свечи "
                 "всех контрактов Binance с 2019 года, а они качаются по одному инструменту "
                 "(около 25 секунд на каждый, около 800 инструментов — часы вместо отведённых "
-                "двадцати минут на двойника). Чтобы он прогонялся, нужен короткий список монет в "
-                "спеке или готовая выгрузка; вручную — `qlab twins run --only "
+                "двадцати минут на двойника). В спеке нет ограниченного списка монет (ни "
+                "`instruments`, ни `required_instruments`, ни списка монет в параметрах), поэтому "
+                "двойнику нужна готовая выгрузка; вручную — `qlab twins run --only "
                 f"{e['idea']} --allow-heavy`. Больше не пробуем, пока не изменится файл спека."]
     if e["action"] == "would-make":
+        listed = (f"; только {len(e['instruments'])} столбцов ({e.get('list_source')}), "
+                  f"выгрузка около {e.get('fetch_minutes')} мин" if e.get("instruments") else "")
         return [f"- {head}: двойник можно сделать{base}; между чем выбирает код: "
-                f"{', '.join(e.get('candidates') or [])}"]
+                f"{', '.join(e.get('candidates') or [])}{listed}"]
     if e["action"] == "error":
         return [f"- {head}: **сбой** — {str(e.get('error'))[:200]}; повторится в следующую ночь"]
     made = "двойник уже был, прогнан впервые" if e["action"] == "existing" else "двойник сделан"
     line = (f"- {head}: {made}{base}, файл `{e.get('twin_spec')}`; код выбирает между "
             f"{len(e.get('candidates') or [])} наборами чисел раз в месяц только по прошлому. "
             if e.get("candidates") else f"- {head}: {made}{base}, файл `{e.get('twin_spec')}`. ")
+    if e.get("instruments"):
+        line += (f"Двойник торгует только {len(e['instruments'])} столбцами "
+                 f"({', '.join(e['instruments'])}; {e.get('list_source')}): список составлен "
+                 "сегодня, по монетам, которые дожили до сегодня, и применён к истории с 2019 "
+                 "года, поэтому честным «без знания будущего» он не считается и правило о "
+                 "составе монет судит его, как любой список, выбранный задним числом. ")
     line += (f"Первый этап (история Binance с 2019 года), прогон {e.get('trial')}: "
              f"{_route_ru(e.get('route'))} — {_numbers(e.get('metrics') or {})}; "
              f"считалось {_minutes(e.get('seconds'))}")
