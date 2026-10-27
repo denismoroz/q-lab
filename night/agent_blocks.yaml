@@ -1,0 +1,4 @@
+# Blocks the implementer agent has written (qlab.agent_blocks, docs/IMPLEMENTER.md).
+# Written by code after the guards pass, never by the agent. A block is a strategy class whose
+# every grid parameter is a key of the spec's `params`: another spec names it by `code_ref`.
+blocks: []

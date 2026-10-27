@@ -283,7 +283,7 @@ def base_candidates(path: Path, research_plan: Mapping, *, watch: Collection[str
 # The stage
 
 
-def _metrics(session, trial_id: int | None) -> dict:
+def trial_metrics(session, trial_id: int | None) -> dict:
     from qlab.registry.models import Trial
 
     trial = session.get(Trial, trial_id) if trial_id else None
@@ -295,23 +295,28 @@ def _metrics(session, trial_id: int | None) -> dict:
     return {k: trial.metrics[k] for k in keep if k in trial.metrics}
 
 
-def _ensure_twin_idea(twin: StrategySpec, origin: str) -> None:
-    """The twin as an idea of the registry, a variant of its original (one branch, not one more
+def ensure_variant_idea(spec: StrategySpec, origin: str, notes: str) -> None:
+    """`spec` as an idea of the registry, a variant of `origin` (one branch, not one more
     place among the strategy's variants: night/limits.yaml)."""
     from qlab.registry import repo
     from qlab.registry.db import session_scope
     from qlab.registry.models import AssetClass, Idea, Profile, SourceType
 
     with session_scope() as session:
-        if session.get(Idea, twin.idea_id) is None:
+        if session.get(Idea, spec.idea_id) is None:
             repo.upsert_idea(
-                session, id=twin.idea_id, title=twin.title, source_type=SourceType.INTERNAL,
-                asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
-                notes=f"Causal twin of {origin} (qlab.twin_stage, docs/RETUNE.md): its numbers "
-                      "are chosen by code from the past only, on Binance's history.")
+                session, id=spec.idea_id, title=spec.title, source_type=SourceType.INTERNAL,
+                asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER, notes=notes)
             session.flush()
         if session.get(Idea, origin) is not None:
-            session.get(Idea, twin.idea_id).parent_id = origin
+            session.get(Idea, spec.idea_id).parent_id = origin
+
+
+def _ensure_twin_idea(twin: StrategySpec, origin: str) -> None:
+    """The twin as an idea of the registry, a variant of its original."""
+    ensure_variant_idea(
+        twin, origin, f"Causal twin of {origin} (qlab.twin_stage, docs/RETUNE.md): its numbers "
+                      "are chosen by code from the past only, on Binance's history.")
 
 
 def _has_run(idea_id: str) -> bool:
@@ -331,9 +336,11 @@ def _binance_listing() -> list[str]:
     return sorted({*names, *(f"{n}-SPOT" for n in names)})
 
 
-def _second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: int,
-                  deployable_capital_usd: float, config) -> None:
-    """The twin's second stage when its stage 1 survived: the same call the generator makes."""
+def second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: int,
+                 deployable_capital_usd: float, config) -> None:
+    """The twin's second stage when its stage 1 survived: the same call the generator makes.
+    `entry` holds the stage 1 run (`route`, `trial`); the second stage's result is put in it
+    (`stage2`, `stage2_seconds`)."""
     from qlab import night
     from qlab.pipeline import stage2
 
@@ -347,21 +354,26 @@ def _second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: i
     entry["stage2_seconds"] = round(time.monotonic() - started, 1)
 
 
-def _run_twin(twin: StrategySpec, origin: str, entry: dict, *, end: date, noise_trials: int,
-              deployable_capital_usd: float, slow_minutes: float, stage2_config) -> None:
-    """Stage 1 of the twin on the stand, then its second stage if it survived."""
+def stage1_on_stand(spec: StrategySpec, entry: dict, *, ensure_idea, end: date,
+                    noise_trials: int, deployable_capital_usd: float, slow_minutes: float,
+                    kind: str = "twins") -> bool:
+    """One spec on the stand, its numbers written into `entry` (`trial`, `route`,
+    `route_reason`, `metrics`, `seconds`, `slow`). False when the run did not happen or failed
+    (`action` = "error" and `error` say why): there is then nothing to send on. `ensure_idea` is
+    called once the sources check out and before the stand writes a trial: the idea the trial
+    belongs to must exist."""
     from qlab import night
     from qlab.pipeline.sources import source_problems
     from qlab.registry.db import session_scope
 
-    problems = source_problems(twin)
+    problems = source_problems(spec)
     if problems:
         entry.update(action="error", error="numbers without a source, not run: "
                      + "; ".join(problems))
-        return
-    _ensure_twin_idea(twin, origin)
+        return False
+    ensure_idea()
     started = time.monotonic()
-    result = night.evaluate_item("twins", twin, end=end, noise_trials=noise_trials,
+    result = night.evaluate_item(kind, spec, end=end, noise_trials=noise_trials,
                                  deployable_capital_usd=deployable_capital_usd)
     elapsed = time.monotonic() - started
     entry["seconds"] = round(elapsed, 1)
@@ -369,11 +381,21 @@ def _run_twin(twin: StrategySpec, origin: str, entry: dict, *, end: date, noise_
     entry.update(trial=result.trial_id, route=result.route, route_reason=result.reason)
     if result.error or result.route == "error":
         entry.update(action="error", error=result.error or result.reason)
-        return
+        return False
     with session_scope() as session:
-        entry["metrics"] = _metrics(session, result.trial_id)
-    _second_stage(twin, entry, end=end, noise_trials=noise_trials,
-                  deployable_capital_usd=deployable_capital_usd, config=stage2_config)
+        entry["metrics"] = trial_metrics(session, result.trial_id)
+    return True
+
+
+def _run_twin(twin: StrategySpec, origin: str, entry: dict, *, end: date, noise_trials: int,
+              deployable_capital_usd: float, slow_minutes: float, stage2_config) -> None:
+    """Stage 1 of the twin on the stand, then its second stage if it survived."""
+    if stage1_on_stand(twin, entry, ensure_idea=lambda: _ensure_twin_idea(twin, origin),
+                       end=end, noise_trials=noise_trials,
+                       deployable_capital_usd=deployable_capital_usd,
+                       slow_minutes=slow_minutes):
+        second_stage(twin, entry, end=end, noise_trials=noise_trials,
+                     deployable_capital_usd=deployable_capital_usd, config=stage2_config)
 
 
 def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
@@ -588,17 +610,17 @@ def _causal_twin(cand: Candidate, base: StrategySpec | None, base_file: Path | N
 # The morning report
 
 
-def _pct(value: object) -> str:
+def pct(value: object) -> str:
     return f"{value:+.1%}" if isinstance(value, int | float) and value == value else "—"
 
 
-def _numbers(m: Mapping[str, object]) -> str:
+def numbers_ru(m: Mapping[str, object]) -> str:
     sharpe, beat = m.get("sharpe_net"), m.get("noise_return_percentile")
-    parts = [f"в год {_pct(m.get('ann_return_net'))}",
+    parts = [f"в год {pct(m.get('ann_return_net'))}",
              f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}",
-             f"просадка {_pct(m.get('max_dd'))}"]
+             f"просадка {pct(m.get('max_dd'))}"]
     if "ann_return_net_ex_best_1pct" in m:
-        parts.append(f"без лучшего 1% дней {_pct(m['ann_return_net_ex_best_1pct'])}")
+        parts.append(f"без лучшего 1% дней {pct(m['ann_return_net_ex_best_1pct'])}")
     if isinstance(beat, int | float):
         parts.append(f"обгоняет шум {beat:.0%}")
     days = m.get("forward_days")
@@ -607,13 +629,13 @@ def _numbers(m: Mapping[str, object]) -> str:
     return ", ".join(parts)
 
 
-def _route_ru(route: str | None) -> str:
+def route_ru(route: str | None) -> str:
     from qlab.funnel import ROUTE_TITLE
 
     return ROUTE_TITLE.get(route or "", route or "—")
 
 
-def _minutes(seconds: object) -> str:
+def duration_ru(seconds: object) -> str:
     if not isinstance(seconds, int | float):
         return ""
     return f"{seconds / 60:.1f} мин" if seconds >= 90 else f"{seconds:.0f} с"
@@ -663,8 +685,8 @@ def entry_lines(e: Mapping) -> list[str]:
                  "со дня, когда список уже был известен; история до него служит разгоном для "
                  "выбора кода и не судится. ")
     line += (f"Первый этап (история Binance с 2019 года), прогон {e.get('trial')}: "
-             f"{_route_ru(e.get('route'))} — {_numbers(e.get('metrics') or {})}; "
-             f"считалось {_minutes(e.get('seconds'))}")
+             f"{route_ru(e.get('route'))} — {numbers_ru(e.get('metrics') or {})}; "
+             f"считалось {duration_ru(e.get('seconds'))}")
     if e.get("slow"):
         line += " (**дольше нормы**, см. `night/twins.yaml`)"
     out = [line]
@@ -675,7 +697,7 @@ def entry_lines(e: Mapping) -> list[str]:
         out += [f"    - {ln}" for ln in stage2_lines({"route": e.get("route")}, e["stage2"])]
     elif e.get("route") is not None:
         out.append(f"    - второй этап не проводился: на первом этапе исход "
-                   f"«{_route_ru(e.get('route'))}»")
+                   f"«{route_ru(e.get('route'))}»")
     return out
 
 
@@ -711,6 +733,8 @@ def report_lines(block: Mapping | None) -> list[str]:
     return lines
 
 
-__all__ = ["CONFIG", "Candidate", "Config", "SECTION_TITLE", "base_candidates", "entry_lines",
-           "find_candidates", "fingerprint", "goes_to_stage2", "load_config", "load_ledger",
-           "report_lines", "twins_stage"]
+__all__ = ["CONFIG", "Candidate", "Config", "SECTION_TITLE", "base_candidates", "duration_ru",
+           "ensure_variant_idea", "entry_lines", "find_candidates", "fingerprint",
+           "goes_to_stage2", "heavy_data", "load_config", "load_ledger", "numbers_ru", "pct",
+           "report_lines", "route_ru", "second_stage", "stage1_on_stand", "trial_metrics",
+           "twins_stage"]

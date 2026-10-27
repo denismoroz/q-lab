@@ -52,3 +52,18 @@ def _no_real_inbox_or_queue(monkeypatch, tmp_path_factory) -> None:
     monkeypatch.setattr(carder, "BRIEFS", folder / "briefs")
     monkeypatch.setattr(carder, "DRAFTS", folder / "drafts")
     monkeypatch.setattr(carder, "CARDS", folder / "cards")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_implement_ledgers(monkeypatch, tmp_path_factory) -> None:
+    """The implement stage's ledger (data/implement/ledger.json), its baseline files and the
+    register of agent-written blocks (night/agent_blocks.yaml) are the owner's real files: a
+    test that reaches them gets a temporary copy that is empty. A test of the stage sets its own
+    over this."""
+    import qlab.agent_blocks as agent_blocks
+    import qlab.implement_run as implement_run
+
+    folder = tmp_path_factory.mktemp("implement")
+    monkeypatch.setattr(implement_run, "LEDGER", folder / "ledger.json")
+    monkeypatch.setattr(implement_run, "BASELINE_DIR", folder / "baselines")
+    monkeypatch.setattr(agent_blocks, "REGISTRY", folder / "agent_blocks.yaml")

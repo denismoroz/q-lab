@@ -24,6 +24,14 @@ the framework has, run by code, not by the agent:
 
 A card the data cannot express is not a failure: the agent declares what is
 missing in `unexpressed_mechanisms` and the stand answers "not evaluable".
+
+A card from the ideas inbox (`qlab.card_fields`, cards/SCHEMA.md, «Карточка из входящих идей»)
+carries more: a `new_block`, a `grid`, a `baseline_spec` and a `data` block. For such a card the
+agent writes a REUSABLE block (one module named after the block, every grid parameter a key of
+the spec's `params`, nothing hidden in the class) and the spec carrying the grid's first
+variant; code then checks that (guard 4), registers the block (`qlab.agent_blocks`) and runs the
+spec, its causal version over the grid and the baseline on the same panel, all by code
+(`qlab.implement_run`, docs/IMPLEMENTER.md). A card without those fields is handled as before.
 """
 
 from __future__ import annotations
@@ -34,7 +42,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from qlab import agent_blocks
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.card_fields import CardFieldError, CardFields, param_at, read_card_fields
 from qlab.pipeline.sources import QLAB_ROOT
 
 MODEL = "sonnet"  # docs/PLAN.md, "Модели для агентов системы": Implementer -> sonnet
@@ -55,7 +65,7 @@ read any file; you may write exactly two files and must not touch anything else:
   {spec_path}   -- its spec
 
 THE CARD (the source you implement; read it fully): {card_path}
-
+{card_brief}
 Read these first, they define what you write:
 - src/qlab/harness/strategy.py   the Strategy protocol and the alignment rule: the weight
   at bar t may use data up to and including t, never after; the stand tests this
@@ -89,14 +99,76 @@ Rules:
   no look-ahead. Pure pandas/numpy. Module and class docstrings in English, saying what
   the card asks and what the code does.
 - The spec: idea_id "{idea_id}", a Russian title, code_ref
-  "qlab.strategies.agent.{module}:<ClassName>", params, data (start 2025-01-01, end
-  {today}), costs, min_leg_notional, unexpressed_mechanisms, sources, params_fixed_at
-  {today}, params_fixed_evidence "written by the implementer agent from {card_path} on
-  {today}".
+  "qlab.strategies.agent.{module}:<ClassName>", params, data (start 2025-01-01 unless
+  the card's DATA part below says otherwise, end {today}), costs, min_leg_notional,
+  unexpressed_mechanisms, sources, params_fixed_at {today}, params_fixed_evidence
+  "written by the implementer agent from {card_path} on {today}".
 - Code, comments and the spec in English except the title.
 
-When both files are written, stop. Reply with one line: the class name, or
+When both files are written (the spec only, when the card says the block exists), stop.
+Reply with one line: the class name, or
 "NOT EXPRESSIBLE: <reason>" if even a declared-unexpressed spec makes no sense."""
+
+
+def card_brief(fields: CardFields, code_path: Path, *, block_exists: bool,
+               blocks: list[str] = ()) -> str:
+    """The extra brief an inbox card adds to the instructions (empty for a hand-written card).
+    What the agent must honour, in the order code will check it afterwards."""
+    if not fields.inbox:
+        return ""
+    parts = [f"\nTHIS CARD COMES FROM THE IDEAS INBOX. The owner's idea, in words: "
+             f"{fields.idea_text!r}. It carries more than a hand-written card; honour every part "
+             "below, code checks each of them after you."]
+    if fields.new_block is not None:
+        block = fields.new_block
+        listed = "\n".join(f"    - {p.name}: {p.meaning}" for p in block.params)
+        parts.append(
+            f"\nBLOCK. Write a REUSABLE block, not a one-off: the class is the block "
+            f"\"{block.name}\" (CamelCase name), in the one module {code_path}. Its rule in "
+            f"plain words, from the card: {block.rule}\nIts parameters and what each means:\n"
+            f"{listed}\nEvery one of them, and every grid parameter below, is read by "
+            "`target_weights` from `params` (a dotted path is a nested mapping); none is a "
+            "constant, a default or a hidden number inside the class. The spec's `params` carry "
+            "the card's FIRST variant. Another spec will name your module by code_ref with other "
+            "numbers and the same class must serve it. The module docstring says the rule and "
+            "lists each parameter with its meaning.")
+        if block_exists:
+            parts.append(
+                f"The module {code_path} ALREADY EXISTS, written for an earlier card. Read it. "
+                "Do NOT write or edit it (a change to it is reverted and the attempt fails): "
+                "write only the spec, whose code_ref points at the existing class. If the "
+                "card's rule needs behaviour that class does not have, reply \"NOT "
+                f"EXPRESSIBLE: the block {block.name} does not express <what>\".")
+    if fields.grid is not None:
+        first = ", ".join(f"{p} = {v!r}" for p, v in fields.grid.first_variant().items())
+        parts.append(
+            f"\nGRID. Code runs the strategy over the card's variants ({fields.grid.count}), "
+            "choosing between them every month from the past only. You do NOT write the grid and "
+            "you do NOT write a Retune spec. Your spec's `params` carry the first variant: "
+            f"{first}. Each of these paths ({', '.join(fields.grid.paths)}) must be a key of "
+            "`params` (nested by dots) that the class reads. A grid parameter the class ignores "
+            "makes the choice meaningless and the attempt fails.")
+    if fields.baseline_spec is not None:
+        parts.append(
+            f"\nBASELINE. The strategy this idea is compared with is {fields.baseline_spec}. "
+            "Read it for the conventions, the costs, min_leg_notional and their `sources`. Do "
+            "not edit it. Do not copy its params unless the card says the idea keeps them.")
+    if fields.data is not None:
+        d = fields.data
+        where = (f"coins {', '.join(d.coins)}" if d.coins else f"coins by the rule: "
+                 f"{d.universe_rule}")
+        honest = (f"start the spec's data at {d.honest_from} (the first day the card's data "
+                  "honestly exists)" if d.honest_from else "start 2025-01-01")
+        interval = d.interval or "as the card says"
+        parts.append(
+            f"\nDATA. The card says: venue {d.venue}, interval {interval}, {where}. In the "
+            f'spec: data.source "{d.venue}" (if the stand has no such source, say so in '
+            "unexpressed_mechanisms, do not substitute one), the same interval, "
+            f"data.instruments the card's coins when it lists them, and {honest}.")
+    if blocks:
+        parts.append("\nBLOCKS ALREADY WRITTEN (reuse one before you write another):\n"
+                     + "\n".join(blocks))
+    return "\n".join(parts) + "\n"
 
 
 @dataclass
@@ -108,6 +180,10 @@ class ImplementOutcome:
     problems: list[str] = field(default_factory=list)
     reverted: list[str] = field(default_factory=list)
     not_expressible: str | None = None
+    fields: CardFields | None = None
+    """The card's inbox fields (None for a card that has none)."""
+    block_reused: bool = False
+    """The card's block already existed and the agent wrote only the spec."""
 
     @property
     def ok(self) -> bool:
@@ -142,10 +218,22 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
     from qlab.pipeline.spec import load_spec
 
     idea_id = yaml.safe_load(card.read_text(encoding="utf-8"))["idea_id"]
-    module = module_name(idea_id)
+    try:
+        fields = read_card_fields(card, QLAB_ROOT)
+    except CardFieldError as exc:
+        # A broken card costs no tokens: the agent is not called.
+        return ImplementOutcome(
+            idea_id=idea_id, code_path=CODE_DIR / f"{module_name(idea_id)}.py",
+            spec_path=SPEC_DIR / f"{idea_id}.yaml", agent_reply=None,
+            problems=[f"the card's fields are wrong: {exc}"])
+    module = fields.new_block.module if fields.new_block else module_name(idea_id)
     code_path = CODE_DIR / f"{module}.py"
     spec_path = SPEC_DIR / f"{idea_id}.yaml"
-    allowed = {str(code_path), str(spec_path)}
+    # A block that already exists is reused as it is: the agent writes only the spec, and any
+    # change to the module is undone (the module may be uncommitted, git would not see it).
+    block_exists = fields.new_block is not None and (QLAB_ROOT / code_path).is_file()
+    module_before = (QLAB_ROOT / code_path).read_text(encoding="utf-8") if block_exists else None
+    allowed = {str(spec_path)} if block_exists else {str(code_path), str(spec_path)}
     before = set(_changed_paths())
     (QLAB_ROOT / CODE_DIR).mkdir(parents=True, exist_ok=True)
     (QLAB_ROOT / SPEC_DIR).mkdir(parents=True, exist_ok=True)
@@ -157,13 +245,18 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
     from datetime import timedelta
 
     last_closed = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+    brief = card_brief(fields, code_path, block_exists=block_exists,
+                       blocks=agent_blocks.block_lines())
     prompt = INSTRUCTIONS.format(code_path=code_path, spec_path=spec_path, card_path=card,
-                                 idea_id=idea_id, module=module, today=last_closed)
+                                 idea_id=idea_id, module=module, today=last_closed,
+                                 card_brief=brief)
     result = run_agent(budget, prompt, session=session, agent="implementer", model=model,
                        max_turns=max_turns, cwd=QLAB_ROOT,
                        extra_args=("--allowedTools", TOOLS, "--disallowedTools", "Bash"))
     outcome = ImplementOutcome(idea_id=idea_id, code_path=code_path, spec_path=spec_path,
-                               agent_reply=(result.text or "").strip()[:500])
+                               agent_reply=(result.text or "").strip()[:500],
+                               fields=fields if fields.inbox else None,
+                               block_reused=block_exists)
     if result.exit_code != 0:
         outcome.problems.append(
             f"the agent stopped before finishing (exit {result.exit_code}; its spending cap or "
@@ -174,8 +267,12 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
         if path not in allowed and path != str(CODE_DIR / "__init__.py"):
             _revert(path)
             outcome.reverted.append(path)
+    if module_before is not None and (QLAB_ROOT / code_path).read_text(
+            encoding="utf-8") != module_before:
+        (QLAB_ROOT / code_path).write_text(module_before, encoding="utf-8")
+        outcome.reverted.append(str(code_path))
     if outcome.reverted:
-        outcome.problems.append(f"wrote outside its two files (reverted): {outcome.reverted}")
+        outcome.problems.append(f"wrote outside its allowed files (reverted): {outcome.reverted}")
     reply = (outcome.agent_reply or "").lstrip("*_` ").strip()
     if reply.upper().startswith("NOT EXPRESSIBLE"):
         # An honest answer, not a broken attempt: recorded as such.
@@ -201,7 +298,60 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
             outcome.problems.append("the class does not implement the Strategy protocol")
     except Exception as exc:  # noqa: BLE001
         outcome.problems.append(f"strategy does not import: {type(exc).__name__}: {exc}")
+    # Guard 4: what an inbox card asked for is in the spec and in the code.
+    if fields.inbox:
+        outcome.problems += card_problems(fields, spec, QLAB_ROOT)
     return outcome
 
 
-__all__ = ["ImplementOutcome", "MODEL", "implement", "module_name"]
+def card_problems(fields: CardFields, spec, root: Path) -> list[str]:
+    """The checks an inbox card adds (guard 4): the spec carries the grid's first variant, every
+    grid parameter is a name the strategy's code mentions (a tripwire against a constant hidden
+    in the class: not proof, a parameter the code never names cannot be read from `params`),
+    and the spec's data is the card's. Pure: reads the spec and the module."""
+    problems: list[str] = []
+    if fields.grid is not None:
+        source = ""
+        module = spec.code_ref.split(":")[0]
+        file = root / "src" / Path(*module.split(".")).with_suffix(".py")
+        if file.is_file():
+            source = file.read_text(encoding="utf-8")
+        for path, value in fields.grid.first_variant().items():
+            found, current = param_at(spec.params, path)
+            if not found:
+                problems.append(f"grid: {path} is not a parameter of the written spec")
+            elif current != value:
+                problems.append(f"grid: the spec carries {path} = {current!r}, the card's first "
+                                f"variant is {value!r}")
+            if source and path.split(".")[-1] not in source:
+                problems.append(f"grid: the code never names {path.split('.')[-1]!r}: it cannot "
+                                "read that parameter from params")
+    if fields.data is not None:
+        d = fields.data
+        if spec.data.source != d.venue and getattr(spec, "execution_venue", None) != d.venue:
+            problems.append(f"data: the card says venue {d.venue}, the spec reads "
+                            f"{spec.data.source}")
+        if d.interval and spec.data.interval != d.interval:
+            problems.append(f"data: the card says interval {d.interval}, the spec has "
+                            f"{spec.data.interval}")
+    return problems
+
+
+def register_block(outcome: ImplementOutcome, *, path: Path | None = None) -> bool:
+    """Put the block the card asked for into the register (`qlab.agent_blocks`). Called by the
+    stage after every guard and the reviewer have passed; False when the card has no block."""
+    if outcome.fields is None or outcome.fields.new_block is None:
+        return False
+    from qlab.pipeline.spec import load_spec
+
+    block = outcome.fields.new_block
+    spec = load_spec(QLAB_ROOT / outcome.spec_path)
+    agent_blocks.register(
+        name=block.name, code_ref=spec.code_ref, rule=block.rule,
+        params=[{"name": p.name, "meaning": p.meaning} for p in block.params],
+        card=str(outcome.fields.card), spec=str(outcome.spec_path), path=path)
+    return True
+
+
+__all__ = ["ImplementOutcome", "MODEL", "card_brief", "card_problems", "implement",
+           "module_name", "register_block"]

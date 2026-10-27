@@ -54,3 +54,6 @@ data/twins/
 
 # the carder agent: the briefs it was given (docs/IDEAS.md); drafts live in cards/drafts/
 data/carder/
+
+# the implementer's post-guard runs: which step of which card is done (docs/IMPLEMENTER.md)
+data/implement/

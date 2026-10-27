@@ -44,6 +44,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab.card_fields import param_at
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
 from qlab.pipeline.sources import QLAB_ROOT, covering_key
 from qlab.pipeline.spec import SpecData, StrategySpec
@@ -149,13 +150,7 @@ def _leaf_items(value: object, prefix: str = ""):
         yield prefix, value
 
 
-def _get(params: Mapping, path: str) -> tuple[bool, object]:
-    node: object = params
-    for name in path.split("."):
-        if not isinstance(node, Mapping) or name not in node:
-            return False, None
-        node = node[name]
-    return True, node
+_get = param_at  # the dotted-path reader the card checks share (`qlab.card_fields`)
 
 
 def _number(value: object) -> bool:
@@ -396,6 +391,30 @@ def _declared_grid(spec: StrategySpec, config: dict, config_path: Path
     if count > cap:
         return None, (f"{count} candidates from the declared lists of {', '.join(axes)}; at "
                       f"most {cap} ({config_path})")
+    own = (f"{config_path} (version {config['version']}): the declared list for each of "
+           f"{', '.join(axes)}; owner 2026-10-26: own numbers chosen on data before the cut")
+    return _axes_grid(
+        spec, axes, kind="lists", own=own,
+        description=(f"the whole declared list of each open parameter ({', '.join(axes)}) from "
+                     f"{config_path}, {count} candidates"),
+        caveat=(f"the lists were declared in {config_path} (version {config['version']}) "
+                "before this twin ran; what was seen of the history when they were declared is "
+                "not recorded, so the choice is only as honest as the lists are"),
+        differs=f"the declared lists of {config_path}"), None
+
+
+def _axis_label(path: str, value: object) -> str:
+    """The name of one value on an axis: `window_days=7` for a number, `kind=rank` for a word."""
+    if _number(value):
+        return _label(path, value)  # type: ignore[arg-type]
+    return f"{path.split('.')[-1]}={value}"
+
+
+def _axes_grid(spec: StrategySpec, axes: Mapping[str, list], *, kind: str, own: str,
+               description: str, caveat: str, differs: str) -> _Grid:
+    """The grid whose axes are parameters of the spec, each with its list of values: the
+    candidates are the cartesian product, the spec's own params carry the first value of every
+    list, and `own` is the citation of the lists."""
     base_params = copy.deepcopy(spec.params)
     for path, values in axes.items():
         *parents, leaf = path.split(".")
@@ -403,9 +422,8 @@ def _declared_grid(spec: StrategySpec, config: dict, config_path: Path
         for name in parents:
             node = node[name]
         node[leaf] = values[0]
-    grid = {path: {_label(path, v): {path: v} for v in values} for path, values in axes.items()}
-    own = (f"{config_path} (version {config['version']}): the declared list for each of "
-           f"{', '.join(axes)}; owner 2026-10-26: own numbers chosen on data before the cut")
+    grid = {path: {_axis_label(path, v): {path: v} for v in values}
+            for path, values in axes.items()}
     sources = {f"base_params.{k}": v for k, v in spec.sources.items()
                if _param_source(k, spec.params) and k not in axes}
     for path in axes:
@@ -414,15 +432,71 @@ def _declared_grid(spec: StrategySpec, config: dict, config_path: Path
     sources["grid"] = own
     candidates = expand_grid(base_params, grid)
     return _Grid(
-        kind="lists", inner_code_ref=spec.code_ref, base_params=base_params, grid=grid,
+        kind=kind, inner_code_ref=spec.code_ref, base_params=base_params, grid=grid,
         candidates=candidates, sources=sources,
         trees=[_with_largest(base_params, axes)],
-        description=(f"the whole declared list of each open parameter ({', '.join(axes)}) from "
-                     f"{config_path}, {count} candidates"),
-        caveat=(f"the lists were declared in {config_path} (version {config['version']}) "
-                "before this twin ran; what was seen of the history when they were declared is "
-                "not recorded, so the choice is only as honest as the lists are"),
-        differs=f"the declared lists of {config_path}"), None
+        description=description, caveat=caveat, differs=differs)
+
+
+def card_grid(spec: StrategySpec, *, axes: Mapping[str, list] | None = None,
+              candidates: Mapping[str, Mapping[str, object]] | None = None, cite: str,
+              max_candidates: int) -> tuple[_Grid | None, str | None]:
+    """The grid an idea's card declares (cards/SCHEMA.md, «Карточка из входящих идей»), or why
+    none can be made. Either `axes` (a parameter path -> its list of values; the candidates
+    are the product) or `candidates` (named overrides); never both. The spec's own params must
+    carry the FIRST variant (code does not move the card's numbers) and every path must be a
+    parameter of the spec. `cite` is the card as the sources cite it: every value of the grid
+    literally stands in that file."""
+    if (axes is None) == (candidates is None):
+        return None, "a card grid is either `params` (lists) or `candidates` (named), not both"
+    if axes is not None:
+        count = math.prod(len(v) for v in axes.values())
+        paths = list(axes)
+    else:
+        count = len(candidates or {})
+        paths = sorted({p for overrides in (candidates or {}).values() for p in overrides})
+    if count < 2:
+        return None, "a card grid needs at least two variants to choose between"
+    if count > max_candidates:
+        return None, (f"{count} variants in the card's grid; at most {max_candidates} "
+                      "(night/own_numbers.yaml, max_candidates)")
+    missing = [p for p in paths if not _get(spec.params, p)[0]]
+    if missing:
+        return None, (f"the grid names {', '.join(missing)}, which are not parameters of "
+                      f"{spec.idea_id}")
+    own = (f"{cite}: the grid the card declares, {count} variants; owner 2026-10-27: an idea "
+           "from the inbox is judged over the grid its card declares")
+    caveat = ("the grid was declared on the card before this twin ran; what was seen of the "
+              "history when the card was written is not recorded, so the choice is only as "
+              "honest as the grid is")
+    if axes is not None:
+        for path, values in axes.items():
+            current = _get(spec.params, path)[1]
+            if current != values[0]:
+                return None, (f"the spec carries {path} = {current!r}, not the card's first "
+                              f"variant {values[0]!r}")
+        return _axes_grid(
+            spec, axes, kind="card", own=own,
+            description=f"the card's declared lists ({', '.join(axes)}), {count} candidates",
+            caveat=caveat, differs=f"the grid declared on the card {cite}"), None
+    named = {name: dict(overrides) for name, overrides in (candidates or {}).items()}
+    for path, value in next(iter(named.values())).items():
+        current = _get(spec.params, path)[1]
+        if current != value:
+            return None, (f"the spec carries {path} = {current!r}, not the first candidate's "
+                          f"{value!r}")
+    base_params = copy.deepcopy(spec.params)
+    grid = {"candidate": named}
+    expanded = expand_grid(base_params, grid)
+    sources = {f"base_params.{k}": v for k, v in spec.sources.items()
+               if _param_source(k, spec.params)}
+    sources["inner_code_ref"] = f"{_code_file(spec.code_ref) or RETUNE_DOC}: the code of the spec"
+    sources["grid"] = own
+    return _Grid(
+        kind="card", inner_code_ref=spec.code_ref, base_params=base_params, grid=grid,
+        candidates=expanded, sources=sources, trees=list(expanded.values()),
+        description=f"the card's named candidates ({', '.join(named)})",
+        caveat=caveat, differs=f"the candidates declared on the card {cite}"), None
 
 
 def _with_largest(params: dict, axes: Mapping[str, list]) -> dict:
@@ -652,7 +726,8 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
                 spec_cite: str = RETUNE_DOC, base_cite: str = RETUNE_DOC,
                 venue_names: Collection[str] | None = None,
                 coin_params: Collection[str] = COIN_LIST_PARAMS,
-                peers: Sequence[tuple[StrategySpec, str]] = ()
+                peers: Sequence[tuple[StrategySpec, str]] = (),
+                listed_at: tuple[date, str] | None = None
                 ) -> tuple[ChosenList | None, str | None]:
     """(the list the twin carries, None), (None, why no twin can be made) or (None, None) when
     the spec names no bounded set of coins.
@@ -670,7 +745,12 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
 
     `peers` are (spec, where it lives) pairs that may date the list (`_earliest_date`): the
     list's date is the earliest `params_fixed_at` of the owner and of those that trade the same
-    coins. `base` is always a peer."""
+    coins. `base` is always a peer.
+
+    `listed_at` is (a day, where it is said): the card's own statement of the day its coin list
+    was known (`data.honest_from`, cards/SCHEMA.md). It replaces the date the specs would give,
+    because a spec written from the card today is dated today, which is not the day the list
+    existed."""
     from qlab.pipeline.stage2 import map_instruments, venue_name
 
     derive = spec.data.interval != "1d"
@@ -709,6 +789,9 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
         chosen_at, dated_by, dated_owner, dated_cite = _earliest_date(
             owner, cite, names, [(p, c) for p, c in pool if p.idea_id != owner.idea_id],
             venue_names, coin_params)
+        if listed_at is not None:
+            chosen_at, dated_by, dated_owner, dated_cite = (
+                listed_at[0], "data.honest_from", owner.idea_id, listed_at[1])
         return ChosenList(
             names=tuple(names), kind=kind, owner=owner.idea_id,
             cite=f"{cite}: {kind} of {owner.idea_id}, the coins its book trades",
@@ -718,9 +801,10 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
 
 
 def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None,
-               chosen: ChosenList | None = None
+               chosen: ChosenList | None = None, not_before: date | None = None
                ) -> tuple[SpecData, list[str] | None]:
-    """(the twin's data, the mapped required instruments)."""
+    """(the twin's data, the mapped required instruments). `not_before` is the first day the
+    idea's data honestly exists (a card's `data.honest_from`): the twin starts no earlier."""
     from qlab.pipeline.stage2 import venue_name
 
     data = spec.data
@@ -729,6 +813,8 @@ def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None,
         required = list(dict.fromkeys(venue_name(n, venue_names) or n for n in required))
     start = min(data.start, BINANCE_ARCHIVE_START) if data.source == TWIN_VENUE \
         else BINANCE_ARCHIVE_START
+    if not_before is not None:
+        start = max(start, not_before)
     # A named list already holds the spot columns (`<COIN>-SPOT`): the snapshot builder refuses
     # a list together with the venue's spot markets.
     return SpecData(
@@ -779,7 +865,8 @@ def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: 
 
 
 def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
-             chosen: ChosenList | None = None) -> dict[str, str]:
+             chosen: ChosenList | None = None, start_cite: str | None = None
+             ) -> dict[str, str]:
     period = PERIODS[refit_every][0]
     sources = {
         "code_ref": "src/qlab/strategies/retune.py (existing wrapper)",
@@ -787,8 +874,9 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
                        "«раз в неделю/день или месяц»",
         "window": f"{RETUNE_DOC} (expanding window: no number introduced)",
         "objective": f"{RETUNE_DOC} (Sharpe after costs)",
-        "data.start": f"{VENUES_DOC}: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день "
-                      "в архиве лаборатории)»",
+        "data.start": start_cite or (
+            f"{VENUES_DOC}: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день "
+            "в архиве лаборатории)»"),
         "data.end": f"{spec_cite}: the same window end",
     }
     sources.update(grid.sources)
@@ -816,7 +904,9 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 config_path: Path = CONFIG, venue_names: Collection[str] | None = None,
                 refit_every: str = "M", coin_params: Collection[str] = COIN_LIST_PARAMS,
                 seconds_per_instrument: float = SECONDS_PER_INSTRUMENT,
-                peers: Sequence[tuple[StrategySpec, str]] = ()) -> TwinResult:
+                peers: Sequence[tuple[StrategySpec, str]] = (), grid: _Grid | None = None,
+                honest_from: tuple[date, str] | None = None,
+                execution_venue: str | None = None) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
@@ -825,15 +915,24 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     names. `refit_every` is `M`, `W` or `D`, as `Retune`'s. `coin_params` and
     `seconds_per_instrument` are `chosen_list`'s and `fetch_estimate`'s (night/twins.yaml).
     `peers` are (spec, its path) pairs of the same strategy that may date a hand-picked list
-    (`chosen_list`); the base always does."""
+    (`chosen_list`); the base always does.
+
+    `grid` (from `card_grid`) is what an idea's card declares: with it the twin chooses between
+    exactly those variants and neither a base pair nor the declared lists are looked for.
+    `honest_from` is (a day, where the card says it) -- the first day the card's data honestly
+    exists: a hand-picked coin list is judged from it (`chosen_list`, `listed_at`), and a card
+    without a list starts the data no earlier. `execution_venue` names the venue the orders
+    would go to when the card's data is a proxy for it."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
     if refusal:
         return TwinResult(None, refusal)
     reasons: list[str] = []
-    grid = None
-    if base is not None and (open_params(spec, config_path) or open_params(base, config_path)):
+    if grid is not None:
+        base = None  # the card's grid is the choice; there is no pair to build
+    elif base is not None and (open_params(spec, config_path)
+                               or open_params(base, config_path)):
         # A spec that leaves numbers open (qlab.own_numbers) has declared its candidates already:
         # the whole lists are the choice, and a list is not a number a pair could override.
         reasons.append("no pair with the base: a spec that leaves numbers open (night/"
@@ -850,13 +949,17 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         return TwinResult(None, "; ".join(dict.fromkeys(reasons)))
 
     chosen, why = chosen_list(
-        spec, base if grid.kind != "lists" else None, spec_cite=_text(spec_path) or RETUNE_DOC,
+        spec, base if grid.kind not in ("lists", "card") else None,
+        spec_cite=_text(spec_path) or RETUNE_DOC,
         base_cite=_text(base_path) or RETUNE_DOC, venue_names=venue_names,
         coin_params=coin_params,
-        peers=[*([(base, _text(base_path) or RETUNE_DOC)] if base is not None else []), *peers])
+        peers=[*([(base, _text(base_path) or RETUNE_DOC)] if base is not None else []), *peers],
+        listed_at=honest_from)
     if why:
         return TwinResult(None, why)
-    data, required = _twin_data(spec, venue_names, chosen)
+    data, required = _twin_data(spec, venue_names, chosen,
+                                None if chosen is not None or honest_from is None
+                                else honest_from[0])
     dropped = list(chosen.dropped) if chosen is not None else []
     seconds = None if chosen is None else fetch_estimate(len(chosen.names),
                                                          seconds_per_instrument)
@@ -918,12 +1021,17 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
             spec, grid, data.start, warm, label, dates, refit_every,
             None if chosen is None else _list_evidence(chosen, data.start, seconds)),
         "selects_causally": True,
-        "sources": _sources(spec, grid, refit_every, _text(spec_path) or RETUNE_DOC, chosen),
+        "sources": _sources(
+            spec, grid, refit_every, _text(spec_path) or RETUNE_DOC, chosen,
+            None if chosen is not None or honest_from is None else
+            f"{honest_from[1]}: the first day the card's data honestly exists "
+            f"(data.honest_from = {honest_from[0]})"),
         "instruments_chosen_at": None if chosen is None else chosen.chosen_at,
         "differs_from_source": [*spec.differs_from_source, *notes],
     }
     if "execution_venue" in StrategySpec.model_fields:
-        update["execution_venue"] = getattr(spec, "execution_venue", None) or (
+        update["execution_venue"] = execution_venue or getattr(
+            spec, "execution_venue", None) or (
             spec.data.source if spec.data.source != TWIN_VENUE else None)
     update["data"] = data.model_dump(mode="python")
     twin = StrategySpec.model_validate({**spec.model_dump(mode="python"), **update})
@@ -986,6 +1094,53 @@ def find_base(spec: StrategySpec, candidates: list[StrategySpec]) -> BaseChoice:
 
 
 # --------------------------------------------------------------------------
+# The baseline on the twin's panel
+
+
+def same_panel_spec(baseline: StrategySpec, twin: StrategySpec, *, idea_id: str, cite: str,
+                    venue_names: Collection[str] | None = None) -> StrategySpec:
+    """`baseline` run on exactly the panel and the costs of `twin`: the same data (venue,
+    interval, window, instruments), the same costs and minimum leg, and the same judged part
+    (`judged_from`, `instruments_chosen_at`), so that a comparison of the two runs is between
+    equals. The baseline's own numbers are untouched: only the ground it stands on is the
+    twin's. `cite` is where the twin's costs are written (the numbers must appear there
+    literally); `venue_names` (Binance's listing) maps the instruments the baseline requires
+    when it names another venue's columns."""
+    required = baseline.required_instruments
+    if required is not None and baseline.data.source != TWIN_VENUE and venue_names is not None:
+        from qlab.pipeline.stage2 import venue_name
+
+        required = list(dict.fromkeys(venue_name(n, venue_names) or n for n in required))
+    data = twin.data
+    sources = dict(baseline.sources)
+    for name in ("taker_fee_bps", "slippage_bps"):
+        sources[f"costs.{name}"] = f"{cite}: the causal version's costs, the same for both runs"
+    sources["min_leg_notional"] = f"{cite}: the causal version's minimum leg"
+    for key in ("data.start", "data.end", "data.instruments", "instruments_chosen_at",
+                "judged_from"):  # the panel and the judged part are the twin's, so are its sources
+        if key in twin.sources:
+            sources[key] = twin.sources[key]
+    note = (f"The baseline {baseline.idea_id} on the causal version's panel ({twin.idea_id}): "
+            f"Binance's candles {twin.data.start} .. {twin.data.end}, its costs, and its judged "
+            "part, so that the two runs are compared like with like.")
+    update = {
+        "idea_id": idea_id,
+        "title": f"{baseline.title}: на данных и издержках двойника {twin.idea_id}",
+        "data": data.model_dump(mode="python"),
+        "costs": twin.costs.model_dump(mode="python"),
+        "min_leg_notional": twin.min_leg_notional,
+        "required_instruments": required,
+        "judged_from": twin.judged_from,
+        "instruments_chosen_at": twin.instruments_chosen_at,
+        "execution_venue": twin.execution_venue,
+        "exploratory": None,
+        "sources": sources,
+        "differs_from_source": [*baseline.differs_from_source, note],
+    }
+    return StrategySpec.model_validate({**baseline.model_dump(mode="python"), **update})
+
+
+# --------------------------------------------------------------------------
 # The file
 
 
@@ -1018,6 +1173,6 @@ def write_twin(spec_path: Path, twin: StrategySpec, origin: str) -> Path:
 
 
 __all__ = ["BINANCE_ARCHIVE_START", "BaseChoice", "COIN_LIST_PARAMS", "ChosenList",
-           "SECONDS_PER_INSTRUMENT", "TwinResult", "causal_twin", "chosen_list", "fetch_estimate",
-           "find_base", "first_choice", "needs_listing", "twin_path", "twin_yaml", "warmup_days",
-           "write_twin"]
+           "SECONDS_PER_INSTRUMENT", "TwinResult", "card_grid", "causal_twin", "chosen_list",
+           "fetch_estimate", "find_base", "first_choice", "needs_listing", "same_panel_spec",
+           "twin_path", "twin_yaml", "warmup_days", "write_twin"]

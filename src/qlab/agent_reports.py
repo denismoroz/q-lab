@@ -166,6 +166,8 @@ def _programmer(day: str, st: dict) -> Run | None:
 
 
 def _implementer(day: str, st: dict) -> Run | None:
+    from qlab import implement_run
+
     entries = st.get("implemented")
     if not entries:
         return None
@@ -173,9 +175,22 @@ def _implementer(day: str, st: dict) -> Run | None:
     for e in entries:
         details += [f"{e['card']}: {p}" for p in e.get("problems") or []]
         details += [f"{e['card']}: проверяющий — {r}" for r in e.get("review") or []]
+        if e.get("block"):
+            details.append(f"{e['card']}: блок `{e['block']['name']}` "
+                           + ("уже был, использован снова" if e["block"].get("reused")
+                              else "написан впервые"))
+        if line := implement_run.summary(e):
+            details.append(f"{e['card']}: {line}")
+        for step, r in (e.get("runs") or {}).items():
+            if r.get("action") in ("error", "none", "heavy") and step in implement_run.STEPS:
+                details.append(f"{e['card']}: {step} — {r.get('error') or r.get('reason')}")
+        if e.get("stopped"):
+            details.append(f"{e['card']}: остановлено — {e['stopped']}")
     passed = [e["card"] for e in entries if not e.get("problems") and not e.get("review")]
+    routes = [f"{e['card']}: {line}" for e in entries if (line := implement_run.summary(e))]
     return Run(day, "ran", "карточки: " + ", ".join(e["card"] for e in entries),
-               f"код написан и прошёл проверки: {len(passed)} из {len(entries)}",
+               f"код написан и прошёл проверки: {len(passed)} из {len(entries)}"
+               + ("; " + "; ".join(routes) if routes else ""),
                details=details, tokens=sum(e.get("tokens", 0) for e in entries))
 
 
