@@ -49,7 +49,7 @@ STOP_STAGES = {"detectors": "определители режима",
                "experiments": "эксперименты исследователя", "programmer": "программист",
                "implement": "реализация карточек",
                "search": "поиск", "catalogue": "разбор статей в каталог",
-               "generate": "генератор идей"}
+               "cards": "карточки для входящих идей", "generate": "генератор идей"}
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
@@ -557,6 +557,16 @@ def write_report(day: date, state: dict) -> Path:
             lines += [f"- остановлено: {read['stopped']}; продолжит в следующую ночь", ""]
         if read.get("error"):
             lines += [f"- сбой до выбора статьи: {read['error']}", ""]
+    if state.get("cards") is not None or state.get("ideas_in"):
+        from qlab import ideas
+        from qlab.agents.carder import report_lines as card_lines
+
+        lines += ["## Входящие идеи и карточки", "",
+                  *card_lines(state.get("cards"), ideas.load(), state.get("ideas_in") or [])]
+        for what, key in (("остановлено", "stopped"), ("сбой", "error")):
+            if (state.get("cards") or {}).get(key):
+                lines.append(f"- {what}: {state['cards'][key]}")
+        lines.append("")
     if implemented := state.get("implemented"):
         lines += ["## Реализация карточек агентом", ""]
         for e in implemented:
@@ -720,7 +730,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
         twins: bool | None = None, noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
-        catalogue: bool = True) -> Path:
+        catalogue: bool = True, cards: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -836,6 +846,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     if search and catalogue and not past_stop(stop_at, state, "catalogue"):
         # Before the generator: a mechanism catalogued tonight can be built tonight.
         guarded(day, state, "catalogue", catalogue_stage, day, state)
+    if search and cards and not past_stop(stop_at, state, "cards"):
+        # After the implement stage on purpose: a card written tonight is implemented on the
+        # NEXT night's implement stage, at the top of the cut order, and tonight's search budget
+        # (the share cut first) pays for the card, not the stages in front of it. Before the
+        # generator: the card is the more valuable of the two.
+        guarded(day, state, "cards", cards_stage, day, state)
     if (generate is True or (search and generate is None)) \
             and not past_stop(stop_at, state, "generate"):
         # Last: the search for new ideas is what the budget cuts first, and the
@@ -919,6 +935,87 @@ def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> Non
         done.add(paper.id)
         cat.save_ledger(ledger)
         save_state(day, state)
+
+
+CARDER = Path("night/carder.yaml")
+
+
+def ingest_memo_ideas(day: date, state: dict, memo: str | Path, source: str) -> dict:
+    """The ideas of an agent's memo (its ```ideas block) into the inbox (`qlab.ideas`), and
+    into the night's state for the report. Optional by design: a memo without the block adds
+    nothing, and a failure here is one line in the state, never the end of the stage."""
+    from qlab import ideas
+
+    try:
+        found = ideas.ingest_memo(Path(memo), source=source, day=day)
+        if found["added"]:
+            state.setdefault("ideas_in", []).extend(
+                {"id": e["id"], "source": source, "text": e["text"]}
+                for e in ideas.load() if e["id"] in found["added"])
+        return found
+    except Exception as exc:  # noqa: BLE001 - the memo is already safe on disk
+        return {"added": [], "known": [], "dropped": [], "error": f"{type(exc).__name__}: {exc}"}
+
+
+def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
+    """The carder agent (`qlab.agents.carder`, docs/IDEAS.md): up to `per_night` ideas of the
+    inbox turned into a card for the implementer (or answered "repeat" / a question to the
+    owner), in the search stage's budget. At most one card of the carder waits for the
+    implementer: while one does, no idea is taken (and no tokens are spent). Resumable: an idea
+    done tonight is not repeated."""
+    from qlab import ideas
+    from qlab import tried as tried_module
+    from qlab.agents import carder
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.registry.db import session_scope
+
+    if not config.is_file():
+        return
+    cfg = carder.load_config(config)
+    if not cfg.get("enabled", False):
+        return
+    entry = state.setdefault("cards", {"entries": []})
+    inbox = ideas.load()
+    entry["incoming"] = [{"id": e["id"], "source": e["source"], "text": e["text"]}
+                         for e in inbox if str(e["date"]) == day.isoformat()
+                         and e["id"] not in {i["id"] for i in state.get("ideas_in") or []}]
+    if moved := carder.sync_implemented(inbox):
+        entry["moved"] = moved
+        ideas.save(inbox)
+    if waiting := carder.pending_cards(inbox):
+        entry["waiting_for"] = waiting[0]["card"]
+        save_state(day, state)
+        return
+    registry = tried_module.load_tried()
+    done = {e["id"] for e in entry["entries"]}
+    max_attempts = int(cfg.get("max_attempts", 2))
+    for _ in range(int(cfg.get("per_night", 1)) - len(done)):
+        idea = ideas.oldest_new(inbox, max_attempts=max_attempts)
+        if idea is None or idea["id"] in done:
+            break
+        try:
+            with session_scope() as session:
+                stage = NightBudget.open(session, probe(session).report.reading).stage(
+                    Stage.SEARCH, candidates=1)
+                result = carder.run_idea(idea, inbox, cfg, budget=stage.candidate(None),
+                                         session=session, day=day, registry=registry)
+        except (NightExhausted, BudgetExhausted) as stop:
+            entry["stopped"] = str(stop)
+            ideas.save(inbox)
+            save_state(day, state)
+            return
+        except Exception as exc:  # noqa: BLE001 - a report line, the night goes on
+            idea["attempts"] = int(idea.get("attempts") or 0) + 1
+            idea["problems"] = [f"{type(exc).__name__}: {exc}"]
+            if idea["attempts"] >= max_attempts:
+                ideas.set_status(idea, "needs-owner", "попытки карточника кончились сбоями")
+            result = {"id": idea["id"], "source": idea["source"], "text": idea["text"],
+                      "status": idea["status"], "problems": idea["problems"], "tokens": 0}
+        entry["entries"].append(result)
+        done.add(idea["id"])
+        ideas.save(inbox)
+        save_state(day, state)
+    save_state(day, state)
 
 
 def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> None:
@@ -1322,6 +1419,10 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         if entry.get("memo") and "noted" not in entry:
             record_research_note(entry, plan)
             save_state(day, state)
+        if entry.get("memo") and "ideas_in" not in entry:
+            # An idea that needs new code goes to the inbox (qlab.ideas, docs/IDEAS.md).
+            entry["ideas_in"] = ingest_memo_ideas(day, state, entry["memo"], "agent:researcher")
+            save_state(day, state)
 
 
 DIRECTOR = Path("night/director.yaml")
@@ -1406,6 +1507,9 @@ def director_stage(day: date, state: dict, *, config: Path = DIRECTOR,
                 session.commit()
             save_state(day, state)
         if "director:agent" in state["done"] and "director:directions" not in state["done"]:
+            if entry.get("memo") and "ideas_in" not in entry:
+                entry["ideas_in"] = ingest_memo_ideas(day, state, root / entry["memo"],
+                                                      "agent:director")
             if entry.get("memo"):
                 mechanism_ids, strategy_names, family_names = known_names(
                     plan, cfg, catalogue(root / CATALOGUE))

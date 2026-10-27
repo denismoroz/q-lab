@@ -52,3 +52,25 @@ def test_a_night_of_an_older_format_is_a_row_that_says_so(tmp_path, monkeypatch)
     runs = {a["key"]: a["runs"] for a in reports.agent_reports(state_dir=tmp_path)["agents"]}
     assert runs["researcher"][0]["status"] == "failed"
     assert runs["researcher"][0]["did"] == "запись ночи не прочитана"
+
+
+def test_the_carder_row_says_what_came_in_and_what_became_of_it(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(reports, "_by_hand", lambda key, seen: [])
+    _night(tmp_path, "2026-10-27", {"cards": {"entries": [
+        {"id": "idea-0001", "text": "Bv3: страховка по объёму торгов, а не по цене",
+         "status": "carded", "card": "cards/bv3-volume-hedge.yaml", "new_block": "volume_gated",
+         "tokens": 900, "problems": []},
+        {"id": "idea-0002", "text": "idea two", "status": "duplicate",
+         "duplicate_of": "bv2-flow-taker-72h", "tokens": 100, "problems": ["reviewer: x"]}]}})
+    _night(tmp_path, "2026-10-28", {"cards": {"entries": [],
+                                              "waiting_for": "cards/bv3-volume-hedge.yaml"}})
+    _night(tmp_path, "2026-10-29", {"cards": {"entries": [], "stopped": "night budget: spent"}})
+    carder = {a["key"]: a for a in reports.agent_reports(state_dir=tmp_path)["agents"]}["carder"]
+    third, second, first = carder["runs"]
+    assert first["status"] == "ran" and carder["tokens"] == 1000
+    assert first["result"] == "карточка написана; повтор уже сделанного"
+    assert "idea-0002: повтор — bv2-flow-taker-72h" in first["details"]
+    assert "idea-0001: карточка cards/bv3-volume-hedge.yaml, новый блок volume_gated" in \
+        first["details"]
+    assert second["status"] == "skipped" and "ещё не взята реализатором" in second["result"]
+    assert third["status"] == "stopped" and "spent" in third["result"]

@@ -51,3 +51,6 @@ data/cataloguer/
 
 # the twins stage: its ledger of ideas with no twin and the hand runs' state (docs/NIGHT.md)
 data/twins/
+
+# the carder agent: the briefs it was given (docs/IDEAS.md); drafts live in cards/drafts/
+data/carder/

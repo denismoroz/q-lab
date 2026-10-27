@@ -1,0 +1,387 @@
+# What has already been tried (src/qlab/tried.py, docs/IDEAS.md): the prior-art registry the
+# carder agent reads before it writes a card, so that nobody repeats a finished experiment.
+#
+# Owner, 2026-10-27: «задача фреймворка генерировать подобные идеи и проверять».
+#
+# One entry per tested variant (or family where the source does not list its variants). Each
+# entry says where the experiment is written down and what came of it, with the numbers as THAT
+# SOURCE writes them -- nothing is re-measured or rounded here. `what` and `result` are Russian,
+# one line each; `where` is a file (q-lab's own, or funding-rate-arbitrage/..., read-only) and a
+# section. The graveyard of the registry (rejected and retired ideas) is NOT copied: code reads
+# it at run time.
+#
+# Seeded 2026-10-27 from frab's Bv2 hedge-signal research (research/strategy_b_v2/LIMITS.md
+# sections 6-9, REPORT.md, hedge_signals.py, false_alarms.py, regime_switch.py, rolling_reopt.py,
+# and research/GRAVEYARD_REVIEW_2026_09.md for the June variants those scripts list as "already
+# tested") and from q-lab's own reviews: docs/BV2_SIGNAL_SEARCH_REVIEW.md, docs/REGIMES.md,
+# docs/HEDGE_TIMING.md, docs/RETUNE.md and the researcher's Bv2 memos.
+#
+# An entry is a fact about a past experiment, not a verdict on a new idea. A new idea that
+# resembles an entry is allowed when its card says what differs (`vs_tried`); the lab's own
+# review of the 45 signal variants (docs/BV2_SIGNAL_SEARCH_REVIEW.md) found that they were
+# compared with a rule fitted on the very window of the test, so a "no" here is evidence about
+# that comparison, not a closed door.
+version: "2026-10-27"
+
+families:
+  hedge-entry-signal: "когда включать страховку: правила по цене, шуму, ставкам и ширине рынка"
+  hedge-entry-new-info: "когда включать страховку: сведения не из цены (поток сделок, акции, опционы)"
+  hedge-entry-published: "сигналы из публикаций (ансамбль горизонтов, модель режимов, канальный выход, управление по шуму)"
+  hedge-staging: "как входить в страховку и выходить из неё: по частям, стопы, раз в сутки, липкий выход, размер"
+  parameter-refit: "перенастройка чисел правила по скользящему окну прошлого"
+  regime-detection: "определение режима рынка (тренд или пила) заранее и переключение правила"
+  basket-coins: "какие монеты держать: больше монет, другие монеты, веса"
+  book-construction: "устройство книги: залог, плечо, ставка на простаивающие деньги, храповик, минимальный капитал"
+  other-markets: "то же правило на других рынках"
+  q-lab-checks: "проверки самого q-lab: момент страховки, переключение по режиму, опыты исследователя"
+
+entries:
+  # ---- hedge-entry-signal -------------------------------------------------------------
+  - id: bv2-sig-momentum-sign
+    family: hedge-entry-signal
+    what: "знак доходности за 3–30 дней как условие страховки; варианты «или», «и», «два из трёх»"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — точка входа Strategy B (и перечень в шапке strategy_b_v2/false_alarms.py)"}
+    result: "в июне перебрали больше десятка входов, ни один не обошёл нынешнее «доход за 14 или за 30 дней не выше нуля»"
+  - id: bv2-sig-entry-timing-check
+    family: hedge-entry-signal
+    what: "проверка, что вход нынешнего правила не случаен: случайный вход, вход позже на 1, 3, 7 дней, идеальный вход"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — точка входа Strategy B, таблица"}
+    result: "нынешнее правило +23.6% в год против +11.9% у случайного входа; на 1 день позже +21.9%, на 3 дня +19.3%, на 7 дней +22.3%; идеальный вход на 14 дней вперёд +66.5%"
+  - id: bv2-sig-close-below-ma
+    family: hedge-entry-signal
+    what: "страховка, когда цена закрытия ниже скользящей средней"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/false_alarms.py, section: "шапка файла, список «Already tested and not repeated»"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-drawdown-from-peak
+    family: hedge-entry-signal
+    what: "страховка, когда цена упала от недавнего максимума на заданную долю"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/false_alarms.py, section: "шапка файла, список «Already tested and not repeated»"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-regime-filters-90-180
+    family: hedge-entry-signal
+    what: "фильтры режима по доходности за 90 и 180 дней"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/false_alarms.py, section: "шапка файла, список «Already tested and not repeated»"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-high-vol-filter
+    family: hedge-entry-signal
+    what: "страховка только при высокой волатильности"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/false_alarms.py, section: "шапка файла, список «Already tested and not repeated»"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-funding-premium-gates
+    family: hedge-entry-signal
+    what: "ставка финансирования и разница спот–контракт как условие или добавка к страховке"
+    where: {file: funding-rate-arbitrage/research/backtest_b_signalsweep2.py, section: "шапка файла, семейства funding-gate, funding-add, premium/basis"}
+    result: "в списке проверенного и не повторявшегося (шапка strategy_b_v2/false_alarms.py); отдельного числа в шапке нет"
+  - id: bv2-sig-btc-down-filter
+    family: hedge-entry-signal
+    what: "страховка альтов только когда BTC в падении"
+    where: {file: funding-rate-arbitrage/research/backtest_b_signalsweep2.py, section: "шапка файла, семейство «BTC market-gate»"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-donchian
+    family: hedge-entry-signal
+    what: "страховка, когда цена ниже минимума за N дней (канал Дончиана)"
+    where: {file: funding-rate-arbitrage/research/backtest_b_signalsweep2.py, section: "шапка файла, семейство Donchian"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-cross-sectional-weakness
+    family: hedge-entry-signal
+    what: "страховать только самые слабые монеты корзины по рангу доходности за 30 дней"
+    where: {file: funding-rate-arbitrage/research/backtest_b_signalsweep2.py, section: "шапка файла, семейство cross-sectional"}
+    result: "в списке проверенного и не повторявшегося; отдельного числа в шапке нет"
+  - id: bv2-sig-continuous-ratio
+    family: hedge-entry-signal
+    what: "непрерывная доля страховки вместо «включено или выключено»"
+    where: {file: funding-rate-arbitrage/research/backtest_b_continuous.py, section: "файл целиком; перечень в шапке strategy_b_v2/false_alarms.py"}
+    result: "в списке проверенного и не повторявшегося; числа лежат в backtest_b_continuous_results.csv и здесь не пересказаны"
+  - id: bv2-sig-go-to-cash
+    family: hedge-entry-signal
+    what: "вместо короткой продажи уходить из монеты в деньги"
+    where: {file: funding-rate-arbitrage/research/backtest_b_gotocash.py, section: "файл целиком; перечень в шапке strategy_b_v2/false_alarms.py"}
+    result: "в списке проверенного и не повторявшегося; числа лежат в backtest_b_gotocash_results.csv и здесь не пересказаны"
+  - id: bv2-sig-min-hold
+    family: hedge-entry-signal
+    what: "минимальное удержание страховки плюс запрет повторного входа (72/72 и 168/168 часов)"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B, абзац «Это не июньская ловушка»"}
+    result: "убивал запрет повторного входа: страховка не могла вернуться на 3–7 дней"
+  - id: bv2-sig-hyst
+    family: hedge-entry-signal
+    what: "гистерезис: вход при падении за 30 дней ниже −5%, выход при доходности за 30 дней не ниже 0%"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — четыре новых входа Strategy B и их комбинации"}
+    result: "27.4% в год против 23.6%, но в медвежьей половине просадка глубже на всех 6 монетах (BTC −20 против −12); правило прохождения не прошёл"
+  - id: bv2-sig-tstat
+    family: hedge-entry-signal
+    what: "падение за 30 дней, нормированное на волатильность, t меньше −1"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — четыре новых входа Strategy B и их комбинации"}
+    result: "страхует лишь 10–15% времени, просадка 32–35%, около вдвое глубже; не прошёл"
+  - id: bv2-sig-efficiency-ratio
+    family: hedge-entry-signal
+    what: "нынешний сигнал плюс чистота тренда по Кауфману (ER за 30 дней больше 0.3)"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — четыре новых входа Strategy B и их комбинации"}
+    result: "страхует лишь 10–15% времени, просадка 32–35%; не прошёл"
+  - id: bv2-sig-breadth
+    family: hedge-entry-signal
+    what: "страховка, когда не меньше двух третей монет корзины падают за 30 дней"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — четыре новых входа Strategy B и их комбинации"}
+    result: "22.7% в год, просадка 19.4%, лучше нынешнего на 2 монетах из 6; не прошёл"
+  - id: bv2-sig-combinations-of-four
+    family: hedge-entry-signal
+    what: "все пары из четырёх новых входов (HYST, TSTAT, ER, BREADTH) через «и» и «или», голосование «два из четырёх» и «три из четырёх»"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — четыре новых входа Strategy B и их комбинации"}
+    result: "18 вариантов, ни один правило не прошёл; лучший HYST|ER 27.7% в год при просадке 16.9%"
+
+  # ---- hedge-entry-new-info -----------------------------------------------------------
+  - id: bv2-flow-taker-72h
+    family: hedge-entry-new-info
+    what: "новая страховка включается только если за 72 часа чистые продажи (поток сделок по инициатору)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§6 Можно ли сократить ложные тревоги, вариант FLOW"}
+    result: "тревог на 20% меньше; проверка 2023-06 — 2026-09: +95% против +85% (BTC+ETH), +103% против +95% (4 монеты); в пиле на BTC+ETH +13.1% против +16.6%; правило не прошёл"
+  - id: bv2-macro-vix
+    family: hedge-entry-new-info
+    what: "страховка ещё и тогда, когда VIX выше своего 80-го перцентиля за год"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8 Другие алгоритмы сигнала из публикаций, вариант MACRO"}
+    result: "проверка +66% против +85% (BTC+ETH); в пиле +21.2% против +16.6%; не прошёл"
+  - id: bv2-dvol-implied-vol
+    family: hedge-entry-new-info
+    what: "страховка ещё и при всплеске подразумеваемой волатильности опционов (Deribit DVOL, с 2021-03)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8 Другие алгоритмы сигнала из публикаций, вариант DVOL"}
+    result: "проверка +60% против +85% (BTC+ETH), +51% против +95% (4 монеты); в пиле +21.6% против +16.6%; не прошёл"
+
+  # ---- hedge-entry-published ----------------------------------------------------------
+  - id: bv2-ens6-horizon-ensemble
+    family: hedge-entry-published
+    what: "шесть пар окон сразу, каждая страхует свою шестую часть книги (ансамбль горизонтов, AQR)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8, вариант ENS6"}
+    result: "проверка +64% против +85% (BTC+ETH), просадка 12.3 против 10.0; не прошёл"
+  - id: bv2-ens3-horizon-ensemble
+    family: hedge-entry-published
+    what: "три пары окон (7/20, 14/30, 30/60), каждая страхует треть книги"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8, вариант ENS3"}
+    result: "проверка +72% против +85% (BTC+ETH), +88% против +95% (4 монеты); снизил просадку только на окне выбора; не прошёл"
+  - id: bv2-jump-regime-model
+    family: hedge-entry-published
+    what: "статистическая модель с двумя режимами по дневным признакам, переобучение раз в месяц, страховка в «медвежьем» режиме (arXiv 2402.05272)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8, вариант JUMP"}
+    result: "страхует 4 раза в год вместо 27, доля ложных тревог 30% в пиле; проверка +37% против +85%, просадка 14.0; не прошёл"
+  - id: bv2-chandelier-exit
+    family: hedge-entry-published
+    what: "страховка, когда цена ниже 60-дневного максимума на три средних дневных диапазона (канал с поправкой на волатильность)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8, вариант CHAND"}
+    result: "проверка +47% против +85%, просадка 34.9 (BTC+ETH); в пиле +26.5% против +16.6%; не прошёл"
+  - id: bv2-volscale-vol-managed
+    family: hedge-entry-published
+    what: "когда основное правило молчит, держать частичную страховку тем большую, чем выше текущая волатильность (Moreira–Muir)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§8, вариант VOLSCALE"}
+    result: "проверка +83% против +85% (BTC+ETH), +94% против +95%: вровень с нынешним правилом; не прошёл"
+
+  # ---- hedge-staging ------------------------------------------------------------------
+  - id: bv2-staged24
+    family: hedge-staging
+    what: "половина страховки сразу, вторая половина если сигнал держится 24 часа"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§6, вариант STAGED24"}
+    result: "тревог на 15% меньше, ложных столько же; просадка на проверке хуже на 2–4 п.п."
+  - id: bv2-staged-dd5
+    family: hedge-staging
+    what: "половина страховки сразу, вторая половина после ещё −5% от точки включения"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§6, вариант STAGED_DD5"}
+    result: "комиссии −35%, но просадка на проверке хуже на 2–4 п.п."
+  - id: bv2-stop-5-10
+    family: hedge-staging
+    what: "снять страховку, если цена ушла на 5% (или 10%) выше точки включения"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§6, варианты STOP5 и STOP10"}
+    result: "эффекта нет"
+  - id: bv2-daily-signal
+    family: hedge-staging
+    what: "читать сигнал раз в сутки вместо раза в час"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§6, вариант DAILY"}
+    result: "тревог на 30% меньше, доля ложных на 5 п.п. ниже, но хуже везде"
+  - id: bv2-sticky-exit
+    family: hedge-staging
+    what: "липкий выход: страховка снимается, только если правило «не нужна» держится 12 (в июне — 24) часа подряд"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B × 3 точки входа, и следующее дополнение про липкий выход"}
+    result: "принято в Bv2: Calmar 1.39 → 2.12, просадка 17.0 → 12.6%; проверка вперёд подтвердила направление, величина намного меньше"
+  - id: bv2-limit-orders
+    family: hedge-staging
+    what: "исполнение лимитными заявками вместо рыночных"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B, строка про лимитные ордера (июнь)"}
+    result: "Calmar 1.61, лучше на 6 монетах из 6; известный рычаг"
+  - id: bv2-partial-hedge-50
+    family: hedge-staging
+    what: "страховать 50% монет вместо 100%"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B × 3 точки входа"}
+    result: "Calmar около 1.0 на всех входах: защиты вдвое меньше"
+  - id: bv2-btc-perp-hedge
+    family: hedge-staging
+    what: "страховать монету контрактом на BTC с долей по скользящей бете за 90 дней"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B × 3 точки входа"}
+    result: "Calmar 0.24–0.64, страховка теряет 9.6% в год: альты расходятся с BTC"
+  - id: bv2-spot-75
+    family: hedge-staging
+    what: "75% капитала в споте, 25% деньгами"
+    where: {file: funding-rate-arbitrage/research/GRAVEYARD_REVIEW_2026_09.md, section: "Дополнение 2026-09-13 — 4 идеи улучшения Strategy B × 3 точки входа"}
+    result: "Calmar как у исходной, просадка выше: просто больше рынка"
+
+  # ---- parameter-refit ----------------------------------------------------------------
+  - id: bv2-refit-54-sets
+    family: parameter-refit
+    what: "пересчёт набора (окна сигнала × липкий выход × храповик, 54 набора) по последним 3–12 месяцам, 48 способов"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§7 Пересчёт параметров по скользящему окну"}
+    result: "NO-GO: лучше фиксированного набора 0 из 48, лучше прода 3 из 48 (BTC+ETH); рейтинг набора «за окно назад» и «вперёд» не связаны (+0.01)"
+  - id: bv2-refit-windows-only
+    family: parameter-refit
+    what: "пересчёт только пары окон сигнала (36 пар, короткое 3–30 × длинное 10–90 дней) по прошлому"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§7a Только окна сигнала"}
+    result: "лучше 14/30 0 способов из 48; пара, лучшая за прошлое, в следующем месяце на 48-м перцентиле из 36"
+  - id: bv2-fixed-slow-windows-30-60
+    family: parameter-refit
+    what: "фиксированные медленные окна 30/60 (выбраны на 2020–23)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§7 и §9, строка «просто медленные окна 30/60 всегда»"}
+    result: "проверка +94% / просадка 9.4 (BTC+ETH), в пиле +25.9%; сам отчёт: выбор задним числом, в 2022-м хуже на 13–14 п.п."
+  - id: bv2-parameter-plateau
+    family: parameter-refit
+    what: "36 вариантов: окна 7/14, 14/30, 21/45, 30/60 × липкий выход 0/12/48 ч × храповик 0.25/0.5/1.0, на данных до 2023"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§1, подраздел «Параметры — плато, а не пик»"}
+    result: "все дают +33…+52% в год при просадке 8–14%"
+
+  # ---- regime-detection ---------------------------------------------------------------
+  - id: bv2-regime-detectors-frab
+    family: regime-detection
+    what: "три детектора режима (эффективность хода Кауфмана за 60 дней, дисперсионное отношение, автокорреляция) как предсказатель «пилы» на следующие 90 дней"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§9 Можно ли определить режим «тренд или пила» заранее"}
+    result: "на BTC и ETH связи нет вовсе, по общей связи от −0.10 до +0.10, на SOL и AVAX слабая"
+  - id: bv2-regime-switch-9
+    family: regime-detection
+    what: "в тренде нынешнее правило, в пиле одно из трёх (не страховать, медленные окна, канальный выход): девять сочетаний"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§9, подраздел «Переключение правила по режиму»"}
+    result: "ни одно не обошло нынешнее правило на окне выбора (Calmar BASE 3.81, лучшее 3.61)"
+  - id: qlab-regime-detector-btc30
+    family: regime-detection
+    what: "определитель режима только по прошлому: BTC за 30 дней, терцили"
+    where: {file: docs/REGIMES.md, section: "Определитель режима: что он умеет (2026-10-03)"}
+    result: "совпадает с разметкой задним числом на 89%, а с режимом следующих 30 дней на 32%: как наугад из трёх"
+
+  # ---- basket-coins -------------------------------------------------------------------
+  - id: bv2-basket-10-20-coins
+    family: basket-coins
+    what: "корзины из 10 и 20 крупных монет вместо 4"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "Корзины из 4 / 10 / 20 крупных монет (basket.py)"}
+    result: "в падение 2025–26: 4 монеты +0.5%, 10 монет −5.9%, 20 монет −4.6%; монеты ранжированы по сегодняшнему открытому интересу (с выжившими)"
+  - id: bv2-cold-wallet-other-hl-coins
+    family: basket-coins
+    what: "«холодный кошелёк» на 26 других монетах Hyperliquid с открытым интересом от $15 млн"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "«Холодный кошелёк» на других монетах HL (other_coins.py)"}
+    result: "на проверке в плюсе 8 монет из 26, правило прохождения прошли 2 (PAXG и CRV); как защита держания работает везде"
+  - id: bv2-basket-10-rolling-windows
+    family: basket-coins
+    what: "корзина из 10 монет (4 + BNB, XRP, LINK, DOGE, ADA, LTC) на скользящих годовых окнах с 2020"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§1, таблица «Скользящие 12 месяцев»"}
+    result: "в минусе 28% окон против 7% у 4 монет; медиана та же, +26%"
+  - id: bv2-btc-eth-only
+    family: basket-coins
+    what: "только BTC и ETH (самая устойчивая пара по отчёту frab)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§4, пункт 5; q-lab: docs/research/bv2-2026-10-03.md, опыт bv2-research-btceth"}
+    result: "frab: в минусе 3% годовых окон; q-lab, опыт bv2-research-btceth (прогон 16796): +7.5% в год, Шарп 1.28, ждёт проверки вперёд (отрезок опыта — период подбора)"
+  - id: bv2-weights-inverse-vol
+    family: basket-coins
+    what: "веса монет обратно пропорциональны волатильности вместо равных"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "таблица «Что изменено против исходной B»"}
+    result: "хуже на проверке; взяты равные веса"
+  - id: qlab-bv2-top10-liquid-list
+    family: basket-coins
+    what: "10 самых ликвидных монет по обороту за 30 дней, список пересматривается раз в месяц и смотрит только в прошлое (идея владельца)"
+    where: {file: docs/BV2_BASKETS.md, section: "Измерения (2026-10-25), «Что ещё видно»"}
+    result: "на выборе +25.0% в год при просадке 8.9% против +35.6% при 6.9% у десятки, выбранной заранее; вперёд +1.0% против +4.4%; различить варианты правила на этих данных нельзя"
+
+  # ---- book-construction --------------------------------------------------------------
+  - id: bv2-margin-leverage-variants
+    family: book-construction
+    what: "залог и плечо: бесплатная маржа, плечо 1×, плечи бумажного теста (BTC 3×, ETH 2×, SOL и AVAX 1.5×), 5×/3×/1.9×/2.5×"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "Маржа по-честному (margin_check.py)"}
+    result: "честная маржа срезает около пятой части дохода (41 → 34% в год в быке); ликвидаций нет ни в одном варианте"
+  - id: bv2-hedge-perp-vs-sell-spot
+    family: book-construction
+    what: "страховка контрактом против продажи спота того же размера"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "Маржа по-честному, вывод 3"}
+    result: "страховка контрактом лучше на +3.7…4.9 п.п. в год (ставка финансирования шорта и комиссии)"
+  - id: bv2-idle-cash-carry
+    family: book-construction
+    what: "простаивающий резерв работает в переносе по ставке финансирования на той же монете (правила FRAB)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, section: "Что изменено против исходной B; Деньги на $1000, по годам"}
+    result: "добавляет +2.3…3.7% в год на монету; по сути FRAB на тех же монетах"
+  - id: bv2-ratchet-threshold
+    family: book-construction
+    what: "порог храповика (продажа выросшего спота) 0.25 / 0.5 / 1.0 от цели"
+    where: {file: docs/research/bv2-2026-10-03.md, section: "Эксперименты на стенде, опыт bv2-research-ratchet; сетка frab — LIMITS.md §1"}
+    result: "опыт 0.25 (прогон 17198): +34.4% в год, ждёт проверки вперёд, отрезок опыта — период подбора; в сетке frab все 36 сочетаний +33…+52% до 2023"
+  - id: bv2-min-capital
+    family: book-construction
+    what: "минимальный капитал на 4 монеты: $60, $120, $257, $1000 и больше"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§3 Пределы, «Снизу: минимальный капитал»"}
+    result: "от $250 минимальный ордер $10 уже не мешает; на $60 фактически голый спот"
+  - id: qlab-bv2-headroom-retune
+    family: book-construction
+    what: "запас пула залога 1.0 / 1.5 из двух прод-книг, выбор запаса кодом раз в месяц (перенастройка по прошлому)"
+    where: {file: docs/research/bv2-2026-10-25.md, section: "§2 «Под вопросом — выбор запаса пула маржи кодом»; docs/RETUNE.md, «Чем дата списка не бывает»"}
+    result: "Hyperliquid: +22.3% в год за 145 дней (прогон 72695), но мощность проверки на шум 1.5%; двойник на Binance с 2023-07 снят как нечестный: на этом окне подбирали монеты"
+  - id: qlab-bv2-twins-since-2025-06
+    family: book-construction
+    what: "три двойника Bv2 (общий пул, частичная страховка, короткое окно) на Binance, судимые только с 2025-06-01, дня, когда список монет был известен"
+    where: {file: docs/RETUNE.md, section: "«Список подобран вручную…» — «Что это меняет в цифрах (прогон 2026-10-27)»"}
+    result: "512 дней: около +2.0% в год, Шарп 0.55; общий пул отвергнут по shape_aware_edge, два других «прошли» и ждут решения владельца (один результат, а не три)"
+  - id: qlab-bv2-shared-pool
+    family: book-construction
+    what: "один общий пул залога на все монеты вместо пула на каждую"
+    where: {file: docs/research/bv2-2026-10-26.md, section: "Эксперименты на стенде (прогоны 86240 и 86441)"}
+    result: "Hyperliquid (прогон 86240): +19.5% в год, ждёт проверки вперёд; Binance (прогон 86441): +3.9%, Шарп 0.57, мало данных; позже отвергнут по shape_aware_edge (docs/RETUNE.md)"
+
+  # ---- other-markets ------------------------------------------------------------------
+  - id: bv2-rule-on-fx
+    family: other-markets
+    what: "правило Bv2 на девяти валютах G10 против доллара (2006–2026)"
+    where: {file: funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, section: "§10 Правило B на валютах (fx_check.py)"}
+    result: "2011–2026: −1.5% в год против −1.9% у «просто держать»; в минусе все девять валют; сохранять нечего"
+
+  # ---- q-lab-checks -------------------------------------------------------------------
+  - id: qlab-hedge-timing-placebo
+    family: q-lab-checks
+    what: "выбирает ли Bv2 момент страховки лучше случайного: хедж каждой монеты сдвинут по кругу, 200 книг"
+    where: {file: docs/HEDGE_TIMING.md, section: "§2 Честная проверка момента хеджа"}
+    result: "Binance с 2019 (с 2023-06): лучше 99% сдвинутых; после подбора (2025-06…) лучше 91–92%; Hyperliquid 170 дней лучше 90%"
+  - id: qlab-t39-ml-regime-hedge
+    family: regime-detection
+    what: "модель-определитель режима рынка (по BTC и всему рынку, раз в день) включает страховку Bv2: «на падении» и «всегда, кроме роста»"
+    where: {file: docs/REGIME_DETECT.md, section: "Результаты, 4 октября; стенд — Bv2 на Binance (прогоны 20012 и 20213)"}
+    result: "проверка вперёд 2025-06 … 2026-09: +3.5% (Шарп 0.52) и −2.2% против +2.1% (Шарп 0.58) у правила книги; в падениях «на падении» проседает вдвое-втрое глубже; не помог"
+  - id: qlab-t39-bv2-second-level
+    family: regime-detection
+    what: "вместо правила книги — модель второго уровня по каждой монете и часу: окупится ли страховка за 14 дней"
+    where: {file: docs/REGIME_DETECT.md, section: "Bv2: второй уровень вместо правила книги (прогон 21017)"}
+    result: "проверка вперёд: −4.7% (Шарп −0.90) против +2.1% (0.58) у правила; модель права в 47–52% часов, правило в 52–55%; заменять правило моделью нельзя"
+  - id: qlab-t39-false-alarm-filter
+    family: hedge-entry-signal
+    what: "модель-фильтр отменяет ложные тревоги правила книги (мета-разметка по Лопесу де Прадо); добавить страховку не может"
+    where: {file: docs/REGIME_DETECT.md, section: "Bv2: второй уровень как фильтр ложных тревог (прогон 27047)"}
+    result: "среди отменённых ложных ровно столько же, сколько среди всех тревог (48% против 49%); проверка вперёд −0.9% (Шарп −0.18) против +2.1% у правила; не умеет отличать"
+  - id: qlab-t39-models-and-features
+    family: regime-detection
+    what: "другие признаки, нейросети (обычные, LSTM, CNN), бустинг, младшие таймфреймы, окно 14 дней, сдвиг метки, устойчивость режима для определителя"
+    where: {file: docs/REGIME_DETECT.md, section: "Итог T39 на 4 октября"}
+    result: "для trend лучшее — два уровня (Шарп 1.57 против 0.40 на 2024–2026); для Bv2 ни один вариант не обошёл правило книги, шесть попыток; если продолжать, то с данными другого рода (поток сделок, ликвидации, книга заявок)"
+  - id: qlab-switch-trend-bv2-by-regime
+    family: q-lab-checks
+    what: "переключение капитала между trend и Bv2 по режиму BTC (объявленное правило, подогнанное правило, выбор только по прошлому)"
+    where: {file: docs/REGIMES.md, section: "Переключение между стратегиями по режиму (2026-10-02), таблица «вся история 2020–2026»"}
+    result: "ни один способ не обогнал «Bv2 всегда» (+22.5%, Шарп 1.92): выбор по прошлому +15.5%, объявленное правило +13.1%"
+  - id: qlab-bv2-short-window
+    family: q-lab-checks
+    what: "короткое окно сигнала страховки 3 / 7 / 14 / 30 дней, значение выбирает код на отрезе (идея владельца «почаще»)"
+    where: {file: docs/research/bv2-2026-10-26.md, section: "Эксперименты на стенде (прогон 87249); раздел 4, идея 1"}
+    result: "+1.6% в год, Шарп 0.27, обгоняет шум 93%, не хватило данных"
+  - id: qlab-bv2-partial-hedge-share
+    family: q-lab-checks
+    what: "доля страховки в боковике: половина или вся (значение выбирает код на отрезе)"
+    where: {file: docs/research/bv2-2026-10-26.md, section: "Эксперименты на стенде (прогон 87452)"}
+    result: "+1.6% в год, Шарп 0.27, обгоняет шум 93%, не хватило данных (те же числа, что у короткого окна)"
+  - id: qlab-signal-search-review-gaps
+    family: q-lab-checks
+    what: "направления, где перебор frab не искал: сколько страховать, взвешенное сочетание сигналов, реинвестирование прибыли, издержки исполнения, состав монет"
+    where: {file: docs/BV2_SIGNAL_SEARCH_REVIEW.md, section: "«Не там искали»"}
+    result: "это список непроверенного, а не результат: новая идея из этих мест не повтор, но должна сказать, чем она отличается от VOLSCALE и частичного хеджа"

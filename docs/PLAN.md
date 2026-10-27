@@ -292,6 +292,7 @@ funding, 234 инструмента по несколько тысяч часо�
 | Scout, Venue-watcher | sonnet | объём и дешевизна, выход проверяется кодом |
 | Formalizer | sonnet | формализация по шаблону |
 | Implementer | sonnet | код против фиксированного API + тесты |
+| Carder (идея → карточка для Implementer, `docs/IDEAS.md`) | sonnet | карточка по шаблону, выход проверяется кодом и вторым агентом |
 | Archivist | sonnet | генерация досье из данных реестра |
 | Adversary (red team) | opus | поиск look-ahead и дыр — единственное место, где нужен сильный судья |
 

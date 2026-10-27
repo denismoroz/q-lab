@@ -545,6 +545,16 @@ digit (a digit is a parameter value; the note is dropped if it has one). The res
 the note as advice for where to look, next to the owner's own question; the generator reads the
 preferred and paused lists in its instructions, and code rejects a spec of a paused mechanism.
 
+If you see an idea that needs NEW code -- not a number of a strategy, not a mechanism of the
+catalogue -- you may add a second fenced block just before the directions block, of exactly
+this form: one idea per line, in plain words, no digit, at most three. Code puts them in the
+owner's ideas inbox (ideas/inbox.yaml), where an agent turns them into cards for the
+implementer. Write no block when you have no such idea.
+
+```ideas
+- "<the idea, in plain words>"
+```
+
 Reply with one line: the memo path."""
 
 

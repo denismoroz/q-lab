@@ -1,0 +1,4 @@
+# The ideas inbox (src/qlab/ideas.py, docs/IDEAS.md). Add with `qlab idea add "..."`; the text
+# of an idea is kept verbatim. The carder agent takes the oldest `new` one each night; its
+# status is changed by code and by the owner's commands only.
+ideas: []

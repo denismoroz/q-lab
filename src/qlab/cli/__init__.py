@@ -752,6 +752,10 @@ def night_run_cmd(
     catalogue: bool = typer.Option(
         True, "--catalogue/--no-catalogue",
         help="The cataloguer agent: one paper into the catalogue (tokens; docs/CATALOGUER.md)"),
+    cards: bool = typer.Option(
+        True, "--cards/--no-cards",
+        help="The carder agent: one inbox idea into a card for the implementer (tokens; "
+        "docs/IDEAS.md)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
     stop_at: str | None = typer.Option(
         None, "--stop-at",
@@ -769,7 +773,7 @@ def night_run_cmd(
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
                director=director, waiting=waiting, twins=twins, programmer=programmer,
-               catalogue=catalogue,
+               catalogue=catalogue, cards=cards,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
 
@@ -1036,6 +1040,113 @@ def idea_set_parent(
         old = idea.parent_id
         idea.parent_id = parent_id
         typer.echo(f"{idea_id}: {old or '(none)'} -> {parent_id}")
+
+
+@idea_app.command("add")
+def idea_add(
+    text: str = typer.Argument(..., help="The idea, in your own words: kept verbatim."),
+    source: str = typer.Option("owner", "--source", help="owner, or agent:<name>"),
+) -> None:
+    """Put an idea in the inbox (ideas/inbox.yaml, docs/IDEAS.md). The carder agent turns the
+    oldest new idea into a card for the implementer, one a night."""
+    from datetime import UTC, datetime
+
+    from qlab import ideas
+
+    try:
+        inbox = ideas.load()
+        entry, added = ideas.add(inbox, text, source=source, day=datetime.now(UTC).date())
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if added:
+        ideas.save(inbox)
+    typer.echo(f"{entry['id']}: added" if added else
+               f"{entry['id']}: these words are already in the inbox ({entry['status']})")
+
+
+@idea_app.command("list")
+def idea_list(status: str | None = typer.Option(
+        None, "--status", help="new | carded | duplicate | needs-owner | implemented | rejected")
+) -> None:
+    """The inbox: every idea, its status and its first words."""
+    from qlab import ideas
+
+    if status is not None and status not in ideas.STATUSES:
+        typer.echo(f"status must be one of {ideas.STATUSES}", err=True)
+        raise typer.Exit(code=1)
+    rows = ideas.by_status(ideas.load(), status) if status else ideas.load()
+    for line in ideas.report_lines(rows):
+        typer.echo(line)
+    typer.echo(f"{len(rows)} ideas")
+
+
+def _inbox_entry(idea_id: str):
+    from qlab import ideas
+
+    inbox = ideas.load()
+    entry = ideas.find(inbox, idea_id)
+    if entry is None:
+        typer.echo(f"unknown idea: {idea_id}", err=True)
+        raise typer.Exit(code=1)
+    return ideas, inbox, entry
+
+
+@idea_app.command("reject")
+def idea_reject(idea_id: str = typer.Argument(...),
+                why: str = typer.Option(..., "--why")) -> None:
+    """THE OWNER'S COMMAND: close an idea of the inbox (a card already written stays; take it
+    out of night/implement_queue.yaml by hand if the implementer must not build it)."""
+    ideas, inbox, entry = _inbox_entry(idea_id)
+    ideas.reject(inbox, idea_id, why)
+    ideas.save(inbox)
+    typer.echo(f"{entry['id']}: rejected")
+
+
+@idea_app.command("retry")
+def idea_retry(idea_id: str = typer.Argument(...)) -> None:
+    """THE OWNER'S COMMAND: put an idea back to new (after answering its question, or after two
+    refused attempts); the carder takes it again with fresh attempts."""
+    ideas, inbox, entry = _inbox_entry(idea_id)
+    ideas.retry(inbox, idea_id)
+    ideas.save(inbox)
+    typer.echo(f"{entry['id']}: new again")
+
+
+@idea_app.command("card")
+def idea_card(idea_id: str | None = typer.Argument(
+        None, help="An idea of the inbox; none: the one the night would take")) -> None:
+    """Run the carder on one idea now (tokens, through the budget guard), as the night would."""
+    from datetime import UTC, datetime
+
+    from qlab import ideas
+    from qlab.agents import carder
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+    from qlab.registry.db import session_scope
+
+    config = carder.load_config()
+    inbox = ideas.load()
+    if carder.sync_implemented(inbox):
+        ideas.save(inbox)
+    if waiting := carder.pending_cards(inbox):
+        typer.echo(f"{waiting[0]['card']} still waits for the implementer: one card of the "
+                   "carder at a time", err=True)
+        raise typer.Exit(code=1)
+    entry = (ideas.find(inbox, idea_id) if idea_id
+             else ideas.oldest_new(inbox, max_attempts=int(config.get("max_attempts", 2))))
+    if entry is None:
+        typer.echo("no idea to card", err=True)
+        raise typer.Exit(code=1)
+    with session_scope() as session:
+        result = carder.run_idea(entry, inbox, config,
+                                 budget=open_candidate(session, None, Stage.SEARCH),
+                                 session=session, day=datetime.now(UTC).date())
+    ideas.save(inbox)
+    typer.echo(f"{entry['id']}: {entry['status']} {result.get('card') or ''}; "
+               f"{result['tokens']:,} tokens")
+    for problem in result["problems"]:
+        typer.echo(f"  {problem}")
 
 
 catalogue_app = typer.Typer(add_completion=False, no_args_is_help=True,

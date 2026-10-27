@@ -32,6 +32,9 @@ _CATALOGUE_RU = {"queued": "в очереди", "catalogued": "новый мех
                  "extended": "числа добавлены к механизму", "none": "механизма нет",
                  "failed": "черновик не принят кодом", "blocked": "остановлено проверяющим",
                  "no_text": "текст статьи недоступен", "rejected": "отклонено владельцем"}
+_CARDER_RU = {"new": "ждёт карточника (попытка не принята)", "carded": "карточка написана",
+              "duplicate": "повтор уже сделанного", "needs-owner": "вопрос к владельцу",
+              "implemented": "реализатор взял карточку", "rejected": "закрыто владельцем"}
 _ROUTE_IN_LINE = re.compile(r"\):\s*([a-z-]+)\s+—")
 
 
@@ -217,6 +220,32 @@ def _cataloguer(day: str, st: dict) -> Run | None:
                details=details, tokens=sum(e.get("tokens", 0) for e in entries))
 
 
+def _carder(day: str, st: dict) -> Run | None:
+    c = st.get("cards")
+    if c is None:
+        return None
+    entries = c.get("entries") or []
+    if not entries:
+        if c.get("waiting_for"):
+            return Run(day, "skipped", "идей не брал",
+                       f"карточка {c['waiting_for']} ещё не взята реализатором")
+        return Run(day, "stopped" if c.get("stopped") else "skipped", "идей не брал",
+                   c.get("stopped") or c.get("error") or "новых идей во входящих нет")
+    details = []
+    for e in entries:
+        details += [f"{e['id']}: {p}" for p in e.get("problems") or []]
+        if e.get("duplicate_of"):
+            details.append(f"{e['id']}: повтор — {e['duplicate_of']}")
+        if e.get("question"):
+            details.append(f"{e['id']}: вопрос владельцу — {e['question']}")
+        if e.get("card"):
+            details.append(f"{e['id']}: карточка {e['card']}, новый блок {e.get('new_block')}")
+    return Run(day, "ran", "; ".join(f"{e['id']}: {' '.join(e['text'].split())[:80]}"
+                                     for e in entries),
+               "; ".join(_CARDER_RU.get(e.get("status"), str(e.get("status"))) for e in entries),
+               details=details, tokens=sum(e.get("tokens", 0) for e in entries))
+
+
 def _generator(day: str, st: dict) -> Run | None:
     g = st.get("generate")
     if g is None:
@@ -260,6 +289,10 @@ AGENTS: tuple[tuple[str, str, str, str, Callable[[str, dict], Run | None]], ...]
     ("cataloguer", "Разборщик статей", "Sonnet",
      "Читает статью целиком и записывает механизм в каталог; каждое число код сверяет с текстом "
      "статьи.", _cataloguer),
+    ("carder", "Карточник", "Sonnet",
+     "Берёт идею из входящих, для которой нужен новый код, и пишет карточку для реализатора; "
+     "либо отвечает «повтор» (называя, что уже пробовали), либо задаёт вопрос владельцу.",
+     _carder),
     ("generator", "Генератор идей", "Sonnet",
      "Собирает новые стратегии из механизмов каталога и своих чисел; каждую проверяет стенд.",
      _generator),

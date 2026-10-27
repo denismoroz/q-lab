@@ -170,6 +170,14 @@ Write two kinds of files and nothing else:
    DROP: <idea_id> — <why, one sentence>
    Code reads these lines and shows them to the owner. You cannot drop anything yourself:
    statuses are changed by code and by the owner, never on your word.
+   If you see an idea that needs NEW code -- a rule or a block that no existing strategy or
+   setting expresses, not a different number of an existing strategy -- end the memo with a
+   fenced block of exactly this form: one idea per line, in plain words, at most three. Code
+   puts them in the owner's ideas inbox, where an agent turns them into cards for the
+   implementer. Write no block when you have no such idea.
+```ideas
+- "<the idea, in the words you would tell the owner>"
+```
 
 2. At most {max_experiments} experiment specs in {spec_dir}/ -- each a variant worth running
    on the stand that tests one fix of the memo: copy the closest existing spec, change
