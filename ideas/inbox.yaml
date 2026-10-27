@@ -1,4 +1,29 @@
 # The ideas inbox (src/qlab/ideas.py, docs/IDEAS.md). Add with `qlab idea add "..."`; the text
 # of an idea is kept verbatim. The carder agent takes the oldest `new` one each night; its
 # status is changed by code and by the owner's commands only.
-ideas: []
+ideas:
+- id: idea-0001
+  date: '2026-10-27'
+  source: owner
+  text: bv2 можно оставить как защита. bv3 - доход. новая стратегия где страховка снимается чаще, по разным
+    таймфреймам. ведь таймфреймы они как матрешки - чем ниже тем больше колебаний. если рассмотреть варианты
+    определения тренда по более высокому таймфрейму а включать по более низкому... в качестве основы по
+    тренду брать не биткоин а монету на которой работать - вот такие идеи
+  status: new
+  card: null
+  notes: 2 попыток карточника не приняты кодом или проверяющим; решает владелец (`qlab idea retry`, `qlab
+    idea reject`)
+  attempts: 1
+  problems:
+  - 'reviewer: `carder.hypothesis_ru`, `new_block.rule_ru`, `grid`. The idea asks to find the trend on
+    a higher timeframe and switch the hedge on by a lower one, as well as to take it off more often. The
+    draft keeps the entry on the slow rule unchanged and only adds a fast release. That is the narrower
+    half of the question. No variant enters on a lower timeframe, and the card never says it is leaving
+    that half out. It should either add an entry-side variant or say plainly that it is excluded and why.'
+  - 'reviewer: `vs_tried[bv2-sig-momentum-sign].difference_ru`. It says the new window is "короче суток",
+    but the 24-hour value is not shorter than a day. Only 12 hours is. Reword it to "12 and 24 hours,
+    both shorter than the 3-day minimum already tried". The card should also state that the rule is the
+    same "and" combination of return signs, with a window from outside the tried range.'
+  - 'reviewer: `new_block.rule_ru`. "Спот", "залог" and "запас маржи" are used with no explanation at
+    first use. The card rules require each term to be explained where it first appears. An engineer who
+    has only the card cannot tell what "запас маржи" refers to, since it is a spec parameter, `hedge_margin_headroom`.'

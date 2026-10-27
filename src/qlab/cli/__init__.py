@@ -1149,6 +1149,35 @@ def idea_card(idea_id: str | None = typer.Argument(
         typer.echo(f"  {problem}")
 
 
+@idea_app.command("recheck")
+def idea_recheck(idea_id: str = typer.Argument(...)) -> None:
+    """The draft already written for an idea through the code checks, the reviewer and the queue
+    again, without calling the writer (tokens only for the reviewer): after a check that refused
+    it was corrected."""
+    from datetime import UTC, datetime
+
+    from qlab import ideas
+    from qlab.agents import carder
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+    from qlab.registry.db import session_scope
+
+    inbox, entry = ideas.load(), None
+    entry = ideas.find(inbox, idea_id)
+    if entry is None:
+        typer.echo(f"unknown idea: {idea_id}", err=True)
+        raise typer.Exit(code=1)
+    with session_scope() as session:
+        result = carder.recheck_idea(entry, carder.load_config(),
+                                     budget=open_candidate(session, None, Stage.SEARCH),
+                                     session=session, day=datetime.now(UTC).date())
+    ideas.save(inbox)
+    typer.echo(f"{entry['id']}: {entry['status']} {result.get('card') or ''}; "
+               f"{result['tokens']:,} tokens")
+    for problem in result["problems"]:
+        typer.echo(f"  {problem}")
+
+
 catalogue_app = typer.Typer(add_completion=False, no_args_is_help=True,
                             help="The cataloguer agent's papers (docs/CATALOGUER.md).")
 app.add_typer(catalogue_app, name="catalogue")

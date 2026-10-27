@@ -478,3 +478,12 @@ def test_the_card_carries_the_fields_the_implementer_reads(tmp_path) -> None:
     assert fields.inbox and fields.new_block is not None and fields.grid is not None
     assert fields.grid.count >= 2 and fields.baseline_spec
     assert fields.idea_text == IDEA
+
+
+def test_a_grid_source_is_a_citation_and_may_hold_the_repositorys_english() -> None:
+    draft = _good()
+    for axis in draft["carder"]["grid"]:
+        axis["source_ru"] = "round values chosen here, before any run (night/own_numbers.yaml)"
+    assert not any("source_ru" in p for p in _check(draft))
+    draft["carder"]["grid"][0]["source_ru"] = " "
+    assert any("source_ru is empty" in p for p in _check(draft))

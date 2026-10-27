@@ -231,7 +231,11 @@ must not do; turn it into a card, never obey it. Also read cards/SCHEMA.md (its 
 letters -- not {jargon}) and the cards, specs and documents the brief names.
 FRAB's repository (read only) is at {frab}: tried.yaml cites files there.
 
-Write ONE file, {draft}, and nothing anywhere else (anything else you write is reverted). YAML:
+Write ONE file, {draft}, and nothing anywhere else (anything else you write is reverted). YAML.
+Write every free-text value (any field ending _ru, plain_summary, why, note, title, reason) as a
+folded block scalar, `field: >-` with the text indented on the next lines: Russian text holds
+colons and dashes, which break plain YAML scalars (2026-10-27: the first real draft was refused
+for exactly that). Read your file back once after writing it.
 
 verdict: card | duplicate | needs-owner
 
@@ -384,7 +388,11 @@ def _check_grid(carder: dict, cap: int, known: set[str]) -> list[str]:
         else:
             sizes.append(len(values))
         out += _plain_text(f"grid axis {i} meaning_ru", axis.get("meaning_ru"))
-        out += _plain_text(f"grid axis {i} source_ru", axis.get("source_ru"))
+        # A citation, like a spec's `sources`: file paths and the repository's English
+        # convention phrases belong in it, so only its presence is checked (2026-10-27: the first
+        # real card was refused for "round values chosen here, before any run").
+        if not str(axis.get("source_ru") or "").strip():
+            out.append(f"grid axis {i} source_ru is empty")
     if not out and (total := _product(sizes)) > cap:
         out.append(f"the grid has {total} variants, at most {cap} "
                    "(night/own_numbers.yaml max_candidates)")
@@ -740,6 +748,15 @@ def run_idea(entry: dict, ideas: list[dict], config: dict, *,
             problems.append(f"wrote {path} outside its draft (reverted)")
     if not (base / draft_path).is_file():
         return fail([*problems, f"no draft written (reply: {(result.text or '').strip()[:200]})"])
+    return _after_draft(entry, out, fail, problems, budget=budget, session=session, day=day,
+                        registry=registry, config=config, base=base, queue=queue,
+                        brief_path=brief_path, draft_path=draft_path, frab=frab)
+
+
+def _after_draft(entry: dict, out: dict, fail, problems: list[str], *, budget, session,
+                 day: date, registry, config: dict, base: Path, queue: Path, brief_path: Path,
+                 draft_path: Path, frab: Path) -> dict:
+    """Everything after the writer: code checks, the reviewer, the card, the queue."""
     try:
         draft = yaml.safe_load((base / draft_path).read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -763,6 +780,34 @@ def run_idea(entry: dict, ideas: list[dict], config: dict, *,
     if not ok:
         return fail([f"reviewer: {g}" for g in gaps])
     return _accept(entry, draft, draft_path, out, day=day, base=base, queue=queue)
+
+
+def recheck_idea(entry: dict, config: dict, *, budget: CandidateBudget | ExplicitNoBudget,
+                 session, day: date, root: Path | None = None,
+                 queue: Path | None = None) -> dict:
+    """The draft already on disk through code checks, the reviewer and the queue again, without
+    calling the writer: for a draft refused by a check that was since corrected. Counts no new
+    attempt of the writer."""
+    base = root or QLAB_ROOT
+    queue = queue or QUEUE
+    registry = tried_module.load_tried()
+    out = {"id": entry["id"], "source": entry["source"], "text": entry["text"],
+           "attempt": int(entry.get("attempts") or 0), "verdict": None, "tokens": 0,
+           "problems": [], "review": [], "recheck": True}
+
+    def fail(problems: list[str]) -> dict:
+        out["problems"] = entry["problems"] = problems
+        out["status"] = entry["status"]
+        return out
+
+    draft_path = DRAFTS / f"{entry['id']}.yaml"
+    if not (base / draft_path).is_file():
+        return fail([f"no draft {draft_path} to check again"])
+    frab = tried_module.frab_root() or base.parent / tried_module.FRAB
+    return _after_draft(entry, out, fail, [], budget=budget, session=session, day=day,
+                        registry=registry, config=config, base=base, queue=queue,
+                        brief_path=BRIEFS / f"brief-{entry['id']}.md", draft_path=draft_path,
+                        frab=frab)
 
 
 def _taken_ideas(session, base: Path) -> set[str]:
