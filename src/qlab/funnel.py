@@ -269,7 +269,9 @@ ROUTE_TITLE = {
 }
 
 AGENT_TITLE = {**SOURCE_TITLE, "assessor": "второе мнение", "reviewer": "проверяющий",
-               "director": "руководитель"}
+               "director": "руководитель", "programmer": "программист",
+               "programmer-review": "проверяющий программиста", "cataloguer": "разборщик статей",
+               "cataloguer-review": "проверяющий разборщика", "probe": "замер бюджета"}
 
 STAGE_TITLE = {
     "recheck": "перепроверка",
