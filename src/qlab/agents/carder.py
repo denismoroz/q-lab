@@ -561,13 +561,45 @@ def _check_vs_tried(rows: object, registry: tried_module.TriedRegistry, entry_te
 # The card, and the implementer's queue
 
 
+def implementer_fields(carder: dict, idea_text: str) -> dict:
+    """The `carder` block in the shape the implementer reads (`qlab.card_fields`, cards/SCHEMA.md
+    «Карточка из входящих идей»): the two halves of the loop were built apart, and a card the
+    implementer cannot read would stay queued for nothing."""
+    out: dict = {"idea_text": idea_text}
+    baseline = carder.get("baseline")
+    if isinstance(baseline, dict) and baseline.get("spec"):
+        out["baseline_spec"] = baseline["spec"]
+    axes = {str(g["param"]): list(g["values"]) for g in carder.get("grid") or []
+            if isinstance(g, dict) and g.get("param") and isinstance(g.get("values"), list)}
+    if axes:
+        out["grid"] = {"params": axes}
+    block = carder.get("new_block")
+    if isinstance(block, dict) and block.get("name"):
+        out["new_block"] = {
+            "name": block["name"],
+            "params": [{"name": p.get("name"), "meaning": p.get("meaning_ru") or p.get("meaning")}
+                       for p in block.get("params") or [] if isinstance(p, dict)],
+            "rule": block.get("rule_ru") or block.get("rule")}
+    data = carder.get("data")
+    if isinstance(data, dict):
+        honest = data.get("honest_from")
+        out["data"] = {k: v for k, v in {
+            "venue": data.get("venue"), "interval": data.get("interval"),
+            "coins": data.get("coins") if not data.get("coin_rule_ru") else None,
+            "universe_rule": data.get("coin_rule_ru"),
+            "honest_from": honest.isoformat() if isinstance(honest, date) else honest,
+        }.items() if v}
+    return out
+
+
 def render_card(draft: dict, entry: dict, *, day: date) -> str:
     """The checked draft as a card file: the verdict line is gone, `found_at` is the day the
     carder wrote it, and the idea stays in the card word for word."""
     card = {k: v for k, v in draft.items() if k != "verdict"}
     card = {"idea_id": card.pop("idea_id"), "found_at": day.isoformat(), **card,
             "idea_source": {"inbox": entry["id"], "source": entry["source"],
-                            "date": str(entry["date"]), "text": entry["text"]}}
+                            "date": str(entry["date"]), "text": entry["text"]},
+            **implementer_fields(draft.get("carder") or {}, entry["text"])}
     header = (f"# Карточка написана агентом-карточником ({entry['id']}, {day.isoformat()}) из идеи "
               "входящих, дословно — в поле idea_source. Поля carder: — для реализатора и "
               "проверяющего.\n# Вердикт по идее вынесет стенд, не агент.\n")

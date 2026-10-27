@@ -463,3 +463,18 @@ def test_the_config_and_the_queue_of_the_repository_are_well_formed() -> None:
     inbox = yaml.safe_load((ROOT / "ideas/inbox.yaml").read_text(encoding="utf-8"))["ideas"]
     assert isinstance(inbox, list)
     assert all(e["status"] in ideas.STATUSES and e["text"] for e in inbox)
+
+
+def test_the_card_carries_the_fields_the_implementer_reads(tmp_path) -> None:
+    # The carder and the implementer were built apart: the card must be readable by
+    # qlab.card_fields, or it would sit in the implementer's queue for nothing.
+    from qlab.card_fields import read_card_fields
+
+    entry = {"id": "idea-0001", "source": "owner", "date": "2026-10-27", "text": IDEA}
+    path = tmp_path / "cards" / "bv3-volume-hedge.yaml"
+    path.parent.mkdir()
+    path.write_text(carder.render_card(_good(), entry, day=DAY), encoding="utf-8")
+    fields = read_card_fields(path, root=Path.cwd())  # raises CardFieldError on any problem
+    assert fields.inbox and fields.new_block is not None and fields.grid is not None
+    assert fields.grid.count >= 2 and fields.baseline_spec
+    assert fields.idea_text == IDEA
