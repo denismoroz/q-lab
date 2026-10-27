@@ -326,6 +326,18 @@ def test_a_failed_rerun_is_tried_again_and_the_finished_one_is_not(
     assert [c[1] for c in stand.calls] == ["ripe"]
 
 
+def test_a_trial_the_stand_routed_error_is_a_failure_tried_again(tmp_path, registry, stand) -> None:
+    # 2026-10-27: the stand caught a strategy's exception and routed its trial "error"; the
+    # night counted it re-run and done, so it was never tried again.
+    _world(tmp_path, registry)
+    stand.results["ripe"] = ItemResult(kind="waiting", name="ripe", trial_id=9, route="error",
+                                       reason="int() argument must be ... not 'list'")
+    state = _stage(tmp_path)
+    row = next(e for e in state["waiting"] if e["idea"] == "ripe")
+    assert row["action"] == "error" and "not 'list'" in row["error"]
+    assert "waiting:ripe:idea" not in state["done"]
+
+
 def test_a_route_change_is_applied_by_code_and_the_report_names_it(
         tmp_path, registry, stand, monkeypatch) -> None:
     _world(tmp_path, registry)
@@ -513,3 +525,11 @@ def test_the_stage_spends_no_tokens() -> None:
 
     source = inspect.getsource(waiting)
     assert "qlab.budget" not in source and "qlab.agents" not in source
+
+
+def test_an_idea_whose_last_run_crashed_stays_in_the_plan_and_is_due(tmp_path, registry) -> None:
+    _world(tmp_path, registry)
+    with registry.session_scope() as s:
+        _trial(s, "fresh", "error", ago=0, metrics=None, status=TrialStatus.ERROR)
+    plan = _plans(tmp_path, registry)[("fresh", "idea")]
+    assert plan.due and plan.why == "прошлый прогон не дал исхода"

@@ -57,9 +57,11 @@ from pathlib import Path
 
 SECTION_TITLE = "Идеи, ждущие данных: проверка вперёд по мере их прихода"
 SPEC_DIR = Path("specs")
-WAITING_ROUTES = ("needs-forward", "needs-more-data")
+WAITING_ROUTES = ("needs-forward", "needs-more-data", "error")
 """Latest routes of an idea that wait for data. `shelf` (capital), `paper` (the owner)
-and `needs-infrastructure` (an adapter) are decided; they are not waiting for data."""
+and `needs-infrastructure` (an adapter) are decided; they are not waiting for data. A
+crashed run (`error`) decided nothing: it is tried again (2026-10-27: two experiments whose
+run crashed dropped out of the plan and nothing would have run them again)."""
 STAGE2_WAITING = ("needs-forward", "not-evaluable", "needs-more-data", "error")
 """Routes of a second stage that decided nothing yet (`qlab.pipeline.stage2.UNDECIDED`
 and `needs-forward`)."""
@@ -179,7 +181,7 @@ def read_basis(session, idea_id: str) -> Basis:
                  and end_of(before) < end_of(shown))
     return Basis(
         data_end=end_of(shown), metrics=dict(shown.metrics or {}), route=route,
-        failed=last.id != shown.id and last.route is None,
+        failed=(last.id != shown.id and last.route is None) or route == "error",
         rules_version=version[0] if version else None, stuck=stuck)
 
 
@@ -323,9 +325,13 @@ def _rerun_idea(plan: Plan, end: date, *, noise_trials: int, deployable_capital_
     result = night.evaluate_item("waiting", load_spec(Path(plan.spec_path)), end=end,
                                  noise_trials=noise_trials,
                                  deployable_capital_usd=deployable_capital_usd)
-    return {"idea": plan.idea_id, "step": "idea", "action": "error" if result.error else "rerun",
+    # The stand catches a strategy's exception and routes the trial "error": still a failure,
+    # tried again on the next run (2026-10-27 counted two as re-run and done).
+    failed = bool(result.error) or result.route == "error"
+    return {"idea": plan.idea_id, "step": "idea", "action": "error" if failed else "rerun",
             "route_before": result.previous_route or plan.route, "route_after": result.route,
-            "reason": result.reason, "trial": result.trial_id, "error": result.error,
+            "reason": result.reason, "trial": result.trial_id,
+            "error": result.error or (result.reason if failed else None),
             "forward_days": result.metrics.get("forward_days"),
             "forward_days_needed": result.metrics.get("forward_days_needed"),
             "status": _status(plan.idea_id), "why": plan.why}
