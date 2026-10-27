@@ -280,7 +280,14 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
         outcome.drops = parse_drop_proposals((QLAB_ROOT / outcome.memo).read_text(
             encoding="utf-8"))
     if len(outcome.specs) > max_experiments:
-        outcome.problems.append(f"{len(outcome.specs)} experiments, at most {max_experiments}")
+        # The limit is the code's (a strategy's free variant slots, night/limits.yaml): what is
+        # over it never reaches the stand. A night rehearsal of 2026-10-27 ran one anyway.
+        extra = outcome.specs[max_experiments:]
+        for path in extra:
+            (QLAB_ROOT / path).unlink(missing_ok=True)
+        outcome.specs = outcome.specs[:max_experiments]
+        outcome.problems.append(f"{len(outcome.specs) + len(extra)} experiments, at most "
+                                f"{max_experiments}: not run and removed {[str(p) for p in extra]}")
     for spec_path in outcome.specs:
         try:
             problems = source_problems(load_spec(QLAB_ROOT / spec_path))

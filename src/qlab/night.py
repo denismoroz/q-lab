@@ -38,7 +38,8 @@ PROD = "dis@10.8.0.5"
 PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's state
 
 #: Stage names in the morning report's stop line (`past_stop`).
-STOP_STAGES = {"recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
+STOP_STAGES = {"detectors": "определители режима",
+               "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
@@ -426,6 +427,11 @@ def write_report(day: date, state: dict) -> Path:
                   f"({stop['before']}). Начатое доделано, остальное — в следующую ночь: "
                   "перепроверки она делает заново, невыполненные эксперименты исследователя "
                   "переносятся.", ""]
+    if errors := state.get("stage_errors"):
+        lines += ["## Сбои стадий", "",
+                  "Стадия упала, ночь пошла дальше; несделанное повторится при следующем запуске.",
+                  "", *(f"- **{STOP_STAGES.get(name, name)}** (`{name}`): {text}"
+                        for name, text in errors.items()), ""]
     items = [ItemResult(**r) for r in state.get("results", [])]
     for kind, title in (("watch", "Стратегии на проверке вперёд"),
                         ("graveyard", "Кладбище по режимам")):
@@ -550,7 +556,7 @@ def write_report(day: date, state: dict) -> Path:
     if gen := state.get("generate"):
         from qlab.agents.generator import GeneratedResult, result_line, second_stage_lines
 
-        lines += ["## Генератор идей (раз в неделю)", "",
+        lines += ["## Генератор идей", "",
                   "Агент берёт опубликованные механизмы из `docs/MECHANISMS.md` и пишет описания "
                   "новых стратегий из готовых блоков; код проверяет каждое число по каталогу, "
                   "стенд прогоняет прошедшие проверку. Вердикты выносит код.", ""]
@@ -711,12 +717,15 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     state = load_state(day)
     state.setdefault("results", [])
     state.pop("stopped_at", None)  # a resumed night gets its own stop time
+    state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
     if detectors and "detectors" not in state:
         # Before the watch list: strategies on it read these files
         # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.
         from qlab.detector_builds import CONFIG, build_all
 
-        state["detectors"] = build_all(end) if CONFIG.is_file() else []
+        built = guarded(day, state, "detectors", build_all, end) if CONFIG.is_file() else []
+        if built is not None:
+            state["detectors"] = built
         save_state(day, state)
     watch = yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
     state["unwatched_bench"] = unwatched_bench(watch)
@@ -730,8 +739,13 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
             continue
         if past_stop(stop_at, state, "recheck"):
             break
-        result = evaluate_item(kind, load_spec(path), end=end, noise_trials=noise_trials,
-                               deployable_capital_usd=deployable_capital_usd)
+        try:
+            spec = load_spec(path)
+        except Exception as exc:  # noqa: BLE001 - one broken spec file is its own row
+            result = ItemResult(kind=kind, name=str(path), error=f"{type(exc).__name__}: {exc}")
+        else:
+            result = evaluate_item(kind, spec, end=end, noise_trials=noise_trials,
+                                   deployable_capital_usd=deployable_capital_usd)
         state["results"] = [r for r in state["results"]
                             if not (r["kind"] == kind and r["name"] == result.name)]
         state["results"].append(asdict(result))
@@ -742,18 +756,20 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # Recheck too: ideas waiting for data that are not on the watch list (qlab.waiting).
         from qlab.waiting import followed_ideas, waiting_stage
 
-        waiting_stage(day, end, state, watch=watch, noise_trials=noise_trials,
-                      deployable_capital_usd=deployable_capital_usd)
+        guarded(day, state, "waiting", waiting_stage, day, end, state, watch=watch,
+                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd)
         followed = followed_ideas(state.get("waiting"))
         state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
         save_state(day, state)
     if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
-        state["paper"] = paper_reconciliation(day)
+        reconciled = guarded(day, state, "paper", paper_reconciliation, day)
+        if reconciled is not None:
+            state["paper"] = reconciled
         save_state(day, state)
     if (decay if decay is not None else paper) and "decay" not in state \
             and not past_stop(stop_at, state, "decay"):
         # After the watch list: the stand's panels are cached by then.
-        decay_stage(day, end, state)
+        guarded(day, state, "decay", decay_stage, day, end, state)
         save_state(day, state)
     if "decay" in state and "allocation" not in state \
             and not past_stop(stop_at, state, "allocation"):
@@ -761,35 +777,61 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # decay results and the paper rule's states and moves nothing.
         from qlab.pool_allocation import night_stage
 
-        night_stage(day, end, state)
+        guarded(day, state, "allocation", night_stage, day, end, state)
         save_state(day, state)
     if assess and not past_stop(stop_at, state, "assess"):
-        assess_stage(day, state)
+        guarded(day, state, "assess", assess_stage, day, state)
     if (director if director is not None else research is not False) \
             and not past_stop(stop_at, state, "director"):
         # Before the researcher and the generator it steers; in the implement stage's
         # budget, and skipped (not the rechecks) when that budget is short.
-        director_stage(day, state, force=director)
+        guarded(day, state, "director", director_stage, day, state, force=director)
     if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
-        research_stage(day, state, noise_trials=noise_trials, stop_at=stop_at)
+        guarded(day, state, "research", research_stage, day, state, noise_trials=noise_trials,
+                stop_at=stop_at)
     if programmer and not past_stop(stop_at, state, "programmer"):
-        programmer_stage(day, state)
+        guarded(day, state, "programmer", programmer_stage, day, state)
     if implement and not past_stop(stop_at, state, "implement"):
-        implement_stage(day, state, noise_trials=noise_trials,
-                        deployable_capital_usd=deployable_capital_usd)
+        guarded(day, state, "implement", implement_stage, day, state,
+                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd)
     if search and not past_stop(stop_at, state, "search"):
-        search_stage(day, state)
+        guarded(day, state, "search", search_stage, day, state)
     if search and catalogue and not past_stop(stop_at, state, "catalogue"):
         # Before the generator: a mechanism catalogued tonight can be built tonight.
-        catalogue_stage(day, state)
+        guarded(day, state, "catalogue", catalogue_stage, day, state)
     if (generate is True or (search and generate is None)) \
             and not past_stop(stop_at, state, "generate"):
         # Last: the search for new ideas is what the budget cuts first, and the
         # generator is the most expensive part of it.
-        generate_stage(day, state, noise_trials=noise_trials,
-                       deployable_capital_usd=deployable_capital_usd, force=generate)
+        guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
+                deployable_capital_usd=deployable_capital_usd, force=generate)
     save_state(day, state)  # with the stop line, if the stop time cut the night
-    return write_report(day, state)
+    try:
+        return write_report(day, state)
+    except Exception as exc:  # noqa: BLE001 - a report must exist in the morning
+        path = REPORT_DIR / f"{day.isoformat()}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# Ночной прогон {day.isoformat()}\n\nОтчёт не собрался: "
+                        f"{type(exc).__name__}: {exc}. Состояние ночи цело: "
+                        f"`{_state_path(day)}`.\n", encoding="utf-8")
+        return path
+
+
+def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
+    """Run one stage; its failure is a line of the morning report, never the end of the night.
+    The night of 2026-10-27 stopped at 04:51 on one stage's AttributeError and research, the
+    generator and the programmer never ran. A failed stage left its done-markers unset, so the
+    next run tries it again. A KeyboardInterrupt (not an Exception) still stops the night."""
+    import traceback
+
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        where = traceback.extract_tb(exc.__traceback__)[-1]
+        state.setdefault("stage_errors", {})[name] = (
+            f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
+        save_state(day, state)
+        return None
 
 
 PROGRAMMER = Path("night/programmer.yaml")

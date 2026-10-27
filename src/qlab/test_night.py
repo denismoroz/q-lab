@@ -894,3 +894,32 @@ def test_a_failing_second_opinion_is_reported_and_the_night_goes_on(tmp_path, mo
     assert broken["stopped"].startswith("сбой: AttributeError")
     assert fine["view"] == "agree"
     assert "assess:1" not in state["done"] and "assess:2" in state["done"]  # retried next run
+
+
+def test_a_failing_stage_is_a_report_line_and_the_rest_of_the_night_runs(
+        tmp_path, monkeypatch) -> None:
+    # The night of 2026-10-27 stopped on one stage's exception; the stages after it never ran.
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: [missing/broken.yaml]\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    ran = []
+
+    def boom(*a, **kw):
+        raise KeyError("strategy")
+
+    monkeypatch.setattr(night, "research_stage", boom)
+    monkeypatch.setattr(night, "search_stage", lambda *a, **kw: ran.append("search"))
+    monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: ran.append("generate"))
+    flags = dict(graveyard=False, paper=False, implement=False, detectors=False, assess=False,
+                 waiting=False, director=False, programmer=False)
+    report = night.run(date(2026, 10, 27), research=True, **flags)
+    assert ran == ["search", "generate"]
+    state = night.load_state(date(2026, 10, 27))
+    assert state["stage_errors"]["research"].startswith("KeyError: 'strategy'")
+    text = report.read_text(encoding="utf-8")
+    assert "## Сбои стадий" in text and "**исследователь** (`research`)" in text
+    broken = state["results"][0]  # a broken spec file on the watch list is its own row
+    assert broken["name"] == "missing/broken.yaml" and "FileNotFoundError" in broken["error"]
