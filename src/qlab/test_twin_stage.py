@@ -605,3 +605,13 @@ def test_the_command_is_registered() -> None:
     assert out.exit_code == 0 and "--only" in out.output and "--allow-heavy" in out.output
     night_help = CliRunner().invoke(app, ["night", "run", "--help"])
     assert "--twins" in night_help.output
+
+
+def test_a_twin_entry_shows_its_result_year_by_year() -> None:
+    entry = {"idea": "x", "action": "made", "twin_spec": "x-causal.yaml", "trial": 1,
+             "route": "reject", "seconds": 60, "candidates": ["a", "b"],
+             "metrics": {"ann_return_net": 0.1, "sharpe_net": 1.0, "max_dd": -0.1,
+                         "year_2024_return": 0.2, "year_2024_days": 366.0,
+                         "year_2025_return": -0.05, "year_2025_days": 365.0}}
+    text = "\n".join(twin_stage.entry_lines(entry))
+    assert "по годам: 2024 +20%, 2025 −5%" in text

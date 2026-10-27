@@ -25,6 +25,12 @@ params_fixed_evidence: >
 
 selects_causally: true
 
+# The coin list (BTC, ETH, SOL, AVAX) was chosen on the fit window 2023-06 .. 2025-05 of
+# specs/bv2-binance.yaml, so it knew which coins survived: judged only from the day it was
+# known, the months before are warm-up for the wrapper's choice (docs/RETUNE.md, 2026-10-27).
+instruments_chosen_at: 2025-06-01
+judged_from: 2025-06-01
+
 params:
   inner_code_ref: qlab.strategies.live.bv2:LiveBv2
   base_params:
@@ -93,6 +99,8 @@ regime_claim:
   bear: beats_market
 
 sources:
+  "instruments_chosen_at": "specs/bv2-binance.yaml: params_fixed_at = 2025-06-01, the end of the window the coin list was fitted on (params_fit_from 2023-06-01)"
+  "judged_from": "docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at = 2025-06-01); the days before are warm-up"
   "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"

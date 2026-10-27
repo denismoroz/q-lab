@@ -289,7 +289,10 @@ def _metrics(session, trial_id: int | None) -> dict:
     trial = session.get(Trial, trial_id) if trial_id else None
     if trial is None or not trial.metrics:
         return {}
-    return {k: trial.metrics[k] for k in TWIN_METRICS if k in trial.metrics}
+    from qlab.year_view import year_keys
+
+    keep = (*TWIN_METRICS, *year_keys(trial.metrics))
+    return {k: trial.metrics[k] for k in keep if k in trial.metrics}
 
 
 def _ensure_twin_idea(twin: StrategySpec, origin: str) -> None:
@@ -619,6 +622,7 @@ def _minutes(seconds: object) -> str:
 def entry_lines(e: Mapping) -> list[str]:
     """One idea's block of the report."""
     from qlab.pipeline.stage2 import report_lines as stage2_lines
+    from qlab.year_view import years_line
 
     head = f"**{e['idea']}**"
     base = f" (база: `{e['base']}`)" if e.get("base") else ""
@@ -664,6 +668,9 @@ def entry_lines(e: Mapping) -> list[str]:
     if e.get("slow"):
         line += " (**дольше нормы**, см. `night/twins.yaml`)"
     out = [line]
+    years = years_line(e.get("metrics"))
+    if years:
+        out.append(f"    - {years}")
     if e.get("stage2") is not None:
         out += [f"    - {ln}" for ln in stage2_lines({"route": e.get("route")}, e["stage2"])]
     elif e.get("route") is not None:
