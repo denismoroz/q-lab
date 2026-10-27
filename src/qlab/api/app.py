@@ -121,6 +121,14 @@ def create_app() -> FastAPI:
             "calibration_ideas": stats.calibration_ideas,
         }
 
+    @app.get("/api/agents")
+    def agents_route(days: Annotated[int, Query(ge=1, le=60)] = 14) -> dict[str, Any]:
+        """What each agent did night by night and what came of it (qlab.agent_reports;
+        copied from the nights' saved state and the agents' own ledgers)."""
+        from qlab.agent_reports import agent_reports
+
+        return agent_reports(days)
+
     @app.get("/api/agent-funnel")
     def agent_funnel_route(session: SessionDep) -> dict[str, Any]:
         """Does the agents' loop work: ideas they created, how far each got,

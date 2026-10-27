@@ -4,9 +4,11 @@ import Registry from './pages/Registry.jsx'
 import IdeaDetail from './pages/IdeaDetail.jsx'
 import Cards from './pages/Cards.jsx'
 import Trials from './pages/Trials.jsx'
+import Agents from './pages/Agents.jsx'
 
 const NAV = [
   { to: '/funnel', text: 'Воронка' },
+  { to: '/agents', text: 'Агенты' },
   { to: '/ideas', text: 'Реестр и кладбище' },
   { to: '/cards', text: 'Карточки кандидатов' },
   { to: '/trials', text: 'Прогоны' },
@@ -45,6 +47,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/funnel" replace />} />
           <Route path="/funnel" element={<Funnel />} />
+          <Route path="/agents" element={<Agents />} />
           <Route path="/ideas" element={<Registry />} />
           <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
           <Route path="/cards" element={<Cards />} />

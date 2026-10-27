@@ -15,6 +15,7 @@ async function getJson(url) {
 
 export const fetchFunnel = () => getJson('/api/funnel')
 export const fetchAgentFunnel = () => getJson('/api/agent-funnel')
+export const fetchAgents = (days) => getJson(`/api/agents?days=${days}`)
 export const fetchIdeas = () => getJson('/api/ideas')
 export const fetchIdea = (ideaId) => getJson(`/api/ideas/${encodeURIComponent(ideaId)}`)
 
