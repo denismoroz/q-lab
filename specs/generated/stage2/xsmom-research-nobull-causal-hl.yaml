@@ -1,0 +1,108 @@
+# Stage 2 of xsmom-research-nobull-causal (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: xsmom-research-nobull-causal-hl
+title: 'XSMOM, честный универс, 20 ног: не держать книгу, когда рынок растёт (определитель режима только
+  по прошлому): числа выбирает код раз в месяц только по прошлому, история Binance с 2019 (второй этап:
+  hyperliquid)'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+  base_params:
+    inner_code_ref: qlab.strategies.xsmom:XsmomCrossSectionalMomentum
+    inner_params:
+      universe: null
+      lookbacks_days:
+      - 14
+      - 21
+      - 30
+      - 45
+      - 60
+      rebalance_days: 7
+      anchor_dow: 3
+      n_positions: 20
+  grid:
+    gate:
+      always:
+        trade_in:
+        - bull
+        - flat
+        - bear
+      only_flat_bear:
+        trade_in:
+        - flat
+        - bear
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-10-26'
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 12.0
+simultaneous_legs: 1
+execution_venue: hyperliquid
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of xsmom-research-nobull: the numbers it trades are chosen by code, every month, from returns
+  realised before the choice (the base xsmom-honest-20legs against its regime-gated experiment); the data
+  is Binance''s history, a proxy for hyperliquid''s market, with the original''s costs and minimum leg.'
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (xsmom-research-nobull-causal) on hyperliquid''s own perpetual contracts listed at each bar;
+  nothing was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2020-01-01'
+params_fixed_evidence: 'Inherited from stage 1 (xsmom-research-nobull-causal): The wrapper''s first causal
+  choice (qlab.strategies.retune, docs/RETUNE.md): the data starts 2019-09-08; the longest warm-up read
+  from the parameters is 60 days (inner_params.lookbacks_days = 60), so the book can first trade on 2019-11-07;
+  a candidate is eligible only after one whole month re-tuning period, so the first re-tuning after 2019-11-07
+  is 2019-12-01 and the first choice is made at the one after it, 2020-01-01. This is warm-up arithmetic
+  read generically from the parameters (every day, hour, window and lookback number, whatever the strategy
+  does with it), not a result. If the strategy needs more than the parameters show (enough instruments
+  listed on Binance, a signal that waits for history), the true first choice is later and the days before
+  it are judged as flat days. The grid is two candidates declared whole: the book of xsmom-honest-20legs
+  traded in every regime (always), and held only in flat, bear (xsmom-research-nobull). What this does
+  not prove: the experiment''s numbers were chosen by hand, looking at hyperliquid data up to 2026-06-15
+  (its window starts 2025-01-01): the same market on Binance from 2025-01-01 to 2026-06-15 is in-sample
+  for the grid (it may have been seen), while the days before 2025-01-01 and after 2026-06-15 were not
+  (the spec''s own date for its numbers: 2026-06-15).'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/xsmom/xsmom-research-nobull.yaml: the same window end'
+  base_params.inner_code_ref: specs/xsmom-honest-20legs.yaml (unchanged)
+  base_params.inner_params: specs/xsmom-honest-20legs.yaml params, unchanged; their own sources are listed
+    there
+  inner_code_ref: 'src/qlab/strategies/regime_gate.py: the wrapper of xsmom-research-nobull'
+  grid.gate.always: 'specs/xsmom-honest-20legs.yaml: the unchanged book of xsmom-honest-20legs, every
+    regime traded'
+  grid.gate.only_flat_bear.trade_in: 'data/research/xsmom-2026-10-26.md, drawdown evidence before the
+    cut: bull -2.3% over 92 days (xsmom-honest-20legs, BTC +90.0%), -5.6% over 68 days (xsmom), -8.7%
+    over 92 days (xsmom-frozen-universe); flat +32.0% and bear +12.7% for xsmom-honest-20legs'
+  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+regime_claim: {}
+review_answers: {}
+selects_causally: true

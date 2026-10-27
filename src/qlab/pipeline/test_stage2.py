@@ -4,6 +4,7 @@ the translation, the point-in-time mapping, the not-evaluable guard, the routing
 
 from __future__ import annotations
 
+import dataclasses
 import types
 from datetime import date
 from pathlib import Path
@@ -800,3 +801,31 @@ def test_the_report_of_a_confirmed_idea_says_what_was_compared_in_plain_words(
     assert "решение владельца 2026-10-27" in text
     assert "а не второе доказательство" in text
     assert "прошла оба этапа" in text and "второй подтвердил согласие с ним" in text
+
+
+# ---- the second stage's id belongs to another idea ---------------------------------------
+
+
+def test_a_second_stage_never_writes_into_an_idea_that_already_has_its_id(
+        tmp_path, registry) -> None:
+    """bv2-research-shared-pool-hl is a researcher's experiment, and also the id the second
+    stage of bv2-research-shared-pool would take: its trials and status are not the second
+    stage's to write (found 2026-10-27, when one trial and a spec version landed there)."""
+    child = f"{PARENT}-hl"
+    with registry.session_scope() as session:
+        repo.upsert_idea(session, id=child, title="another experiment",
+                         source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
+                         profile=Profile.OTHER, notes="Declared by the researcher (bv2).")
+        before = session.get(Idea, child).status
+    result = _run(tmp_path)
+    assert result.skipped and "belongs to another idea" in result.skipped
+    assert result.trial_id is None and result.status == "skipped"
+    assert not (tmp_path / "stage2").exists()  # no spec written either
+    assert _status(child) == before and _status(PARENT) != IdeaStatus.REJECTED
+    with registry.session_scope() as session:
+        assert session.get(Idea, child).parent_id is None  # not adopted as a second stage
+        from qlab.registry.stages import child_id_taken
+
+        assert child_id_taken(session, PARENT)
+    lines = stage2.report_lines({"route": "paper"}, dataclasses.asdict(result))
+    assert "уже занято другой идеей" in lines[0]

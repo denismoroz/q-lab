@@ -43,6 +43,15 @@ def stage2_child(session: Session, parent_id: str) -> Idea | None:
     return None
 
 
+def child_id_taken(session: Session, parent_id: str) -> bool:
+    """Whether the id a second stage of `parent_id` would take (`<parent>-hl`) already belongs to
+    an idea that is not that second stage -- a researcher's own `bv2-research-shared-pool-hl`
+    next to `bv2-research-shared-pool`. Writing the second stage there would run a trial under,
+    and move the status of, an idea that is another experiment (found 2026-10-27)."""
+    idea = session.get(Idea, child_id(parent_id))
+    return idea is not None and not (idea.parent_id == parent_id and is_stage2_child(idea))
+
+
 def latest_routed(session: Session, idea_id: str) -> tuple[Trial, Spec] | None:
     """The idea's latest trial that carries a route, with the spec it ran."""
     row = (session.query(Trial, Spec).join(Spec, Trial.spec_id == Spec.id)
@@ -63,5 +72,5 @@ def data_range(session: Session, trial_id: int) -> tuple[date, date] | None:
     return (min(starts) if starts else min(r[1] for r in rows), max(r[1] for r in rows))
 
 
-__all__ = ["CHILD_SUFFIX", "NOTES_PREFIX", "child_id", "data_range", "is_stage2_child",
-           "latest_routed", "stage2_child"]
+__all__ = ["CHILD_SUFFIX", "NOTES_PREFIX", "child_id", "child_id_taken", "data_range",
+           "is_stage2_child", "latest_routed", "stage2_child"]

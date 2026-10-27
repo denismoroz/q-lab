@@ -1,0 +1,180 @@
+# Causal twin of bv2-research-shared-pool (qlab twin, src/qlab/twin.py): its numbers are chosen
+# by code, from the past only, on Binance's history (docs/RETUNE.md). Written by
+# code, not by hand.
+idea_id: bv2-research-shared-pool-causal
+title: 'Bv2 как на проде (запас 1.0), но залог один на все четыре монеты, Binance 2023–2026 (эксперимент
+  исследователя 26.10, исправление 1): числа выбирает код раз в месяц только по прошлому, история Binance
+  с 2019'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.live.bv2:LiveBv2
+  base_params:
+    coins:
+    - BTC
+    - ETH
+    - SOL
+    - AVAX
+    capital_usd: 257.0
+    spot_share: 0.5
+    hedge_threshold: 0.0
+    sticky_exit_hours: 12
+    ratchet_threshold: 0.5
+    carry_enabled: false
+    carry_fraction: 0.6
+    carry_entry_apr: 0.1
+    carry_exit_hours: 24
+    slippage: 0.0005
+    min_order_usd: 10.0
+    margin_enabled: true
+    short_leverage:
+      BTC: 3.0
+      ETH: 2.0
+      SOL: 1.5
+      AVAX: 1.5
+    default_leverage: 1.0
+    maint_margin_rate:
+      BTC: 0.0125
+      ETH: 0.02
+      SOL: 0.025
+      AVAX: 0.05
+    default_maint_margin_rate: 0.05
+    margin_buffer: 0.1
+    hedge_margin_headroom: 1.0
+    rebalance_at_im_share: 0.5
+    mode: paper
+  grid:
+    variant:
+      base: {}
+      experiment:
+        shared_margin: true
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 5.25
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1h
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-09-20'
+  instruments:
+  - AVAX
+  - AVAX-SPOT
+  - BTC
+  - BTC-SPOT
+  - ETH
+  - ETH-SPOT
+  - SOL
+  - SOL-SPOT
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+execution_venue: hyperliquid
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of bv2-research-shared-pool: the numbers it trades are chosen by code, every month, from
+  returns realised before the choice (the base bv2-binance against its experiment (shared_margin)); the
+  data is Binance''s history, a proxy for binance''s market, with the original''s costs and minimum leg.'
+noise_universe: held
+measure_hedge_timing: true
+required_instruments:
+- BTC-SPOT
+- ETH-SPOT
+- SOL-SPOT
+- AVAX-SPOT
+- BTC
+- ETH
+- SOL
+- AVAX
+params_fixed_at: '2019-11-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  data starts 2019-09-08; the longest warm-up read from the parameters is 1 days (carry_exit_hours = 24),
+  so the book can first trade on 2019-09-09; a candidate is eligible only after one whole month re-tuning
+  period, so the first re-tuning after 2019-09-09 is 2019-10-01 and the first choice is made at the one
+  after it, 2019-11-01. This is warm-up arithmetic read generically from the parameters (every day, hour,
+  window and lookback number, whatever the strategy does with it), not a result. If the strategy needs
+  more than the parameters show (enough instruments listed on Binance, a signal that waits for history),
+  the true first choice is later and the days before it are judged as flat days. The grid is two candidates
+  declared whole: the numbers of bv2-binance unchanged, and the numbers of bv2-research-shared-pool (shared_margin).
+  What this does not prove: the experiment''s own data was already Binance''s: 2023-04-28 .. 2025-06-01
+  may have been seen when its numbers were chosen, so that stretch is in-sample for the grid and the twin
+  adds only the days before 2023-04-28 (the spec''s own date for its numbers: 2025-06-01).'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/bv2/bv2-research-shared-pool.yaml: the same window end'
+  base_params.coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  base_params.capital_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.hedge_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.sticky_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.ratchet_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.carry_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_fraction: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_entry_apr: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.slippage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.min_order_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.margin_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.short_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.default_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.default_maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.margin_buffer: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.hedge_margin_headroom: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.rebalance_at_im_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.mode: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  inner_code_ref: 'src/qlab/strategies/live/bv2.py: the strategy both bv2-binance and bv2-research-shared-pool
+    run'
+  grid.variant.base: 'specs/bv2-binance.yaml: the base''s numbers, unchanged'
+  grid.variant.experiment.shared_margin: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas,
+    «можно ли трюк с FRAB с плечем и страховкой использовать на Bv2?»; docs/BV2_MARGIN.md, direction 1
+    «Один пул залога на все монеты», handed to the researcher by the owner: «давай»'
+  score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
+    min_order_usd
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+regime_claim:
+  bull: earns
+  bear: beats_market
+selects_causally: true

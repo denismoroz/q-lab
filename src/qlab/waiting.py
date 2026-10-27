@@ -276,7 +276,12 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
     from qlab.night import is_generator_idea
     from qlab.pipeline.stage2 import survives
     from qlab.registry.models import Idea, IdeaStatus
-    from qlab.registry.stages import is_stage2_child, latest_routed, stage2_child
+    from qlab.registry.stages import (
+        child_id_taken,
+        is_stage2_child,
+        latest_routed,
+        stage2_child,
+    )
 
     plans: list[Plan] = []
     statuses = [IdeaStatus(s) for s in (*IN_WORK, "validated")]
@@ -293,8 +298,10 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
             plans.append(_plan_for(idea.id, "idea", path, skip, read_basis(session, idea.id),
                                    end, coverage_days, current_rules))
         child = stage2_child(session, idea.id)
+        # `<idea>-hl` may be another idea (bv2-research-shared-pool-hl): nothing is written there
+        child_taken = child is None and child_id_taken(session, idea.id)
         survivor = (stage2_config is not None and stage2_config.enabled and route is not None
-                    and survives(route, stage2_config))
+                    and not child_taken and survives(route, stage2_config))
         # A researcher's experiment on Binance's history goes to the second stage as a
         # generated idea does (it is run right after the experiment; this catches the ones
         # that never were, and the twins): `qlab.twin_stage.goes_to_stage2`.

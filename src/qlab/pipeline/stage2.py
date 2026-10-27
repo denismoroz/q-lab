@@ -429,6 +429,10 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
         result.skipped = f"stage 1 routed {stage1_route}: only survivors go on"
         return result
     try:
+        if _id_taken(spec.idea_id):
+            result.skipped = (f"the second stage's idea id {result.idea_id!r} belongs to another "
+                              f"idea of the registry, not to a second stage of {spec.idea_id!r}")
+            return result
         _run(spec, result, config, noise_trials=noise_trials,
              deployable_capital_usd=deployable_capital_usd, spec_dir=spec_dir,
              venue_names=venue_names, measure=measure)
@@ -438,6 +442,14 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
         if not measure:
             _settle_after_error(result, config)
     return result
+
+
+def _id_taken(parent_id: str) -> bool:
+    from qlab.registry.db import session_scope
+    from qlab.registry.stages import child_id_taken
+
+    with session_scope() as session:
+        return child_id_taken(session, parent_id)
 
 
 def _settle_after_error(result: Stage2Result, config: Stage2Config) -> None:
@@ -572,6 +584,10 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
     if stage2.get("status") == "skipped":
         if stage2.get("skipped", "").startswith("stage 2 is switched off"):
             return ["второй этап (проверка на Hyperliquid) выключен в `night/stage2.yaml`"]
+        if stage2.get("skipped", "").startswith("the second stage's idea id"):
+            return ["второй этап не проводился: имя для него (`<идея>-hl`) уже занято другой идеей "
+                    "реестра, и писать в неё чужие испытания нельзя; идее нужно другое имя "
+                    "второго этапа"]
         return [f"второй этап (тот же механизм на Hyperliquid) не проводился: на первом этапе "
                 f"исход «{_route_ru(str(stage1_route))}», а на Hyperliquid проверяют только "
                 "тех, кто прошёл первый"]
