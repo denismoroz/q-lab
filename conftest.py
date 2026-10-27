@@ -23,3 +23,15 @@ def _noise_in_process(monkeypatch) -> None:
     from qlab.calibration.run import NOISE_WORKERS_ENV
 
     monkeypatch.setenv(NOISE_WORKERS_ENV, "1")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_agent_ledgers(monkeypatch) -> None:
+    """A test that runs the whole night never reaches the programmer's queue or the
+    cataloguer's ledger on disk: both stages read and write the owner's real files
+    (data/programmer/queue.json, data/cataloguer/ledger.json). Until 2026-10-27 every test
+    run appended a budget error to the real queue. A test of a stage sets its own over this."""
+    import qlab.night as night
+
+    monkeypatch.setattr(night, "programmer_stage", lambda *a, **kw: None)
+    monkeypatch.setattr(night, "catalogue_stage", lambda *a, **kw: None)
