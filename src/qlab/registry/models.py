@@ -331,7 +331,9 @@ class Trial(Base):
     params: Mapped[dict] = mapped_column(JSON, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # none_as_null: a trial without metrics is SQL NULL, so `metrics IS NOT NULL` filters
+    # mean what they say (a JSON 'null' passed them and crashed the night of 2026-10-27).
+    metrics: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     status: Mapped[TrialStatus] = mapped_column(
         _enum_column(TrialStatus), nullable=False, index=True
     )

@@ -848,3 +848,45 @@ def test_past_stop_records_only_the_first_cut_stage() -> None:
     assert "stopped_at" not in state
     assert night.past_stop(late, state, "waiting") and night.past_stop(late, state, "director")
     assert state["stopped_at"]["before"] == "waiting"
+
+
+def test_a_failing_second_opinion_is_reported_and_the_night_goes_on(tmp_path, monkeypatch) -> None:
+    # The night of 2026-10-27 stopped at 04:51 on one brief that could not be built: research,
+    # the generator and the programmer never ran. One candidate's failure is now its row.
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    import qlab.agents.assessor as assessor
+    import qlab.budget as budget
+    import qlab.registry.db as db
+
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    fake_session = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+
+    @contextmanager
+    def scope():
+        yield fake_session
+
+    monkeypatch.setattr(db, "session_scope", scope)
+    monkeypatch.setattr(budget, "probe", lambda s: SimpleNamespace(report=SimpleNamespace(
+        reading=None)))
+    stage = SimpleNamespace(candidate=lambda name: SimpleNamespace(spent_tokens=7))
+    monkeypatch.setattr(budget, "NightBudget", SimpleNamespace(open=lambda s, r: SimpleNamespace(
+        stage=lambda *a, **k: stage)))
+    monkeypatch.setattr(night, "worth_assessing", lambda s, results: results)
+
+    def brief(session, trial_id, paper=None):
+        if trial_id == 1:
+            raise AttributeError("'NoneType' object has no attribute 'items'")
+        return trial_id
+
+    monkeypatch.setattr(assessor, "build_brief", brief)
+    monkeypatch.setattr(assessor, "run_assessment", lambda brief, budget, session: SimpleNamespace(
+        view="agree", dispute=False, summary="ok"))
+    state = {"done": {}, "results": [{"name": "broken", "trial_id": 1},
+                                     {"name": "fine", "trial_id": 2}]}
+    night.assess_stage(date(2026, 10, 27), state)
+    broken, fine = state["assessed"]
+    assert broken["stopped"].startswith("сбой: AttributeError")
+    assert fine["view"] == "agree"
+    assert "assess:1" not in state["done"] and "assess:2" in state["done"]  # retried next run

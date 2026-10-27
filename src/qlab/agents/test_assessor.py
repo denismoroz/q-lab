@@ -8,7 +8,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from qlab.agents.assessor import Brief, build_brief, parse_answer, run_assessment, verify
@@ -123,3 +123,20 @@ def test_assessment_is_recorded_and_the_verdict_untouched(session, tmp_path, mon
     row = session.query(Assessment).one()
     assert (row.trial_id, row.view, row.summary) == (trial.id, "too_harsh", "рано")
     assert session.get(Trial, trial.id).route == TrialRoute.NEEDS_FORWARD
+
+
+def test_a_family_members_run_without_metrics_is_skipped_for_its_last_good_one(session) -> None:
+    # The night of 2026-10-27: a variant's latest run failed (metrics None, once stored as the
+    # JSON text 'null' that `IS NOT NULL` let through) and the brief crashed the night.
+    good = _trial(session, "a-variant", {"ann_return_net": 0.02}, TrialRoute.NEEDS_FORWARD)
+    failed = Trial(spec_id=good.spec_id, config_hash="h-failed", code_sha="x", params={},
+                   started_at=datetime.now(UTC), metrics=None, status=TrialStatus.NOT_EVALUABLE,
+                   route=TrialRoute.NOT_EVALUABLE, route_reason="error",
+                   source=TrialSource.IMPORTED)
+    session.add(failed)
+    session.flush()
+    trial = _trial(session, "a", {"ann_return_net": 0.238}, TrialRoute.NEEDS_FORWARD)
+    raw = session.execute(text("select metrics from trial where id = :i"), {"i": failed.id})
+    assert raw.scalar() is None  # SQL NULL, not 'null'
+    brief = build_brief(session, trial.id)
+    assert brief.facts["a-variant.ann_return_net"] == 0.02

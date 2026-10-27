@@ -205,3 +205,22 @@ def test_the_choice_sees_only_data_before_the_cut():
     assert list(run.choices.dropna()) == ["w3"]  # A was the better before the cut
     held = run.weights.loc["2024-05-01":]
     assert (held["A"] == 1.0).all() and (run.weights.loc[:"2024-04-29"].abs().sum().sum() == 0)
+
+
+def test_a_night_rerun_keeps_the_first_runs_cut_on_a_longer_tail(config, tmp_path):
+    # The night of 2026-10-27 passed open lists to the stand as they were; a re-run must judge
+    # the same one choice, its cut fixed by the spec file's window, not moved by the new data.
+    from qlab.night import rerun_spec, with_end
+
+    text = _spec("perp-carry-crash-timing", "gen-ex-rerun", window="[3, 7, 14, 30]",
+                 rebalance="[1, 7]", min_history="30", extra_sources=OPEN_SOURCES)
+    path = tmp_path / "gen-ex-rerun.yaml"
+    path.write_text(text, encoding="utf-8")
+    spec = load_spec(path)
+    first = own_numbers.cut_date(spec, config)
+    judged = with_end(rerun_spec(spec), date(2027, 6, 1))
+    assert judged.code_ref == own_numbers.RETUNE and judged.params_fixed_at == first
+    assert judged.params["choose_at"] == first.isoformat() and judged.data.end == date(2027, 6, 1)
+    plain = spec.model_copy(update={"params": {**spec.params, "rebalance_days": 1,
+                                               "signal": {"block": "funding", "window_days": 7}}})
+    assert rerun_spec(plain) is plain

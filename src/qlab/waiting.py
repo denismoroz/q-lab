@@ -335,7 +335,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
                   deployable_capital_usd: float, config) -> dict:
     """The second stage on the fresh tail. `stage1` is tonight's re-run of the first
     stage when there was one; otherwise stage 1's latest outcome in the registry."""
-    from qlab import night
+    from qlab import night, own_numbers
     from qlab.pipeline.spec import load_spec
     from qlab.pipeline.stage2 import run_stage2
     from qlab.registry.db import session_scope
@@ -348,7 +348,16 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             routed = latest_routed(session, plan.idea_id)
             route = getattr(routed[0].route, "value", routed[0].route) if routed else None
             trial_id = routed[0].id if routed else None
-    outcome = run_stage2(night.with_end(load_spec(Path(plan.spec_path)), end),
+    spec = load_spec(Path(plan.spec_path))
+    if own_numbers.open_params(spec):  # the values chosen at stage 1's cut, as the generator
+        retune = night.rerun_spec(spec)
+        with session_scope() as session:
+            chosen = own_numbers.chosen_params(night.with_end(retune, end), session)
+        if chosen is None:
+            return {**_entry(plan, end), "action": "wait", "due_end": None,
+                    "why": "на отрезе не выбрано ни одного значения: второму этапу нечего нести"}
+        spec = own_numbers.fixed_at_choice(spec, chosen, retune.params_fixed_at)
+    outcome = run_stage2(night.with_end(spec, end),
                          stage1_route=route, stage1_trial_id=trial_id, noise_trials=noise_trials,
                          deployable_capital_usd=deployable_capital_usd, config=config)
     m = outcome.metrics or {}

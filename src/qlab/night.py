@@ -123,6 +123,23 @@ def previous_route(session, idea_id: str, before: int) -> str | None:
     return getattr(row[0], "value", row[0]) if row else None
 
 
+def rerun_spec(spec: StrategySpec) -> StrategySpec:
+    """The spec a night re-run evaluates. A spec with open numbers (qlab.own_numbers) is its
+    one-choice form, its cut computed from the window the spec file declares -- before the
+    data is extended -- so the forward days grow night by night and the choice stays the one
+    made at the first run. Its candidates were recorded as trials by that first run (the
+    researcher or the generator); re-running the same choice adds no new candidate. The
+    night of 2026-10-27 passed such specs to the stand as they were and both failed."""
+    from qlab import own_numbers
+
+    if not own_numbers.open_params(spec):
+        return spec
+    config = own_numbers.load_config()
+    if found := own_numbers.problems(spec, config):
+        raise ValueError("; ".join(found))
+    return own_numbers.to_retune(spec, config)
+
+
 def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int,
                   deployable_capital_usd: float) -> ItemResult:
     """One evaluation in its own transaction, so one failure cannot roll back
@@ -133,6 +150,7 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
 
     result = ItemResult(kind=kind, name=spec.idea_id)
     try:
+        spec = rerun_spec(spec)
         with session_scope() as session:
             out = evaluate_spec_with_shape_aware_bar(
                 with_end(spec, end), session=session, ruleset=load_latest(),
@@ -867,6 +885,9 @@ def assess_stage(day: date, state: dict) -> None:
                 break
             except BudgetExhausted as stop:
                 entry["stopped"] = f"candidate budget: {stop}"
+            except Exception as exc:  # noqa: BLE001 - a second opinion is never worth the night
+                session.rollback()
+                entry["stopped"] = f"сбой: {type(exc).__name__}: {exc}"
             out.append(entry)
             session.commit()
             save_state(day, state)

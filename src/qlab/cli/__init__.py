@@ -742,6 +742,9 @@ def night_run_cmd(
     waiting: bool = typer.Option(
         True, "--waiting/--no-waiting",
         help="Re-run the ideas waiting for data that are not on the watch list (no tokens)"),
+    programmer: bool = typer.Option(
+        True, "--programmer/--no-programmer",
+        help="The programmer agent on its queue (tokens; docs/PROGRAMMER.md)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
     stop_at: str | None = typer.Option(
         None, "--stop-at",
@@ -758,8 +761,8 @@ def night_run_cmd(
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               director=director, waiting=waiting, noise_trials=noise_trials,
-               stop_at=stop_time(stop_at) if stop_at else None)
+               director=director, waiting=waiting, programmer=programmer,
+               noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
 
 
