@@ -745,6 +745,9 @@ def night_run_cmd(
     programmer: bool = typer.Option(
         True, "--programmer/--no-programmer",
         help="The programmer agent on its queue (tokens; docs/PROGRAMMER.md)"),
+    catalogue: bool = typer.Option(
+        True, "--catalogue/--no-catalogue",
+        help="The cataloguer agent: one paper into the catalogue (tokens; docs/CATALOGUER.md)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
     stop_at: str | None = typer.Option(
         None, "--stop-at",
@@ -762,6 +765,7 @@ def night_run_cmd(
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
                director=director, waiting=waiting, programmer=programmer,
+               catalogue=catalogue,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
 
@@ -972,6 +976,102 @@ def idea_set_parent(
         old = idea.parent_id
         idea.parent_id = parent_id
         typer.echo(f"{idea_id}: {old or '(none)'} -> {parent_id}")
+
+
+catalogue_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                            help="The cataloguer agent's papers (docs/CATALOGUER.md).")
+app.add_typer(catalogue_app, name="catalogue")
+
+
+def _catalogue_paper(paper_id: str):
+    from qlab.agents import cataloguer as cat
+
+    ledger = cat.load_ledger()
+    paper = next((p for p in ledger if p.id == paper_id), None)
+    if paper is None:
+        typer.echo(f"unknown paper: {paper_id}", err=True)
+        raise typer.Exit(code=1)
+    return cat, ledger, paper
+
+
+@catalogue_app.command("list")
+def catalogue_list() -> None:
+    """Every paper the cataloguer took and what became of it."""
+    from qlab.agents import cataloguer as cat
+
+    for p in cat.load_ledger():
+        typer.echo(f"{p.id:28s} {p.status:10s} attempts {p.attempts}  {p.mechanism or ''}  "
+                   f"{p.title[:60]}")
+        for problem in p.problems + [f"review: {g}" for g in p.review]:
+            typer.echo(f"    {problem.splitlines()[0][:160]}")
+
+
+@catalogue_app.command("add")
+def catalogue_add(
+    link: str = typer.Argument(..., help="The paper's link (arXiv or a direct PDF)"),
+    pdf: str | None = typer.Option(None, "--pdf", help="A local PDF of it, when the link is "
+                                   "behind a login"),
+    title: str = typer.Option("", "--title"),
+) -> None:
+    """Queue a paper of the owner's: the night reads it before the feed's candidates."""
+    from datetime import UTC, datetime
+
+    from qlab.agents import cataloguer as cat
+
+    ledger = cat.load_ledger()
+    paper = cat.add_owner_paper(ledger, link, pdf=pdf, title=title,
+                                day=datetime.now(UTC).date())
+    cat.save_ledger(ledger)
+    typer.echo(f"queued {paper.id}" if paper else "this paper is already in the ledger")
+
+
+@catalogue_app.command("run")
+def catalogue_run(paper_id: str | None = typer.Argument(
+        None, help="A paper of the ledger; none: the one the night would take")) -> None:
+    """Read one paper now (tokens, through the budget guard), as the night would."""
+    from datetime import UTC, datetime
+
+    from qlab.agents import cataloguer as cat
+    from qlab.budget import Stage
+    from qlab.budget.agent import open_candidate
+    from qlab.registry.db import session_scope
+
+    config = cat.load_config()
+    ledger = cat.load_ledger()
+    with session_scope() as session:
+        paper = (next((p for p in ledger if p.id == paper_id), None) if paper_id
+                 else cat.next_paper(ledger, session,
+                                     max_attempts=int(config.get("max_attempts", 2))))
+        if paper is None:
+            typer.echo("no paper to read", err=True)
+            raise typer.Exit(code=1)
+        cat.run_paper(paper, config, budget=open_candidate(session, None, Stage.SEARCH),
+                      session=session, day=datetime.now(UTC).date())
+    cat.save_ledger(ledger)
+    typer.echo(f"{paper.id}: {paper.status} {paper.mechanism or paper.reason or ''}; "
+               f"{paper.tokens:,} tokens")
+    for problem in paper.problems + [f"review: {g}" for g in paper.review]:
+        typer.echo(f"  {problem}")
+
+
+@catalogue_app.command("retry")
+def catalogue_retry(paper_id: str = typer.Argument(...)) -> None:
+    """Put a blocked or set-aside paper back in the queue (the owner's decision)."""
+    cat, ledger, paper = _catalogue_paper(paper_id)
+    paper.status, paper.attempts = "queued", 0
+    cat.save_ledger(ledger)
+    typer.echo(f"{paper.id}: queued again")
+
+
+@catalogue_app.command("reject")
+def catalogue_reject(paper_id: str = typer.Argument(...),
+                     reason: str = typer.Option(..., "--reason")) -> None:
+    """THE OWNER'S COMMAND: undo a paper -- its catalogue commit is reverted by a new commit."""
+    cat, ledger, paper = _catalogue_paper(paper_id)
+    cat.reject(paper, reason)
+    cat.save_ledger(ledger)
+    typer.echo(f"{paper.id}: rejected" + (f", commit {paper.commit[:10]} reverted"
+                                          if paper.commit else ""))
 
 
 code_app = typer.Typer(add_completion=False, no_args_is_help=True,

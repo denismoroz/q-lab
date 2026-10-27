@@ -44,7 +44,8 @@ STOP_STAGES = {"recheck": "перепроверка списка наблюде�
                "director": "руководитель исследований", "research": "исследователь",
                "experiments": "эксперименты исследователя", "programmer": "программист",
                "implement": "реализация карточек",
-               "search": "поиск", "generate": "генератор идей"}
+               "search": "поиск", "catalogue": "разбор статей в каталог",
+               "generate": "генератор идей"}
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
@@ -522,6 +523,16 @@ def write_report(day: date, state: dict) -> Path:
         if coded.get("stopped"):
             lines.append(f"- остановлено: {coded['stopped']}; продолжит в следующую ночь")
             lines.append("")
+    if (read := state.get("catalogue")) is not None:
+        from qlab.agents.cataloguer import load_ledger
+        from qlab.agents.cataloguer import report_lines as catalogue_lines
+
+        lines += ["## Разбор статей в каталог", "", *catalogue_lines(read.get("entries") or [],
+                                                                     load_ledger()), ""]
+        if read.get("stopped"):
+            lines += [f"- остановлено: {read['stopped']}; продолжит в следующую ночь", ""]
+        if read.get("error"):
+            lines += [f"- сбой до выбора статьи: {read['error']}", ""]
     if implemented := state.get("implemented"):
         lines += ["## Реализация карточек агентом", ""]
         for e in implemented:
@@ -684,7 +695,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
         noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
-        stop_at: datetime | None = None, programmer: bool = True) -> Path:
+        stop_at: datetime | None = None, programmer: bool = True,
+        catalogue: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -767,6 +779,9 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                         deployable_capital_usd=deployable_capital_usd)
     if search and not past_stop(stop_at, state, "search"):
         search_stage(day, state)
+    if search and catalogue and not past_stop(stop_at, state, "catalogue"):
+        # Before the generator: a mechanism catalogued tonight can be built tonight.
+        catalogue_stage(day, state)
     if (generate is True or (search and generate is None)) \
             and not past_stop(stop_at, state, "generate"):
         # Last: the search for new ideas is what the budget cuts first, and the
@@ -778,6 +793,53 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
 
 
 PROGRAMMER = Path("night/programmer.yaml")
+CATALOGUER = Path("night/cataloguer.yaml")
+
+
+def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> None:
+    """The cataloguer agent (`qlab.agents.cataloguer`, docs/CATALOGUER.md): up to `per_night`
+    papers read in full and written into the catalogue when code and the reviewer pass them, in
+    the search stage's budget. Resumable: a paper done tonight is not repeated."""
+    from dataclasses import asdict
+
+    from qlab.agents import cataloguer as cat
+    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.registry.db import session_scope
+
+    if not config.is_file():
+        return
+    cfg = cat.load_config(config)
+    if not cfg.get("enabled", False):
+        return
+    entry = state.setdefault("catalogue", {"entries": []})
+    ledger = cat.load_ledger()
+    done = {e["id"] for e in entry["entries"]}
+    max_attempts = int(cfg.get("max_attempts", 2))
+    for _ in range(int(cfg.get("per_night", 1)) - len(done)):
+        paper = None
+        try:
+            with session_scope() as session:
+                paper = cat.next_paper(ledger, session, max_attempts=max_attempts)
+                if paper is None or paper.id in done:
+                    break
+                stage = NightBudget.open(session, probe(session).report.reading).stage(
+                    Stage.SEARCH, candidates=1)
+                cat.run_paper(paper, cfg, budget=stage.candidate(None), session=session, day=day)
+        except (NightExhausted, BudgetExhausted) as stop:
+            entry["stopped"] = str(stop)
+            cat.save_ledger(ledger)
+            save_state(day, state)
+            return
+        except Exception as exc:  # noqa: BLE001 - a report line, the night goes on
+            if paper is None:
+                entry["error"] = f"{type(exc).__name__}: {exc}"
+                break
+            paper.problems.append(f"{type(exc).__name__}: {exc}")
+            paper.status = "failed"
+        entry["entries"].append(asdict(paper))
+        done.add(paper.id)
+        cat.save_ledger(ledger)
+        save_state(day, state)
 
 
 def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> None:

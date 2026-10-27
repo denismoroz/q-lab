@@ -532,14 +532,18 @@ def test_a_night_without_search_does_not_run_the_generator(tmp_path, monkeypatch
     watch = tmp_path / "watch.yaml"
     watch.write_text("specs: []\n")
     monkeypatch.setattr(night, "WATCHLIST", watch)
-    seen = []
-    monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: seen.append(kw.get("force")))
-    monkeypatch.setattr(night, "search_stage", lambda *a, **kw: None)
+    seen, order = [], []
+    monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: (
+        seen.append(kw.get("force")), order.append("generate")))
+    monkeypatch.setattr(night, "search_stage", lambda *a, **kw: order.append("search"))
+    monkeypatch.setattr(night, "catalogue_stage", lambda *a, **kw: order.append("catalogue"))
     flags = dict(graveyard=False, paper=False, implement=False, detectors=False, assess=False,
-                 research=False, waiting=False)
+                 research=False, waiting=False, programmer=False)
     night.run(date(2026, 10, 21), search=False, **flags)
-    assert seen == []
+    assert seen == [] and order == []
     night.run(date(2026, 10, 21), search=True, **flags)
+    # a mechanism the cataloguer writes tonight can be built by the generator tonight
+    assert order == ["search", "catalogue", "generate"]
     night.run(date(2026, 10, 21), search=False, generate=True, **flags)
     assert seen == [None, True]
 

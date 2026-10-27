@@ -1,0 +1,14 @@
+# The cataloguer agent (qlab.agents.cataloguer, docs/CATALOGUER.md). Owner, 2026-10-27: «да,
+# сделай агента для разбора статей в каталог. чтобы шаг разобрать работал полностью».
+#
+# One paper a night, in the search stage's share of the budget (the share CLAUDE.md cuts
+# first), before the generator, so a mechanism catalogued tonight can be built tonight. Code
+# checks every number of the draft against the paper's own text, a reviewer agent checks the
+# meaning; a draft that passes is written into docs/MECHANISMS.md and committed (that file
+# only, locally). The owner undoes one with `qlab catalogue reject <id>`.
+enabled: true
+model: sonnet        # docs/PLAN.md: the agents that write run on sonnet
+reviewer_model: sonnet
+max_turns: 40
+per_night: 1
+max_attempts: 2      # a paper refused twice by code is set aside

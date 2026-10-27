@@ -45,3 +45,6 @@ data/publications/
 data/capital_floors/
 data/console/
 data/programmer/
+
+# the cataloguer agent: its ledger, paper texts and work folders (docs/CATALOGUER.md)
+data/cataloguer/
