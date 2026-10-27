@@ -148,6 +148,12 @@ def card_brief(fields: CardFields, code_path: Path, *, block_exists: bool,
             f"{first}. Each of these paths ({', '.join(fields.grid.paths)}) must be a key of "
             "`params` (nested by dots) that the class reads. A grid parameter the class ignores "
             "makes the choice meaningless and the attempt fails.")
+    if fields.readings:
+        listed = "\n".join(f"    - {r}" for r in fields.readings)
+        parts.append(
+            "\nREADINGS. The idea's words allow more than one reading, and the card keeps each as "
+            f"a variant of the grid:\n{listed}\nThe block must be able to run every one of them "
+            "through its parameters: none may be left to a constant inside the class.")
     if fields.baseline_spec is not None:
         parts.append(
             f"\nBASELINE. The strategy this idea is compared with is {fields.baseline_spec}. "

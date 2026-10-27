@@ -249,6 +249,9 @@ def _carder(day: str, st: dict) -> Run | None:
     details = []
     for e in entries:
         details += [f"{e['id']}: {p}" for p in e.get("problems") or []]
+        if e.get("notes"):
+            details.append(f"{e['id']}: замечания по словам (не блокируют) — "
+                           + "; ".join(e["notes"]))
         if e.get("duplicate_of"):
             details.append(f"{e['id']}: повтор — {e['duplicate_of']}")
         if e.get("question"):

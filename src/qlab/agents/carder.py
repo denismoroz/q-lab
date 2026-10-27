@@ -16,12 +16,20 @@ one idea a night:
 3. one agent call writes ONE draft `cards/drafts/<inbox id>.yaml`: a card (hypothesis, a
    baseline spec to compare with, what is new against every nearest tried entry, a grid of
    variants declared before any run, the data with the honest start of its coin list, the NEW
-   block to build) -- or `duplicate` (naming the tried entry or buried idea it repeats) or
-   `needs-owner` (one question);
+   block to build; when the idea's words allow several readings, every reading is a variant of
+   the grid and is listed in `readings_ru`) -- or `duplicate` (naming the tried entry or buried
+   idea it repeats) or `needs-owner` (one question);
 4. code checks the draft (`check_draft`): the schema, every tried id exists, the grid is within
    `night/own_numbers.yaml` max_candidates, the baseline spec loads, the data is honest about its
    coin list, the Russian is plain and without the jargon `cards/SCHEMA.md` forbids;
-5. a reviewer agent reads the idea, the draft and the tried entries and checks the meaning;
+5. a reviewer agent reads the idea, the draft and the tried entries and checks the meaning. Its
+   remarks come in two kinds (2026-10-27, after the first real idea went round three times for
+   about 2M tokens): `BLOCK: <kind>: <ref>: <text>` for a problem that makes the card wrong (a
+   closed list of kinds, BLOCK_KINDS) and `NOTE: <text>` for wording, which never blocks and
+   stays on the card. From the second round the reviewer sees the previous round's blocks and a
+   diff against the previous draft, and may block only on a block still not fixed (`prev:<n>`) or
+   inside the changed lines (`changed`); code demotes any other block to a note, so the loop
+   converges;
 6. code moves the card to `cards/<idea_id>.yaml`, queues it in `night/implement_queue.yaml` (one
    card of the carder pending at a time) and sets the inbox status. The verdict on the idea
    itself is never the agent's: the stand will give it, after the implementer has built the block.
@@ -31,8 +39,11 @@ the share CLAUDE.md cuts first."""
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
+import shutil
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -40,7 +51,7 @@ import yaml
 
 from qlab import ideas as inbox
 from qlab import tried as tried_module
-from qlab.agents.cataloguer import JARGON, _russian_problems, review_lines
+from qlab.agents.cataloguer import JARGON, _russian_problems
 from qlab.agents.implementer import _changed_paths, _revert
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.pipeline.sources import QLAB_ROOT
@@ -65,6 +76,11 @@ _ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DRIVER = ("who_pays", "why", "kill_condition", "observable")
+BLOCK_KINDS = ("narrowed", "hindsight-data", "repeats-tried", "baseline-mismatch",
+               "rule-incomplete", "unfair-grid", "wrong-duplicate", "bad-question")
+"""What a blocking remark of the reviewer may be about. Everything else (an unexplained term, a
+clumsy sentence, a missing example) is a NOTE: wording never blocks a card."""
+MAX_DIFF_LINES = 300
 
 
 def _abs(path: Path) -> Path:
@@ -265,6 +281,8 @@ prior:
 carder:
   hypothesis_ru: <the testable claim in one or two plain-Russian sentences, with what would
     make it false>
+  readings_ru:                # only when the idea's words allow 2 or more readings (rule 7)
+    - <one plain-Russian sentence per reading>
   baseline:
     spec: <a spec file from the brief's list: the strategy the new rule is compared against>
     why_ru: <why that one>
@@ -307,6 +325,14 @@ Rules code checks -- a draft that breaks one is refused and you are told why:
    data or the question, it is a card. If existing blocks or parameters already express the
    idea (nothing new to build), answer needs-owner and say which ones, so the owner can send it
    to the researcher.
+7. When the idea's words allow more than one reading, never pick one and drop the rest: list the
+   readings in `carder.readings_ru` (2 or more plain-Russian sentences, one per reading) and make
+   EACH reading a variant of the grid -- an axis of the new block, for example a parameter whose
+   values name the readings, or numbers that switch a part of the rule on or off. Checking a
+   variant on the stand is cheap, tokens are not. Example: «determine the trend on the higher
+   timeframe, switch on by the lower one» is read either as "the lower timeframe only lifts the
+   hedge" or as "it both lifts and sets it": one axis with two values, not a guess. Answer
+   needs-owner only when the readings do not fit {cap} variants together with the other axes.
 {earlier}
 Reply with one line: "DRAFT: <verdict> <idea_id or tried id>"."""
 
@@ -320,20 +346,166 @@ repository (read only) is at {frab}.
 Code already checked the schema, the ids, the grid size, the baseline file and the plain-words
 word list. Check what code cannot:
 1. Does the draft carry the idea as it was worded -- the same question, not a narrower, safer or
-   more famous one? Is anything the idea asks for missing from the rule?
+   more famous one? Is anything the idea asks for missing from the rule? When the words allow
+   more than one reading, the draft must keep every reading as a variant of the grid (and list
+   them in `carder.readings_ru`): a reading that is in the grid is NOT a reason to block, a
+   reading that was dropped is `narrowed`.
 2. For `card`: is each `difference_ru` really a difference -- read the tried entry it names, its
    result line and the file it cites; is the new rule not the same rule with another number? Is
    the grid a fair declaration (values not picked because a tried entry's result favoured them,
-   unless source_ru says so)?
+   unless source_ru says so)? Is the grid's first variant the baseline, and is the baseline the
+   strategy the new rule changes?
 3. For `duplicate`: is it truly the same idea as the entry it names? A wrong duplicate buries a
    new idea for good, so be strict: the same rule, the same data question.
-4. For `needs-owner`: is the question one only the owner can answer, and is it specific?
-5. Is the rule in `new_block.rule_ru` complete enough for an engineer who has only the card? Is
-   `plain_summary` readable without a dictionary, every term explained at first use?
+4. For `needs-owner`: is the question one only the owner can answer, and is it specific? A
+   question about which reading of the idea is meant is wrong when the readings fit the grid.
+5. Is the rule in `new_block.rule_ru` complete enough for an engineer who has only the card?
 6. Is the data honest about its coin list and its start (no list that knows who survived)?
 
-Reply with lines only: `GAP: <what is wrong, which field>` for every problem you are sure of, then
-a last line `VERDICT: OK` if there is none or `VERDICT: GAP` if there is any."""
+Two kinds of remark, and only the first stops a card:
+- `BLOCK: <kind>: <ref>: <text>` -- a problem that makes the card WRONG. <kind> is exactly one of:
+  narrowed (the card answers a narrower or different question than the idea, or drops a reading
+  of it), hindsight-data (the coin list or the data start is chosen knowing the outcome),
+  repeats-tried (a `difference_ru` that is no difference), baseline-mismatch (the grid's first
+  variant is not the baseline, or the baseline is not the strategy the rule changes),
+  rule-incomplete (an engineer with only the card would have to guess), unfair-grid (values picked
+  because a result favoured them), wrong-duplicate (a duplicate that is not the same idea),
+  bad-question (a needs-owner question the owner need not answer, or one the grid already
+  answers). A kind not in this list counts as a NOTE.
+- `NOTE: <text>` -- wording: a term not explained at first use, a clumsy sentence, a jargon word,
+  a missing example, a nicer title. A NOTE never blocks; write as many as are useful. Do not turn
+  wording into a BLOCK.
+{round}
+Reply with lines only: every BLOCK and NOTE you are sure of, then a last line `VERDICT: OK` if
+there is no BLOCK or `VERDICT: BLOCK` if there is any."""
+
+ROUND_ONE = """
+This is the first review of this idea: write `new` as <ref> in every BLOCK.
+"""
+
+ROUND_NEXT = """
+This is a later review round, not the first. The draft was refused last round for these BLOCK
+remarks (numbered):
+{previous}
+
+The agent then changed the draft. What changed (unified diff, the previous draft against this
+one):
+```diff
+{diff}
+```
+You may BLOCK only on:
+- a previous remark that is still NOT fixed in this draft: `BLOCK: <kind>: prev:<n>: <text>`
+  with its number from the list above; or
+- something wrong inside the changed lines of the diff: `BLOCK: <kind>: changed: <text>`.
+Anything you notice in the parts that did not change -- however true -- is at most a NOTE. A
+previous remark you do not repeat counts as fixed. Code demotes any other BLOCK to a NOTE, so a
+new find in an unchanged part cannot stop the card.
+"""
+
+
+# --------------------------------------------------------------------------
+# The reviewer's reply
+
+
+@dataclass
+class Review:
+    """A parsed reply. `blocks` are the remarks that stop the card ({kind, ref, text}), `notes`
+    the wording remarks that never do, `extra` problems code found in the reply itself."""
+    blocks: list[dict] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.blocks and not self.extra
+
+    @property
+    def problems(self) -> list[str]:
+        return [*self.extra, *(block_problem(b) for b in self.blocks)]
+
+
+_BLOCK_LINE = re.compile(r"^BLOCK:\s*(.+)$", re.MULTILINE)
+_NOTE_LINE = re.compile(r"^NOTE:\s*(.+)$", re.MULTILINE)
+_REF = re.compile(r"^(new|changed|prev:\s*\d+)\s*:\s*(.+)$")
+_VERDICT = re.compile(r"^VERDICT:\s*(OK|BLOCK)\s*$", re.MULTILINE)
+
+
+def block_problem(block: dict) -> str:
+    """A blocking remark as the line `problems` of an inbox entry and the report carry."""
+    return f"reviewer: {block['kind']}: {block['text']}"
+
+
+def parse_review(text: str, previous: list[dict] | None = None) -> Review:
+    """The reviewer's reply: `BLOCK: <kind>: <ref>: <text>`, `NOTE: <text>`, a last line
+    `VERDICT: OK|BLOCK`. A BLOCK of an unknown kind is a note, and says so. `previous` is the
+    earlier round's blocks (None in the first round); from the second round a BLOCK stands only
+    when its ref is `changed` or `prev:<n>` of a block in that list, any other is demoted to a
+    note with the reason, so a find in a part that did not change cannot stop the card. A reply
+    with no verdict line, or `VERDICT: BLOCK` with no BLOCK line at all, blocks."""
+    review = Review(notes=[m.group(1).strip() for m in _NOTE_LINE.finditer(text)])
+    named = 0
+    for line in _BLOCK_LINE.findall(text):
+        named += 1
+        kind, _, rest = line.partition(":")
+        if not rest.strip():
+            kind, rest = "", line
+        kind, rest = kind.strip().lower(), rest.strip()
+        ref_match = _REF.match(rest)
+        ref, body = ((re.sub(r"\s+", "", ref_match.group(1)), ref_match.group(2).strip())
+                     if ref_match else ("", rest))
+        if kind not in BLOCK_KINDS:
+            review.notes.append(f"{body} (a BLOCK of an unknown kind {kind!r}, counted as a note)")
+        elif previous is None:
+            review.blocks.append({"kind": kind, "ref": "new", "text": body})
+        elif ref == "changed" or (ref.startswith("prev:") and 1 <= int(ref[5:]) <= len(previous)):
+            review.blocks.append({"kind": kind, "ref": ref, "text": body})
+        else:
+            review.notes.append(
+                f"[{kind}] {body} (not blocking: from the second round a BLOCK must point at a "
+                f"previous remark still not fixed, prev:<n>, or at the changed lines, changed; "
+                f"its ref was {ref or 'missing'!r})")
+    verdicts = _VERDICT.findall(text)
+    if not verdicts:
+        review.extra.append("the reviewer gave no verdict")
+    elif verdicts[-1] == "BLOCK" and not named:
+        review.extra.append("the reviewer answered VERDICT: BLOCK without a BLOCK line")
+    return review
+
+
+def previous_blocks(entry: dict) -> list[dict]:
+    """The blocking remarks of the previous round, from the inbox entry. An entry written before
+    the remarks were structured has only `problems` strings `reviewer: ...`: they block too, as
+    kind `unknown`."""
+    stored = entry.get("review_blocks")
+    if stored:
+        return [{"kind": str(b.get("kind") or "unknown"), "ref": str(b.get("ref") or "new"),
+                 "text": str(b.get("text") or "")} for b in stored if isinstance(b, dict)]
+    return [{"kind": "unknown", "ref": "new", "text": str(p)[len("reviewer:"):].strip()}
+            for p in entry.get("problems") or [] if str(p).startswith("reviewer:")]
+
+
+def prev_path(draft_path: Path) -> Path:
+    """Where the draft of the last refused round is kept (`<id>.prev.yaml`, next to the draft;
+    never in `cards/`, so it can never be taken for a card)."""
+    return draft_path.with_suffix(".prev.yaml")
+
+
+def round_text(previous: list[dict], current: str, prev_file: Path) -> str:
+    """The part of the reviewer's prompt about the round: the first round, or the previous
+    blocks and the diff against the draft the reviewer last refused."""
+    if not previous:
+        return ROUND_ONE
+    if prev_file.is_file():
+        diff = list(difflib.unified_diff(
+            prev_file.read_text(encoding="utf-8").splitlines(), current.splitlines(),
+            "previous draft", "this draft", lineterm="", n=2))
+        if len(diff) > MAX_DIFF_LINES:
+            diff = [*diff[:MAX_DIFF_LINES], f"... (the diff is cut at {MAX_DIFF_LINES} lines)"]
+        shown = "\n".join(diff) or "(nothing changed)"
+    else:
+        shown = "(no copy of the previous draft was kept: treat the whole draft as changed)"
+    listed = "\n".join(f"{n}. [{b['kind']}] {b['text']}" for n, b in enumerate(previous, 1))
+    return ROUND_NEXT.format(previous=listed, diff=shown)
 
 
 # --------------------------------------------------------------------------
@@ -441,6 +613,20 @@ def _check_data(data: object) -> list[str]:
     return out
 
 
+def _check_readings(readings: object) -> list[str]:
+    """`readings_ru` is optional; when it is there, it lists the readings of the idea's words,
+    each in plain Russian (each one is also a variant of the grid, which the reviewer checks)."""
+    if readings is None:
+        return []
+    if not isinstance(readings, list) or len(readings) < 2:
+        return ["carder.readings_ru must be a list of 2 or more sentences, one per reading of "
+                "the idea"]
+    out: list[str] = []
+    for i, reading in enumerate(readings, 1):
+        out += _plain_text(f"carder.readings_ru {i}", reading)
+    return out
+
+
 def _check_new_block(block: object, taken: set[str]) -> list[str]:
     if not isinstance(block, dict):
         return ["carder.new_block is missing"]
@@ -523,6 +709,7 @@ def _check_card(draft: dict, *, registry, entry_text, graveyard, taken_ideas, ca
     if not isinstance(carder, dict):
         return [*out, "the `carder` block is missing"]
     out += _plain_text("carder.hypothesis_ru", carder.get("hypothesis_ru"))
+    out += _check_readings(carder.get("readings_ru"))
     known = set(own_numbers.load_config().get("lists") or {})
     baseline = carder.get("baseline") if isinstance(carder.get("baseline"), dict) else {}
     spec_file = baseline.get("spec")
@@ -581,6 +768,9 @@ def implementer_fields(carder: dict, idea_text: str) -> dict:
             if isinstance(g, dict) and g.get("param") and isinstance(g.get("values"), list)}
     if axes:
         out["grid"] = {"params": axes}
+    readings = carder.get("readings_ru")
+    if isinstance(readings, list) and readings:
+        out["readings"] = [" ".join(str(r).split()) for r in readings]
     block = carder.get("new_block")
     if isinstance(block, dict) and block.get("name"):
         out["new_block"] = {
@@ -702,11 +892,12 @@ def run_idea(entry: dict, ideas: list[dict], config: dict, *,
     queue = queue or QUEUE
     registry = registry or tried_module.load_tried()
     earlier = [str(p) for p in entry.get("problems") or []]
+    previous = previous_blocks(entry)
     entry["attempts"] = int(entry.get("attempts") or 0) + 1
     entry["problems"] = []
     out = {"id": entry["id"], "source": entry["source"], "text": entry["text"],
            "attempt": entry["attempts"], "verdict": None, "tokens": 0, "problems": [],
-           "review": []}
+           "review": [], "notes": []}
 
     def fail(problems: list[str]) -> dict:
         out["problems"] = entry["problems"] = problems
@@ -747,38 +938,50 @@ def run_idea(entry: dict, ideas: list[dict], config: dict, *,
             _revert(path)
             problems.append(f"wrote {path} outside its draft (reverted)")
     if not (base / draft_path).is_file():
-        return fail([*problems, f"no draft written (reply: {(result.text or '').strip()[:200]})"])
-    return _after_draft(entry, out, fail, problems, budget=budget, session=session, day=day,
-                        registry=registry, config=config, base=base, queue=queue,
+        return fail([*problems, f"no draft written (reply: {(result.text or '').strip()[:200]})",
+                     *map(block_problem, previous)])
+    return _after_draft(entry, out, fail, problems, previous, budget=budget, session=session,
+                        day=day, registry=registry, config=config, base=base, queue=queue,
                         brief_path=brief_path, draft_path=draft_path, frab=frab)
 
 
-def _after_draft(entry: dict, out: dict, fail, problems: list[str], *, budget, session,
-                 day: date, registry, config: dict, base: Path, queue: Path, brief_path: Path,
-                 draft_path: Path, frab: Path) -> dict:
-    """Everything after the writer: code checks, the reviewer, the card, the queue."""
+def _after_draft(entry: dict, out: dict, fail, problems: list[str], previous: list[dict], *,
+                 budget, session, day: date, registry, config: dict, base: Path, queue: Path,
+                 brief_path: Path, draft_path: Path, frab: Path) -> dict:
+    """Everything after the writer: code checks, the reviewer, the card, the queue. `previous`
+    is the blocking remarks of the last review round: they stay on the entry (and in the
+    problems the writer is told) until a review round replaces them."""
+    entry["review_blocks"] = previous
+    carried = [block_problem(b) for b in previous]
     try:
-        draft = yaml.safe_load((base / draft_path).read_text(encoding="utf-8"))
+        text = (base / draft_path).read_text(encoding="utf-8")
+        draft = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        return fail([*problems, f"the draft is not YAML: {exc}"])
+        return fail([*problems, f"the draft is not YAML: {exc}", *carried])
     taken = _taken_ideas(session, base)
     found = check_draft(draft, registry=registry, entry_text=entry["text"],
                         graveyard=graveyard_ids(session), taken_ideas=taken, config=config,
                         root=base)
     if found or problems:
-        return fail([*problems, *found])
+        return fail([*problems, *found, *carried])
     out["verdict"] = draft["verdict"]
-    review = run_agent(budget, REVIEW.format(brief=brief_path, draft=draft_path, frab=frab),
-                       session=session, agent="carder-review",
+    prompt = REVIEW.format(brief=brief_path, draft=draft_path, frab=frab,
+                           round=round_text(previous, text, base / prev_path(draft_path)))
+    review = run_agent(budget, prompt, session=session, agent="carder-review",
                        model=config.get("reviewer_model", "sonnet"), max_turns=20, cwd=base,
                        extra_args=("--allowedTools", REVIEW_TOOLS,
                                    "--disallowedTools", "Bash,Write,Edit",
                                    "--add-dir", str(frab)))
     out["tokens"] = getattr(budget, "spent_tokens", 0)
-    ok, gaps = review_lines(review.text or "")
-    out["review"] = gaps
-    if not ok:
-        return fail([f"reviewer: {g}" for g in gaps])
+    parsed = parse_review(review.text or "", previous or None)
+    out["review"] = [b["text"] for b in parsed.blocks] + parsed.extra
+    out["review_blocks"], out["notes"] = parsed.blocks, parsed.notes
+    entry["review_notes"] = parsed.notes
+    if not parsed.ok:
+        if parsed.blocks:  # a reply with no real remark leaves the last proper round in place
+            entry["review_blocks"] = parsed.blocks
+            shutil.copyfile(base / draft_path, base / prev_path(draft_path))
+        return fail(parsed.problems)
     return _accept(entry, draft, draft_path, out, day=day, base=base, queue=queue)
 
 
@@ -793,7 +996,7 @@ def recheck_idea(entry: dict, config: dict, *, budget: CandidateBudget | Explici
     registry = tried_module.load_tried()
     out = {"id": entry["id"], "source": entry["source"], "text": entry["text"],
            "attempt": int(entry.get("attempts") or 0), "verdict": None, "tokens": 0,
-           "problems": [], "review": [], "recheck": True}
+           "problems": [], "review": [], "notes": [], "recheck": True}
 
     def fail(problems: list[str]) -> dict:
         out["problems"] = entry["problems"] = problems
@@ -804,10 +1007,10 @@ def recheck_idea(entry: dict, config: dict, *, budget: CandidateBudget | Explici
     if not (base / draft_path).is_file():
         return fail([f"no draft {draft_path} to check again"])
     frab = tried_module.frab_root() or base.parent / tried_module.FRAB
-    return _after_draft(entry, out, fail, [], budget=budget, session=session, day=day,
-                        registry=registry, config=config, base=base, queue=queue,
-                        brief_path=BRIEFS / f"brief-{entry['id']}.md", draft_path=draft_path,
-                        frab=frab)
+    return _after_draft(entry, out, fail, [], previous_blocks(entry), budget=budget,
+                        session=session, day=day, registry=registry, config=config, base=base,
+                        queue=queue, brief_path=BRIEFS / f"brief-{entry['id']}.md",
+                        draft_path=draft_path, frab=frab)
 
 
 def _taken_ideas(session, base: Path) -> set[str]:
@@ -844,7 +1047,9 @@ def _accept(entry: dict, draft: dict, draft_path: Path, out: dict, *, day: date,
         out["grid"] = _product([len(a["values"]) for a in draft["carder"]["grid"]])
         out["new_block"] = draft["carder"]["new_block"]["name"]
     (base / draft_path).unlink(missing_ok=True)
-    entry["problems"] = []
+    (base / prev_path(draft_path)).unlink(missing_ok=True)
+    entry["problems"], entry["review_blocks"] = [], []
+    entry["review_notes"] = out.get("notes") or []
     out["status"] = entry["status"]
     return out
 
@@ -882,6 +1087,8 @@ def report_lines(cards: dict | None, ideas: list[dict], memo_ideas: list[dict]) 
             head += f": это уже было — `{e['duplicate_of']}`"
         lines.append(head + f"; {e.get('tokens', 0):,} токенов")
         lines += [f"    - {p}" for p in e.get("problems") or []]
+        if e.get("notes"):
+            lines.append("    - замечания по словам (не блокируют): " + "; ".join(e["notes"]))
         if e.get("question"):
             lines.append(f"    - вопрос владельцу: {e['question']}")
     if cards.get("waiting_for"):
@@ -903,7 +1110,7 @@ def report_lines(cards: dict | None, ideas: list[dict], memo_ideas: list[dict]) 
     return lines
 
 
-__all__ = ["CONFIG", "INSTRUCTIONS", "REVIEW", "append_to_queue", "block_lines", "build_brief",
-           "card_implemented", "check_draft", "graveyard_lines", "load_config", "load_queue",
-           "pending_cards", "related_files", "render_card", "report_lines", "run_idea",
-           "sync_implemented"]
+__all__ = ["BLOCK_KINDS", "CONFIG", "INSTRUCTIONS", "REVIEW", "append_to_queue", "block_lines",
+           "build_brief", "card_implemented", "check_draft", "graveyard_lines", "load_config",
+           "load_queue", "parse_review", "pending_cards", "previous_blocks", "related_files",
+           "render_card", "report_lines", "run_idea", "sync_implemented"]

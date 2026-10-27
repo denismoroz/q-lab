@@ -1,7 +1,8 @@
 """The carder agent (qlab.agents.carder): an idea becomes a card only when code accepts the draft
-(schema, tried ids, grid size, baseline, honest coin list, plain Russian) and the reviewer finds
-no gap; a repeat or a question is answered the same way; one card of the carder waits for the
-implementer at a time. The agent is faked; the checks, the queue and the inbox are real."""
+(schema, tried ids, grid size, baseline, honest coin list, plain Russian) and the reviewer makes
+no blocking remark (wording remarks are notes and never block); a repeat or a question is answered
+the same way; one card of the carder waits for the implementer at a time. The agent is faked; the
+checks, the queue and the inbox are real."""
 
 from __future__ import annotations
 
@@ -382,18 +383,141 @@ def test_a_draft_code_refuses_is_retried_and_after_the_second_failure_waits_for_
     assert ideas.oldest_new(world.inbox, max_attempts=2) is world.entry
 
 
-def test_a_reviewer_gap_blocks_the_card(world, monkeypatch) -> None:
+def test_a_reviewer_block_refuses_the_card_and_keeps_the_draft_for_the_next_round(
+        world, monkeypatch) -> None:
     calls = _agent(monkeypatch, _good(),
-                   review="GAP: carder.vs_tried: bv2-staged24 is the same rule\nVERDICT: GAP")
+                   review="BLOCK: repeats-tried: new: carder.vs_tried: bv2-staged24 is the same "
+                          "rule\nNOTE: the title is clumsy\nVERDICT: BLOCK")
     out = _run(world)
     assert out["status"] == "new" and out["review"] == [
         "carder.vs_tried: bv2-staged24 is the same rule"]
-    assert out["problems"] == ["reviewer: carder.vs_tried: bv2-staged24 is the same rule"]
+    assert out["problems"] == ["reviewer: repeats-tried: carder.vs_tried: bv2-staged24 is the "
+                               "same rule"]
+    block = {"kind": "repeats-tried", "ref": "new",
+             "text": "carder.vs_tried: bv2-staged24 is the same rule"}
+    assert world.entry["review_blocks"] == [block] and out["review_blocks"] == [block]
+    assert world.entry["review_notes"] == ["the title is clumsy"] == out["notes"]
     assert [c["agent"] for c in calls] == ["carder", "carder-review"]
     assert carder.load_queue(world.queue) == [] and not (
         world.root / "cards/bv3-volume-hedge.yaml").exists()
+    drafts = world.root / "cards/drafts"
+    assert (drafts / "idea-0001.prev.yaml").read_text(encoding="utf-8") == (
+        drafts / "idea-0001.yaml").read_text(encoding="utf-8")
     _agent(monkeypatch, _good(), review="no verdict at all")
     assert "the reviewer gave no verdict" in _run(world)["problems"][-1]
+
+
+def test_a_reply_with_notes_only_accepts_the_card_and_keeps_the_notes(world, monkeypatch) -> None:
+    _agent(monkeypatch, _good(),
+           review="NOTE: the word «залог» is not explained at first use\n"
+                  "NOTE: the example could carry a second number\nVERDICT: OK")
+    out = _run(world)
+    assert out["status"] == "carded" and out["problems"] == []
+    assert out["notes"] == ["the word «залог» is not explained at first use",
+                            "the example could carry a second number"]
+    assert world.entry["review_notes"] == out["notes"] and world.entry["review_blocks"] == []
+    text = "\n".join(carder.report_lines({"entries": [{**out, "tokens": 5}]}, world.inbox, []))
+    assert "замечания по словам (не блокируют): the word «залог»" in text
+    assert "a second number" in text
+
+
+def test_a_block_of_an_unknown_kind_is_a_note_and_says_so(world, monkeypatch) -> None:
+    review = carder.parse_review("BLOCK: weird-kind: new: the colour of the title\nVERDICT: BLOCK")
+    assert review.blocks == [] and len(review.notes) == 1
+    assert "unknown kind 'weird-kind'" in review.notes[0] and "the colour" in review.notes[0]
+    assert review.ok  # the lines decide: a note blocks nothing
+    _agent(monkeypatch, _good(), review="BLOCK: weird-kind: new: wording\nVERDICT: BLOCK")
+    out = _run(world)
+    assert out["status"] == "carded" and "unknown kind" in out["notes"][0]
+    # a BLOCK verdict that names nothing at all still blocks
+    assert not carder.parse_review("VERDICT: BLOCK").ok
+    assert not carder.parse_review("BLOCK: narrowed: new: x").ok  # no verdict line
+
+
+def test_from_round_two_a_block_must_point_at_a_previous_remark_or_the_changed_lines() -> None:
+    previous = [{"kind": "narrowed", "ref": "new", "text": "one"},
+                {"kind": "rule-incomplete", "ref": "new", "text": "two"}]
+    reply = "\n".join([
+        "BLOCK: narrowed: prev:1: still not fixed",
+        "BLOCK: unfair-grid: changed: the new axis is picked after a result",
+        "BLOCK: hindsight-data: new: found in a part that did not change",
+        "BLOCK: narrowed: prev:7: there is no such remark",
+        "BLOCK: bad-question: no ref at all",
+        "VERDICT: BLOCK"])
+    review = carder.parse_review(reply, previous)
+    assert review.blocks == [
+        {"kind": "narrowed", "ref": "prev:1", "text": "still not fixed"},
+        {"kind": "unfair-grid", "ref": "changed", "text": "the new axis is picked after a result"}]
+    assert len(review.notes) == 3 and all("not blocking" in n for n in review.notes)
+    assert "ref was 'new'" in review.notes[0] and "ref was 'prev:7'" in review.notes[1]
+    assert "ref was 'missing'" in review.notes[2]
+    # the first round marks every block `new`, ref or none; a previous remark not repeated is fixed
+    first = carder.parse_review("BLOCK: narrowed: new: x\nBLOCK: unfair-grid: no ref\n"
+                                "VERDICT: BLOCK")
+    assert first.blocks == [{"kind": "narrowed", "ref": "new", "text": "x"},
+                            {"kind": "unfair-grid", "ref": "new", "text": "no ref"}]
+    assert carder.parse_review("NOTE: wording\nVERDICT: OK", previous).ok
+
+
+def test_the_second_round_prompt_carries_the_numbered_blocks_and_the_diff(
+        world, monkeypatch) -> None:
+    first = _agent(monkeypatch, _good(),
+                   review="BLOCK: narrowed: new: the second reading is dropped\n"
+                          "BLOCK: rule-incomplete: new: the exit is not said\nVERDICT: BLOCK")
+    _run(world)
+    assert "write `new` as <ref>" in first[1]["prompt"] and "unified diff" not in first[1]["prompt"]
+    drafts = world.root / "cards/drafts"
+    assert (drafts / "idea-0001.prev.yaml").is_file()
+    second = _agent(monkeypatch, _good(title="Страховка включается по обороту, а не по цене"),
+                    review="NOTE: a nicer title\nVERDICT: OK")
+    out = _run(world)
+    prompt = second[1]["prompt"]
+    assert "1. [narrowed] the second reading is dropped" in prompt
+    assert "2. [rule-incomplete] the exit is not said" in prompt
+    assert "--- previous draft" in prompt and "+++ this draft" in prompt
+    assert "-title: Страховка включается, когда оборот растёт, а цена стоит" in prompt
+    assert "+title: Страховка включается по обороту, а не по цене" in prompt
+    assert "prev:<n>" in prompt and "changed" in prompt
+    # accepted: the card stands, the working copies are gone, the card directory holds one card
+    assert out["status"] == "carded" and out["notes"] == ["a nicer title"]
+    assert not (drafts / "idea-0001.prev.yaml").exists()
+    assert not (drafts / "idea-0001.yaml").exists()
+    assert sorted(p.name for p in (world.root / "cards").glob("*.yaml")) == [
+        "bv3-volume-hedge.yaml"]
+    assert world.entry["review_blocks"] == []
+
+
+def test_a_code_refusal_between_review_rounds_keeps_the_open_remarks(world, monkeypatch) -> None:
+    _agent(monkeypatch, _good(), review="BLOCK: narrowed: new: a reading is dropped\n"
+                                        "VERDICT: BLOCK")
+    _run(world)
+    world.entry["attempts"] = 0
+    _agent(monkeypatch, _good(plain_summary="Слишком коротко."))
+    out = _run(world)
+    assert any("too short" in p for p in out["problems"])
+    assert "reviewer: narrowed: a reading is dropped" in out["problems"]
+    assert world.entry["review_blocks"][0]["kind"] == "narrowed"
+    # the reviewer's next look is still held to the old remark and the old draft
+    calls = _agent(monkeypatch, _good(title="Страховка по обороту торгов, а не по цене"))
+    _run(world)
+    assert "1. [narrowed] a reading is dropped" in calls[1]["prompt"]
+
+
+def test_an_entry_with_plain_string_problems_from_before_still_loads(world, monkeypatch) -> None:
+    world.entry["problems"] = ["reviewer: `grid`. The idea asks for two readings and one is gone.",
+                               "something else, not from the reviewer"]
+    blocks = carder.previous_blocks(world.entry)
+    assert blocks == [{"kind": "unknown", "ref": "new",
+                       "text": "`grid`. The idea asks for two readings and one is gone."}]
+    calls = _agent(monkeypatch, _good(), review="NOTE: wording\nVERDICT: OK")
+    out = _run(world)
+    # no copy of the previous draft was kept: the whole draft counts as changed
+    assert "1. [unknown] `grid`. The idea asks for two readings" in calls[1]["prompt"]
+    assert "no copy of the previous draft was kept" in calls[1]["prompt"]
+    assert out["status"] == "carded"
+    # such a remark still blocks, and in the second round only as prev:<n>
+    again = carder.parse_review("BLOCK: narrowed: prev:1: still gone\nVERDICT: BLOCK", blocks)
+    assert not again.ok and again.blocks[0]["ref"] == "prev:1"
 
 
 def test_no_draft_and_files_written_elsewhere_are_reported(world, monkeypatch) -> None:
@@ -487,3 +611,42 @@ def test_a_grid_source_is_a_citation_and_may_hold_the_repositorys_english() -> N
     assert not any("source_ru" in p for p in _check(draft))
     draft["carder"]["grid"][0]["source_ru"] = " "
     assert any("source_ru is empty" in p for p in _check(draft))
+
+
+def test_the_readings_of_an_idea_are_two_or_more_plain_sentences() -> None:
+    draft = _good()
+    readings = ["Младший таймфрейм только поднимает страховку.",
+                "Младший таймфрейм и поднимает страховку, и решает, когда её ставить."]
+    assert _check(_carder(draft, readings_ru=readings)) == []
+    assert _check(draft) == []  # optional
+    assert any("readings_ru must be a list of 2 or more" in p
+               for p in _check(_carder(draft, readings_ru=readings[:1])))
+    assert any("readings_ru must be a list" in p for p in _check(_carder(draft, readings_ru="x")))
+    assert any("readings_ru 2" in p for p in _check(_carder(
+        draft, readings_ru=[readings[0], "The lower timeframe sets the hedge."])))
+    assert any("«хедж»" in p for p in _check(_carder(
+        draft, readings_ru=[readings[0], "Младший таймфрейм ставит хедж."])))
+
+
+def test_the_readings_reach_the_card_and_the_implementer(tmp_path) -> None:
+    from qlab.agents.implementer import card_brief
+    from qlab.card_fields import read_card_fields
+
+    readings = ["Младший таймфрейм только поднимает страховку.",
+                "Младший таймфрейм и поднимает страховку, и решает, когда её ставить."]
+    entry = {"id": "idea-0001", "source": "owner", "date": "2026-10-27", "text": IDEA}
+    path = tmp_path / "cards" / "bv3-volume-hedge.yaml"
+    path.parent.mkdir()
+    text = carder.render_card(_carder(_good(), readings_ru=readings), entry, day=DAY)
+    path.write_text(text, encoding="utf-8")
+    card = yaml.safe_load(text)
+    assert card["readings"] == readings and card["carder"]["readings_ru"] == readings
+    assert card_problems(card, Path("cards/bv3-volume-hedge.yaml")) == []
+    fields = read_card_fields(path, root=Path.cwd())
+    assert list(fields.readings) == readings
+    brief = card_brief(fields, Path("src/qlab/strategies/agent/x.py"), block_exists=False)
+    assert "READINGS." in brief and readings[1] in brief
+    # a card without readings reads as before
+    plain = tmp_path / "cards" / "plain.yaml"
+    plain.write_text(carder.render_card(_good(), entry, day=DAY), encoding="utf-8")
+    assert read_card_fields(plain, root=Path.cwd()).readings == ()

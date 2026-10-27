@@ -2,7 +2,7 @@
 «Карточка из входящих идей»; docs/IMPLEMENTER.md, «Из идеи в блок и в проверку за одну ночь»).
 
 A card written by hand has none of them and is read exactly as before. A card the carder agent
-writes from an owner's idea carries four more things, so that code can take the idea from words
+writes from an owner's idea carries more things, so that code can take the idea from words
 to a verdict in one night without asking anybody:
 
 - `baseline_spec` -- the strategy the idea is compared with (a path to a spec file);
@@ -12,7 +12,9 @@ to a verdict in one night without asking anybody:
 - `new_block` -- the block of code the idea needs and does not exist: its name, its parameters
   with what each means, and the rule in plain words;
 - `data` -- the venue, the interval, the coins (a list) or the rule that picks them, and
-  `honest_from`, the first day the data honestly exists.
+  `honest_from`, the first day the data honestly exists;
+- `readings` (optional) -- when the idea's words allow several readings, one plain sentence per
+  reading. Each reading is a variant of the grid; the block must serve all of them.
 
 This module only reads and checks the shape of those fields. It writes nothing, calls no agent
 and decides nothing: a card with a broken field is refused with every problem named, never
@@ -105,6 +107,7 @@ class CardFields:
     grid: CardGrid | None = None
     new_block: NewBlock | None = None
     data: CardData | None = None
+    readings: tuple[str, ...] = ()
 
     @property
     def inbox(self) -> bool:
@@ -237,6 +240,13 @@ def read_card_fields(card: Path | str, root: Path | None = None) -> CardFields:
     grid = _grid(raw.get("grid"), problems)
     block = _block(raw.get("new_block"), problems)
     data = _data(raw.get("data"), problems)
+    readings_raw = raw.get("readings")
+    readings: tuple[str, ...] = ()
+    if readings_raw is not None:
+        if not isinstance(readings_raw, list) or any(not str(r).strip() for r in readings_raw):
+            problems.append("readings: must be a list of sentences, one per reading of the idea")
+        else:
+            readings = tuple(" ".join(str(r).split()) for r in readings_raw)
     baseline = raw.get("baseline_spec")
     baseline_path = None
     if baseline is not None:
@@ -253,7 +263,7 @@ def read_card_fields(card: Path | str, root: Path | None = None) -> CardFields:
     return CardFields(
         card=card, idea_id=str(raw["idea_id"]), title=str(raw.get("title") or raw["idea_id"]),
         idea_text=" ".join(str(text).split()), found_at=found, baseline_spec=baseline_path,
-        grid=grid, new_block=block, data=data)
+        grid=grid, new_block=block, data=data, readings=readings)
 
 
 __all__ = ["BlockParam", "CardData", "CardFieldError", "CardFields", "CardGrid", "NewBlock",
