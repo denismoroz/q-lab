@@ -968,7 +968,7 @@ def run_idea(entry: dict, ideas: list[dict], config: dict, *,
 
     def fail(problems: list[str]) -> dict:
         out["problems"] = entry["problems"] = problems
-        if entry["attempts"] >= int(config.get("max_attempts", 2)):
+        if entry["attempts"] >= int(config.get("max_attempts", 3)):
             inbox.set_status(entry, "needs-owner",
                              f"{entry['attempts']} попыток карточника не приняты кодом или "
                              "проверяющим; решает владелец (`qlab idea retry`, `qlab idea reject`)")

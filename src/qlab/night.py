@@ -19,6 +19,7 @@ a run that stops -- a crash, a budget stop -- continues where it stopped.
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -926,7 +927,7 @@ def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> Non
     entry = state.setdefault("catalogue", {"entries": []})
     ledger = cat.load_ledger()
     done = {e["id"] for e in entry["entries"]}
-    max_attempts = int(cfg.get("max_attempts", 2))
+    max_attempts = int(cfg.get("max_attempts", 3))
     for _ in range(int(cfg.get("per_night", 1)) - len(done)):
         paper = None
         try:
@@ -974,6 +975,17 @@ def ingest_memo_ideas(day: date, state: dict, memo: str | Path, source: str) -> 
         return {"added": [], "known": [], "dropped": [], "error": f"{type(exc).__name__}: {exc}"}
 
 
+_CARDER_FIELDS = ("attempts", "problems", "review_blocks", "review_notes")
+
+
+def _restore_idea(idea: dict, kept: dict) -> None:
+    for key in _CARDER_FIELDS:
+        if key in kept:
+            idea[key] = kept[key]
+        else:
+            idea.pop(key, None)
+
+
 def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     """The carder agent (`qlab.agents.carder`, docs/IDEAS.md): up to `per_night` ideas of the
     inbox turned into a card for the implementer (or answered "repeat" / a question to the
@@ -1005,11 +1017,15 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
         return
     registry = tried_module.load_tried()
     done = {e["id"] for e in entry["entries"]}
-    max_attempts = int(cfg.get("max_attempts", 2))
+    max_attempts = int(cfg.get("max_attempts", 3))
     for _ in range(int(cfg.get("per_night", 1)) - len(done)):
         idea = ideas.oldest_new(inbox, max_attempts=max_attempts)
         if idea is None or idea["id"] in done:
             break
+        # An attempt cut short keeps the idea as it was: the earlier remarks are what the next
+        # attempt edits the draft by, and a half-written draft is not one to edit.
+        kept = {k: copy.deepcopy(idea[k]) for k in _CARDER_FIELDS if k in idea}
+        draft = carder._snapshot(carder.DRAFTS / f"{idea['id']}.yaml")
         try:
             with session_scope() as session:
                 stage = NightBudget.open(session, probe(session).report.reading).stage(
@@ -1017,17 +1033,22 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
                 result = carder.run_idea(idea, inbox, cfg, budget=stage.candidate(None),
                                          session=session, day=day, registry=registry)
         except (NightExhausted, BudgetExhausted) as stop:
+            _restore_idea(idea, kept)
+            carder._restore(draft)
             entry["stopped"] = str(stop)
             ideas.save(inbox)
             save_state(day, state)
             return
         except Exception as exc:  # noqa: BLE001 - a report line, the night goes on
+            _restore_idea(idea, kept)
+            carder._restore(draft)
             idea["attempts"] = int(idea.get("attempts") or 0) + 1
-            idea["problems"] = [f"{type(exc).__name__}: {exc}"]
             if idea["attempts"] >= max_attempts:
-                ideas.set_status(idea, "needs-owner", "попытки карточника кончились сбоями")
+                ideas.set_status(idea, "needs-owner", "попытки карточника кончились сбоями; "
+                                  f"последний: {type(exc).__name__}: {exc}")
             result = {"id": idea["id"], "source": idea["source"], "text": idea["text"],
-                      "status": idea["status"], "problems": idea["problems"], "tokens": 0}
+                      "status": idea["status"], "problems": [f"{type(exc).__name__}: {exc}"],
+                      "tokens": 0}
         entry["entries"].append(result)
         done.add(idea["id"])
         ideas.save(inbox)
@@ -1060,7 +1081,7 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> No
                      source=f"research director, directions of {directions.date}", day=day)
     prog.save_queue(queue)
     done = {e["id"] for e in entry["entries"]}
-    max_attempts = int(cfg.get("max_attempts", 2))
+    max_attempts = int(cfg.get("max_attempts", 3))
     for _ in range(int(cfg.get("per_night", 1)) - len(done)):
         req = next(
             (r for r in queue if r.status in ("queued", "failed") and r.attempts < max_attempts

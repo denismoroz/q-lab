@@ -1134,7 +1134,7 @@ def idea_card(idea_id: str | None = typer.Argument(
                    "carder at a time", err=True)
         raise typer.Exit(code=1)
     entry = (ideas.find(inbox, idea_id) if idea_id
-             else ideas.oldest_new(inbox, max_attempts=int(config.get("max_attempts", 2))))
+             else ideas.oldest_new(inbox, max_attempts=int(config.get("max_attempts", 3))))
     if entry is None:
         typer.echo("no idea to card", err=True)
         raise typer.Exit(code=1)
@@ -1241,7 +1241,7 @@ def catalogue_run(paper_id: str | None = typer.Argument(
     with session_scope() as session:
         paper = (next((p for p in ledger if p.id == paper_id), None) if paper_id
                  else cat.next_paper(ledger, session,
-                                     max_attempts=int(config.get("max_attempts", 2))))
+                                     max_attempts=int(config.get("max_attempts", 3))))
         if paper is None:
             typer.echo("no paper to read", err=True)
             raise typer.Exit(code=1)

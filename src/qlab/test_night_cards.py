@@ -198,7 +198,7 @@ def test_a_budget_stop_leaves_the_idea_new_and_a_crash_counts_an_attempt(
         real_cards_stage(day, {"done": {}}, config=stage_env.config)
     first = ideas.find(ideas.load(), "idea-0001")
     assert first["attempts"] == 2 and first["status"] == "needs-owner"
-    assert "boom" in first["problems"][0]
+    assert "boom" in first["notes"] and not first.get("problems")  # a crash is no remark
 
 
 def test_a_disabled_or_missing_config_does_nothing(stage_env, tmp_path) -> None:
@@ -282,3 +282,42 @@ def test_an_unreadable_memo_never_stops_the_stage(tmp_path) -> None:
     bad.write_text("```ideas\n- [unclosed\n```\n", encoding="utf-8")
     assert night.ingest_memo_ideas(DAY, state, bad, "agent:director")["added"] == []
     assert Path(str(bad)).is_file()
+
+
+def test_a_cut_attempt_keeps_the_remarks_and_the_draft_the_next_attempt_edits(
+        stage_env, monkeypatch) -> None:
+    inbox = ideas.load()
+    first = ideas.find(inbox, "idea-0001")
+    first.update(attempts=1, problems=["reviewer: narrowed: a reading is missing"],
+                 review_blocks=[{"kind": "narrowed", "ref": "new", "text": "a reading is missing"}])
+    ideas.save(inbox)
+    draft = carder._abs(carder.DRAFTS / "idea-0001.yaml")
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text("verdict: card\n", encoding="utf-8")
+
+    def half_then(error):
+        def run(idea, *a, **kw):
+            idea["attempts"] += 1
+            idea["problems"], idea["review_blocks"] = [], []
+            draft.write_text("verdict: ca", encoding="utf-8")
+            raise error
+        return run
+
+    try:
+        monkeypatch.setattr(carder, "run_idea", half_then(NightExhausted("spent")))
+        real_cards_stage(DAY, {"done": {}}, config=stage_env.config)
+        kept = ideas.find(ideas.load(), "idea-0001")
+        assert kept["attempts"] == 1 and kept["problems"] == [
+            "reviewer: narrowed: a reading is missing"] and kept["review_blocks"]
+        assert draft.read_text(encoding="utf-8") == "verdict: card\n"
+
+        monkeypatch.setattr(carder, "run_idea", half_then(RuntimeError("boom")))
+        state = {"done": {}}
+        real_cards_stage(DAY, state, config=stage_env.config)
+        crashed = ideas.find(ideas.load(), "idea-0001")
+        assert crashed["attempts"] == 2  # a crash counts, the remarks stay
+        assert crashed["problems"] == ["reviewer: narrowed: a reading is missing"]
+        assert state["cards"]["entries"][0]["problems"] == ["RuntimeError: boom"]
+        assert draft.read_text(encoding="utf-8") == "verdict: card\n"
+    finally:
+        draft.unlink(missing_ok=True)
