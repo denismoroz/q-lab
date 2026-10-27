@@ -53,6 +53,13 @@ UNDECIDED = ("not-evaluable", "needs-more-data", "error")
 
 
 @dataclass(frozen=True)
+class SpotLeg:
+    """A coin's spot leg on the stage 2 venue: the venue's token and where that is cited."""
+    token: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Stage2Config:
     enabled: bool
     venue: str
@@ -61,6 +68,10 @@ class Stage2Config:
     slippage_bps: float
     cost_sources: Mapping[str, str]
     stage1_survives: tuple[str, ...]
+    spot_legs: Mapping[str, SpotLeg] = field(default_factory=dict)
+    """Coin -> the venue's spot token the lab has verified, with its source."""
+    no_spot: Mapping[str, str] = field(default_factory=dict)
+    """Coin -> why the venue has no usable spot token for it (a cited reason)."""
 
 
 def load_config(path: Path = CONFIG) -> Stage2Config:
@@ -75,7 +86,11 @@ def load_config(path: Path = CONFIG) -> Stage2Config:
             taker_fee_bps=float(costs["taker_fee_bps"]),
             slippage_bps=float(costs["slippage_bps"]),
             cost_sources={str(k): " ".join(str(v).split()) for k, v in costs["sources"].items()},
-            stage1_survives=tuple(str(r) for r in raw["stage1_survives"]))
+            stage1_survives=tuple(str(r) for r in raw["stage1_survives"]),
+            spot_legs={str(coin): SpotLeg(str(leg["token"]), " ".join(str(leg["source"]).split()))
+                       for coin, leg in raw["spot_legs"].items()},
+            no_spot={str(coin): " ".join(str(leg["source"]).split())
+                     for coin, leg in raw["no_spot"].items()})
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
     absent = {"costs.taker_fee_bps", "costs.slippage_bps"} - set(config.cost_sources)
@@ -121,6 +136,39 @@ def venue_name(name: str, venue_names: Collection[str]) -> str | None:
     return None
 
 
+def venue_listing() -> list[str]:
+    """What Hyperliquid lists: its perpetual contracts and, as `<coin>-SPOT`, the coins that
+    also have a USDC-quoted spot token (`qlab.data.sources.hyperliquid.discover_spot_universe`,
+    the lab's own resolution of spot tokens: the token named like the coin, else "U" + coin).
+    Stage 1's spot columns are matched against the second list."""
+    from qlab.data.sources.hyperliquid import discover_spot_universe, discover_universe
+
+    return [*discover_universe(), *discover_spot_universe()]
+
+
+def spot_coin(name: str) -> str | None:
+    """The coin of a spot column name (`BTC-SPOT` -> `BTC`), None for a perpetual."""
+    return name[: -len(SPOT_SUFFIX)] if name.endswith(SPOT_SUFFIX) else None
+
+
+def absence_reason(name: str, config: Stage2Config) -> str:
+    """Why stage 1's column `name` has no counterpart on the stage 2 venue, in words that
+    cite their source. A spot leg gets the reason of its coin."""
+    coin = spot_coin(name)
+    if coin is None:
+        return f"{name} is not listed on {config.venue}"
+    base = coin
+    for prefix in _UNIT_PREFIXES:
+        if coin.startswith(prefix) and len(coin) > len(prefix):
+            base = coin[len(prefix):]
+            break
+    for candidate in (coin, base):
+        if candidate in config.no_spot:
+            return (f"{name} has no {config.venue} spot leg: {config.no_spot[candidate]}")
+    return (f"{name} has no {config.venue} spot leg: spotMeta lists no USDC-quoted token named "
+            f"{base} or U{base} (the lab's rule, qlab.data.sources.hyperliquid.fetch_spot_meta)")
+
+
 def map_instruments(instruments: list[str], venue_names: Collection[str]
                     ) -> tuple[list[str], list[str]]:
     """(mapped names without repeats, in order; the stage 1 names the venue lacks)."""
@@ -135,6 +183,33 @@ def map_instruments(instruments: list[str], venue_names: Collection[str]
     return mapped, dropped
 
 
+def _spot_legs(instruments: list[str], config: Stage2Config
+               ) -> tuple[list[str], dict[str, str]]:
+    """Notes and cited sources for the spot columns of the stage 2 instrument list: which
+    Hyperliquid token each is, and where that comes from. Only the lab's verified tokens
+    (`night/stage2.yaml`, `spot_legs`) carry their own citation; any other coin is
+    resolved by the lab's rule from the live listing and cites that rule."""
+    notes: list[str] = []
+    sources: dict[str, str] = {}
+    for name in instruments:
+        coin = spot_coin(name)
+        if coin is None:
+            continue
+        leg = config.spot_legs.get(coin)
+        if leg is not None:
+            notes.append(f"{name} is {config.venue}'s {leg.token}/USDC spot token ({leg.source}).")
+            sources[f"data.spot_legs.{coin}"] = leg.source
+        else:
+            citation = ("src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token "
+                        f"named {coin} or U{coin} in the live spotMeta; kept only on bars "
+                        "where its price is within frab's 3% of the perp "
+                        "(src/qlab/data/snapshot.py spot_is_another_asset)")
+            notes.append(f"{name} is the {config.venue} spot token resolved from the live "
+                         f"listing, not one of the lab's verified tokens ({citation}).")
+            sources[f"data.spot_legs.{coin}"] = citation
+    return notes, sources
+
+
 # --------------------------------------------------------------------------
 # The translation
 
@@ -144,6 +219,10 @@ class Translation:
     spec: StrategySpec | None
     problems: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
+    unavailable: list[str] = field(default_factory=list)
+    """Why the book cannot be held on the venue: a REQUIRED column (a spot leg, usually) it
+    does not list. The run is "not evaluable" with these reasons; nothing is dropped
+    silently, because a book without one of its legs is another mechanism."""
 
 
 def translate(spec: StrategySpec, config: Stage2Config, *,
@@ -172,11 +251,14 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
             problems.append(f"none of the {len(data.instruments)} instruments of stage 1 is "
                             f"listed on {config.venue}")
     required = spec.required_instruments
+    unavailable: list[str] = []
     if required is not None and venue_names is not None:
         mapped = [venue_name(n, venue_names) or n for n in required]
+        unavailable = [absence_reason(n, config) for n in dict.fromkeys(required)
+                       if venue_name(n, venue_names) is None]
         required = list(dict.fromkeys(mapped))  # an unmapped name stays: the run says it is absent
     if problems:
-        return Translation(None, problems, dropped)
+        return Translation(None, problems, dropped, unavailable)
 
     child_data = SpecData(
         source=config.venue, interval=data.interval, include_spot=data.include_spot,
@@ -195,6 +277,9 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                      f"and are not traded: {', '.join(dropped)}.")
     sources = {k: v for k, v in spec.sources.items() if k != "costs" and not k.startswith("costs.")}
     sources.update(config.cost_sources)
+    spot_notes, spot_sources = _spot_legs(instruments or [], config)
+    notes += spot_notes
+    sources.update(spot_sources)
     evidence = spec.params_fixed_evidence
     child = spec.model_copy(update={
         "idea_id": f"{spec.idea_id}{CHILD_SUFFIX}",
@@ -211,7 +296,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                                   else f"Inherited from stage 1 ({spec.idea_id}): {evidence}"),
         "sources": sources,
     })
-    return Translation(child, [], dropped)
+    return Translation(child, [], dropped, unavailable)
 
 
 # --------------------------------------------------------------------------
@@ -338,6 +423,9 @@ class Stage2Result:
     most_coins: int | None = None
     full_share: float | None = None
     dropped: list = field(default_factory=list)
+    unavailable: list = field(default_factory=list)
+    """Required columns the venue does not list, with the cited reason each (the run is
+    not evaluable for them)."""
     spec_path: str | None = None
     combined_route: str | None = None
     combined_reason: str | None = None
@@ -478,11 +566,10 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
 
     if spec.data.instruments is not None or spec.required_instruments is not None:
         if venue_names is None:
-            from qlab.data.sources.hyperliquid import discover_universe
-
-            venue_names = discover_universe()
+            venue_names = venue_listing()
     translation = translate(spec, config, venue_names=venue_names)
     result.dropped = translation.dropped
+    result.unavailable = translation.unavailable
     if translation.spec is None:
         result.status = "not-evaluable"
         result.reason = "; ".join(translation.problems)
@@ -524,11 +611,13 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                 stage1_route=result.stage1_route,
                 load_history=lambda: confirm.load_stage1_history(
                     session, spec, result.stage1_trial_id))
-        if window is not None and window.reason is not None:
+        extra = [*translation.unavailable, *([window.reason] if window is not None
+                                             and window.reason is not None else [])]
+        if extra:
             evaluation = evaluate_spec(
                 child, session=session, ruleset=ruleset,
                 deployable_capital_usd=deployable_capital_usd,
-                not_evaluable_extra=[window.reason])
+                not_evaluable_extra=extra)
         else:
             review = {} if reviewer is None else {"review_route": reviewer}
             evaluation = evaluate_spec_with_shape_aware_bar(
@@ -688,6 +777,7 @@ def _combined_ru(stage1_route: object, stage2: Mapping[str, object]) -> str:
             "Пройти надо обоим")
 
 
-__all__ = ["BookWindow", "CONFIG", "Combined", "SPEC_DIR", "Stage2Config", "Stage2Result",
-           "Translation", "book_window", "combine", "load_config", "map_instruments",
-           "report_lines", "run_stage2", "survives", "translate", "venue_name", "write_spec"]
+__all__ = ["BookWindow", "CONFIG", "Combined", "SPEC_DIR", "SpotLeg", "Stage2Config",
+           "Stage2Result", "Translation", "absence_reason", "book_window", "combine",
+           "load_config", "map_instruments", "report_lines", "run_stage2", "spot_coin",
+           "survives", "translate", "venue_listing", "venue_name", "write_spec"]

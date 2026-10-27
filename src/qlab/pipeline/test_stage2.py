@@ -259,6 +259,114 @@ def test_a_spot_column_is_matched_among_spot_columns() -> None:
     assert stage2.venue_name("ETH-SPOT", {"BTC", "ETH", "BTC-SPOT"}) is None
 
 
+# ---- spot legs: Binance's `<coin>-SPOT` on Hyperliquid's spot tokens ----------------------
+
+BV2_COINS = ("BTC", "ETH", "SOL", "AVAX")
+BV2_INSTRUMENTS = sorted([*BV2_COINS, *(f"{c}-SPOT" for c in BV2_COINS)])
+HL_LISTING = {*BV2_COINS, "HYPE", "kPEPE", *(f"{c}-SPOT" for c in BV2_COINS), "HYPE-SPOT"}
+
+
+def _bv2_shaped(**overrides: object) -> StrategySpec:
+    """What the Bv2 specs look like to the translation: explicit spot and perpetual columns."""
+    required = [f"{c}-SPOT" for c in BV2_COINS] + list(BV2_COINS)
+    data = {"source": "binance", "interval": "1h", "start": date(2023, 4, 28),
+            "end": LAST_DAY, "instruments": BV2_INSTRUMENTS}
+    return _spec(data=data, required_instruments=required, **overrides)
+
+
+def _shipped() -> stage2.Stage2Config:
+    return stage2.load_config(Path(__file__).resolve().parents[3] / "night" / "stage2.yaml")
+
+
+def test_the_shipped_config_names_the_four_wrapped_spot_tokens_with_a_source_each() -> None:
+    config = _shipped()
+    assert {c: leg.token for c, leg in config.spot_legs.items()} == {
+        "BTC": "UBTC", "ETH": "UETH", "SOL": "USOL", "AVAX": "UAVAX"}
+    assert all(leg.source for leg in config.spot_legs.values())
+    assert set(config.no_spot) == {"LINK", "AAVE"} and all(config.no_spot.values())
+
+
+def test_bv2s_spot_legs_map_to_hyperliquids_spot_columns_and_cite_each_token() -> None:
+    config = _shipped()
+    result = stage2.translate(_bv2_shaped(), config, venue_names=HL_LISTING)
+
+    assert result.dropped == [] and result.unavailable == []
+    child = result.spec
+    assert sorted(child.data.instruments) == BV2_INSTRUMENTS
+    assert child.data.source == "hyperliquid"
+    assert sorted(child.required_instruments) == BV2_INSTRUMENTS
+    for coin, token in (("BTC", "UBTC"), ("ETH", "UETH"), ("SOL", "USOL"), ("AVAX", "UAVAX")):
+        assert f"{coin}-SPOT is hyperliquid's {token}/USDC spot token" in " ".join(
+            child.differs_from_source)
+        assert child.sources[f"data.spot_legs.{coin}"] == config.spot_legs[coin].source
+    # Every cited file exists (frab's repository is a sibling of q-lab's; a stub stands in).
+    assert not [p for p in source_problems(child) if "does not exist" in p
+                and "funding-rate-arbitrage" not in p]
+
+
+def test_a_spot_coin_outside_the_verified_list_is_resolved_by_the_labs_rule_and_says_so() -> None:
+    spec = _bv2_shaped().model_copy(update={
+        "data": _bv2_shaped().data.model_copy(update={"instruments": ["HYPE", "HYPE-SPOT"]}),
+        "required_instruments": ["HYPE", "HYPE-SPOT"]})
+    child = stage2.translate(spec, _shipped(), venue_names=HL_LISTING).spec
+    assert child.data.instruments == ["HYPE", "HYPE-SPOT"]
+    assert "not one of the lab's verified tokens" in " ".join(child.differs_from_source)
+    assert "fetch_spot_meta" in child.sources["data.spot_legs.HYPE"]
+
+
+def test_a_required_spot_leg_hyperliquid_lacks_is_unavailable_with_a_cited_reason() -> None:
+    config = _shipped()
+    spec = _bv2_shaped().model_copy(update={
+        "data": _bv2_shaped().data.model_copy(update={"instruments": [
+            "BTC", "BTC-SPOT", "LINK", "LINK-SPOT", "DOGE", "DOGE-SPOT"]}),
+        "required_instruments": ["BTC-SPOT", "BTC", "LINK-SPOT", "LINK", "DOGE-SPOT", "DOGE"]})
+    listing = {"BTC", "BTC-SPOT", "LINK", "DOGE"}  # perpetuals of LINK and DOGE, no spot
+
+    result = stage2.translate(spec, config, venue_names=listing)
+
+    assert result.dropped == ["LINK-SPOT", "DOGE-SPOT"]
+    assert len(result.unavailable) == 2
+    link, doge = result.unavailable
+    assert link.startswith("LINK-SPOT has no hyperliquid spot leg") and "LINK0" in link
+    assert "tokens.py" in link  # frab's blacklist is the cited source
+    assert doge.startswith("DOGE-SPOT has no hyperliquid spot leg")
+    assert "named DOGE or UDOGE" in doge and "fetch_spot_meta" in doge
+    # The leg is not dropped silently from the requirement: the run says it is absent.
+    assert "LINK-SPOT" in result.spec.required_instruments
+
+
+def test_a_required_perpetual_the_venue_lacks_is_unavailable_too() -> None:
+    spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                       "end": LAST_DAY, "instruments": ["BTC", "LUNA2"]},
+                 required_instruments=["BTC", "LUNA2"])
+    result = stage2.translate(spec, CONFIG, venue_names={"BTC"})
+    assert result.unavailable == ["LUNA2 is not listed on hyperliquid"]
+
+
+def test_a_book_missing_a_required_spot_leg_on_the_venue_is_not_evaluable_with_a_trial(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), FAILING)  # a ruleset that would reject anything run
+    spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                       "end": LAST_DAY, "instruments": ["C0", "C1", "C2", "C3", "C4", "C5",
+                                                         "LINK", "LINK-SPOT"]},
+                 required_instruments=["LINK-SPOT", "LINK"])
+    listing = {"C0", "C1", "C2", "C3", "C4", "C5", "LINK"}
+    config = dataclasses.replace(CONFIG, no_spot={"LINK": "LINK0 is an EVM bridge (tokens.py)"})
+
+    result = stage2.run_stage2(
+        spec, stage1_route="paper", stage1_trial_id=None, noise_trials=1,
+        deployable_capital_usd=3000.0, spec_dir=tmp_path / "stage2", config=config,
+        venue_names=listing)
+
+    assert result.status == "not-evaluable" and result.route == "not-evaluable"
+    assert "LINK-SPOT has no hyperliquid spot leg: LINK0 is an EVM bridge" in result.reason
+    assert result.unavailable and result.dropped == ["LINK-SPOT"]
+    assert result.combined_route == "needs-forward"  # waits; not a reject
+    with db_module.session_scope() as session:
+        trial = session.get(Trial, result.trial_id)  # written like every run
+        assert trial.status == TrialStatus.NOT_EVALUABLE
+
+
 def test_the_written_spec_loads_back_the_same(tmp_path) -> None:
     child = stage2.translate(_spec(), CONFIG).spec.model_copy(
         update={"judged_from": date(2025, 1, 30)})
@@ -296,9 +404,15 @@ def test_a_config_without_a_key_or_a_cost_source_is_refused(tmp_path) -> None:
     broken.write_text(
         "enabled: true\nvenue: hyperliquid\ndata_start: 2025-01-01\n"
         "costs: {taker_fee_bps: 4.5, slippage_bps: 0.9, sources: {costs.taker_fee_bps: x}}\n"
-        "stage1_survives: [paper]\n", encoding="utf-8")
+        "stage1_survives: [paper]\nspot_legs: {}\nno_spot: {}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="no source for"):
         stage2.load_config(broken)
+    broken.write_text(
+        "enabled: true\nvenue: hyperliquid\ndata_start: 2025-01-01\n"
+        "costs: {taker_fee_bps: 4.5, slippage_bps: 0.9, sources: {costs.taker_fee_bps: x,"
+        " costs.slippage_bps: y}}\nstage1_survives: [paper]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing key 'spot_legs'"):
+        stage2.load_config(broken)  # the spot mapping is declared, never a silent default
 
 
 # ---- from which day the market holds the book -------------------------------------------

@@ -39,6 +39,61 @@ costs:
       «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid's own cost
       estimate, whose slippage part is 0.9
 
+# Spot legs. A book that holds spot against a perpetual (Bv2) names Binance's spot
+# columns (BTC-SPOT); Hyperliquid names the same asset by its own token, most of them
+# wrapped bridge tokens, and the lab's column for it is `<coin>-SPOT` too
+# (qlab.data.sources.hyperliquid.fetch_spot_meta: the token named like the coin, else
+# "U" + coin). Stage 2 maps `<coin>-SPOT` to that column when Hyperliquid lists it.
+# The lab's panel then keeps the column only on bars where the spot price is within
+# frab's 3% of its perp (qlab.data.snapshot.spot_is_another_asset); a token that is
+# another asset never gets a bar. The tokens below are the ones the lab has verified
+# against frab; any other coin is resolved from Hyperliquid's live spotMeta by the same
+# rule, and says so in the stage 2 spec's notes.
+spot_legs:
+  BTC:
+    token: UBTC
+    source: >-
+      docs/TASKS.md line 635 (spotMeta read 2026-09-22): BTC is UBTC (@142), the token
+      production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+      line 13: UBTC, UETH, USOL are 1:1 with the perp, deep books, safe
+  ETH:
+    token: UETH
+    source: >-
+      docs/TASKS.md line 636 (spotMeta read 2026-09-22): ETH is UETH (@151), the token
+      production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+      line 13
+  SOL:
+    token: USOL
+    source: >-
+      docs/TASKS.md line 637 (spotMeta read 2026-09-22): SOL is USOL (@156), the token
+      production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+      line 13
+  AVAX:
+    token: UAVAX
+    source: >-
+      docs/TASKS.md line 638 (spotMeta read 2026-09-22): AVAX is UAVAX (@306), bridge_safe
+      in production's coin_registry then; but
+      funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+      lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and
+      docs/TASKS.md line 670 counts its bars at 21.3% of the window: the lab's price-parity
+      check (src/qlab/data/snapshot.py spot_is_another_asset) keeps only the bars where it is 1:1
+
+# Coins whose Binance spot leg has NO Hyperliquid counterpart, with the reason. A book
+# that requires such a leg cannot be held on Hyperliquid: stage 2 is "not evaluable"
+# for it, never a book with the leg quietly missing.
+no_spot:
+  LINK:
+    source: >-
+      Hyperliquid's only LINK spot token is LINK0, an EVM bridge with its own price
+      discovery (not 1:1 with the perp; a -$3 incident in testing);
+      funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py lines 16-18 and 25
+      (BRIDGE_TOKEN_BLACKLIST); docs/TASKS.md line 639
+  AAVE:
+    source: >-
+      Hyperliquid's only AAVE spot token is AAVE0, an EVM bridge with its own price
+      discovery; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py lines
+      16-18 and 25 (BRIDGE_TOKEN_BLACKLIST); docs/TASKS.md line 640
+
 # Stage 1 routes that go on to stage 2: every strategy rule passed, or none failed
 # yet. A stage 1 `reject` is final (the graveyard); the routes that decide nothing
 # (not-evaluable, needs-more-data, error) have nothing to confirm.
