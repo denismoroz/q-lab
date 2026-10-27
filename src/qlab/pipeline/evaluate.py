@@ -68,6 +68,7 @@ from qlab.rules.schema import (
 from qlab.venues.config import load_venue
 from qlab.venues.derive import (
     derive_cross_venue_metrics,
+    derive_proxy_venue_metrics,
     derive_venue_metrics,
     explain_venue_failures,
 )
@@ -393,6 +394,17 @@ def cut_truncated_history(panel: MarketPanel) -> MarketPanel:
     honest_from = pd.Timestamp(max(truncated.values()))
     cut = int(panel.prices.index.searchsorted(honest_from))
     return _slice_rows(panel, cut, len(panel.prices.index) - 1)
+
+
+def proxy_execution_venue(spec: StrategySpec) -> str | None:
+    """The venue the orders would go to when it differs from the data source
+    (`StrategySpec.execution_venue`), else `None`: the spec's venue facts are then the data
+    source's own. An `execution_venue` equal to `data.source` is no proxy -- stage 2 copies a
+    stage 1 spec onto Hyperliquid and keeps the field -- so it also gives `None`."""
+    execution = spec.execution_venue
+    if execution is None or execution == spec.data.source:
+        return None
+    return execution
 
 
 def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
@@ -1331,6 +1343,19 @@ def evaluate_spec(
                         simultaneous_legs=spec.simultaneous_legs,
                     )
                 )
+            elif (execution := proxy_execution_venue(spec)) is not None:
+                # Data from one venue, orders to another (`execution_venue`): the
+                # order adapter and the uncovered-leg recovery are the execution
+                # venue's facts, the forward data stays the data source's.
+                measured.update(
+                    derive_proxy_venue_metrics(
+                        load_venue(spec.data.source),
+                        load_venue(execution),
+                        snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+                        data_venue_id=spec.data.source,
+                        simultaneous_legs=spec.simultaneous_legs,
+                    )
+                )
             else:
                 measured.update(
                     derive_venue_metrics(
@@ -1512,9 +1537,16 @@ def evaluate_spec(
     # row and the route never read as a bare `venue_supported = 0` (the first
     # two generated ideas were read that way, 2026-10-25).
     held = [str(c) for c in weights.columns[(weights.abs() > 0).any(axis=0)]]
-    venue_reasons = explain_venue_failures(
-        load_venue(spec.data.source), venue_id=spec.data.source, instruments=held
-    )
+    execution = proxy_execution_venue(spec)
+    if execution is not None:
+        venue_reasons = explain_venue_failures(
+            load_venue(execution), venue_id=execution, instruments=held,
+            data_venue_id=spec.data.source,
+        )
+    else:
+        venue_reasons = explain_venue_failures(
+            load_venue(spec.data.source), venue_id=spec.data.source, instruments=held
+        )
     spot_source = getattr(spec.data, "spot_source", None)
     if spot_source and "venue_supported" not in venue_reasons:
         # A cross-venue book (derive_cross_venue_metrics) fails on the spot venue's
@@ -1525,6 +1557,15 @@ def evaluate_spec(
     if "venue_supported" in venue_reasons:
         why = venue_reasons["venue_supported"]
         routing = dataclasses.replace(routing, reason=f"{routing.reason} [venue_supported: {why}]")
+    if execution is not None:
+        # Whatever the route, say where the execution facts came from: a reader of
+        # `atomic_execution unknown` or of a pass must not take them for the data venue's.
+        routing = dataclasses.replace(
+            routing,
+            reason=(f"{routing.reason} [execution facts (venue_supported, atomic_execution) "
+                    f"read from {execution}, the spec's execution_venue; data from "
+                    f"{spec.data.source}]"),
+        )
     if exploratory:
         # Computed in full on the owner's say-so, but not a decision: keep the
         # rules' answer visible and the route where the reasons put it.

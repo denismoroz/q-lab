@@ -209,6 +209,23 @@ class StrategySpec(BaseModel):
         ),
     )
 
+    execution_venue: str | None = None
+    """The venue where this strategy's ORDERS would go, when it is not the venue the
+    candles come from: "data from `data.source`, orders to `execution_venue`" (stage 1
+    judges ideas on Binance's long history, but the lab trades on Hyperliquid;
+    docs/TWO_STAGE.md, docs/VENUES.md).
+
+    `None` (the default) means orders go where the data comes from, and every venue fact
+    is read from `data.source`: nothing is inferred from a spec's costs or comments, so a
+    spec says "this is a data proxy" explicitly or not at all. When set, the EXECUTION
+    facts -- `venue_supported` (do we have an order adapter there) and `atomic_execution`
+    (no uncovered leg persists after a failure) -- are read from `venues/<execution_venue>.yaml`,
+    while `data_forward_available` stays about the data source
+    (`qlab.venues.derive.derive_proxy_venue_metrics`). The costs and the minimum leg of
+    such a spec must already be the execution venue's own: this field changes no number.
+    Equal to `data.source` it changes nothing (stage 2 copies a stage 1 spec onto
+    Hyperliquid and keeps this field)."""
+
     unexpressed_mechanisms: list[str]
     """Mechanisms of the strategy `idea_id` names that `code_ref` does NOT
     express -- the "Left OUT" list a transcription already writes in its
@@ -428,6 +445,22 @@ class StrategySpec(BaseModel):
         if value < 1:
             raise ValueError(f"simultaneous_legs must be >= 1, got {value}")
         return value
+
+    @field_validator("execution_venue")
+    @classmethod
+    def _execution_venue_is_named(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("execution_venue must name a venue (venues/<id>.yaml), or be omitted")
+        return value
+
+    @model_validator(mode="after")
+    def _execution_venue_not_with_spot_source(self) -> StrategySpec:
+        if self.execution_venue is not None and self.data.spot_source is not None:
+            raise ValueError(
+                "execution_venue with data.spot_source: a book whose legs are on two venues "
+                "already says where its orders go (spot_source); name one or the other"
+            )
+        return self
 
     @field_validator("unexpressed_mechanisms")
     @classmethod

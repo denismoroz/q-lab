@@ -151,6 +151,46 @@ def derive_venue_metrics(
     return {name: float(value) for name, value in raw.items() if value is not None}
 
 
+def derive_proxy_venue_metrics(
+    data_venue: VenueConfig | None,
+    execution_venue: VenueConfig | None,
+    *,
+    snapshot_source: str,
+    data_venue_id: str,
+    simultaneous_legs: int,
+) -> dict[str, float]:
+    """The three preflight metrics for a spec whose candles come from one venue and whose
+    orders would go to another (`StrategySpec.execution_venue`): stage 1 judges an idea
+    on Binance's long history, but the lab trades on Hyperliquid.
+
+    The data venue is not the execution venue, so each fact is read from the venue it is
+    a fact about:
+
+    - `venue_supported` (do we have an order adapter) and `atomic_execution` (no
+      uncovered leg persists after a failure) are about where the orders go: both come
+      from the EXECUTION venue's config. Reading them from the data venue would answer a
+      question nobody asked -- Binance has no adapter and names no recovery mechanism
+      because we never place orders there, which says nothing about the venue the
+      strategy would run on.
+    - `data_forward_available` stays about the data source, exactly as in
+      `derive_venue_metrics`: the run used the data venue's candles, so only its free,
+      forward-available data (and a snapshot actually taken from it) can be claimed.
+
+    A missing execution-venue config or an unset fact is unknown (absent), never guessed,
+    as everywhere in this module.
+    """
+    raw: dict[str, bool | None] = {
+        "venue_supported": venue_supported(execution_venue),
+        "data_forward_available": data_forward_available(
+            data_venue, snapshot_source=snapshot_source, venue_id=data_venue_id
+        ),
+        "atomic_execution": atomic_execution(
+            execution_venue, simultaneous_legs=simultaneous_legs
+        ),
+    }
+    return {name: float(value) for name, value in raw.items() if value is not None}
+
+
 def derive_cross_venue_metrics(
     perp_venue: VenueConfig | None,
     spot_venue: VenueConfig | None,
@@ -204,6 +244,7 @@ def explain_venue_failures(
     *,
     venue_id: str,
     instruments: Sequence[str] = (),
+    data_venue_id: str | None = None,
 ) -> dict[str, str]:
     """Plain-language reason for every venue metric that came out FALSE, keyed
     by metric name (`venue_supported`, ...). A metric that passed or is
@@ -216,11 +257,13 @@ def explain_venue_failures(
     `venue.execution_adapter`. Access is a separate fact, recorded in
     `docs/VENUES.md`, and this metric never reads it.
 
-    The venue checked is the spec's data source: a spec has no execution-venue
-    field, so the pipeline asks whether orders could be placed where the
-    candles come from. It does not ask whether the traded instruments exist
-    on Hyperliquid (that check belongs to the second evaluation stage, T45);
-    the text says so, and names the instruments the book actually held.
+    The venue checked is the one the orders would go to: the spec's data source,
+    or, for a data proxy (`StrategySpec.execution_venue`), the execution venue --
+    then `venue_id` is that venue and `data_venue_id` names where the candles came
+    from, so the text never blames the data venue for a fact about the execution
+    venue. It does not ask whether the traded instruments exist on Hyperliquid
+    (that check belongs to the second evaluation stage, T45); the text says so,
+    and names the instruments the book actually held.
     """
     reasons: dict[str, str] = {}
     if venue is not None and venue.execution_adapter is False:
@@ -233,8 +276,13 @@ def explain_venue_failures(
             if names
             else ""
         )
+        which = (
+            f"venue {venue_id} (the spec's execution_venue; the data comes from {data_venue_id})"
+            if data_venue_id is not None and data_venue_id != venue_id
+            else f"venue {venue_id}"
+        )
         reasons["venue_supported"] = (
-            f"venue {venue_id} has no order-placing adapter of ours "
+            f"{which} has no order-placing adapter of ours "
             f"(venues/{venue_id}.yaml execution_adapter: false); this is a fact about "
             "our infrastructure, not about access (docs/VENUES.md) and not about "
             "the strategy; whether the instruments exist on Hyperliquid, where "
@@ -247,6 +295,7 @@ __all__ = [
     "atomic_execution",
     "data_forward_available",
     "derive_cross_venue_metrics",
+    "derive_proxy_venue_metrics",
     "derive_venue_metrics",
     "explain_venue_failures",
     "venue_supported",

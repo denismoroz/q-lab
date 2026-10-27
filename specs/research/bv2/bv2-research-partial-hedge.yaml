@@ -86,6 +86,10 @@ costs:
   slippage_bps: 0.9
 min_leg_notional: 10.0
 simultaneous_legs: 2
+# Binance is the DATA proxy; orders would go to Hyperliquid, whose costs and minimum leg this spec
+# already uses, so the venue facts (adapter, uncovered-leg recovery) are Hyperliquid's
+# (StrategySpec.execution_venue, docs/VENUES.md section 9). No number changes.
+execution_venue: hyperliquid
 
 # Random books for the noise bar trade only the coins this book holds
 # (StrategySpec.noise_universe): the coin list is fixed, the question is the

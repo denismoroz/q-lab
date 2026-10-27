@@ -55,6 +55,10 @@ costs:
 
 min_leg_notional: 10.0
 simultaneous_legs: 2
+# Binance is the DATA proxy; orders would go to Hyperliquid, whose costs and minimum leg this spec
+# already uses, so the venue facts (adapter, uncovered-leg recovery) are Hyperliquid's
+# (StrategySpec.execution_venue, docs/VENUES.md section 9). No number changes.
+execution_venue: hyperliquid
 
 unexpressed_mechanisms: []
 

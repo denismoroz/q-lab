@@ -731,6 +731,100 @@ def test_failed_venue_supported_names_the_venue_and_the_instruments(session, tmp
     assert "not about access" in row.note
 
 
+_ATOMIC_RULE = Rule(
+    id="atomic_execution", stage=Stage.PREFLIGHT, kind=RuleKind.INFRASTRUCTURE,
+    metric="atomic_execution", comparator=Comparator.EQ, threshold=1, fatal=True,
+)
+_VENUE_RULE = Rule(
+    id="venue_supported", stage=Stage.PREFLIGHT, kind=RuleKind.INFRASTRUCTURE,
+    metric="venue_supported", comparator=Comparator.EQ, threshold=1, fatal=True,
+)
+
+
+def _binance_spec(session, tmp_path, **overrides: object) -> StrategySpec:
+    _register_snapshot(
+        session, tmp_path, snapshot_id="snap-binance", instruments=INSTRUMENTS,
+        universe_complete=True, source="binance",
+    )
+    return _make_spec(
+        params={"weight": 0.4},
+        data={"source": "binance", "interval": INTERVAL, "start": START, "end": END,
+              "instruments": None},
+        **overrides,
+    )
+
+
+def test_two_leg_binance_spec_without_an_execution_venue_stays_undecided(session, tmp_path) -> None:
+    """Unchanged behaviour: Binance names no recovery mechanism, so `atomic_execution` of a
+    two-leg spec is unknown and the run routes `needs-more-data`."""
+    spec = _binance_spec(session, tmp_path, simultaneous_legs=2)
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert "atomic_execution" not in result.metrics
+    assert result.metrics["venue_supported"] == 0.0
+    assert result.routing.route == "needs-more-data"
+    assert "read from" not in result.routing.reason
+
+
+def test_two_leg_binance_proxy_reads_execution_facts_from_hyperliquid(session, tmp_path) -> None:
+    """Data from Binance, orders to Hyperliquid: Hyperliquid names `uncovered_leg_recovery`
+    and has an adapter, so both facts are known and true, the forward data is still
+    Binance's, and the route says where the execution facts came from."""
+    spec = _binance_spec(session, tmp_path, simultaneous_legs=2, execution_venue="hyperliquid")
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert result.metrics["atomic_execution"] == 1.0
+    assert result.metrics["venue_supported"] == 1.0
+    assert result.metrics["data_forward_available"] == 1.0
+    assert result.routing.route == "paper"
+    assert "read from hyperliquid, the spec's execution_venue; data from binance" in (
+        result.routing.reason)
+
+
+def test_single_leg_binance_spec_is_unchanged_without_an_execution_venue(session, tmp_path) -> None:
+    spec = _binance_spec(session, tmp_path)
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.metrics["atomic_execution"] == 1.0
+    assert result.metrics["venue_supported"] == 0.0
+    assert result.routing.route == "needs-infrastructure"
+    assert "venue binance has no order-placing adapter" in result.routing.reason
+
+
+def test_an_execution_venue_equal_to_the_data_source_changes_nothing(session, tmp_path) -> None:
+    """Stage 2 copies a stage 1 spec onto Hyperliquid and keeps the field."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(params={"weight": 0.4}, simultaneous_legs=2, execution_venue=SOURCE)
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.routing.route == "paper"
+    assert "execution_venue" not in result.routing.reason
+
+
+def test_an_unconfigured_execution_venue_is_named_in_the_route(session, tmp_path) -> None:
+    """A proxy whose execution venue has no config leaves `venue_supported` unknown, and the
+    route says which venue the execution facts were looked up on, not the data source's."""
+    spec = _binance_spec(session, tmp_path, execution_venue="no-such-venue")
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert "venue_supported" not in result.metrics
+    assert result.routing.route == "needs-more-data"
+    assert "read from no-such-venue, the spec's execution_venue; data from binance" in (
+        result.routing.reason)
+
+
 def test_passed_venue_supported_has_no_venue_explanation(session, tmp_path) -> None:
     _register_discovered(session, tmp_path)
     spec = _make_spec(params={"weight": 0.4})

@@ -210,6 +210,46 @@ def test_a_spot_source_is_another_venue_priced_by_its_own_closes() -> None:
         StrategySpec.model_validate(_spec_dict(data={**mixed, "include_spot": False}))
 
 
+def test_execution_venue_defaults_to_the_data_source() -> None:
+    assert StrategySpec.model_validate(_spec_dict()).execution_venue is None
+
+
+def test_an_execution_venue_names_where_the_orders_go() -> None:
+    data = {**_BASE["data"], "source": "binance"}  # type: ignore[dict-item]
+    spec = StrategySpec.model_validate(_spec_dict(data=data, execution_venue="hyperliquid"))
+    assert spec.execution_venue == "hyperliquid" and spec.data.source == "binance"
+    with pytest.raises(ValidationError, match="must name a venue"):
+        StrategySpec.model_validate(_spec_dict(execution_venue="  "))
+
+
+def test_an_execution_venue_cannot_be_combined_with_a_spot_source() -> None:
+    data = dict(_BASE["data"])  # type: ignore[arg-type]
+    mixed = {**data, "include_spot": True, "spot_prices": "own", "spot_source": "binance"}
+    with pytest.raises(ValidationError, match="already says where its orders go"):
+        StrategySpec.model_validate(_spec_dict(data=mixed, execution_venue="hyperliquid"))
+
+
+def test_the_two_leg_binance_data_proxies_say_their_orders_go_to_hyperliquid() -> None:
+    """The specs whose comments call Binance a DATA proxy for Hyperliquid and that hold two
+    legs: without the field their `atomic_execution` is read from Binance, which names no
+    recovery mechanism, and they route `needs-more-data` for ever."""
+    repo = Path(__file__).resolve().parents[3]
+    proxies = [
+        "specs/bv2-binance.yaml",
+        "specs/research/bv2/bv2-research-btceth.yaml",
+        "specs/research/bv2/bv2-research-headroom-retune-binance.yaml",
+        "specs/research/bv2/bv2-research-partial-hedge.yaml",
+        "specs/research/bv2/bv2-research-shared-pool.yaml",
+        "specs/research/bv2/bv2-research-short-window.yaml",
+        *(p.relative_to(repo).as_posix()
+          for p in sorted((repo / "specs/bv2-owner-ideas").glob("*.yaml"))),
+    ]
+    for name in proxies:
+        spec = load_spec(repo / name)
+        assert spec.data.source == "binance" and spec.simultaneous_legs == 2, name
+        assert spec.execution_venue == "hyperliquid", name
+
+
 def test_the_binance_spot_strategy_runs_at_the_owners_three_budgets() -> None:
     """Owner, 2026-10-25: «если нужно 300-400-1000 - давай считать на них». The main spec
     is 1000, the variants 300 and 400, four slots each; apart from the idea and the

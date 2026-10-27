@@ -17,6 +17,7 @@ from qlab.venues.derive import (
     atomic_execution,
     data_forward_available,
     derive_cross_venue_metrics,
+    derive_proxy_venue_metrics,
     derive_venue_metrics,
     venue_supported,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "atomic_execution",
     "data_forward_available",
     "derive_cross_venue_metrics",
+    "derive_proxy_venue_metrics",
     "derive_venue_metrics",
     "load_venue",
     "venue_supported",

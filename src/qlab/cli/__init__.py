@@ -1822,9 +1822,9 @@ def calibrate_planted_cmd(
 
     from qlab.calibration.planted import noise_books, planted_outcomes
     from qlab.harness.costs import CostModel
-    from qlab.pipeline.evaluate import resolve_panel, resolve_strategy
+    from qlab.pipeline.evaluate import proxy_execution_venue, resolve_panel, resolve_strategy
     from qlab.venues.config import load_venue
-    from qlab.venues.derive import derive_venue_metrics
+    from qlab.venues.derive import derive_proxy_venue_metrics, derive_venue_metrics
 
     spec = load_spec(reference)
     ruleset = load(rules_version) if rules_version is not None else load_latest()
@@ -1833,12 +1833,22 @@ def calibrate_planted_cmd(
     weights = resolve_strategy(spec.code_ref).target_weights(panel, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    shared = derive_venue_metrics(
-        load_venue(spec.data.source),
-        snapshot_source=str(panel.meta.get("venue", spec.data.source)),
-        venue_id=spec.data.source,
-        simultaneous_legs=spec.simultaneous_legs,
-    )
+    execution = proxy_execution_venue(spec)
+    if execution is not None:
+        shared = derive_proxy_venue_metrics(
+            load_venue(spec.data.source),
+            load_venue(execution),
+            snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+            data_venue_id=spec.data.source,
+            simultaneous_legs=spec.simultaneous_legs,
+        )
+    else:
+        shared = derive_venue_metrics(
+            load_venue(spec.data.source),
+            snapshot_source=str(panel.meta.get("venue", spec.data.source)),
+            venue_id=spec.data.source,
+            simultaneous_legs=spec.simultaneous_legs,
+        )
     shared["point_in_time_universe"] = 1.0 if panel.meta.get("universe_complete") else 0.0
     shared["accrual_applied"] = 1.0
 

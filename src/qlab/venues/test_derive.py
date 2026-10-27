@@ -14,6 +14,7 @@ from qlab.venues.derive import (
     atomic_execution,
     data_forward_available,
     derive_cross_venue_metrics,
+    derive_proxy_venue_metrics,
     derive_venue_metrics,
     explain_venue_failures,
     venue_supported,
@@ -261,3 +262,56 @@ def test_explanation_is_empty_for_a_pass_or_an_unknown() -> None:
     assert explain_venue_failures(HYPERLIQUID_LIKE, venue_id="hyperliquid") == {}
     assert explain_venue_failures(BARE_VENUE, venue_id="bare") == {}
     assert explain_venue_failures(None, venue_id="nowhere") == {}
+
+
+# ---- derive_proxy_venue_metrics: data from one venue, orders to another ---------------
+
+
+def _proxy(data, execution, *, legs=2):
+    return derive_proxy_venue_metrics(
+        data, execution, snapshot_source="binance", data_venue_id="binance",
+        simultaneous_legs=legs)
+
+
+def test_a_two_leg_binance_data_proxy_takes_its_execution_facts_from_hyperliquid() -> None:
+    """Binance names no recovery mechanism (we never place orders there), so on its own a
+    two-leg book is `atomic_execution` unknown for ever; the execution venue answers it."""
+    assert "atomic_execution" not in derive_venue_metrics(
+        BINANCE_LIKE, snapshot_source="binance", venue_id="binance", simultaneous_legs=2)
+    assert _proxy(BINANCE_LIKE, HYPERLIQUID_LIKE) == {
+        "venue_supported": 1.0,
+        "data_forward_available": 1.0,
+        "atomic_execution": 1.0,
+    }
+
+
+def test_a_proxys_forward_data_is_still_the_data_venues_fact() -> None:
+    """The snapshot came from the data venue: its own free-data fact is the one that counts,
+    and a snapshot of another venue cannot be claimed."""
+    no_forward = VenueConfig(id="binance", title="B", execution_adapter=False,
+                             free_public_data=False)
+    assert _proxy(no_forward, HYPERLIQUID_LIKE)["data_forward_available"] == 0.0
+    mismatch = derive_proxy_venue_metrics(
+        BINANCE_LIKE, HYPERLIQUID_LIKE, snapshot_source="hyperliquid",
+        data_venue_id="binance", simultaneous_legs=2)
+    assert mismatch["data_forward_available"] == 0.0
+
+
+def test_a_proxy_with_an_execution_venue_that_lacks_the_facts_stays_unknown() -> None:
+    metrics = _proxy(BINANCE_LIKE, BARE_VENUE)
+    assert "venue_supported" not in metrics and "atomic_execution" not in metrics
+    assert _proxy(BINANCE_LIKE, None) == {"data_forward_available": 1.0}
+
+
+def test_a_single_leg_proxy_is_atomic_and_supported_by_the_execution_venue() -> None:
+    assert _proxy(BINANCE_LIKE, HYPERLIQUID_LIKE, legs=1)["atomic_execution"] == 1.0
+    assert _proxy(BINANCE_LIKE, BINANCE_LIKE, legs=1)["venue_supported"] == 0.0
+
+
+def test_the_explanation_of_a_proxy_names_the_execution_venue_and_the_data_venue() -> None:
+    text = explain_venue_failures(
+        BINANCE_LIKE, venue_id="binance", instruments=["BTC"], data_venue_id="aster"
+    )["venue_supported"]
+    assert "venue binance (the spec's execution_venue; the data comes from aster)" in text
+    plain = explain_venue_failures(BINANCE_LIKE, venue_id="binance", instruments=["BTC"])
+    assert "execution_venue" not in plain["venue_supported"]
