@@ -264,6 +264,39 @@ class Rule(BaseModel):
         return value
 
 
+class InformationalRule(BaseModel):
+    """A reading shown next to the verdict that DECIDES nothing (2026-10-27.2).
+
+    It is not a `Rule`: it never becomes a verdict row, never fails a candidate and
+    never moves a route. `qlab.rules.engine.read_informational` compares the metric
+    with `threshold` only to say "this would hold / would not hold", so the owner
+    sees what a threshold would have done before choosing one. A null `threshold`
+    means no line is drawn yet: the number is shown on its own.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    metric: str
+    comparator: Comparator | None = None
+    threshold: float | None = None
+    rationale: str
+
+    @field_validator("id", "metric")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _line_is_whole(self) -> InformationalRule:
+        if (self.comparator is None) != (self.threshold is None):
+            raise ValueError(
+                f"informational rule {self.id!r}: comparator and threshold go together")
+        return self
+
+
 class RetiredRule(BaseModel):
     """A rule that used to exist but has been removed from active screening.
 
@@ -311,6 +344,9 @@ class RuleSet(BaseModel):
     stage2_confirmation: Stage2Confirmation | None = None
     """From 2026-10-27.1: where the noise bar of stage 2 cannot decide, stage 2
     confirms stage 1's verdict instead (docs/TWO_STAGE.md)."""
+    informational: list[InformationalRule] = Field(default_factory=list)
+    """From 2026-10-27.2: readings shown beside the verdict that decide nothing
+    (the year-by-year view, docs/YEARS.md)."""
     regime_coverage_days: int | None = None
     """From 2026-10-02.3: a forward test decides only once it has seen every
     market regime (`qlab.regimes`) for at least this many days; otherwise it
@@ -339,6 +375,13 @@ class RuleSet(BaseModel):
             if rule.id in seen:
                 raise ValueError(f"duplicate rule id {rule.id!r} in ruleset {self.version}")
             seen.add(rule.id)
+        return self
+
+    @model_validator(mode="after")
+    def _unique_informational_ids(self) -> RuleSet:
+        ids = [reading.id for reading in self.informational]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"duplicate informational id in ruleset {self.version}")
         return self
 
     @model_validator(mode="after")

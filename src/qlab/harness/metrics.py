@@ -13,6 +13,10 @@ panel's timestamps (never a hardcoded 365/365.25) — see `periods_per_year`.
 module or in any `rules/*.yaml` file: measuring and gating are different
 jobs (CLAUDE.md, "Никогда не выдумывать числа и пороги"; docs/T27_CONCENTRATION.md
 has the measurement and a proposal left for the owner to decide).
+
+`year_breakdown` (owner, 2026-10-27) shows the same failure from the calendar side:
+the result year by year, and whether it rests on one lucky year. It is informational
+for the same reason (rules 2026-10-27.2, docs/YEARS.md).
 """
 
 from __future__ import annotations
@@ -223,6 +227,86 @@ def ann_return_net_ex_best_1pct(net_return: pd.Series) -> float:
 
     total_growth = float((1.0 + remaining).prod())
     return -1.0 if total_growth <= 0.0 else total_growth ** (ppy / n_remaining) - 1.0
+
+
+COUNTED_YEAR_DAYS = 120
+"""A calendar year with at least this many days in the judged part is counted in the
+year summaries (owner, 2026-10-27: «давай вот эту проверку с разбивкой добавим в
+фреймворк»). A shorter stretch is still listed year by year but is too short to be
+called "a year that was good or bad"."""
+SHARPE_YEAR_DAYS = 60
+"""A year's own Sharpe is reported from this many days on; below it the ratio of a
+few weeks' mean to their spread says nothing."""
+
+
+def year_breakdown(net_return: pd.Series) -> dict[str, float]:
+    """The judged part's result year by year, and three summaries of how evenly the
+    years share it. Flat numeric keys, because `trial.metrics` is a flat mapping.
+
+    Per calendar year `Y` (UTC) present in the series:
+        year_Y_return: the year's compounded net return, `(1 + r).prod() - 1`. NOT
+            annualised: a partial first or last year shows what it really earned.
+        year_Y_days: calendar days with a return in that year (a 282-day 2026 says so).
+        year_Y_max_dd: the deepest peak-to-trough fall of the equity curve inside the
+            year, which starts from 1.0 on the year's first bar; `<= 0`.
+        year_Y_sharpe: only with `SHARPE_YEAR_DAYS` days or more, annualised with the
+            whole series' `periods_per_year`.
+
+    Summaries, over the COUNTED years (`COUNTED_YEAR_DAYS` days or more):
+        years_counted, years_positive: how many years count and how many of them
+            ended above zero.
+        years_positive_share: their ratio.
+        ann_return_net_ex_best_year: `ann_return_net` recomputed with every bar of
+            the best counted year (by `year_Y_return`) removed -- the same convention
+            as `ann_return_net_ex_best_1pct`: the full series' annualisation factor,
+            the reduced bar count as the compounding base. `-1.0` if what remains
+            wipes the book out. Absent with fewer than two counted years: removing
+            the only year leaves nothing to annualise.
+        best_year_share_of_profit: the best counted year's profit divided by the
+            whole series' profit, both as plain sums of the bars' net returns (the
+            arithmetic convention of `fragility_days`, which keeps the shares
+            additive). Above 1 when the other years together lost money. Absent
+            when the total is not positive or with fewer than two counted years.
+
+    A key whose value is undefined is left out rather than set to NaN (the rules
+    engine reads an absent metric as unknown). Fewer than two bars: empty dict.
+    """
+    if len(net_return) < 2:
+        return {}
+    ppy = periods_per_year(net_return.index)
+    out: dict[str, float] = {}
+    counted: dict[int, float] = {}
+    for year, bars in net_return.groupby(net_return.index.year):
+        year = int(year)
+        days = int(bars.index.normalize().nunique())
+        equity = (1.0 + bars).cumprod()
+        out[f"year_{year}_return"] = float(equity.iloc[-1] - 1.0)
+        out[f"year_{year}_days"] = days
+        out[f"year_{year}_max_dd"] = float((equity / equity.cummax().clip(lower=1.0) - 1.0).min())
+        std = bars.std(ddof=1)
+        if days >= SHARPE_YEAR_DAYS and len(bars) >= 2 and std and not pd.isna(std):
+            out[f"year_{year}_sharpe"] = float(bars.mean() / std * np.sqrt(ppy))
+        if days >= COUNTED_YEAR_DAYS:
+            counted[year] = out[f"year_{year}_return"]
+    if not counted:
+        return out
+    positive = sum(1 for value in counted.values() if value > 0)
+    out["years_counted"] = len(counted)
+    out["years_positive"] = positive
+    out["years_positive_share"] = positive / len(counted)
+    if len(counted) < 2:
+        return out
+
+    best = max(counted, key=lambda year: counted[year])
+    rest = net_return[net_return.index.year != best]
+    growth = float((1.0 + rest).prod())
+    out["ann_return_net_ex_best_year"] = (
+        -1.0 if growth <= 0.0 else growth ** (ppy / len(rest)) - 1.0)
+    total = float(net_return.sum())
+    if total > 0.0:
+        out["best_year_share_of_profit"] = float(
+            net_return[net_return.index.year == best].sum()) / total
+    return out
 
 
 def hold_benchmark(prices: pd.DataFrame, weights: pd.DataFrame) -> dict[str, float]:

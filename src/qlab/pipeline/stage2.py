@@ -37,6 +37,7 @@ import yaml
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
+from qlab.year_view import year_keys, years_line
 
 CONFIG = Path("night/stage2.yaml")
 SPEC_DIR = Path("specs/generated/stage2")
@@ -632,6 +633,7 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.status = "not-evaluable" if result.route == "not-evaluable" else "evaluated"
         metrics = evaluation.metrics or {}
         result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
+        result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
         if not measure:
             combined = combine(result.stage1_route or "", result.route, config=config,
                                stage2_reason=result.reason or "")
@@ -707,6 +709,8 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
         numbers = f" — {_numbers_ru(metrics)}" if metrics else ""
         lines.append(f"{head}, прогон {stage2.get('trial_id')}: {_route_ru(stage2.get('route'))}"
                      f"{numbers}; {window}{forward}")
+        if years := years_line(metrics):
+            lines.append(years)
         confirmation = stage2.get("confirmation")
         decided_by_history = bool(confirmation) and confirmation.get("status") != "not-applied"
         if stage2.get("route") not in ("paper", "shelf") and not decided_by_history:

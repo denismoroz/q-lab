@@ -5,6 +5,7 @@ import { fetchIdea, fetchIdeaPage } from '../api.js'
 import { Absent, Json, Pager, Panel, QueryState, StatusBadge } from '../components/ui.jsx'
 import { VerdictLegend, VerdictList } from '../components/Verdict.jsx'
 import TrialTable from '../components/TrialTable.jsx'
+import YearView from '../components/YearView.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -254,6 +255,7 @@ function Outcome({ outcome }) {
         <NumberList title="период подбора — только для сведения" numbers={fitNumbers} />
       )}
       <RegimeTable m={m} />
+      <YearView view={trial.year_view} />
       <p className="mt-3 text-xs text-slate-500">
         прогон #{trial.id}, {trial.started_at?.slice(0, 10)}
         {outcome.unrouted_trials
@@ -310,6 +312,7 @@ function StageColumn({ title, hint, stage, ideaId }) {
             {label(TRIAL_ROUTE, trial.route)}
           </div>
           {rows.length > 0 && <NumberList title={null} numbers={rows} />}
+          <YearView view={trial.year_view} compact />
           <p className="mt-2 break-words font-mono text-xs text-slate-500">{trial.route_reason}</p>
           <p className="mt-2 text-xs text-slate-500">
             данные: {STAGE_VENUE[stage.venue] ?? stage.venue}

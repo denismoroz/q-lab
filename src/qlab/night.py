@@ -28,6 +28,7 @@ from pathlib import Path
 import yaml
 
 from qlab.pipeline.spec import StrategySpec, load_spec
+from qlab.year_view import year_keys, years_line
 
 WATCHLIST = Path("night/watchlist.yaml")
 IMPLEMENT_QUEUE = Path("night/implement_queue.yaml")
@@ -169,6 +170,7 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
             result.metrics.update({k: v for k, v in metrics.items()
                                    if k.startswith(("regime_", "fit_regime_"))
                                    and k.endswith(("_return", "_noise_percentile"))})
+            result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the night goes on
         result.error = f"{type(exc).__name__}: {exc}"
     return result
@@ -455,6 +457,12 @@ def write_report(day: date, state: dict) -> Path:
             lines.append(f"| {r.name} | {r.route}{changed} | {r.previous_route or '—'} | "
                          + " | ".join(_report_row(m)) + " |")
         lines.append("")
+        # The same runs year by year (docs/YEARS.md): a total that rests on one lucky period
+        # is visible at a glance. A description; no verdict reads it.
+        lines += [f"- `{r.name}`: {line}" for r in group
+                  if not r.error and (line := years_line(r.metrics))]
+        if any(not r.error and years_line(r.metrics) for r in group):
+            lines.append("")
     if state.get("waiting") or state.get("waiting_notes"):
         from qlab.waiting import SECTION_TITLE as WAITING_TITLE
         from qlab.waiting import report_lines as waiting_lines

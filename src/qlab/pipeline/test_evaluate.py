@@ -1461,6 +1461,25 @@ def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_pa
     assert {v.data_range_end for v in selection} == {date(2026, 1, 5)}
 
 
+def test_the_year_view_describes_the_judged_part_alone(session, tmp_path) -> None:
+    spec = _explicit_long(
+        session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"
+    )
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    m = result.metrics
+    assert m["judged_on_forward"] == 1.0
+    # The forward test lies inside 2026: one partial year, listed, and too short to be counted.
+    assert m["year_2026_days"] == 5 and "year_2026_return" in m and "year_2026_max_dd" in m
+    assert "years_counted" not in m
+    # The selection period's copy of the metrics carries no year view.
+    assert not any(k.startswith("fit_year_") or k.startswith("fit_years_") for k in m)
+    # And the view changed no verdict: it is not a rule.
+    assert result.routing.route == "needs-forward"
+
+
 def _rows(*rows: tuple[str, bool | None]) -> EvaluationResult:
     from qlab.rules.engine import VerdictRow
 

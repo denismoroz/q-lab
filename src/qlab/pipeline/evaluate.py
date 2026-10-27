@@ -44,6 +44,7 @@ from qlab.harness.metrics import (
     hold_benchmark,
     min_capital_usd,
     periods_per_year,
+    year_breakdown,
 )
 from qlab.harness.run import run_backtest
 from qlab.harness.strategy import Strategy, own_costs, validate_weights
@@ -72,6 +73,7 @@ from qlab.venues.derive import (
     derive_venue_metrics,
     explain_venue_failures,
 )
+from qlab.year_view import is_year_key
 
 Route = Literal[
     "reject",
@@ -1315,7 +1317,8 @@ def evaluate_spec(
         index = panel.prices.index
         bar = INTERVAL_TO_TIMEDELTA.get(spec.data.interval)
 
-        def _measure(lo: int, hi: int, *, forward_part: bool = False) -> dict[str, float]:
+        def _measure(lo: int, hi: int, *, forward_part: bool = False,
+                     years: bool = False) -> dict[str, float]:
             """Backtest metrics plus the facts the rules read, on rows lo..hi."""
             if (lo, hi) == (0, len(index) - 1):
                 part_panel, part_weights = panel, weights
@@ -1325,6 +1328,9 @@ def evaluate_spec(
             result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
                                   extra_cost=extra_cost)
             measured = compute_metrics(result)
+            if years:
+                # The judged part year by year (docs/YEARS.md): a description, read by no rule.
+                measured.update(year_breakdown(result.net_return))
             measured.update(hold_benchmark(part_panel.prices, part_weights))
             # How the result splits across BTC's bull / flat / bear days
             # (docs/REGIMES.md): a description, read by no rule.
@@ -1431,7 +1437,8 @@ def evaluate_spec(
         judged = split.forward if split.forward is not None else split.selection
         if judged is None:  # the whole window is shorter than two bars
             judged = (first, last)
-        metrics = _measure(*judged, forward_part=split_mode and split.forward is not None)
+        metrics = _measure(*judged, forward_part=split_mode and split.forward is not None,
+                           years=True)
         if spec.judged_from is not None and first > 0:
             metrics["skipped_warmup_days"] = _days((0, first - 1))
         if spec.measure_hedge_timing:
@@ -1453,7 +1460,8 @@ def evaluate_spec(
         if split_mode:
             if split.forward is not None and split.selection is not None:
                 selection_metrics = _measure(*split.selection)
-                metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()})
+                metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()
+                                if not is_year_key(k)})
             elif split.forward is None:
                 selection_metrics = metrics
             if split.before is not None:

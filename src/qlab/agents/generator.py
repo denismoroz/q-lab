@@ -58,6 +58,7 @@ from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.directions import active_directions, generator_text
 from qlab.pipeline.sources import QLAB_ROOT
+from qlab.year_view import year_keys, years_line
 
 MODEL = "sonnet"  # docs/PLAN.md: the agents that write specs run on sonnet
 CATALOGUE = Path("docs/MECHANISMS.md")
@@ -793,6 +794,7 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
             result.reason = out.routing.reason
             metrics = out.metrics or {}
             result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
+            result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the others still run
         result.error = f"{type(exc).__name__}: {exc}"
     if result.error is None:
@@ -816,7 +818,8 @@ def second_stage_lines(r: GeneratedResult) -> list[str]:
     of both stages together, as plain Russian lines under `result_line`."""
     from qlab.pipeline.stage2 import report_lines
 
-    return report_lines({"route": r.route}, r.stage2)
+    years = years_line(r.metrics)
+    return ([years] if years else []) + report_lines({"route": r.route}, r.stage2)
 
 
 def result_line(r: GeneratedResult) -> str:

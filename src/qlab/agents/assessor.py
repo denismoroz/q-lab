@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.year_view import years_line
 
 MODEL = "opus"  # docs/PLAN.md, "Модели для агентов системы": the strong judge -> opus
 VIEWS = ("agree", "too_harsh", "too_lenient", "unsure")
@@ -199,6 +200,8 @@ def build_brief(session: Session, trial_id: int, *, paper: list[str] | None = No
             f"- trial {t.id} ({t.started_at:%Y-%m-%d}): {getattr(t.route, 'value', t.route)} "
             f"-- {t.route_reason}" for t in earlier),
         "related variants": "\n".join(related),
+        # The result year by year (docs/YEARS.md): is the profit in one lucky period?
+        "by calendar year": years_line(trial.metrics) or "",
     }
     if paper:
         word = (keys.get(idea.id) or "").lower()

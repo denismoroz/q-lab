@@ -745,3 +745,46 @@ def test_allocation_endpoint_returns_the_latest_saved_proposal_or_null(client, m
     body = client.get("/api/allocation").json()
 
     assert body["at"] == "2026-10-25" and body["proposal"]["capital"] == 3000.0
+
+
+def test_a_trial_carries_its_year_view_or_null(client, session_factory):
+    """docs/YEARS.md: the metrics' per-year keys regrouped for the console, with the newest
+    ruleset's informational readings; null for a run from before the view existed."""
+    from qlab.registry.models import Spec, TrialRoute
+
+    assert client.get("/api/ideas/alpha/trials").json()["items"][0]["year_view"] is None
+
+    session = session_factory()
+    spec = session.query(Spec).filter(Spec.idea_id == "alpha").one()
+    metrics = {"ann_return_net": 0.2, "ann_return_net_ex_best_1pct": 0.03,
+               "year_2021_return": 0.9, "year_2021_days": 365, "year_2021_max_dd": -0.2,
+               "year_2021_sharpe": 1.4,
+               "year_2022_return": -0.1, "year_2022_days": 365, "year_2022_max_dd": -0.3,
+               "year_2023_return": 0.01, "year_2023_days": 90, "year_2023_max_dd": -0.05,
+               "years_counted": 2, "years_positive": 1, "years_positive_share": 0.5,
+               "ann_return_net_ex_best_year": -0.1, "best_year_share_of_profit": 1.2}
+    repo.add_trial(
+        session, spec_id=spec.id, config_hash="years", snapshot_id="snap-1", code_sha="x",
+        params={}, status=TrialStatus.OK, route=TrialRoute.REJECT, route_reason="r",
+        started_at=datetime(2026, 10, 27, tzinfo=UTC), metrics=metrics)
+    session.commit()
+    session.close()
+
+    trial = client.get("/api/ideas/alpha").json()["latest_outcome"]["trial"]
+    view = trial["year_view"]
+    assert [y["year"] for y in view["years"]] == [2021, 2022, 2023]
+    assert view["years"][0]["return"] == 0.9 and view["years"][0]["sharpe"] == 1.4
+    assert view["years"][1]["sharpe"] is None
+    assert [y["partial"] for y in view["years"]] == [False, False, True]
+    assert [y["counted"] for y in view["years"]] == [True, True, False]
+    assert view["best_year"] == 2021
+    assert view["summary"]["years_positive"] == 1 and view["summary"]["years_counted"] == 2
+    assert view["line"].startswith("по годам: 2021 +90%, 2022 −10%, 2023 (90 дн.) +1%")
+    readings = {r["id"]: r for r in view["readings"]}
+    assert readings["ex_best_year_positive"]["holds"] is False
+    assert readings["ex_best_1pct_positive"]["holds"] is True
+    assert readings["years_positive_share"]["threshold"] is None
+    assert readings["years_positive_share"]["holds"] is None
+    # The raw metrics are still all there, unchanged.
+    assert trial["metrics"]["year_2021_return"] == 0.9
+    assert client.get("/api/trials?limit=1").json()["items"][0]["year_view"]["best_year"] == 2021

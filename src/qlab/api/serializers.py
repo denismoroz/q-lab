@@ -12,9 +12,11 @@ frontend cannot accidentally paint a measurement as a decision.
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any
 
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
+from qlab.year_view import year_view
 
 # The three legitimate verdict kinds (docs/REGISTRY.md, "Три законных вида
 # строки в `verdict`"). Russian labels live in the frontend; these ids are
@@ -138,6 +140,18 @@ def verdict_json(verdict: Verdict) -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _latest_ruleset():
+    """The newest ruleset, for its informational readings only; None if it cannot be read
+    (the console then shows the year view without the readings)."""
+    from qlab.rules.loader import load_latest
+
+    try:
+        return load_latest()
+    except Exception:  # noqa: BLE001 - a view must not fail over a missing rules file
+        return None
+
+
 def trial_json(
     trial: Trial,
     *,
@@ -165,6 +179,9 @@ def trial_json(
         "started_at": _iso(trial.started_at),
         "finished_at": _iso(trial.finished_at),
         "metrics": trial.metrics,
+        # The metrics' per-year keys regrouped for the console (docs/YEARS.md); null for a
+        # run from before the view existed. Copied from the stored metrics, nothing computed.
+        "year_view": year_view(trial.metrics, _latest_ruleset()),
         "status": trial.status.value,
         # Null for runs made before routes were stored (docs/TASKS.md T31).
         "route": trial.route.value if trial.route is not None else None,
