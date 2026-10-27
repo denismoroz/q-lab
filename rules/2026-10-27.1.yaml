@@ -1,0 +1,44 @@
+# Stage 2 of the idea generator's evaluation (Hyperliquid) confirms the verdict of
+# stage 1 (Binance's long history) where its own noise comparison cannot decide.
+#
+# Measured 2026-10-27: on Hyperliquid, data from 2025-01-01, the rule
+# `shape_aware_edge` (beat 99% of same-shape random books) has almost no power.
+# Idea xsmom-research-nobull-retune, stage 2: 628 forward days, +44.5% a year,
+# Sharpe 1.34, beats noise 93.5% -> `needs-forward`, "on this window the noise bar
+# would pass a strategy of this shape truly earning 7% a year only 6% of the time
+# (it decides from 80%)". Hyperliquid's history grows one day a day, so that wait is
+# years, for every idea.
+#
+# Owner, 2026-10-27, on stage 1 = Binance since 2019-09 ("verdict immediately", years
+# of data, so the noise comparison has power there) and stage 2 = the same mechanism
+# on Hyperliquid: proof comes from stage 1; stage 2 is a consistency check, not a
+# second independent proof. «делай все».
+#
+# What changes: when the noise bar's power on the stage 2 window (`noise_power`, the
+# number rules 2026-10-24.2 already compute) is below `noise_power.min_power`, the
+# failed noise comparison is replaced by two checks -- the stage 2 total return after
+# costs is above zero, and the stage 2 result does not fall in the bottom
+# `alert_percentile` of 100 same-length segments of stage 1's forward history (the
+# same strategy on Binance). Every other rule, the length of the forward test and
+# regime coverage judge stage 2 exactly as before. Where the noise bar has power it
+# decides as before. No threshold of any rule changes, and no new number is
+# introduced: the percentile is the owner's alarm threshold for paper books.
+#
+# The check confirms a stage 1 that decided (paper, shelf, needs-infrastructure) on
+# a powered noise comparison; a stage 1 that is itself "too early" passes nothing
+# (qlab.pipeline.stage2.combine). Without stage 1's history the old behaviour stands
+# and the run's reason says why.
+
+version: "2026-10-27.1"
+based_on: "2026-10-24.2"
+
+stage2_confirmation:
+  alert_percentile_from: night/decay.yaml
+  rationale: >
+    Owner, 2026-10-27: «делай все» -- proof comes from stage 1's long history, stage 2
+    is a consistency check. The threshold is the owner's existing alarm for paper
+    books (night/decay.yaml, `alert_percentile`, 2026-10-26: «пускай порог будет 7»:
+    a result in the bottom 7 of 100 same-length segments of the strategy's own history
+    is unlike it); it is read from that file, not copied, so the two cannot drift
+    apart. Consistency is not a second proof: it says the strategy on Hyperliquid
+    behaves like itself on Binance, nothing more.

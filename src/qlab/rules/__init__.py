@@ -22,6 +22,7 @@ from qlab.rules.schema import (
     RuleSet,
     ShortForwardUse,
     Stage,
+    Stage2Confirmation,
     parse_version,
 )
 
@@ -41,6 +42,7 @@ __all__ = [
     "RetiredRule",
     "ShortForwardUse",
     "Stage",
+    "Stage2Confirmation",
     "VerdictRow",
     "classify_nearness",
     "evaluate",

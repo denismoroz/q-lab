@@ -132,6 +132,37 @@ class Evaluation:
     (calibration noise)."""
 
 
+@dataclass(frozen=True, slots=True)
+class RoutingContext:
+    """What a route reviewer (`evaluate_spec(review_route=...)`) sees: the route the
+    rules gave, the numbers and verdicts it rests on, and the window it was judged on."""
+
+    spec: StrategySpec
+    ruleset: RuleSet
+    routing: RoutingDecision
+    metrics: Mapping[str, float]
+    rules_result: EvaluationResult
+    """The rules on the judged window (the forward test when there is one)."""
+    selection_result: EvaluationResult | None
+    forward_judged: bool
+    """The judged window is a forward test (not the selection period)."""
+    deployable_capital_usd: float
+    range_start: date
+    range_end: date
+
+
+@dataclass(frozen=True, slots=True)
+class RouteReview:
+    """A reviewer's answer: the route the run is recorded with instead, numbers to store
+    on its trial, and the verdicts (rendered by the rules engine) behind the change."""
+
+    routing: RoutingDecision
+    metrics: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    result: EvaluationResult | None = None
+    note: str | None = None
+    """Written on the verdict rows of `result`."""
+
+
 def resolve_strategy(code_ref: str) -> Strategy:
     """Resolve `code_ref` to a `Strategy` instance.
 
@@ -1055,6 +1086,7 @@ def evaluate_spec(
     check_lookahead: bool = True,
     check_sources: bool = True,
     not_evaluable_extra: Sequence[str] = (),
+    review_route: Callable[[RoutingContext], RouteReview | None] | None = None,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
 
@@ -1134,6 +1166,13 @@ def evaluate_spec(
     mode this function does NOT convert into an `error` trial: there is no
     honest `qlab`-sourced trial row without a data anchor, so that exception
     propagates instead of being written as a schema-violating row.
+
+    `review_route` (stage 2 of the idea generator, docs/TWO_STAGE.md) is asked once,
+    with the route the rules decided, before the trial is written; a `RouteReview`
+    answer replaces the route, adds its numbers to the trial's metrics and its
+    verdicts to the run's own, so the trial, the idea's status and the verdicts all
+    carry the route that stands. Nothing is reviewed in a not-evaluable, exploratory
+    or failed run.
 
     Always writes exactly one `trial` row. Writes one `verdict` row per rule
     the ruleset actually evaluated, but only on a successful run — a failed
@@ -1508,6 +1547,17 @@ def evaluate_spec(
                 sum(1 for row in selection_result.rows if row.passed is False))
     else:
         routing = decide_route(rules_result, metrics, deployable_capital_usd)
+    review: RouteReview | None = None
+    if review_route is not None and not exploratory:
+        review = review_route(RoutingContext(
+            spec=spec, ruleset=ruleset, routing=routing, metrics=metrics,
+            rules_result=rules_result, selection_result=selection_result,
+            forward_judged=split_mode and split.forward is not None,
+            deployable_capital_usd=deployable_capital_usd,
+            range_start=range_start, range_end=range_end))
+        if review is not None:
+            routing = review.routing
+            metrics.update(review.metrics)
     # A failed venue fact says WHICH venue and what is missing, so the verdict
     # row and the route never read as a bare `venue_supported = 0` (the first
     # two generated ideas were read that way, 2026-10-25).
@@ -1582,6 +1632,8 @@ def evaluate_spec(
                 index[split.selection[1]].date(),
                 SELECTION_NOTE,
             )
+    if review is not None and review.result is not None:
+        verdict_rows += _verdict_rows(review.result, range_start, range_end, review.note)
     if verdict_rows:
         repo.add_verdicts(session, verdict_rows)
 
@@ -1605,6 +1657,8 @@ __all__ = [
     "forward_years_needed",
     "split_at_fixed_date",
     "Evaluation",
+    "RouteReview",
+    "RoutingContext",
     "RoutingDecision",
     "StrategyResolutionError",
     "complete_book_window",

@@ -195,6 +195,29 @@ class NoisePower(BaseModel):
     rationale: str
 
 
+class Stage2Confirmation(BaseModel):
+    """How stage 2 of the idea generator's evaluation (Hyperliquid) confirms the
+    verdict of stage 1 (Binance's long history) where its own noise comparison
+    cannot decide (docs/TWO_STAGE.md), from 2026-10-27.1.
+
+    Owner, 2026-10-27, «делай все»: the proof comes from stage 1's years of
+    data; stage 2 is a consistency check, not a second independent proof. When
+    the noise bar has less than `NoisePower.min_power` on the stage 2 window,
+    the comparison is replaced by: the stage 2 result must not fall in the
+    bottom `alert_percentile` of 100 same-length segments of stage 1's forward
+    history, and its total return after costs must be above zero. The
+    percentile is the owner's alarm for paper books and is NOT repeated here:
+    it is read from `alert_percentile_from`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    alert_percentile_from: str
+    """A YAML file with a top-level `alert_percentile` (0-100): the owner's
+    threshold, `night/decay.yaml`. While it is null nothing is confirmed."""
+    rationale: str
+
+
 class Rule(BaseModel):
     """A single screening rule."""
 
@@ -285,6 +308,9 @@ class RuleSet(BaseModel):
     noise_power: NoisePower | None = None
     """From 2026-10-24.2: a `wait` rule's failure counts only where the noise
     bar can tell a good strategy from luck."""
+    stage2_confirmation: Stage2Confirmation | None = None
+    """From 2026-10-27.1: where the noise bar of stage 2 cannot decide, stage 2
+    confirms stage 1's verdict instead (docs/TWO_STAGE.md)."""
     regime_coverage_days: int | None = None
     """From 2026-10-02.3: a forward test decides only once it has seen every
     market regime (`qlab.regimes`) for at least this many days; otherwise it

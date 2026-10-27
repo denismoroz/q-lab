@@ -84,6 +84,8 @@ def test_compute_metrics_matches_hand_computation() -> None:
     total_growth = np.prod(1.0 + r)
     expected_ann_return = total_growth ** (ppy / n) - 1.0
     assert metrics["ann_return_net"] == pytest.approx(expected_ann_return)
+    # total_return_net: the compounded return over the window, not annualised.
+    assert metrics["total_return_net"] == pytest.approx(total_growth - 1.0)
 
     # sharpe_net: sample mean / sample std (ddof=1) * sqrt(ppy).
     expected_sharpe = (r.mean() / r.std(ddof=1)) * np.sqrt(ppy)

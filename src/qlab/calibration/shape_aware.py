@@ -98,6 +98,7 @@ def evaluate_spec_with_shape_aware_bar(
     n_trials: int,
     seed_offset: int = 0,
     series: str = CANONICAL_SERIES,
+    review_route=None,
 ) -> ShapeAwareResult:
     """Evaluate `spec` under `ruleset`, with a matched-noise percentile of
     its own computed and folded into the SAME verdict.
@@ -110,6 +111,9 @@ def evaluate_spec_with_shape_aware_bar(
     of that cost it is paying, rather than inheriting a number it never
     chose. `qlab.calibration.run.run_noise_series` itself still rejects
     `n_trials <= 0`.
+
+    `review_route` is handed to the candidate's `evaluate_spec` as is (stage 2 of the
+    idea generator, docs/TWO_STAGE.md); the noise books never get one.
 
     `series` defaults to `qlab.calibration.percentile.CANONICAL_SERIES`
     (`"dollar_neutral"`) -- see that module's docstring for why the
@@ -192,6 +196,7 @@ def evaluate_spec_with_shape_aware_bar(
         ruleset=ruleset,
         deployable_capital_usd=deployable_capital_usd,
         extra_metrics=_extra_metrics,
+        review_route=review_route,
     )
 
     percentiles = (

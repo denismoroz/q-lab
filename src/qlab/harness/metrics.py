@@ -259,6 +259,9 @@ def compute_metrics(result: RunResult) -> dict[str, float]:
             `total_growth <= -1` (the book is wiped out or worse), this is
             `-1.0` rather than raising on a fractional power of a
             non-positive base.
+        total_return_net: `(1 + net_return).prod() - 1`, the compounded net
+            return over the whole window (not annualised). Read by the stage 2
+            check against stage 1's same-length segments (docs/TWO_STAGE.md).
         sharpe_net: `mean(net_return) / std(net_return, ddof=1) *
             sqrt(periods_per_year)`. `NaN` if fewer than 2 periods or the
             return series has zero variance (a flat return series has no
@@ -329,6 +332,7 @@ def compute_metrics(result: RunResult) -> dict[str, float]:
 
     return {
         "ann_return_net": float(ann_return_net),
+        "total_return_net": total_growth - 1.0,
         "sharpe_net": float(sharpe_net),
         "max_dd": max_dd,
         "turnover": turnover_ann,
