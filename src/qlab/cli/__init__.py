@@ -1464,6 +1464,46 @@ def stage2_cmd(
         raise typer.Exit(code=1)
 
 
+@app.command("twin")
+def twin_cmd(
+    spec_path: Path = typer.Argument(  # noqa: B008
+        ..., metavar="SPEC", help="A spec whose numbers a person or an agent chose"),
+    base_path: Path | None = typer.Option(  # noqa: B008
+        None, "--base",
+        help="The strategy spec an experiment SPEC modifies: the two become the grid"),
+    write: bool = typer.Option(
+        False, "--write",
+        help="Write <name>-causal.yaml next to SPEC (a different existing file is not "
+             "overwritten)"),
+) -> None:
+    """The causal twin of a spec (docs/RETUNE.md): the same idea with its numbers chosen by
+    code every month from the past only, on Binance's history from 2019, so the stand can
+    judge it the same night instead of waiting for new data. Prints the twin's YAML, or the
+    plain reason why none can be made. Code only: no agent, no tokens, no database."""
+    from qlab.twin import causal_twin, twin_yaml, write_twin
+
+    try:
+        spec = load_spec(spec_path)
+        base = load_spec(base_path) if base_path is not None else None
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: invalid spec: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    result = causal_twin(spec, base=base, spec_path=spec_path, base_path=base_path)
+    if result.spec is None:
+        typer.echo(f"no twin for {spec.idea_id}: {result.reason}")
+        if base is None:
+            typer.echo("(an experiment on another spec needs --base SPEC: the spec it modifies)")
+        return
+    if write:
+        try:
+            typer.echo(str(write_twin(spec_path, result.spec, spec.idea_id)))
+        except FileExistsError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        return
+    typer.echo(twin_yaml(result.spec, spec.idea_id), nl=False)
+
+
 @app.command("director")
 def director_cmd(
     dry_run: bool = typer.Option(
