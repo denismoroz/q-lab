@@ -90,6 +90,8 @@ def test_night_target_follows_the_formula(session) -> None:
 def test_no_reading_no_night(session) -> None:
     with pytest.raises(NightExhausted, match="does not guess"):
         NightBudget.open(session, UsageReading("allowed", None, None), now=NOW)
+    with pytest.raises(NightExhausted, match="does not guess"):  # the probe read nothing at all
+        NightBudget.open(session, None, now=NOW)
 
 
 def test_stage_shares_what_is_left_among_waiting_candidates(session) -> None:

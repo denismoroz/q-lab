@@ -186,7 +186,9 @@ class NightBudget:
     @classmethod
     def open(cls, session: Session, reading: UsageReading, now: datetime | None = None
              ) -> NightBudget:
-        if reading.seven_day is None:
+        if reading is None or reading.seven_day is None:
+            # A probe that read nothing (the CLI or the network failed) is the same: a clean
+            # stop, never an AttributeError that a stage would not take for a stop.
             raise NightExhausted("no reading of the weekly window: the guard does not guess it")
         now = now or datetime.now(UTC)
         start = reading.seven_day.utilization
