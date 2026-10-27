@@ -621,7 +621,8 @@ def _earliest_date(owner: StrategySpec, owner_cite: str, names: Sequence[str],
 
     A peer is a spec of the same strategy (the experiment's base, the strategy's live spec): it
     can only date a list it holds itself, the same set of coins, whichever venue's names it
-    uses. Its date is when the book with those coins was fixed (docs/FIT_VS_FORWARD.md), which
+    uses, and must fix its numbers by hand (a causal chooser's date is its first choice, not the
+    list's). Its date is when the book with those coins was fixed (docs/FIT_VS_FORWARD.md), which
     is earlier than the day an experiment reusing the list was written."""
     from qlab.pipeline.stage2 import venue_name
 
@@ -630,6 +631,10 @@ def _earliest_date(owner: StrategySpec, owner_cite: str, names: Sequence[str],
     want = _coins(names)
     for peer, cite in peers:
         if peer.params_fixed_at is None or peer.params_fixed_at >= best[0]:
+            continue
+        if peer.selects_causally or normalize_ref(peer.code_ref) == RETUNE:
+            # The date of a re-tuning wrapper is its code's first choice (bv2-research-headroom-
+            # retune-binance: 2023-07-01), not the day anyone chose the coins.
             continue
         found = _named_columns(peer, coin_params, derive=True)
         if found is None:

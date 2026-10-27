@@ -554,6 +554,18 @@ def test_a_peer_with_other_coins_does_not_date_the_list():
     assert chosen.chosen_at == date(2025, 6, 1) and chosen.dated_cite == "specs/bv2-live.yaml"
 
 
+def test_a_causal_chooser_with_the_same_coins_does_not_date_the_list():
+    """bv2-research-headroom-retune-binance trades the same four coins and is dated 2023-07-01,
+    the first choice of its code; the coins were fixed on 2025-06-01 (the live book)."""
+    experiment = _load(*BV2_POOL)
+    retune = _load("research", "bv2", "bv2-research-headroom-retune-binance.yaml")
+    assert retune.selects_causally and retune.params_fixed_at == date(2023, 7, 1)
+    chosen, _ = chosen_list(
+        experiment, venue_names=_listing("BTC", "ETH", "SOL", "AVAX"),
+        peers=[(retune, "specs/retune.yaml"), (_load("bv2-live.yaml"), "specs/bv2-live.yaml")])
+    assert chosen.chosen_at == date(2025, 6, 1) and chosen.dated_cite == "specs/bv2-live.yaml"
+
+
 def test_no_day_is_left_to_judge_when_the_list_is_dated_at_or_after_the_data_end():
     experiment = _load(*BV2_POOL)
     early_end = experiment.model_copy(update={

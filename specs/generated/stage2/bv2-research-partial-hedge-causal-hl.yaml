@@ -59,7 +59,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-25'
+  end: '2026-10-26'
   instruments:
   - AVAX
   - AVAX-SPOT
@@ -80,10 +80,17 @@ differs_from_source:
 - 'Causal twin of bv2-research-partial-hedge: the numbers it trades are chosen by code, every month, from
   returns realised before the choice (the declared lists of night/own_numbers.yaml); the data is Binance''s
   history, a proxy for binance''s market, with the original''s costs and minimum leg.'
+- 'The twin trades only 8 named columns (AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, SOL, SOL-SPOT),
+  the data.instruments of bv2-research-partial-hedge, not the whole market: the list was chosen by 2025-06-01
+  and would know which coins survived if applied to the history before it (survivorship), so the twin
+  is judged only from 2025-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08 are warm-up
+  for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
 - 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
   stage 1 (bv2-research-partial-hedge-causal) on hyperliquid''s own perpetual contracts listed at each
   bar; nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
+  it are warm-up.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
   AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
   lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
@@ -122,7 +129,16 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-research-partial-hedge-causa
   from night/own_numbers.yaml, 2 candidates. What this does not prove: the lists were declared in night/own_numbers.yaml
   (version 2026-10-26.2) before this twin ran; what was seen of the history when they were declared is
   not recorded, so the choice is only as honest as the lists are (the spec''s own date for its numbers:
-  2025-06-01).'
+  2025-06-01). The instrument list is not point-in-time before 2025-06-01. The twin trades only the 8
+  columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, SOL, SOL-SPOT (data.instruments of bv2-research-partial-hedge)
+  (hourly candles of every Binance perpetual take hours; these take about 3 minutes). A list chosen by
+  hand and applied to history from 2019-09-08 knows which coins existed and survived, which the days before
+  it was chosen did not; a coin Binance listed later has no candles before its listing day and enters
+  then. The earliest documented day the list existed is 2025-06-01 (params_fixed_at of bv2-research-partial-hedge),
+  so the twin is judged only from that day (`judged_from` = `instruments_chosen_at` = 2025-06-01): the
+  history before it is warm-up for the code''s monthly choice (more data to choose with), not judged,
+  and from that day the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
+judged_from: '2025-06-01'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
@@ -176,6 +192,13 @@ sources:
   inner_code_ref: 'src/qlab/strategies/live/bv2.py: the code of the spec'
   grid: 'night/own_numbers.yaml (version 2026-10-26.2): the declared list for each of partial_hedge_share;
     owner 2026-10-26: own numbers chosen on data before the cut'
+  data.instruments: 'specs/research/bv2/bv2-research-partial-hedge.yaml: data.instruments of bv2-research-partial-hedge,
+    the coins its book trades'
+  instruments_chosen_at: 'specs/research/bv2/bv2-research-partial-hedge.yaml: params_fixed_at = 2025-06-01
+    of bv2-research-partial-hedge, the earliest documented day the list of bv2-research-partial-hedge
+    existed'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2025-06-01); the days before are warm-up'
   score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
     both legs move by the same amount'
   score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
@@ -211,3 +234,4 @@ regime_claim:
   bear: beats_market
 review_answers: {}
 selects_causally: true
+instruments_chosen_at: '2025-06-01'
