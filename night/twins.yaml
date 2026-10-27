@@ -27,7 +27,9 @@ slow_twin_minutes: 20
 # list (qlab.twin.chosen_list), so only those columns are fetched. The list comes from, in this
 # order: the spec's own data.instruments, its required_instruments, a coin list in its params
 # (the parameters named in coin_list_params below); then the same three of the base spec. Every
-# list is cited in the twin's sources and marked as chosen with hindsight (instruments_chosen_at).
+# list is cited in the twin's sources and dated (instruments_chosen_at: the earliest documented
+# params_fixed_at of the spec that owns it, its base or another spec of the strategy with the same
+# coins); the twin is judged only from that day (judged_from), the earlier history is warm-up.
 # A spec that names no such set (FRAB's `universe: all_paired`) stays heavy.
 #
 # Fetching one column's hourly history since 2019 takes about this many seconds (measured

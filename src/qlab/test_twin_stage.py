@@ -411,7 +411,7 @@ def test_a_twin_with_an_instrument_list_is_run_and_the_report_names_the_list(
     assert entry["fetch_minutes"] == 3.3
     assert [c[0] for c in world.calls] == ["stand", "stage2"]
     text = "\n".join(twin_stage.entry_lines(entry))
-    assert "только 8 столбцами" in text and "задним числом" in text
+    assert "только 8 столбцами" in text and "со дня, когда список уже был известен" in text
 
 
 def test_a_list_past_the_threshold_is_recorded_as_heavy_with_its_size(world, monkeypatch) -> None:

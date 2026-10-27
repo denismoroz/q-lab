@@ -227,6 +227,21 @@ def test_translation_maps_named_instruments_and_drops_what_the_venue_lacks() -> 
     assert any("LUNA2" in note for note in result.spec.differs_from_source)
 
 
+def test_a_list_dated_after_the_venue_data_begins_is_judged_from_that_day_here_too() -> None:
+    """A causal twin's hand-picked list (`instruments_chosen_at`) knows how earlier days ended:
+    the child on Hyperliquid is judged from the list's day, the earlier days are warm-up."""
+    spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                       "end": LAST_DAY, "instruments": ["BTC", "ETH"]},
+                 instruments_chosen_at=date(2025, 6, 1),
+                 sources={**_spec().sources, "instruments_chosen_at": OWNER})
+    child = stage2.translate(spec, CONFIG, venue_names={"BTC", "ETH"}).spec
+    assert child.judged_from == date(2025, 6, 1) and child.instruments_chosen_at == date(2025, 6, 1)
+    assert any("Judged from 2025-06-01" in note for note in child.differs_from_source)
+    # Known before the venue's data begins: nothing to cut.
+    early = spec.model_copy(update={"instruments_chosen_at": date(2020, 1, 1)})
+    assert stage2.translate(early, CONFIG, venue_names={"BTC", "ETH"}).spec.judged_from is None
+
+
 def test_translation_with_no_instrument_left_makes_no_spec_and_says_why() -> None:
     spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
                        "end": LAST_DAY, "instruments": ["LUNA2", "FTT"]})

@@ -1437,6 +1437,32 @@ def test_a_list_chosen_when_the_judged_part_began_is_point_in_time(session, tmp_
     assert result.metrics["point_in_time_universe"] == 1.0  # fixed when the forward test began
 
 
+def test_a_causal_twin_with_a_late_list_is_judged_only_from_the_day_the_list_was_known(
+        session, tmp_path) -> None:
+    """The twin's first causal choice is early (`params_fixed_at`), its hand-picked list is
+    younger (`instruments_chosen_at`); `judged_from` = the list's day cuts the judged part, so
+    the universe is point-in-time there, and the days before are warm-up, not selection."""
+    ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
+    twin = dict(params_fixed_at=date(2026, 1, 2), params_fixed_evidence="first causal choice",
+                selects_causally=True, instruments_chosen_at=date(2026, 1, 6),
+                sources=LIST_SOURCES)
+
+    spec = _explicit_long(session, tmp_path, **twin)
+    unjudged = evaluate_spec(spec, session=session, ruleset=ruleset,
+                             deployable_capital_usd=1000.0)
+    assert unjudged.metrics["point_in_time_universe"] == 0.0  # judged from the first choice
+
+    cut = evaluate_spec(spec.model_copy(update={"judged_from": date(2026, 1, 6)}),
+                        session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    assert cut.metrics["point_in_time_universe"] == 1.0
+    assert cut.metrics["judged_on_forward"] == 1.0
+    assert cut.metrics["selection_days"] == 0.0  # a causal chooser has no selection period
+    assert cut.metrics["forward_days"] == pytest.approx(5.0 + 1 / 24)
+    assert cut.metrics["skipped_warmup_days"] == pytest.approx(5.0)
+    rows = session.query(Verdict).filter(Verdict.trial_id == cut.trial_id).all()
+    assert {v.data_range_start for v in rows if v.note == FORWARD_NOTE} == {date(2026, 1, 6)}
+
+
 def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_path) -> None:
     spec = _explicit_long(
         session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"

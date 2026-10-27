@@ -233,7 +233,9 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     the interval, the end of the data, `params_fixed_at` and its evidence, the
     fit window, the noise universe, the sources of the parameters. Switched: the
     venue (`data.source`), the start of the data (the later of stage 1's and the
-    config's), the costs (Hyperliquid's, cited), the idea id and title.
+    config's), the costs (Hyperliquid's, cited), the idea id and title. A stage 1
+    `instruments_chosen_at` later than the start becomes the child's `judged_from`: the days
+    before the list was known are warm-up here as there.
 
     With `instruments` or `required_instruments` named, `venue_names` (what the
     venue lists) maps them; a coin it does not list is dropped from the list --
@@ -265,6 +267,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         spot_prices=data.spot_prices, spot_source=None,
         start=max(data.start, config.data_start), end=data.end, instruments=instruments,
         min_daily_volume_usd=data.min_daily_volume_usd)
+    # A list chosen later than the venue's data begins (a causal twin's hand-picked coins,
+    # `instruments_chosen_at`) is judged from that day here as on the twin's own history:
+    # earlier days know how the list ended up.
+    known_from = (spec.instruments_chosen_at
+                  if spec.instruments_chosen_at is not None and instruments is not None
+                  and spec.instruments_chosen_at > child_data.start else None)
     notes = [
         f"Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same "
         f"parameter values as stage 1 ({spec.idea_id}) on {config.venue}'s own perpetual "
@@ -275,6 +283,9 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     if dropped:
         notes.append(f"{len(dropped)} instrument(s) of stage 1 are not listed on {config.venue} "
                      f"and are not traded: {', '.join(dropped)}.")
+    if known_from is not None:
+        notes.append(f"Judged from {known_from}, the day the instrument list was known "
+                     "(instruments_chosen_at); the days before it are warm-up.")
     sources = {k: v for k, v in spec.sources.items() if k != "costs" and not k.startswith("costs.")}
     sources.update(config.cost_sources)
     spot_notes, spot_sources = _spot_legs(instruments or [], config)
@@ -290,7 +301,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                            slippage_bps=config.slippage_bps),
         "required_instruments": required,
         "exploratory": None,
-        "judged_from": None,
+        "judged_from": known_from,
         "differs_from_source": [*spec.differs_from_source, *notes],
         "params_fixed_evidence": (None if evidence is None
                                   else f"Inherited from stage 1 ({spec.idea_id}): {evidence}"),
@@ -586,6 +597,9 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
             result.needed_coins, result.most_coins = window.needed, window.most
             result.full_share = window.full_share
             if window.judged_from is not None:
+                if child.judged_from is not None:
+                    window = dataclasses.replace(
+                        window, judged_from=max(window.judged_from, child.judged_from))
                 child = child.model_copy(update={
                     "judged_from": window.judged_from,
                     "differs_from_source": [*child.differs_from_source, (

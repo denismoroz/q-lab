@@ -528,7 +528,8 @@ class _Run:
                     self.finish(cand, entry, counted=False)
                     return None
             names = self.venue_names
-        result = _causal_twin(cand, base, base_file, names, self.config)
+        result = _causal_twin(cand, base, base_file, names, self.config,
+                              [(s, f.as_posix()) for f, s in pool])
         if result.spec is None:
             entry.update(action="none", reason=result.reason)
             if not self.dry_run:
@@ -570,12 +571,14 @@ class _Run:
 
 
 def _causal_twin(cand: Candidate, base: StrategySpec | None, base_file: Path | None, names,
-                 config: Config):
+                 config: Config, peers=()):
+    """`peers`: the specs of the same strategy (the pool the base was found in), which may date
+    the twin's hand-picked list (`qlab.twin.chosen_list`)."""
     from qlab.twin import causal_twin
 
     return causal_twin(cand.spec, base=base, spec_path=cand.path, base_path=base_file,
                        venue_names=names, coin_params=config.coin_list_params,
-                       seconds_per_instrument=config.seconds_per_instrument)
+                       seconds_per_instrument=config.seconds_per_instrument, peers=peers)
 
 
 # --------------------------------------------------------------------------
@@ -651,10 +654,10 @@ def entry_lines(e: Mapping) -> list[str]:
             if e.get("candidates") else f"- {head}: {made}{base}, файл `{e.get('twin_spec')}`. ")
     if e.get("instruments"):
         line += (f"Двойник торгует только {len(e['instruments'])} столбцами "
-                 f"({', '.join(e['instruments'])}; {e.get('list_source')}): список составлен "
-                 "сегодня, по монетам, которые дожили до сегодня, и применён к истории с 2019 "
-                 "года, поэтому честным «без знания будущего» он не считается и правило о "
-                 "составе монет судит его, как любой список, выбранный задним числом. ")
+                 f"({', '.join(e['instruments'])}; {e.get('list_source')}): список подобран "
+                 "вручную по монетам, которые дожили до тех лет, поэтому двойник судится только "
+                 "со дня, когда список уже был известен; история до него служит разгоном для "
+                 "выбора кода и не судится. ")
     line += (f"Первый этап (история Binance с 2019 года), прогон {e.get('trial')}: "
              f"{_route_ru(e.get('route'))} — {_numbers(e.get('metrics') or {})}; "
              f"считалось {_minutes(e.get('seconds'))}")

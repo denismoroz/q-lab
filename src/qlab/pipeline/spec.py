@@ -405,13 +405,15 @@ class StrategySpec(BaseModel):
 
     A fixed list is a point-in-time universe on the forward test BECAUSE it was fixed
     before that test began (docs/FIT_VS_FORWARD.md): it cannot know the future of days
-    it did not see. A causal twin (`qlab.twin`) breaks that premise: its list is
-    chosen today, from coins that exist and survived today, and is applied to Binance's
-    history from 2019, so every judged day before the choice is one the list knew the
-    outcome of. With this date set, `point_in_time_universe` is 1 on the judged part
-    only if the part starts on or after it; before, it is 0 and the rule
-    `honest_universe` applies as it does to any list chosen with hindsight. `None`
-    (the default) keeps the old reading: the list was fixed at `params_fixed_at`.
+    it did not see. A causal twin (`qlab.twin`) breaks that premise: its list was chosen
+    by hand in 2023-2025 from coins that survived, and is applied to Binance's history
+    from 2019, so every judged day before the choice is one the list knew the outcome of.
+    With this date set, `point_in_time_universe` is 1 on the judged part only if the part
+    starts on or after it; before, it is 0 and the rule `honest_universe` applies as it
+    does to any list chosen with hindsight. The twin therefore sets `judged_from` to this
+    date: the earlier history is warm-up for its causal choice, not judged, and the
+    judged part is point-in-time. `None` (the default) keeps the old reading: the list
+    was fixed at `params_fixed_at`.
     Needs `data.instruments` and a citation in `sources["instruments_chosen_at"]`."""
 
     @model_validator(mode="after")

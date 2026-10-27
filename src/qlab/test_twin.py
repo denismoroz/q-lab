@@ -497,6 +497,7 @@ BV2_POOL_PATH = "specs/research/bv2/bv2-research-shared-pool-hl.yaml"
 def bv2_twin() -> StrategySpec:
     result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
                          spec_path=SPECS / "research" / "bv2" / BV2_POOL[-1],
+                         base_path=SPECS / "bv2-live.yaml",
                          venue_names=_listing("BTC", "ETH", "SOL", "AVAX", "DOGE"))
     assert result.reason is None
     return result.spec
@@ -514,18 +515,66 @@ def test_an_hourly_idea_that_names_its_columns_gets_a_twin_that_fetches_only_tho
 def test_the_list_is_cited_and_every_source_of_the_twin_checks(bv2_twin):
     assert bv2_twin.sources["data.instruments"].startswith(BV2_POOL_PATH)
     assert "required_instruments" in bv2_twin.sources["data.instruments"]
-    assert bv2_twin.sources["instruments_chosen_at"].startswith(BV2_POOL_PATH)
-    assert "params_fixed_at = 2026-08-28" in bv2_twin.sources["instruments_chosen_at"]
+    # The experiment's own params_fixed_at is 2026-08-28; the list existed in the live spec
+    # since the end of the documented fit window, and that spec is what the source cites.
+    assert bv2_twin.sources["instruments_chosen_at"].startswith("specs/bv2-live.yaml")
+    assert "params_fixed_at = 2025-06-01" in bv2_twin.sources["instruments_chosen_at"]
+    assert bv2_twin.sources["judged_from"].startswith("docs/RETUNE.md")
     assert _own_problems(bv2_twin) == []
 
 
-def test_the_list_is_marked_as_chosen_with_hindsight_in_the_data_and_in_words(bv2_twin):
-    assert bv2_twin.instruments_chosen_at == date(2026, 8, 28)  # the original's params_fixed_at
+def test_a_hand_picked_list_is_judged_only_from_the_earliest_day_it_existed(bv2_twin):
+    """The twin's experiment dates from 2026-08-28, but the four coins were fixed with the live
+    book on 2025-06-01 (docs/FIT_VS_FORWARD.md): the days before it are warm-up, not judged."""
+    assert bv2_twin.instruments_chosen_at == date(2025, 6, 1)
+    assert bv2_twin.judged_from == bv2_twin.instruments_chosen_at
+    assert bv2_twin.params_fixed_at < bv2_twin.judged_from  # the first causal choice, 2019-11
     evidence = bv2_twin.params_fixed_evidence
-    assert "not point-in-time" in evidence and "survived" in evidence
+    assert "not point-in-time before 2025-06-01" in evidence and "survived" in evidence
+    assert "warm-up" in evidence and "judged only from that day" in evidence
     assert "8 columns" in evidence and "3 minutes" in evidence
     notes = " ".join(bv2_twin.differs_from_source)
     assert "survivorship" in notes and "8 named columns" in notes
+    assert "judged only from 2025-06-01" in notes
+
+
+def test_a_peer_with_other_coins_does_not_date_the_list():
+    experiment = _load(*BV2_POOL)
+    other = _load("bv2-binance.yaml")
+    three = other.model_copy(update={
+        "params": {**other.params, "coins": ["BTC", "ETH", "SOL"]},
+        "data": other.data.model_copy(update={"instruments": None}),
+        "required_instruments": None})
+    chosen, _ = chosen_list(experiment, venue_names=_listing("BTC", "ETH", "SOL", "AVAX"),
+                            peers=[(three, "specs/three.yaml")])
+    assert chosen.chosen_at == experiment.params_fixed_at
+    assert chosen.dated_owner == experiment.idea_id
+    chosen, _ = chosen_list(experiment, venue_names=_listing("BTC", "ETH", "SOL", "AVAX"),
+                            peers=[(_load("bv2-live.yaml"), "specs/bv2-live.yaml")])
+    assert chosen.chosen_at == date(2025, 6, 1) and chosen.dated_cite == "specs/bv2-live.yaml"
+
+
+def test_no_day_is_left_to_judge_when_the_list_is_dated_at_or_after_the_data_end():
+    experiment = _load(*BV2_POOL)
+    early_end = experiment.model_copy(update={
+        "data": experiment.data.model_copy(update={"end": date(2025, 5, 1)})})
+    result = causal_twin(early_end, base=_load("bv2-live.yaml"),
+                         venue_names=_listing("BTC", "ETH", "SOL", "AVAX"))
+    assert result.spec is None and "no such day is left" in result.reason
+
+
+def test_the_evaluator_counts_the_list_as_point_in_time_on_the_part_the_twin_is_judged_on():
+    """`judged_from` and `instruments_chosen_at` agree, so the first judged bar is on or after
+    the day the list was known (qlab.pipeline.evaluate, `list_precedes`)."""
+    import pandas as pd
+
+    result = causal_twin(_load(*BV2_POOL), base=_load("bv2-live.yaml"),
+                         venue_names=_listing("BTC", "ETH", "SOL", "AVAX"))
+    twin = result.spec
+    index = pd.date_range("2019-09-08", "2026-09-20", freq="1h", tz="UTC")
+    first = int(index.searchsorted(pd.Timestamp(twin.judged_from, tz="UTC")))
+    assert index[first].date() >= twin.instruments_chosen_at
+    assert twin.selects_causally and twin.data.instruments is not None
 
 
 def test_the_result_says_how_many_columns_where_from_and_what_the_fetch_costs():
@@ -622,7 +671,8 @@ def test_the_twin_with_a_list_survives_the_file_and_the_cli_prints_it(tmp_path, 
     result = runner.invoke(app, ["twin", str(SPECS.joinpath(*BV2_POOL)),
                                  "--base", str(SPECS / "bv2-live.yaml")])
     assert result.exit_code == 0, result.output
-    assert "instruments_chosen_at: '2026-08-28'" in result.output
+    assert "instruments_chosen_at: '2025-06-01'" in result.output
+    assert "judged_from: '2025-06-01'" in result.output
     assert "8 columns from required_instruments" in result.output
     assert "within the night bound" in result.output
     assert str(ROOT) not in result.output

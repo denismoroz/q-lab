@@ -37,7 +37,7 @@ from __future__ import annotations
 import copy
 import math
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -545,10 +545,16 @@ class ChosenList:
     """The idea id of the spec the list was read from (the original or its base)."""
     cite: str
     chosen_at: date
-    """The latest day the list can have been chosen: the owner's `params_fixed_at`, else the
-    end of its data (a list of a spec with no date may know everything up to there)."""
+    """The EARLIEST documented day the list existed, which is the day the twin starts to be
+    judged: the `params_fixed_at` of the owner or of a peer (the base, another spec of the
+    strategy) that trades the same coins, whichever is earliest; failing any, the end of the
+    owner's data (a list of a spec with no date may know everything up to there)."""
     dated_by: str = "params_fixed_at"
     dropped: tuple[str, ...] = ()
+    dated_owner: str = ""
+    """The idea id of the spec whose date `chosen_at` is."""
+    dated_cite: str = ""
+    """Where that spec lives, as the twin's sources cite it."""
 
 
 def fetch_estimate(columns: int, seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> float:
@@ -602,10 +608,46 @@ def needs_listing(spec: StrategySpec, base: StrategySpec | None = None, *,
                for owner in (spec, base))
 
 
+def _coins(names: Collection[str]) -> frozenset[str]:
+    return frozenset(n.removesuffix(SPOT_SUFFIX).upper() for n in names)
+
+
+def _earliest_date(owner: StrategySpec, owner_cite: str, names: Sequence[str],
+                   peers: Sequence[tuple[StrategySpec, str]], venue_names: Collection[str] | None,
+                   coin_params: Collection[str]) -> tuple[date, str, str, str]:
+    """(the date, what dates it, whose it is, where it lives): the earliest documented
+    `params_fixed_at` among the owner and the peers that trade the same coins as `names`, else
+    the owner's own date, else the end of its data.
+
+    A peer is a spec of the same strategy (the experiment's base, the strategy's live spec): it
+    can only date a list it holds itself, the same set of coins, whichever venue's names it
+    uses. Its date is when the book with those coins was fixed (docs/FIT_VS_FORWARD.md), which
+    is earlier than the day an experiment reusing the list was written."""
+    from qlab.pipeline.stage2 import venue_name
+
+    best = (owner.params_fixed_at or owner.data.end,
+            "params_fixed_at" if owner.params_fixed_at else "data.end", owner.idea_id, owner_cite)
+    want = _coins(names)
+    for peer, cite in peers:
+        if peer.params_fixed_at is None or peer.params_fixed_at >= best[0]:
+            continue
+        found = _named_columns(peer, coin_params, derive=True)
+        if found is None:
+            continue
+        theirs = {_coins(found[0])}
+        if peer.data.source != TWIN_VENUE and venue_names is not None:
+            mapped = [venue_name(n, venue_names) for n in found[0]]
+            theirs.add(_coins(m for m in mapped if m is not None))
+        if want in theirs:
+            best = (peer.params_fixed_at, "params_fixed_at", peer.idea_id, cite)
+    return best
+
+
 def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
                 spec_cite: str = RETUNE_DOC, base_cite: str = RETUNE_DOC,
                 venue_names: Collection[str] | None = None,
-                coin_params: Collection[str] = COIN_LIST_PARAMS
+                coin_params: Collection[str] = COIN_LIST_PARAMS,
+                peers: Sequence[tuple[StrategySpec, str]] = ()
                 ) -> tuple[ChosenList | None, str | None]:
     """(the list the twin carries, None), (None, why no twin can be made) or (None, None) when
     the spec names no bounded set of coins.
@@ -619,7 +661,11 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
     list loses the coins Binance lacks, as docs/TWO_STAGE.md says of a coin list in a spec; a
     list read from `required_instruments` or from params does not: the strategy needs exactly
     those coins and its parameters are copied unchanged (the same document), so a missing coin
-    is a refusal that names it."""
+    is a refusal that names it.
+
+    `peers` are (spec, where it lives) pairs that may date the list (`_earliest_date`): the
+    list's date is the earliest `params_fixed_at` of the owner and of those that trade the same
+    coins. `base` is always a peer."""
     from qlab.pipeline.stage2 import map_instruments, venue_name
 
     derive = spec.data.interval != "1d"
@@ -653,12 +699,16 @@ def chosen_list(spec: StrategySpec, base: StrategySpec | None = None, *,
                         "Binance's data cannot hold the same book; dropping a coin would be a "
                         "change of the strategy's numbers, which is the owner's to make")
                 names = [m for m in mapped if m is not None]
+        names = list(dict.fromkeys(names))
+        pool = [*peers, *([(base, base_cite)] if base is not None else [])]
+        chosen_at, dated_by, dated_owner, dated_cite = _earliest_date(
+            owner, cite, names, [(p, c) for p, c in pool if p.idea_id != owner.idea_id],
+            venue_names, coin_params)
         return ChosenList(
-            names=tuple(dict.fromkeys(names)), kind=kind, owner=owner.idea_id,
+            names=tuple(names), kind=kind, owner=owner.idea_id,
             cite=f"{cite}: {kind} of {owner.idea_id}, the coins its book trades",
-            chosen_at=owner.params_fixed_at or owner.data.end,
-            dated_by="params_fixed_at" if owner.params_fixed_at else "data.end",
-            dropped=tuple(dropped)), None
+            chosen_at=chosen_at, dated_by=dated_by, dropped=tuple(dropped),
+            dated_owner=dated_owner, dated_cite=dated_cite), None
     return None, None
 
 
@@ -690,14 +740,16 @@ def _list_evidence(chosen: ChosenList, start: date, seconds: float | None) -> st
             f" (hourly candles of every Binance perpetual take hours; these take about "
             f"{seconds / 60:.0f} minutes)")
     return (
-        f"The instrument list is not point-in-time. The twin trades only the {len(chosen.names)} "
-        f"columns {', '.join(chosen.names)} ({chosen.kind} of {chosen.owner}){cost}. A list "
-        f"chosen by {chosen.chosen_at} and applied to history from {start} knows which coins "
-        f"existed and survived up to {chosen.chosen_at}, which the days before it did not; a "
-        "coin Binance listed later has no candles before its listing day and enters then. So "
-        f"`instruments_chosen_at` is {chosen.chosen_at}: the stand reports "
-        "point_in_time_universe 0 on every judged day before it, and the rule honest_universe "
-        "judges the twin as it judges any list chosen with hindsight (docs/FIT_VS_FORWARD.md)")
+        f"The instrument list is not point-in-time before {chosen.chosen_at}. The twin trades "
+        f"only the {len(chosen.names)} columns {', '.join(chosen.names)} ({chosen.kind} of "
+        f"{chosen.owner}){cost}. A list chosen by hand and applied to history from {start} "
+        "knows which coins existed and survived, which the days before it was chosen did not; a "
+        "coin Binance listed later has no candles before its listing day and enters then. The "
+        f"earliest documented day the list existed is {chosen.chosen_at} ({chosen.dated_by} of "
+        f"{chosen.dated_owner}), so the twin is judged only from that day (`judged_from` = "
+        f"`instruments_chosen_at` = {chosen.chosen_at}): the history before it is warm-up for "
+        "the code's monthly choice (more data to choose with), not judged, and from that day "
+        "the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md)")
 
 
 def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: str,
@@ -737,9 +789,12 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
     sources.update(grid.sources)
     if chosen is not None:
         sources["data.instruments"] = chosen.cite
-        sources["instruments_chosen_at"] = (
-            f"{chosen.cite.split(':')[0]}: {chosen.dated_by} = {chosen.chosen_at}, the latest "
-            f"day the list of {chosen.owner} can have been chosen")
+        dated = (f"{chosen.dated_by} = {chosen.chosen_at} of {chosen.dated_owner}, the earliest "
+                 f"documented day the list of {chosen.owner} existed")
+        sources["instruments_chosen_at"] = f"{chosen.dated_cite.split(':')[0]}: {dated}"
+        sources["judged_from"] = (
+            f"{RETUNE_DOC}: a hand-picked list is judged only from the day it was known "
+            f"(instruments_chosen_at = {chosen.chosen_at}); the days before are warm-up")
     for name in ("taker_fee_bps", "slippage_bps"):
         cost = spec.sources.get(f"costs.{name}") or spec.sources.get("costs")
         sources[f"score_costs.{name}"] = cost or f"{RETUNE_DOC}: scores use the spec's costs"
@@ -755,14 +810,17 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 spec_path: Path | str | None = None, base_path: Path | str | None = None,
                 config_path: Path = CONFIG, venue_names: Collection[str] | None = None,
                 refit_every: str = "M", coin_params: Collection[str] = COIN_LIST_PARAMS,
-                seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> TwinResult:
+                seconds_per_instrument: float = SECONDS_PER_INSTRUMENT,
+                peers: Sequence[tuple[StrategySpec, str]] = ()) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
     `spec_path` and `base_path` are cited as the places the candidates' numbers come from.
     `venue_names` (Binance's listing) is needed only to map instruments a Hyperliquid spec
     names. `refit_every` is `M`, `W` or `D`, as `Retune`'s. `coin_params` and
-    `seconds_per_instrument` are `chosen_list`'s and `fetch_estimate`'s (night/twins.yaml)."""
+    `seconds_per_instrument` are `chosen_list`'s and `fetch_estimate`'s (night/twins.yaml).
+    `peers` are (spec, its path) pairs of the same strategy that may date a hand-picked list
+    (`chosen_list`); the base always does."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
@@ -789,7 +847,8 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     chosen, why = chosen_list(
         spec, base if grid.kind != "lists" else None, spec_cite=_text(spec_path) or RETUNE_DOC,
         base_cite=_text(base_path) or RETUNE_DOC, venue_names=venue_names,
-        coin_params=coin_params)
+        coin_params=coin_params,
+        peers=[*([(base, _text(base_path) or RETUNE_DOC)] if base is not None else []), *peers])
     if why:
         return TwinResult(None, why)
     data, required = _twin_data(spec, venue_names, chosen)
@@ -829,9 +888,15 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         notes.append(
             f"The twin trades only {len(chosen.names)} named columns ({', '.join(chosen.names)}), "
             f"the {chosen.kind} of {chosen.owner}, not the whole market: the list was chosen by "
-            f"{chosen.chosen_at} and is applied to history from {data.start}, so it knows which "
-            "coins survived (survivorship); the stand does not call it point-in-time "
-            "(instruments_chosen_at, docs/FIT_VS_FORWARD.md).")
+            f"{chosen.chosen_at} and would know which coins survived if applied to the history "
+            f"before it (survivorship), so the twin is judged only from {chosen.chosen_at} "
+            f"(judged_from = instruments_chosen_at); the days from {data.start} are warm-up for "
+            "the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).")
+    if chosen is not None and chosen.chosen_at >= data.end:
+        return TwinResult(None, (
+            f"the instrument list is dated {chosen.chosen_at} ({chosen.dated_by} of "
+            f"{chosen.dated_owner}), on or after the end of the data ({data.end}): a hand-picked "
+            "list is judged only from the day it was known, and no such day is left"))
     update = {
         "idea_id": f"{spec.idea_id}{TWIN_SUFFIX}",
         "title": f"{spec.title}: числа выбирает код {PERIODS[refit_every][1]} только по "
@@ -841,7 +906,7 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "data": data,
         "required_instruments": required,
         "exploratory": None,
-        "judged_from": None,
+        "judged_from": None if chosen is None else chosen.chosen_at,
         "params_fit_from": None,
         "params_fixed_at": dates[2],
         "params_fixed_evidence": _evidence(
