@@ -201,12 +201,13 @@ def test_a_crash_computing_stage_1_history_is_a_reason_not_a_crash() -> None:
     assert "stage 1's history could not be computed: ValueError: boom" in found.reason
 
 
-@pytest.mark.parametrize("power,expect", [(None, "was not recorded"), (0.5, "had power 50%")])
-def test_a_stage_1_whose_own_noise_comparison_was_unpowered_is_not_a_proof(
-        power: float | None, expect: str) -> None:
+@pytest.mark.parametrize("power", [None, 0.15])
+def test_stage_1_power_is_not_required_its_survival_means_it_passed_the_noise_bar(
+        power: float | None) -> None:
+    # xsmom-research-nobull-retune: stage 1 beat 100% of random books with power 15%
     review, found = _review(_context(_metrics()), _stage1(power=power))
-    assert found.status == "not-applied" and expect in found.reason
-    assert review.routing.route == "needs-forward"
+    assert found.status != "not-applied"
+    assert found.stage1_noise_power == power
 
 
 def test_without_the_owners_alarm_nothing_is_confirmed() -> None:

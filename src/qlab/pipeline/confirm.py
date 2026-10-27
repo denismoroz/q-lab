@@ -261,14 +261,9 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
         return not_applied(f"stage 1's history could not be computed: "
                            f"{type(exc).__name__}: {exc}", alert_percentile=alert)
     known = dict(alert_percentile=alert, stage1_trial_id=history.trial_id)
-    if history.noise_power is None or history.noise_power != history.noise_power:
-        return not_applied("stage 1's noise comparison power was not recorded, so it cannot "
-                           "be shown to have decided", **known)
-    if history.noise_power < power_rule.min_power:
-        return not_applied(
-            f"stage 1's own noise comparison had power {history.noise_power:.0%} "
-            f"(it decides from {power_rule.min_power:.0%}), so stage 1 is not a proof",
-            stage1_noise_power=history.noise_power, **known)
+    # Stage 1's own power is not required: a stage 1 survivor PASSED its noise comparison
+    # (an unpowered failure routes needs-forward, which is not in STAGE1_CONFIRMS), and low
+    # power only lets good strategies fail -- it does not let empty ones pass a 99% bar.
 
     days = window_days_of(ctx.metrics, ctx.spec.data.interval)
     total = ctx.metrics.get(TOTAL_METRIC)

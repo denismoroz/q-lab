@@ -504,9 +504,10 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                              + "; ".join(problems))
 
         reviewer = None
-        if (not measure and ruleset.stage2_confirmation is not None
+        if (ruleset.stage2_confirmation is not None
                 and result.stage1_route in confirm.STAGE1_CONFIRMS):
             # Only a stage 1 that decided can be confirmed; a stage 1 that waits passes nothing.
+            # A measurement shows the check too; it still moves no idea's status.
             reviewer = confirm.Stage2Reviewer(
                 stage1_route=result.stage1_route,
                 load_history=lambda: confirm.load_stage1_history(
