@@ -15,6 +15,9 @@ budget guard has nothing to guard (a test pins that).
 * `book_window` -- from which day the market holds enough coins for the portfolio
   rule, and whether it ever does (pure, on a panel);
 * `combine` -- the idea's route from the two stages' routes (pure);
+* confirmation by stage 1's history (`qlab.pipeline.confirm`, rules 2026-10-27.1): where
+  the comparison with random books cannot decide on Hyperliquid's short window, stage 2
+  is a consistency check with stage 1's long history, not a second proof;
 * `run_stage2` -- the whole step: child idea, translation, window, run, verdict,
   the parent's status, all of it written to the registry;
 * `report_lines` -- the stages side by side, in plain Russian.
@@ -23,6 +26,7 @@ budget guard has nothing to guard (a test pins that).
 from __future__ import annotations
 
 import copy
+import dataclasses
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -30,14 +34,16 @@ from pathlib import Path
 
 import yaml
 
+from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
 
 CONFIG = Path("night/stage2.yaml")
 SPEC_DIR = Path("specs/generated/stage2")
 COMPOSED_CODE_REF = "qlab.strategies.blocks:Composed"
-RESULT_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
-                  "min_capital_usd", "forward_days", "forward_days_needed", "selection_days")
+RESULT_METRICS = ("ann_return_net", "total_return_net", "sharpe_net", "max_dd",
+                  "noise_return_percentile", "noise_power", "min_capital_usd", "forward_days",
+                  "forward_days_needed", "selection_days")
 UNDECIDED = ("not-evaluable", "needs-more-data", "error")
 """Stage 2 routes that decided nothing: the idea waits."""
 
@@ -281,7 +287,13 @@ def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config
       venue where the orders go (a stage 1 `needs-infrastructure` is Binance's
       missing adapter, which stage 2 settles);
     * a stage 2 that decided nothing (not evaluable, no data, a crash) never
-      passes the idea: it waits, with the reason."""
+      passes the idea: it waits, with the reason.
+
+    A stage 2 route that came from the consistency check with stage 1
+    (`qlab.pipeline.confirm`) is an ordinary stage 2 route here. It is only ever
+    given for a stage 1 that decided (`paper`, `shelf`, `needs-infrastructure`); and
+    were it ever given for a stage 1 that still waits, the `needs-forward` line below
+    keeps the idea waiting: "too early" on stage 1 never turns into a pass."""
     if stage1_route not in config.stage1_survives:
         return Combined(stage1_route, f"stage 1 {stage1_route}: stage 2 not run")
     if stage2_route == "reject":
@@ -330,6 +342,12 @@ class Stage2Result:
     combined_route: str | None = None
     combined_reason: str | None = None
     parent_status: str | None = None
+    confirmation: dict | None = None
+    """The consistency check with stage 1's history (`qlab.pipeline.confirm.Confirmation`
+    as a dict), when the noise comparison could not decide on this window: the
+    percentile among stage 1's same-length segments, how many there were, the stage 1
+    trial compared to, and the rules version that decided. None when the comparison
+    with random books decided as before."""
     error: str | None = None
 
 
@@ -485,15 +503,27 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
             raise ValueError("the stage 2 spec cites no checkable source for: "
                              + "; ".join(problems))
 
+        reviewer = None
+        if (not measure and ruleset.stage2_confirmation is not None
+                and result.stage1_route in confirm.STAGE1_CONFIRMS):
+            # Only a stage 1 that decided can be confirmed; a stage 1 that waits passes nothing.
+            reviewer = confirm.Stage2Reviewer(
+                stage1_route=result.stage1_route,
+                load_history=lambda: confirm.load_stage1_history(
+                    session, spec, result.stage1_trial_id))
         if window is not None and window.reason is not None:
             evaluation = evaluate_spec(
                 child, session=session, ruleset=ruleset,
                 deployable_capital_usd=deployable_capital_usd,
                 not_evaluable_extra=[window.reason])
         else:
+            review = {} if reviewer is None else {"review_route": reviewer}
             evaluation = evaluate_spec_with_shape_aware_bar(
                 child, session=session, ruleset=ruleset,
-                deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials).candidate
+                deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials,
+                **review).candidate
+        if reviewer is not None and reviewer.outcome is not None:
+            result.confirmation = dataclasses.asdict(reviewer.outcome)
         result.trial_id = evaluation.trial_id
         result.route = str(evaluation.routing.route)
         result.reason = evaluation.routing.reason
@@ -571,8 +601,12 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
         numbers = f" — {_numbers_ru(metrics)}" if metrics else ""
         lines.append(f"{head}, прогон {stage2.get('trial_id')}: {_route_ru(stage2.get('route'))}"
                      f"{numbers}; {window}{forward}")
-        if stage2.get("route") not in ("paper", "shelf"):
+        confirmation = stage2.get("confirmation")
+        decided_by_history = bool(confirmation) and confirmation.get("status") != "not-applied"
+        if stage2.get("route") not in ("paper", "shelf") and not decided_by_history:
             lines.append(f"причина: {stage2.get('reason')}")
+        if confirmation:
+            lines.extend(_confirmation_ru(confirmation))
     if stage2.get("dropped"):
         lines.append("монет первого этапа, которых нет на Hyperliquid, не торгуем: "
                      f"{len(stage2['dropped'])}")  # type: ignore[arg-type]
@@ -581,9 +615,53 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
     return lines
 
 
+def _confirmation_ru(c: Mapping[str, object]) -> list[str]:
+    """The consistency check with stage 1's long history (`qlab.pipeline.confirm`) in plain
+    words: why the comparison with random books was replaced, what the check found."""
+    power, need = c.get("noise_power"), c.get("noise_min_power")
+    good = c.get("noise_good_return")
+    why = ""
+    if isinstance(power, int | float) and isinstance(need, int | float):
+        yearly = f"{good:.0%} в год" if isinstance(good, int | float) else "хорошо"
+        why = (f"сравнение со случайными книгами на таком коротком отрезке почти ничего не "
+               f"различает: стратегия, которая на самом деле зарабатывает {yearly}, прошла бы "
+               f"его лишь в {power:.0%} случаев (решает оно от {need:.0%}), поэтому его заменила "
+               "сверка с длинной историей первого этапа (решение владельца 2026-10-27)")
+    if c.get("status") == "not-applied":
+        out = [f"сверка с длинной историей не проведена — {c.get('reason')}; остаётся прежний "
+               "вывод: идея ждёт"]
+        return [why, *out] if why else out
+    percentile, alert = c.get("percentile"), c.get("alert_percentile")
+    head = (f"сверка с длинной историей: хуже нынешнего было {percentile:.0f} из 100 таких же "
+            f"отрезков на Binance (порог владельца — нижние {alert:g}); отрезков "
+            f"{c.get('segments')}, из них не пересекающихся {c.get('independent_segments')}, "
+            f"длина отрезка {c.get('window_days')} дн.; сравнивали с прогоном первого этапа "
+            f"{c.get('stage1_trial_id')} ({c.get('stage1_from')} — {c.get('stage1_to')}); "
+            f"правила {c.get('rules_version')}")
+    total = c.get("total_return")
+    shown = f"{total:+.1%}" if isinstance(total, int | float) else "—"
+    if c.get("status") == "confirmed":
+        verdict = (f"итог сверки: за отрезок стратегия заработала {shown} после комиссий (больше "
+                   "нуля) и не оказалась среди худших отрезков своей длинной истории — "
+                   "подтверждено. Это проверка на согласие, а не второе доказательство: "
+                   "доказывает первый этап; бумажная торговля 4–6 недель перед деньгами остаётся")
+    elif c.get("status") == "not-positive":
+        verdict = (f"итог сверки: за отрезок стратегия заработала {shown} после комиссий — не "
+                   "больше нуля; отказ")
+    else:
+        verdict = (f"итог сверки: результат в нижних {alert:g} из 100 отрезков длинной истории — "
+                   "на себя не похоже; отказ")
+    return [line for line in (why, head, verdict) if line]
+
+
 def _combined_ru(stage1_route: object, stage2: Mapping[str, object]) -> str:
     route = stage2.get("combined_route")
     status = stage2.get("parent_status")
+    confirmation = stage2.get("confirmation") or {}
+    if (confirmation.get("status") == "confirmed"
+            and route in ("paper", "shelf", "needs-infrastructure")):
+        return (f"прошла оба этапа ({_route_ru(str(route))}), статус «{status}»: первый этап "
+                "доказал, второй подтвердил согласие с ним")
     if route == "reject":
         return (f"отвергнута на втором этапе — на данных Hyperliquid по {stage2.get('data_end')}; "
                 "воскресить можно только на данных, которых тогда не было")

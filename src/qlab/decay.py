@@ -456,22 +456,30 @@ def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Tim
     (the first realised row), as the harness's `net_return`. Never fetches and
     never writes a trial: a recorded strategy is only described, as
     `qlab.diagnose.diagnose_spec` does."""
-    from qlab.harness.costs import CostModel
-    from qlab.harness.run import run_backtest
-    from qlab.harness.strategy import own_costs
     from qlab.night import with_end
-    from qlab.pipeline.evaluate import (
-        _slice_rows,
-        complete_book_window,
-        resolve_cached_panel,
-        resolve_strategy,
-    )
+    from qlab.pipeline.evaluate import resolve_cached_panel
     from qlab.pipeline.spec import load_spec
 
     spec = with_end(load_spec(spec_path), end)
     panel = resolve_cached_panel(session, spec)
     if panel is None:
         raise StandHistoryMissing(f"the panel of {spec_path} is not cached")
+    try:
+        return net_return_on_panel(spec, panel, cut=cut)
+    except StandHistoryMissing as exc:
+        raise StandHistoryMissing(f"{spec_path}: {exc}") from exc
+
+
+def net_return_on_panel(spec, panel, *, cut: pd.Timestamp | None = None) -> pd.Series:
+    """The spec's strategy run on `panel` (read-only, no trial), the panel cut at `cut`
+    when one is given, as the harness's `net_return`. The honest start the evaluation
+    uses applies: truncated history is cut, and with `required_instruments` the run
+    covers the longest stretch in which the whole book existed."""
+    from qlab.harness.costs import CostModel
+    from qlab.harness.run import run_backtest
+    from qlab.harness.strategy import own_costs
+    from qlab.pipeline.evaluate import _slice_rows, complete_book_window, resolve_strategy
+
     truncated = dict(panel.meta.get("history_truncated") or {})
     if truncated:  # the same honest start the evaluation uses
         panel = _slice_rows(panel, int(panel.prices.index.searchsorted(
@@ -482,9 +490,11 @@ def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Tim
         coverage = complete_book_window(panel, spec.required_instruments)
         if coverage.window is not None:
             first, last = coverage.window
-    last = min(last, int(index.searchsorted(cut, side="right")) - 1)
+    if cut is not None:
+        last = min(last, int(index.searchsorted(cut, side="right")) - 1)
     if last - first < 3:
-        raise StandHistoryMissing(f"{spec_path}: fewer than three bars before {cut:%Y-%m-%d}")
+        where = f" before {cut:%Y-%m-%d}" if cut is not None else ""
+        raise StandHistoryMissing(f"fewer than three bars{where}")
     seen = _slice_rows(panel, 0, last)  # the realised period never reaches the strategy
     strategy = resolve_strategy(spec.code_ref)
     weights = strategy.target_weights(seen, spec.params)
@@ -696,6 +706,7 @@ __all__ = [
     "StandHistoryMissing", "WindowMeasure", "alert_label", "band_line", "bands_for",
     "STRATEGY_PNL", "build_live_series", "capital_mismatch", "check_band", "compare",
     "daily_closes", "latest_decay", "live_exports",
-    "load_all_books", "load_config", "max_drawdown", "percentile_of", "result_lines",
-    "rolling_windows", "run_decay", "save_results", "stand_net_return", "trim_flat_start",
+    "load_all_books", "load_config", "max_drawdown", "net_return_on_panel", "percentile_of",
+    "result_lines", "rolling_windows", "run_decay", "save_results", "stand_net_return",
+    "trim_flat_start",
 ]

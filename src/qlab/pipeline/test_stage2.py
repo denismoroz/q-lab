@@ -15,7 +15,7 @@ import pytest
 import qlab.pipeline.sources as sources
 import qlab.registry.db as db_module
 from qlab.data.panel import MarketPanel
-from qlab.pipeline import stage2
+from qlab.pipeline import confirm, stage2
 from qlab.pipeline.evaluate import evaluate_spec
 from qlab.pipeline.sources import source_problems
 from qlab.pipeline.spec import StrategySpec, load_spec
@@ -35,7 +35,17 @@ from qlab.registry.models import (
     Verdict,
 )
 from qlab.registry.stages import NOTES_PREFIX, child_id, stage2_child
-from qlab.rules.schema import Comparator, Rule, RuleSet, Stage
+from qlab.rules.schema import (
+    Comparator,
+    FitPeriodUse,
+    HoldoutShare,
+    NoisePower,
+    Rule,
+    RuleSet,
+    ShortForwardUse,
+    Stage,
+    Stage2Confirmation,
+)
 
 PARENT = "gen-test-momentum"
 CHILD = f"{PARENT}-hl"
@@ -600,3 +610,193 @@ def test_the_report_explains_a_skip_a_wait_and_a_measurement_in_words(
 def test_child_id_is_the_parents_with_the_venue_suffix() -> None:
     assert child_id(PARENT) == CHILD
     assert _spec().idea_id == PARENT
+
+
+# ---- confirmation by stage 1's history (rules 2026-10-27.1) -----------------------------
+
+NOISE_RULE = Rule(id="shape_aware_edge", stage=Stage.EDGE, metric="noise_return_percentile",
+                  comparator=Comparator.GE, threshold=0.99, fatal=True,
+                  fit_period=FitPeriodUse.INFORMATIONAL, on_short_forward=ShortForwardUse.WAIT)
+CONFIRMING = RuleSet(
+    version="2026-10-27.1", rules=[NOISE_RULE, CAPITAL_FIT_GENEROUS],
+    holdout_share=HoldoutShare(share=1 / 3, rationale="t"),
+    noise_power=NoisePower(good_return=0.07, min_power=0.80, rationale="t"),
+    stage2_confirmation=Stage2Confirmation(alert_percentile_from="night/decay.yaml",
+                                           rationale="t"))
+
+
+def _trending_market() -> MarketPanel:
+    """Coins whose drifts differ a lot, so the momentum mechanism earns something."""
+    index = pd.date_range(pd.Timestamp(FIRST_DAY, tz="UTC"), periods=DAYS, freq="1D")
+    rng = np.random.default_rng(5)
+    drifts = np.linspace(-0.004, 0.004, 8)
+    prices = pd.DataFrame(100 * np.cumprod(1 + rng.normal(drifts, 0.01, (DAYS, 8)), axis=0),
+                          index=index, columns=[f"C{i}" for i in range(8)])
+    tradeable = prices.notna()
+    funding = pd.DataFrame(0.0, index=index, columns=prices.columns)
+    volume = pd.DataFrame(1e6, index=index, columns=prices.columns)
+    return MarketPanel(
+        snapshot_id=SNAPSHOT, prices=prices, funding=funding, tradeable=tradeable,
+        volume=volume,
+        meta={"venue": "hyperliquid", "interval": "1d", "universe_complete": True,
+              "range_start": index[0].isoformat(), "range_end": index[-1].isoformat()})
+
+
+def _stand_without_power(monkeypatch, history: confirm.Stage1History | Exception | None,
+                         *, noise_power: float = 0.05) -> list:
+    """Stage 2 as on Hyperliquid's short window: the candidate loses the noise comparison
+    (93.5% against the 99% bar) and the bar has `noise_power`; stage 1's history is `history`.
+    Returns the list the loader's calls are appended to."""
+    _stand(monkeypatch, _trending_market(), CONFIRMING)
+    calls: list = []
+
+    def bar(spec, *, session, ruleset, deployable_capital_usd, n_trials, review_route=None):
+        return types.SimpleNamespace(candidate=evaluate_spec(
+            spec, session=session, ruleset=ruleset, deployable_capital_usd=deployable_capital_usd,
+            check_lookahead=False, review_route=review_route,
+            extra_metrics={"noise_return_percentile": 0.935, "noise_power": noise_power}))
+
+    monkeypatch.setattr("qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar", bar)
+
+    def loader(session, spec, trial_id):
+        calls.append((spec.idea_id, trial_id))
+        if isinstance(history, Exception):
+            raise history
+        return history
+
+    monkeypatch.setattr(confirm, "load_stage1_history", loader)
+    return calls
+
+
+def _history(drift: float = 0.002, noise: float = 0.03, days: int = 900,
+             power: float | None = 0.95) -> confirm.Stage1History:
+    index = pd.date_range("2022-01-01", periods=days, freq="D", tz="UTC")
+    returns = np.random.default_rng(2).normal(drift, noise, days)
+    return confirm.Stage1History(41, pd.Series(returns, index=index), power)
+
+
+def _confirm_run(tmp_path, route: str | None = "paper") -> stage2.Stage2Result:
+    _set_status(PARENT, IdeaStatus.VALIDATED)
+    return stage2.run_stage2(_spec(), stage1_route=route, stage1_trial_id=41, noise_trials=1,
+                             deployable_capital_usd=3000.0, spec_dir=tmp_path / "stage2",
+                             config=CONFIG)
+
+
+def test_without_power_a_consistent_result_confirms_stage_1_and_the_stand_records_it(
+        registry, tmp_path, monkeypatch) -> None:
+    calls = _stand_without_power(monkeypatch, _history())
+
+    result = _confirm_run(tmp_path)
+
+    assert calls == [(PARENT, 41)]  # stage 1's own idea and its trial id
+    assert (result.route, result.combined_route) == ("paper", "paper")
+    assert _status(PARENT) == IdeaStatus.VALIDATED and _status(CHILD) == IdeaStatus.VALIDATED
+    found = result.confirmation
+    assert found["status"] == "confirmed" and found["rules_version"] == "2026-10-27.1"
+    assert found["stage1_trial_id"] == 41 and found["alert_percentile"] == 7.0
+    assert found["segments"] > 100 and found["independent_segments"] >= 1
+    assert found["percentile"] > 7.0 and found["total_return"] > 0
+    with db_module.session_scope() as session:
+        trial = session.get(Trial, result.trial_id)
+        assert trial.route == TrialRoute.PAPER  # the trial carries the route that stands
+        assert "consistency check, not a second proof" in trial.route_reason
+        assert trial.metrics["stage1_segment_percentile"] == pytest.approx(found["percentile"])
+        assert trial.metrics["stage1_segments"] == found["segments"]
+        assert trial.metrics["stage1_trial_id"] == 41
+        verdicts = {v.rule_id: v for v in session.query(Verdict).filter(
+            Verdict.trial_id == trial.id, Verdict.rule_id.in_(
+                ["stage1_consistency", "stage2_total_return_positive"])).all()}
+        assert set(verdicts) == {"stage1_consistency", "stage2_total_return_positive"}
+        assert all(v.passed and v.rules_version == "2026-10-27.1" for v in verdicts.values())
+        assert verdicts["stage1_consistency"].threshold == 7.0
+        assert verdicts["stage1_consistency"].data_range_end == LAST_DAY
+        assert "confirmation by stage 1's history" in verdicts["stage1_consistency"].note
+        noise = session.query(Verdict).filter(
+            Verdict.trial_id == trial.id, Verdict.rule_id == "shape_aware_edge",
+            Verdict.note.like("forward test%")).one()
+        assert noise.passed is False  # the noise comparison's own verdict is still recorded
+
+
+def test_without_power_a_result_unlike_stage_1s_history_is_rejected_with_stage_2s_range(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand_without_power(monkeypatch, _history(drift=0.05, noise=0.002))  # a far better history
+
+    result = _confirm_run(tmp_path)
+
+    assert result.route == "reject" and result.combined_route == "reject"
+    assert result.confirmation["status"] == "inconsistent"
+    assert result.confirmation["percentile"] <= result.confirmation["alert_percentile"]
+    assert _status(PARENT) == IdeaStatus.REJECTED and _status(CHILD) == IdeaStatus.REJECTED
+    with db_module.session_scope() as session:
+        failed = session.query(Verdict).filter(
+            Verdict.trial_id == result.trial_id, Verdict.passed.is_(False),
+            Verdict.rule_id == "stage1_consistency").one()
+        assert failed.data_range_end == LAST_DAY  # the graveyard's data range is stage 2's
+    text = "\n".join(stage2.report_lines({"route": "paper"}, stage2_dict(result)))
+    assert "хуже нынешнего было 0 из 100 таких же отрезков на Binance" in text
+    assert "порог владельца — нижние 7" in text and "на себя не похоже; отказ" in text
+
+
+def test_a_powered_noise_comparison_still_decides_as_before(
+        registry, tmp_path, monkeypatch) -> None:
+    calls = _stand_without_power(monkeypatch, _history(), noise_power=0.90)
+
+    result = _confirm_run(tmp_path)
+
+    assert calls == [] and result.confirmation is None  # stage 1's history is not even read
+    assert result.route == "reject" and result.combined_route == "reject"
+
+
+def test_stage_1_still_too_early_never_turns_into_a_pass(registry, tmp_path, monkeypatch) -> None:
+    calls = _stand_without_power(monkeypatch, _history())
+
+    result = _confirm_run(tmp_path, "needs-forward")
+
+    assert calls == [] and result.confirmation is None
+    assert result.route == "needs-forward" and result.combined_route == "needs-forward"
+    assert _status(PARENT) == IdeaStatus.BENCH
+    # and were stage 2 to pass anyway, combine keeps the idea waiting on stage 1
+    assert stage2.combine("needs-forward", "paper", config=CONFIG).route == "needs-forward"
+
+
+def test_without_stage_1_history_the_old_route_stands_and_the_reason_says_why(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand_without_power(monkeypatch, confirm.Stage1HistoryMissing(
+        "stage 1's data snapshot snap-9 cannot be read: gone"))
+
+    result = _confirm_run(tmp_path)
+
+    assert result.route == "needs-forward" and result.combined_route == "needs-forward"
+    assert _status(PARENT) == IdeaStatus.BENCH
+    assert result.confirmation["status"] == "not-applied" and result.confirmation["route"] is None
+    assert ("consistency check with stage 1 not applied: stage 1's data snapshot snap-9 "
+            "cannot be read: gone") in result.reason
+    assert result.reason.startswith("too early to tell:")  # today's reason, kept
+    text = "\n".join(stage2.report_lines({"route": "paper"}, stage2_dict(result)))
+    assert "сверка с длинной историей не проведена" in text and "идея ждёт" in text
+    assert "сравнение со случайными книгами на таком коротком отрезке" in text
+
+
+def test_a_hand_run_measurement_is_never_confirmed(registry, tmp_path, monkeypatch) -> None:
+    calls = _stand_without_power(monkeypatch, _history())
+    _set_status(PARENT, IdeaStatus.REJECTED)
+
+    result = stage2.run_stage2(_spec(), stage1_route="reject", stage1_trial_id=41,
+                               noise_trials=1, deployable_capital_usd=3000.0,
+                               spec_dir=tmp_path / "stage2", config=CONFIG, measure=True)
+
+    assert calls == [] and result.confirmation is None and result.route == "needs-forward"
+
+
+def test_the_report_of_a_confirmed_idea_says_what_was_compared_in_plain_words(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand_without_power(monkeypatch, _history())
+    text = "\n".join(stage2.report_lines({"route": "paper"},
+                                         stage2_dict(_confirm_run(tmp_path))))
+    assert "сверка с длинной историей: хуже нынешнего было" in text
+    assert "таких же отрезков на Binance (порог владельца — нижние 7)" in text
+    assert "из них не пересекающихся" in text and "прогоном первого этапа 41" in text
+    assert "правила 2026-10-27.1" in text
+    assert "решение владельца 2026-10-27" in text
+    assert "а не второе доказательство" in text
+    assert "прошла оба этапа" in text and "второй подтвердил согласие с ним" in text
