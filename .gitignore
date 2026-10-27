@@ -51,3 +51,6 @@ data/cataloguer/
 
 # the twins stage: its ledger of ideas with no twin and the hand runs' state (docs/NIGHT.md)
 data/twins/
+
+# the implementer's post-guard runs: which step of which card is done (docs/IMPLEMENTER.md)
+data/implement/

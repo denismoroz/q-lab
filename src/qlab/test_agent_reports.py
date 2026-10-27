@@ -52,3 +52,30 @@ def test_a_night_of_an_older_format_is_a_row_that_says_so(tmp_path, monkeypatch)
     runs = {a["key"]: a["runs"] for a in reports.agent_reports(state_dir=tmp_path)["agents"]}
     assert runs["researcher"][0]["status"] == "failed"
     assert runs["researcher"][0]["did"] == "запись ночи не прочитана"
+
+
+def test_the_implementer_row_shows_the_block_and_the_routes_of_the_three_versions(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(reports, "_by_hand", lambda key, seen: [])
+    runs = {"spec": {"action": "ran", "route": "needs-forward"},
+            "causal": {"action": "ran", "route": "paper"},
+            "baseline": {"action": "ran", "route": "reject"},
+            "stage2-causal": {"action": "error", "error": "no data"}}
+    _night(tmp_path, "2026-10-28", {"implemented": [
+        {"card": "cards/a.yaml", "idea_id": "a", "tokens": 900, "problems": [], "review": [],
+         "block": {"name": "momentum", "reused": False}, "runs": runs},
+        {"card": "cards/b.yaml", "idea_id": "b", "tokens": 100, "problems": ["source: x"],
+         "attempts": 1},
+        {"card": "cards/c.yaml", "idea_id": "c", "resumed": True,
+         "runs": {"spec": {"action": "heavy", "reason": "hourly candles"}}}]})
+    out = reports.agent_reports(days=1, state_dir=tmp_path)
+    (run,) = {a["key"]: a["runs"] for a in out["agents"]}["implementer"]
+    assert run["did"] == "карточки: cards/a.yaml, cards/b.yaml, cards/c.yaml"
+    assert run["result"].startswith("код написан и прошёл проверки: 2 из 3")
+    assert ("cards/a.yaml: написанная: ждёт проверки на новых данных; с выбором кода: прошла все "
+            "правила, ждёт решения владельца; база: отвергнута") in run["result"]
+    assert "cards/c.yaml: написанная: тяжёлые данные" in run["result"]
+    assert "cards/a.yaml: блок `momentum` написан впервые" in run["details"]
+    assert "cards/b.yaml: source: x" in run["details"]
+    assert "cards/a.yaml: stage2-causal — no data" in run["details"]
+    assert "cards/c.yaml: spec — hourly candles" in run["details"]

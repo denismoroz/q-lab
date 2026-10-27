@@ -558,16 +558,32 @@ def write_report(day: date, state: dict) -> Path:
         if read.get("error"):
             lines += [f"- сбой до выбора статьи: {read['error']}", ""]
     if implemented := state.get("implemented"):
+        from qlab import implement_run
+
         lines += ["## Реализация карточек агентом", ""]
+        if any(e.get("runs") for e in implemented):
+            lines += [
+                "Идея из входящих, которой нужен новый код, за одну ночь доходит до исхода: агент "
+                "пишет блок и спек, а дальше без агента и без токенов код прогоняет написанную "
+                "версию, версию с выбором кода (раз в месяц и только по прошлому он выбирает между "
+                "вариантами карточки на истории Binance с 2019 года), базовую стратегию на тех же "
+                "данных, что и версия с выбором кода, и второй этап на Hyperliquid для прошедших "
+                "(`docs/IMPLEMENTER.md`). Исход каждого прогона выносит стенд.", ""]
         for e in implemented:
-            lines.append(f"- **{e['card']}** → {e.get('idea_id', '?')}: "
-                         f"{e.get('tokens', 0):,} токенов; ответ агента: {e.get('reply') or '—'}")
+            head = (f"- **{e['card']}** → {e.get('idea_id', '?')}: "
+                    + ("прогоны продолжены с прошлой ночи" if e.get("resumed") else
+                       f"{e.get('tokens', 0):,} токенов; ответ агента: {e.get('reply') or '—'}"))
+            lines.append(head)
             for p in e.get("problems") or []:
                 lines.append(f"    - проверка не пройдена: {p}")
+            if e.get("problems") and e.get("attempts", 0) >= implement_run.MAX_ATTEMPTS:
+                lines.append(f"    - попыток {e['attempts']} из {implement_run.MAX_ATTEMPTS}: "
+                             "больше не пробуем, карточка ждёт владельца")
             for r in e.get("review") or []:
                 lines.append(f"    - проверяющий: {r}")
             if e.get("stand"):
                 lines.append(f"    - стенд: {e['stand']}")
+            lines += implement_run.entry_lines(e)
             if e.get("stopped"):
                 lines.append(f"    - остановлено: {e['stopped']}")
         lines.append("")
@@ -830,7 +846,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         guarded(day, state, "programmer", programmer_stage, day, state)
     if implement and not past_stop(stop_at, state, "implement"):
         guarded(day, state, "implement", implement_stage, day, state,
-                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd)
+                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                stop_at=stop_at)
     if search and not past_stop(stop_at, state, "search"):
         guarded(day, state, "search", search_stage, day, state)
     if search and catalogue and not past_stop(stop_at, state, "catalogue"):
@@ -1621,34 +1638,71 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
 
 
 def implement_stage(day: date, state: dict, *, noise_trials: int,
-                    deployable_capital_usd: float) -> None:
-    """Stage 2 (CLAUDE.md order): cards from `night/implement_queue.yaml` not
-    yet implemented, written by the implementer agent and run through every
-    guard, inside tonight's token budget. A night stop or a candidate's cap
-    is not a failure: the card stays queued for the next night."""
-    from qlab.agents.implementer import implement
-    from qlab.agents.reviewer import code_files, run_review
+                    deployable_capital_usd: float, stop_at: datetime | None = None,
+                    queue: Path | None = None, ledger_path: Path | None = None) -> None:
+    """Stage 2 (CLAUDE.md order): cards from `night/implement_queue.yaml` written by the
+    implementer agent and run through every guard, inside tonight's token budget; then, by code
+    and outside the budget, the written spec, its causal version over the card's grid and the
+    card's baseline on the same panel, and the second stage of every survivor
+    (`qlab.implement_run`, docs/IMPLEMENTER.md). A night stop or a candidate's cap is not a
+    failure: a card the agent did not reach stays queued, and a run cut by the stop time is done
+    on the next night from the ledger (`data/implement/ledger.json`). A card whose block and
+    runs are settled is not taken again; one the agent failed twice waits for the owner."""
+    from qlab import implement_run, twin_stage
+    from qlab.agents.implementer import implement, register_block
+    from qlab.agents.reviewer import BLOCKING_KINDS, code_files, run_review
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
     from qlab.registry.db import session_scope
 
-    if not IMPLEMENT_QUEUE.is_file():
+    ledger_path = ledger_path or implement_run.LEDGER
+    ledger = twin_stage.load_ledger(ledger_path)
+    ctx = implement_run.RunContext(
+        day=day, end=last_closed_day(), noise_trials=noise_trials,
+        deployable_capital_usd=deployable_capital_usd, state=state, ledger=ledger,
+        ledger_path=ledger_path, stop_at=stop_at, stage2_config=implement_run.load_stage2_config())
+    out = state.setdefault("implemented", [])
+    seen = {e["card"]: e for e in out}
+
+    # Runs left over from an earlier night: the agent is done with them, no tokens are needed.
+    for card in implement_run.pending_cards(ledger):
+        rec = ledger[card]
+        entry = seen.get(card)
+        if entry is None:
+            entry = {**(rec.get("entry") or {}), "card": card, "resumed": True}
+            out.append(entry)
+        entry["runs"] = rec.setdefault("runs", {})
+        if not implement_run.run_card(card, rec, ctx):
+            entry["stopped"] = "время ночи вышло; остальные прогоны продолжатся следующей ночью"
+        _stand_line(entry)
+        ctx.save()
+
+    queue = queue or IMPLEMENT_QUEUE
+    if not queue.is_file():
         return
-    cards = yaml.safe_load(IMPLEMENT_QUEUE.read_text(encoding="utf-8")).get("cards") or []
-    pending = [c for c in cards if f"implement:{c}" not in state["done"]]
+    cards = yaml.safe_load(queue.read_text(encoding="utf-8")).get("cards") or []
+    pending = [c for c in cards if f"implement:{c}" not in state["done"]
+               and implement_run.should_take(ledger.get(c))]
     if not pending:
         return
-    out = state.setdefault("implemented", [])
+    fresh: list[dict] = []
     with session_scope() as session:
         night_budget = NightBudget.open(session, probe(session).report.reading)
         stage = night_budget.stage(Stage.IMPLEMENT, candidates=len(pending))
         for card in pending:
+            if past_stop(stop_at, state, f"implement:{card}"):
+                break
             entry = {"card": card}
             try:
                 budget = stage.candidate(None)
                 outcome = implement(Path(card), budget=budget, session=session)
+                rec = ledger.setdefault(card, implement_run.new_record(outcome.idea_id, day))
+                rec["attempts"] += 1
                 entry.update(idea_id=outcome.idea_id, reply=outcome.agent_reply,
-                             problems=outcome.problems,
-                             not_expressible=outcome.not_expressible)
+                             problems=outcome.problems, not_expressible=outcome.not_expressible,
+                             attempts=rec["attempts"])
+                if outcome.fields is not None:
+                    entry["idea_text"] = outcome.fields.idea_text
+                rec["status"] = "not-expressible" if outcome.not_expressible else "failed"
                 if outcome.ok:
                     spec = load_spec(outcome.spec_path)
                     review = run_review(
@@ -1656,6 +1710,27 @@ def implement_stage(day: date, state: dict, *, noise_trials: int,
                         sources={card: Path(card).read_text(encoding="utf-8")},
                         code=code_files(spec), budget=budget, session=session)
                     entry["review"] = [f"[{f.kind}] {f.summary}" for f in review.accepted]
+                    gaps = [f.summary for f in review.accepted
+                            if f.kind in BLOCKING_KINDS and f.summary not in spec.review_answers]
+                    if gaps:
+                        rec["blocked"] = "; ".join(gaps)
+                    else:
+                        try:
+                            registered = register_block(outcome)
+                        except Exception as exc:  # noqa: BLE001 - the runs do not depend on it
+                            registered = False
+                            entry["problems"] = [*entry["problems"], "the block was not "
+                                                 f"registered: {type(exc).__name__}: {exc}"]
+                        if registered:
+                            block = outcome.fields.new_block
+                            entry["block"] = {
+                                "name": block.name, "rule": block.rule,
+                                "file": str(outcome.code_path), "reused": outcome.block_reused,
+                                "params": [{"name": p.name, "meaning": p.meaning}
+                                           for p in block.params]}
+                    rec["idea_id"] = outcome.idea_id
+                    rec["status"] = "pending-run"
+                    rec["entry"] = dict(entry)
                 entry["tokens"] = budget.spent_tokens
                 state["done"][f"implement:{card}"] = datetime.now(UTC).isoformat()
             except NightExhausted as stop:
@@ -1663,22 +1738,35 @@ def implement_stage(day: date, state: dict, *, noise_trials: int,
                 out.append(entry)
                 save_state(day, state)
                 session.commit()
-                return
+                break
             except BudgetExhausted as stop:
                 entry["stopped"] = f"candidate budget: {stop}"
             out.append(entry)
+            fresh.append(entry)
+            twin_stage.save_ledger(ledger, ledger_path)
             save_state(day, state)
             session.commit()
-    # The stand runs each implemented spec in its own transaction.
-    for entry in out:
-        if entry.get("problems") == [] and "stand" not in entry:
-            spec = load_spec(Path("specs/agent") / f"{entry['idea_id']}.yaml")
-            _ensure_idea(spec, entry["card"])
-            result = evaluate_item("implemented", spec, end=spec.data.end,
-                                   noise_trials=noise_trials,
-                                   deployable_capital_usd=deployable_capital_usd)
-            entry["stand"] = result.error or f"{result.route}: {result.reason}"
-            save_state(day, state)
+    # The stand runs in its own transactions, so after the agent's session is closed.
+    for entry in fresh:
+        rec = ledger.get(entry["card"])
+        if rec is None or rec.get("status") != "pending-run":
+            continue
+        entry["runs"] = rec["runs"]
+        if not implement_run.run_card(entry["card"], rec, ctx):
+            entry["stopped"] = "время ночи вышло; остальные прогоны продолжатся следующей ночью"
+        _stand_line(entry)
+        ctx.save()
+
+
+def _stand_line(entry: dict) -> None:
+    """The written spec's own verdict as one line (what the report printed before the extra runs
+    existed)."""
+    spec_run = (entry.get("runs") or {}).get("spec") or {}
+    if spec_run.get("action") == "ran":
+        entry["stand"] = spec_run.get("error") or f"{spec_run.get('route')}: " \
+            f"{spec_run.get('route_reason')}"
+    elif spec_run.get("action") == "error":
+        entry["stand"] = str(spec_run.get("error"))
 
 
 def _ensure_idea(spec: StrategySpec, card: str) -> None:
