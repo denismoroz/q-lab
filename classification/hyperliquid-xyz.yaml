@@ -7,6 +7,7 @@ rule_version: 2026-10-25.1
 annotation_snapshots:
 - '2026-10-25'
 - '2026-10-26'
+- '2026-10-27'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -121,6 +122,19 @@ instruments:
       underlying: 'AMZN references 1 share of Amazon.com, Inc. common stock (Nasdaq:
         AMZN), quoted in USD. Amazon operates e-commerce, cloud-computing, advertising,
         and logistics businesses.'
+  xyz:ANT:
+    listed_from: '2026-10-26'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-26'
+      observed_on: '2026-10-27'
+      asset_class: preipo
+      class_key: preipo
+      venue_category: preipo
+      underlying: 'ANT references 1 share of Anthropic, PBC Class A common stock (expected
+        Nasdaq: ANT), quoted in USD. ANT is a pre-IPO market: the referenced security
+        has not yet listed, and upon listing the market is intended to convert to
+        a standard...'
   xyz:ARM:
     listed_from: '2026-05-21'
     listed_from_basis: first_candle
@@ -1129,6 +1143,14 @@ instruments:
       asset_class: unclassified
       class_key: unclassified
       note: the venue serves no annotation
+    - valid_from: '2026-10-28'
+      observed_on: '2026-10-27'
+      asset_class: index
+      class_key: index
+      venue_category: indices
+      underlying: NIFTY references the native INR level of the NIFTY 50, a free-float
+        capitalization-weighted index of 50 leading Indian equities. No FX conversion
+        is applied; index-point P&L is cash-settled in USDC.
   xyz:NOK:
     listed_from: '2026-06-15'
     listed_from_basis: first_candle
@@ -1292,6 +1314,16 @@ instruments:
       asset_class: unclassified
       class_key: unclassified
       note: the venue serves no annotation
+    - valid_from: '2026-10-28'
+      observed_on: '2026-10-27'
+      asset_class: stock
+      class_key: stock:unknown
+      venue_category: stocks
+      underlying: 'RELIANCE references 1 equity share of Reliance Industries Limited
+        (NSE: RELIANCE). The oracle converts the INR share price to USD at the prevailing
+        USD/INR FX rate. Reliance Industries operates energy, petrochemicals, retail,
+        and...'
+      note: no known exchange named in the description
   xyz:RIVN:
     listed_from: '2026-01-14'
     listed_from_basis: first_candle
