@@ -1,0 +1,59 @@
+# The year-by-year view: every run shows its result per calendar year, and whether the
+# profit sits in one lucky period. INFORMATIONAL: no verdict, route or status changes.
+#
+# Measured 2026-10-27, on the long Binance history (2019-09 to 2026-10):
+#   * the XSMOM twin earns +36% a year over the whole window, but -4.8% a year without
+#     its best 1% of days and draws down -54% (trial 85838, xsmom-research-nobull-retune:
+#     +38.3% a year, -2.3% without the best 1%);
+#   * the Bv2 variants earn about +23% a year, but the window contains 2020-2021, years
+#     of very high funding, while the measurement of the strategy's own last year was
+#     about +2% a year.
+# A total can look strong and rest on one period. Owner, 2026-10-27, asking for the
+# year-by-year check to be part of the framework: «давай вот эту проверку с разбивкой
+# добавим в фреймворк».
+#
+# What changes: the stand (`qlab.harness.metrics.year_breakdown`) writes into every
+# judged run's metrics `year_<Y>_return|days|max_dd|sharpe` per calendar year and three
+# summaries (below). The readings listed here are shown in the console and the reports
+# next to the verdict (`qlab.rules.engine.read_informational`). Nothing here is a Rule:
+# no verdict row is written, no candidate fails, no route moves, and no threshold of any
+# existing rule changes. Which of these should DECIDE, and where the line goes, is the
+# owner's choice (docs/YEARS.md carries the candidates and what each would have decided
+# on real runs); until then a reading with a threshold is shown only as "holds / does
+# not hold", and a reading without one is shown as a plain number.
+
+version: "2026-10-27.2"
+based_on: "2026-10-27.1"
+
+informational:
+  - id: ex_best_year_positive
+    metric: ann_return_net_ex_best_year
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      The annualised net return of the judged part with its single best calendar year
+      removed. The line is zero -- the same line `net_edge_positive` already draws for
+      the whole window, so no new number is introduced. It says whether the result
+      survives losing its luckiest year. Not defined with fewer than two counted years
+      (a year counts from 120 days in the judged part).
+  - id: ex_best_1pct_positive
+    metric: ann_return_net_ex_best_1pct
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      The annualised net return without the best 1% of days (an existing metric,
+      T27). Zero is the same economic line as above. Shown beside the year view
+      because the two catch different things: one lucky year is a period, the best 1%
+      of days is a handful of days, and a book can pass either test and fail the other.
+  - id: years_positive_share
+    metric: years_positive_share
+    rationale: >
+      The share of counted calendar years (120 days or more in the judged part) that
+      ended above zero. No line yet: the owner chooses it (docs/YEARS.md lists the
+      candidates). Shown as a number, with the count of years it is made of.
+  - id: best_year_share_of_profit
+    metric: best_year_share_of_profit
+    rationale: >
+      The best counted year's profit divided by the whole judged part's profit, both as
+      sums of bars' net returns. Above 1 means the other years together lost money. No
+      line yet: the owner chooses it. Absent when the total is not positive.

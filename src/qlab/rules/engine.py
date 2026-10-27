@@ -73,6 +73,34 @@ class EvaluationResult:
         return tuple(rule_id for rule_id in self.failed_rule_ids if rule_id not in infra)
 
 
+@dataclass(frozen=True, slots=True)
+class Reading:
+    """One informational reading of a metric (`InformationalRule`). `holds` is None
+    when the rule draws no line yet or the metric is unknown; it decides nothing."""
+
+    rule_id: str
+    metric: str
+    value: float | None
+    comparator: str | None
+    threshold: float | None
+    holds: bool | None
+
+
+def read_informational(metrics: Mapping[str, float | None], ruleset: RuleSet) -> list[Reading]:
+    """The ruleset's informational readings against `metrics`. Pure, like `evaluate`, and
+    apart from it: nothing here reaches a verdict, a route or a status."""
+    readings: list[Reading] = []
+    for rule in ruleset.informational:
+        raw = metrics.get(rule.metric)
+        value = None if raw is None or (isinstance(raw, float) and math.isnan(raw)) else float(raw)
+        holds = (None if value is None or rule.comparator is None or rule.threshold is None
+                 else rule.comparator.compare(value, rule.threshold))
+        readings.append(Reading(rule.id, rule.metric, value,
+                                rule.comparator.value if rule.comparator else None,
+                                rule.threshold, holds))
+    return readings
+
+
 def evaluate(
     metrics: Mapping[str, float | None],
     ruleset: RuleSet,
