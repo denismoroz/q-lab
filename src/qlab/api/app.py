@@ -209,6 +209,7 @@ def create_app() -> FastAPI:
         detail["decay"] = _decay(session, idea_id)
         detail["strategy"] = strategy_view(session, idea_id)
         detail["two_stage"] = _two_stage(session, idea)
+        detail["causal_twin"] = _causal_twin(session, idea)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -262,6 +263,18 @@ def create_app() -> FastAPI:
             "stage1": stage(parent_id),
             "stage2": stage(child_id),
         }
+
+    def _causal_twin(session: Session, idea: Idea) -> dict[str, Any] | None:
+        """The idea's causal twin (`<id>-causal`, qlab.twin_stage) with its two stages, so the
+        original's page shows its own Binance-then-Hyperliquid answer (owner, 2026-10-28:
+        «почему не пересчинаны по принципу HL/binance?»). Null when the idea has no twin."""
+        from qlab.twin import TWIN_SUFFIX
+
+        twin = session.get(Idea, idea.id + TWIN_SUFFIX)
+        if twin is None or twin.parent_id != idea.id:
+            return None
+        return {"id": twin.id, "status": twin.status.value,
+                "two_stage": _two_stage(session, twin)}
 
     def _latest_assessment(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The assessor agent's latest second opinion (docs/ASSESSOR.md). The

@@ -88,6 +88,7 @@ export default function IdeaDetail() {
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <TwoStages stages={ideaQuery.data.two_stage} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
+            <CausalTwin twin={ideaQuery.data.causal_twin} />
             <Assessment
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
@@ -353,6 +354,39 @@ function TwoStages({ stages }) {
       </div>
       <p className="mt-3 text-sm font-medium text-slate-800">{twoStageSentence(stages)}</p>
     </Panel>
+  )
+}
+
+// 2026-10-28, owner: «почему не пересчинаны по принципу HL/binance?». The Binance-then-
+// Hyperliquid answer of an idea lives under its causal twin (qlab.twin_stage); the original's
+// page shows it here instead of only on the twin's own page.
+function CausalTwin({ twin }) {
+  if (!twin) return null
+  return (
+    <section className="space-y-3 rounded border border-sky-200 bg-sky-50/40 p-4">
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        Та же идея, проверенная на Binance и Hyperliquid
+      </div>
+      <p className="text-sm text-slate-700">
+        Выше — прогон самой идеи, как она записана: числа выбраны один раз, и проверка вперёд у
+        неё — только время после этого выбора. Ответ по схеме «сначала длинная
+        история Binance, потом Hyperliquid» записан у её двойника: те же правила, но числа код
+        выбирает каждый месяц только по прошлому, поэтому всё время после первого выбора — это
+        проверка вперёд за годы.{' '}
+        <Link className="text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${twin.id}`}>
+          {twin.id}
+        </Link>{' '}
+        · <StatusBadge status={twin.status} />
+      </p>
+      {twin.two_stage ? (
+        <TwoStages stages={twin.two_stage} />
+      ) : (
+        <p className="text-sm text-slate-500">
+          Второго этапа у двойника пока нет: его запускает ночной конвейер для тех, кто прошёл первый.
+        </p>
+      )}
+      <ForwardCharts ideaId={twin.id} />
+    </section>
   )
 }
 

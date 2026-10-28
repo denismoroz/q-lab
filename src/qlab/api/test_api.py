@@ -586,6 +586,36 @@ def test_idea_detail_puts_both_stages_of_a_generated_idea_side_by_side(client, s
     assert client.get("/api/ideas/alpha-hl").json()["strategy"]["root"] == "alpha"
 
 
+def test_idea_detail_shows_the_causal_twins_two_stages_on_the_originals_page(
+        client, session_factory):
+    """Owner, 2026-10-28: the original idea's page carries its causal twin's Binance-then-
+    Hyperliquid answer; an idea with no twin, or a same-named idea that is not its child, has
+    none."""
+    from qlab.registry.models import Idea
+
+    assert client.get("/api/ideas/alpha").json()["causal_twin"] is None
+
+    session = session_factory()
+    for idea_id, parent in (("alpha-causal", "alpha"), ("alpha-causal-hl", "alpha-causal"),
+                            ("beta-causal", "alpha")):
+        session.add(Idea(id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                         asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                         status=IdeaStatus.VALIDATED, parent_id=parent,
+                         notes="Second stage of alpha-causal (docs/TWO_STAGE.md)"
+                         if idea_id.endswith("-hl") else None))
+    session.add(Idea(id="beta", title="beta", source_type=SourceType.INTERNAL,
+                     asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                     status=IdeaStatus.BENCH))
+    session.commit()
+    session.close()
+
+    twin = client.get("/api/ideas/alpha").json()["causal_twin"]
+    assert twin["id"] == "alpha-causal" and twin["status"] == "validated"
+    assert (twin["two_stage"]["parent_id"], twin["two_stage"]["child_id"]) == (
+        "alpha-causal", "alpha-causal-hl")
+    assert client.get("/api/ideas/beta").json()["causal_twin"] is None
+
+
 def test_idea_detail_carries_the_latest_paper_check_or_null(client, session_factory):
     from qlab.registry.models import PaperCheck
 
