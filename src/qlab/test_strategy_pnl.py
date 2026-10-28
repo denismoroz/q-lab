@@ -324,8 +324,9 @@ def test_every_shipped_book_states_the_money_available_to_the_strategy() -> None
     assert {k: v["strategy_capital_usd"] for k, v in raw["books"].items()} == {
         "strategy-b-v2": 257, "bv2-research-headroom": 257, "trend-live": 3000,
         "bv2-research-headroom-retune": 257, "trend-retune-weekly": 3000}
-    # FRAB: the strategy works on 90, whatever else the account holds.
-    assert raw["live_books"]["frab"]["strategy_capital_usd"] == 90
+    # FRAB: the strategy works on its budget (120 since the owner's change of 2026-10-27, was 90),
+    # whatever else the account holds.
+    assert raw["live_books"]["frab"]["strategy_capital_usd"] == 120
 
 
 def test_a_book_without_strategy_capital_is_refused_at_load(tmp_path: Path) -> None:

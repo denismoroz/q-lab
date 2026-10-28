@@ -270,7 +270,8 @@ def test_the_live_export_reads_raw_rows_of_the_strategy_not_the_account() -> Non
         "frab_budget.csv"]
     everything = " ".join(sql for _, sql in queries)
     assert "equity_snapshots" not in everything and "total_equity" not in everything
-    assert "strategy_id=1" in everything and f"{_ms(date(2026, 10, 10))}" in everything
+    # The realised period of FRAB starts again at the owner's budget change (2026-10-27 05:00 UTC).
+    assert "strategy_id=1" in everything and f"{_ms(date(2026, 10, 27), 5)}" in everything
 
 
 def _shipped_books() -> Path:
@@ -299,7 +300,7 @@ def test_the_shipped_mapping_and_config_are_consistent() -> None:
     books = decay.load_all_books(root / "night" / "paper_books.yaml")
     assert books["frab"]["live"] and books["frab"]["strategy_id"] == 1
     # FRAB's percents are on its budget (90), not on the account (owner, 2026-10-25).
-    assert books["frab"]["strategy_capital_usd"] == 90
+    assert books["frab"]["strategy_capital_usd"] == 120  # the owner's budget since 2026-10-27
     assert books["frab"]["equity_from"] == "strategy_pnl"
     assert books["frab"]["equity_column"] == "strategy_equity"
     for cfg in books.values():

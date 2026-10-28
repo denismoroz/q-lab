@@ -16,9 +16,17 @@ code_ref: "qlab.strategies.live.frab:LiveFrab"
 
 # The decision rule as it trades now was last changed on 2026-10-10 (frab
 # a0f5b5e: phase 2 exits only once the funding given back covers the round
-# trip's fees). Everything after that date is the forward test.
-params_fixed_at: 2026-10-10
+# trip's fees), and the live numbers on 2026-10-27: the owner raised the budget from
+# 90 to 120 and the slots from four to five on the host (owner, 2026-10-28: «да я»). The
+# change landed between 01:50 and 05:01 UTC that day, so the first whole day under the
+# new numbers, 2026-10-28, starts the forward test; the forward test on 90 and four slots
+# (2026-10-10 -- 2026-10-27) is in the registry's earlier runs of this idea.
+params_fixed_at: 2026-10-28
 params_fixed_evidence: >
+  frab.db strategies.params_json id 1 as exported on 2026-10-28
+  (seed/prod_params/2026-10-28-two_phase.json): budget_cap_usdc 120, concurrency_cap 5; the
+  export of 2026-10-27 01:50 UTC still had 90 and 4, and the fifth position (SOL, farb_positions
+  #32) opened at 05:01 UTC on 2026-10-27. Before that:
   funding-rate-arbitrage commit a0f5b5e (2026-10-10), «fix(two-phase): выход из POST только когда
   отданный фандинг покрыл комиссии круга» -- the last change to the decision functions
   (two_phase_signals.decide_post_breakeven, phase2_giveback_fee_mult = 1.0). Earlier changes:
@@ -27,7 +35,8 @@ params_fixed_evidence: >
   the code defaults; when they were set is not recorded, and they were known by 2026-10-10.
 
 # The live instance verbatim (frab.db strategies.params_json, id 1, read-only
-# 2026-10-24, seed/prod_params/2026-10-24-two_phase.json) plus the coin
+# 2026-10-24, seed/prod_params/2026-10-24-two_phase.json; budget and slots as of
+# 2026-10-28, seed/prod_params/2026-10-28-two_phase.json) plus the coin
 # registry's active, validated coins and their leverage
 # (seed/prod_params/2026-10-24-coin_registry_active.csv). TwoPhaseParams
 # ignores the row's `coins`, `position_size_usdc`, `perp_leverage` and
@@ -40,8 +49,8 @@ params:
   cap_min_hold_hours: 720
   safety_mult: 5
   signal_window_hours: 8
-  concurrency_cap: 4
-  budget_cap_usdc: 90
+  concurrency_cap: 5
+  budget_cap_usdc: 120
   margin_buffer_factor: 3
   phase1_negative_patience: 24
   phase1_breakeven_cap_hours: 720
@@ -80,8 +89,8 @@ sources:
   "cap_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
   "safety_mult": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
   "signal_window_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
-  "concurrency_cap": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
-  "budget_cap_usdc": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
+  "concurrency_cap": "seed/prod_params/2026-10-28-two_phase.json (frab.db strategies.params_json id 1, read-only; owner's change of 2026-10-27)"
+  "budget_cap_usdc": "seed/prod_params/2026-10-28-two_phase.json (frab.db strategies.params_json id 1, read-only; owner's change of 2026-10-27)"
   "margin_buffer_factor": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
   "phase1_negative_patience": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
   "phase1_breakeven_cap_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
