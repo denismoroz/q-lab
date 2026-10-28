@@ -432,6 +432,12 @@ def write_report(day: date, state: dict) -> Path:
                   f"({stop['before']}). Начатое доделано, остальное — в следующую ночь: "
                   "перепроверки она делает заново, невыполненные эксперименты исследователя "
                   "переносятся.", ""]
+    account = state.get("account") or {}
+    if account.get("ok") is False:
+        lines += ["**Агенты этой ночью не работали: Claude CLI вошёл не под тем аккаунтом.** "
+                  f"{account.get('message')} Этапы без агентов (перепроверки, бумажные книги, "
+                  "распад) прошли как обычно, а шаги агентов остановлены без траты токенов и "
+                  "продолжатся в следующую ночь, когда вход будет выполнен.", ""]
     if errors := state.get("stage_errors"):
         lines += ["## Сбои стадий", "",
                   "Стадия упала, ночь пошла дальше; несделанное повторится при следующем запуске.",
@@ -644,7 +650,11 @@ def write_report(day: date, state: dict) -> Path:
 
     lines += publication_lines(state)
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
-    lines += ["## Токены", "", _token_lines(day), ""]
+    tokens = _token_lines(day)
+    if account.get("ok") is False:
+        tokens += ("\n\nАккаунт Claude CLI не тот, какой назван в night/account.yaml: агенты "
+                   "ночью ничего не потратили.")
+    lines += ["## Токены", "", tokens, ""]
     path = REPORT_DIR / f"{day.isoformat()}.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
@@ -722,6 +732,22 @@ def _funnel_lines(day: date) -> list[str]:
     return lines[:-1]
 
 
+def account_state() -> dict:
+    """Which Claude account the CLI is logged in to, for the report (`claude auth status`
+    costs no tokens). The agent stages refuse a wrong one themselves; this only records it."""
+    from qlab.budget import WrongAccount
+    from qlab.budget.agent import check_account
+
+    try:
+        return {"ok": True, "email": check_account().email}
+    except WrongAccount as refusal:
+        return {"ok": False, "found": refusal.found, "expected": refusal.expected,
+                "message": str(refusal)}
+    except Exception as exc:  # noqa: BLE001 - the report names it, the night goes on
+        return {"ok": False, "found": None, "expected": None,
+                "message": f"Аккаунт Claude CLI не проверен: {type(exc).__name__}: {exc}."}
+
+
 def _token_lines(day: date) -> str:
     from qlab.registry.db import session_scope
     from qlab.registry.models import TokenSpend
@@ -734,11 +760,13 @@ def _token_lines(day: date) -> str:
             by[r.stage] = by.get(r.stage, 0) + (r.tokens_in or 0) + (r.tokens_out or 0) + (
                 r.tokens_cache_write or 0) + (r.tokens_cache_read or 0)
         last = max(rows, key=lambda r: r.at, default=None)
+        under = sorted({r.account or "не записан" for r in rows})
     if not by:
         return "Токены за эту ночь не тратились."
     week = (f"; недельное окно после последнего вызова — {last.seven_day_util:.0%}"
             if last is not None and last.seven_day_util is not None else "")
-    return "Потрачено: " + ", ".join(f"{k} {v:,}" for k, v in by.items()) + week
+    return (f"Аккаунт: {', '.join(under)}. Потрачено: "
+            + ", ".join(f"{k} {v:,}" for k, v in by.items()) + week)
 
 
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
@@ -765,6 +793,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     state.setdefault("results", [])
     state.pop("stopped_at", None)  # a resumed night gets its own stop time
     state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
+    state["account"] = account_state()  # the report says which account the agents ran under
     if detectors and "detectors" not in state:
         # Before the watch list: strategies on it read these files
         # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.

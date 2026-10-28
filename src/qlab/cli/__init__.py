@@ -1396,29 +1396,54 @@ budget_app = typer.Typer(help="Token budget guard (docs/BUDGET.md).", no_args_is
 app.add_typer(budget_app, name="budget")
 
 
+def _budget_account() -> str:
+    """The account in use, as a line for `qlab budget status`: raises `WrongAccount` when the
+    CLI is logged in to another one (or to none)."""
+    from qlab.budget.agent import check_account
+
+    found = check_account()
+    return f"{found.email} (config directory {found.config_dir})"
+
+
 @budget_app.command("status")
 def budget_status_cmd() -> None:
     """Tonight's ceiling from the latest recorded reading of the shared
     windows -- no call is made (use `qlab budget probe` for a fresh one)."""
     from datetime import UTC, datetime, timedelta
 
-    from qlab.budget.guard import WEEKLY_CEILING, NightBudget, calibrate, nights_until
+    from qlab.budget.account import load_account
+    from qlab.budget.guard import (
+        WEEKLY_CEILING,
+        NightBudget,
+        WrongAccount,
+        calibrate,
+        last_reading,
+        nights_until,
+    )
     from qlab.budget.usage import UsageReading, Window
     from qlab.registry.models import TokenSpend
 
+    # The ledger is read for the account the night will use (night/account.yaml); the account
+    # the CLI is logged in to is checked first -- `claude auth status` costs no tokens.
+    expected = load_account().email
+    try:
+        typer.echo(f"account          {_budget_account()}")
+    except WrongAccount as refusal:
+        typer.echo(f"account          WRONG -- {refusal}")
+        typer.echo(f"                 (the figures below are the ledger of {expected})")
     with session_scope() as session:
-        last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
-                .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
-        cal = calibrate(session)
+        last = last_reading(session, expected)
+        cal = calibrate(session, account=expected)
         if last is None:
-            typer.echo("no reading recorded yet: run `qlab budget probe`")
+            typer.echo(f"no reading of {expected} recorded yet: run `qlab budget probe`")
             return
         resets = last.seven_day_resets_at.replace(tzinfo=UTC)
         now = datetime.now(UTC)
         reading = UsageReading("allowed", None, Window(last.seven_day_util, resets))
         night = NightBudget.open(session, reading, now=now)
         week_start = resets - timedelta(days=7)
-        rows = session.query(TokenSpend).filter(TokenSpend.at >= week_start).all()
+        rows = (session.query(TokenSpend)
+                .filter(TokenSpend.at >= week_start, TokenSpend.account == expected).all())
     by_stage: dict[str, int] = {}
     for r in rows:
         total = (r.tokens_in or 0) + (r.tokens_out or 0) + (r.tokens_cache_write or 0) + (
@@ -1441,14 +1466,19 @@ def budget_status_cmd() -> None:
 @budget_app.command("probe")
 def budget_probe_cmd() -> None:
     """One minimal call to read the shared windows; recorded in token_spend."""
-    from qlab.budget import probe
+    from qlab.budget import WrongAccount, probe
 
-    with session_scope() as session:
-        result = probe(session)
+    try:
+        with session_scope() as session:
+            result = probe(session)
+    except WrongAccount as refusal:
+        typer.echo(str(refusal), err=True)
+        raise typer.Exit(code=1) from refusal
     r = result.report.reading
     if r is None or r.seven_day is None:
         typer.echo("the call reported no window reading", err=True)
         raise typer.Exit(code=1)
+    typer.echo(f"account {result.account}")
     typer.echo(f"status {r.status}; weekly {r.seven_day.utilization:.0%} (resets "
                f"{r.seven_day.resets_at:%Y-%m-%d %H:%M} UTC); five-hour "
                f"{r.five_hour.utilization if r.five_hour else float('nan'):.0%}; "
@@ -1892,11 +1922,10 @@ def _interactive_night_budget(session):
     from datetime import UTC, datetime, timedelta
 
     from qlab.budget import NightBudget, probe
+    from qlab.budget.guard import last_reading
     from qlab.budget.usage import UsageReading, Window
-    from qlab.registry.models import TokenSpend
 
-    last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
-            .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+    last = last_reading(session)  # the current account's rows only
     now = datetime.now(UTC)
     # A reading older than the five-hour window's own length describes a
     # window that is gone; take a fresh one first.

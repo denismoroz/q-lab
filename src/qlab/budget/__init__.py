@@ -9,6 +9,7 @@ from qlab.budget.guard import (
     NightBudget,
     NightExhausted,
     Stage,
+    WrongAccount,
     calibrate,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "NightBudget",
     "NightExhausted",
     "Stage",
+    "WrongAccount",
     "calibrate",
     "probe",
     "run_agent",

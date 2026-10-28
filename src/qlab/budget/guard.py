@@ -1,10 +1,10 @@
 """The token budget guard (CLAUDE.md, "Бюджет токенов"; docs/BUDGET.md).
 
-The nightly pipeline runs on the owner's subscription, sharing its quota with
-the owner's own work; the guard is the only protection. The dangerous window
-is the seven-day one: the five-hour window recovers by morning on its own,
-the weekly one resets once a week, and one greedy night would lock the owner
-out for days.
+The nightly pipeline runs on the owner's subscription (the account named in
+`night/account.yaml`, checked before every call), sharing its quota with the owner's own
+work; the guard is the only protection. The dangerous window is the seven-day one:
+the five-hour window recovers by morning on its own, the weekly one resets once a week, and
+one greedy night would lock the owner out for days.
 
 **The night's ceiling is computed, not set** (CLAUDE.md):
 
@@ -87,6 +87,19 @@ class CandidateExhausted(BudgetExhausted):
     """This candidate's cap is reached: stop it, the others go on."""
 
 
+class WrongAccount(NightExhausted):
+    """The CLI is not logged in, or not to the account `night/account.yaml` names
+    (`qlab.budget.account`). Raised before any tokens are spent. A subclass of
+    `NightExhausted` on purpose: every agent stage already stops on that signal and saves its
+    state, and the stages without agents go on."""
+
+    def __init__(self, message: str, *, found: str | None = None,
+                 expected: str | None = None) -> None:
+        super().__init__(message)
+        self.found = found
+        self.expected = expected
+
+
 @dataclass(frozen=True)
 class Calibration:
     util_per_token: float
@@ -102,8 +115,29 @@ Max window is many more tokens than a percent of a Pro window, so calls before
 it would calibrate the guard far too cautiously; only calls since count."""
 
 
-def _calls(session: Session, since: datetime | None = None) -> list[TokenSpend]:
+def current_account() -> str:
+    """The email the CLI is checked to be logged in to (raises `WrongAccount` otherwise);
+    what the calibration and the last reading are read for. Imported late: the module that
+    starts the CLI imports this one."""
+    from qlab.budget.agent import check_account
+
+    return check_account().email
+
+
+def last_reading(session: Session, account: str | None = None) -> TokenSpend | None:
+    """The newest ledger row of `account` (default: the current one) that carries a reading of
+    the weekly window. Another account's rows are another subscription's windows."""
+    return (session.query(TokenSpend)
+            .filter(TokenSpend.account == (account or current_account()),
+                    TokenSpend.seven_day_util.is_not(None))
+            .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+
+
+def _calls(session: Session, since: datetime | None = None,
+           account: str | None = None) -> list[TokenSpend]:
     query = session.query(TokenSpend)
+    if account is not None:
+        query = query.filter(TokenSpend.account == account)
     if since is not None:
         query = query.filter(TokenSpend.at >= since)
     return query.order_by(TokenSpend.at, TokenSpend.id).all()
@@ -139,13 +173,19 @@ def usd_per_token(session: Session, model: str | None) -> float:
     return max(every) if every else USD_PER_TOKEN_PRIOR
 
 
-def calibrate(session: Session, since: datetime | None = PLAN_SINCE) -> Calibration:
+def calibrate(session: Session, since: datetime | None = PLAN_SINCE,
+              account: str | None = None) -> Calibration:
     """Weekly utilization per token, from consecutive calls in the same weekly
     window: (sum of utilization gained + one reading's resolution) / tokens
     spent -- an upper bound, so the estimate starts cautious and tightens as
     tokens accumulate. Utilization gained between two calls also counts the
-    owner's own use in between, which can only make it more cautious."""
-    rows = [r for r in _calls(session, since) if _total(r) > 0]
+    owner's own use in between, which can only make it more cautious.
+
+    Only the rows of `account` (default: the current one) count: a percent of one
+    subscription's window is a different number of tokens than a percent of another's (the
+    work account's Team calibration, ~1 pp per million tokens, would let the owner's Pro plan
+    be overspent ~8x). An account with no rows gets the prior, CLAUDE.md's measurement."""
+    rows = [r for r in _calls(session, since, account or current_account()) if _total(r) > 0]
     usd = sum(r.usd_est or 0.0 for r in rows)
     tokens = sum(_total(r) for r in rows)
     usd_per_token = usd / tokens if usd > 0 and tokens > 0 else USD_PER_TOKEN_PRIOR
@@ -295,6 +335,9 @@ __all__ = [
     "NightExhausted",
     "Stage",
     "StageBudget",
+    "WrongAccount",
     "calibrate",
+    "current_account",
+    "last_reading",
     "nights_until",
 ]

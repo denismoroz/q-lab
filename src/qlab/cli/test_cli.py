@@ -383,3 +383,22 @@ def test_director_dry_run_prints_the_evidence_and_approve_clears_the_flag(
     result = runner.invoke(app, ["director", "--approve"])
     assert result.exit_code == 0 and "approved" in result.output
     assert dirs.active_directions(root) is not None
+
+
+def test_budget_status_names_the_account_and_probe_refuses_a_wrong_one(cli_db, monkeypatch):
+    import qlab.budget.agent as agent
+
+    runner.invoke(app, ["init-db"])
+    status = runner.invoke(app, ["budget", "status"])
+    assert status.exit_code == 0, status.output
+    assert "account          moroz.denis@gmail.com" in status.output
+
+    monkeypatch.setattr(agent, "_read_status", lambda account: {
+        "loggedIn": True, "email": "denis.moroz@toptal.com"})
+    monkeypatch.setattr(agent, "_checked", {})  # the right account was kept for ten minutes
+    status = runner.invoke(app, ["budget", "status"])
+    assert "WRONG" in status.output and "denis.moroz@toptal.com" in status.output
+    assert "moroz.denis@gmail.com" in status.output  # the expected one
+    probe = runner.invoke(app, ["budget", "probe"])
+    assert probe.exit_code == 1
+    assert "claude auth login" in probe.output

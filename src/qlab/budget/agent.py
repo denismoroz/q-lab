@@ -11,19 +11,35 @@ cannot spend past the cap; after the call it writes the spend to
 `token_spend` -- also when the call failed -- and lets the budget read the
 windows the call reported. `qlab.budget.test_guard` checks that no other
 module in q-lab starts the `claude` CLI.
+
+**The account.** Every start of the CLI goes through `run_claude`, which puts the q-lab
+config directory (`night/account.yaml`) into the environment as `CLAUDE_CONFIG_DIR`: an
+independent login, apart from the owner's work CLI. Before any agent call `check_account`
+asks `claude auth status` (it costs no tokens, and its answer is kept for ten minutes) and
+raises `WrongAccount` -- nothing spent -- when nobody is logged in or the email is not the
+expected one. The ledger row of a call records the checked email.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from qlab.budget.guard import CandidateBudget, ExplicitNoBudget, Stage
+from qlab.budget.account import (
+    CONFIG_DIR_ENV,
+    Account,
+    load_account,
+    same_email,
+    wrong_account,
+)
+from qlab.budget.guard import CandidateBudget, ExplicitNoBudget, Stage, last_reading
 from qlab.budget.usage import CallReport, parse_stream
 from qlab.registry.models import TokenSpend
 
@@ -35,10 +51,71 @@ class AgentResult:
     text: str | None
     report: CallReport
     exit_code: int
+    account: str | None = None  # the checked email the call ran under
+
+
+ACCOUNT_CACHE_SECONDS = 600
+STATUS_TIMEOUT_SECONDS = 60
 
 
 def _claude_bin() -> str:
     return os.environ.get(CLAUDE_BIN_ENV, "claude")
+
+
+def claude_env(account: Account | None = None) -> dict[str, str]:
+    """The environment of every `claude` start: the caller's own, with the q-lab config
+    directory over `CLAUDE_CONFIG_DIR`."""
+    account = account or load_account()
+    return {**os.environ, CONFIG_DIR_ENV: str(account.config_dir)}
+
+
+def run_claude(args: list[str], *, account: Account | None = None, **kwargs
+               ) -> subprocess.CompletedProcess:
+    """The ONE place the `claude` CLI is started: `args` after the binary, under q-lab's own
+    config directory. Anything else in `kwargs` goes to `subprocess.run`."""
+    return subprocess.run([_claude_bin(), *args], env=claude_env(account), check=False,
+                          **kwargs)
+
+
+def _read_status_cli(account: Account) -> dict:
+    """`claude auth status` under the q-lab config directory: the CLI's own JSON (`loggedIn`,
+    `email`, `orgName`, `subscriptionType`). A logged-out CLI prints `"loggedIn": false`, and
+    may exit non-zero doing so, so the output is read whatever the exit code."""
+    done = run_claude(["auth", "status"], account=account, stdin=subprocess.DEVNULL,
+                      capture_output=True, text=True, timeout=STATUS_TIMEOUT_SECONDS)
+    status = json.loads(done.stdout)
+    if not isinstance(status, dict):
+        raise ValueError("not an object")
+    return status
+
+
+def _read_status(account: Account) -> dict:
+    return _read_status_cli(account)
+
+
+_checked: dict[tuple, tuple[float, Account]] = {}
+
+
+def check_account() -> Account:
+    """The account of `night/account.yaml`, after `claude auth status` confirmed the CLI is
+    logged in to it. Costs no tokens; a success is kept for `ACCOUNT_CACHE_SECONDS` (a refusal
+    never is, so the owner's login takes effect at once). Raises `WrongAccount`."""
+    expected = load_account()
+    key = (_claude_bin(), str(expected.config_dir), expected.email)
+    now = time.monotonic()
+    hit = _checked.get(key)
+    if hit is not None and now - hit[0] < ACCOUNT_CACHE_SECONDS:
+        return hit[1]
+    try:
+        status = _read_status(expected)
+    except (subprocess.TimeoutExpired, ValueError) as exc:  # a bad answer is not a login
+        raise wrong_account(expected, None, detail=(
+            f"не удалось прочитать `claude auth status` ({type(exc).__name__})")) from exc
+    found = status.get("email") if status.get("loggedIn") else None
+    if not same_email(found, expected.email):
+        raise wrong_account(expected, found)
+    _checked[key] = (now, expected)
+    return expected
 
 
 def open_candidate(session, idea_id: str | None, stage: Stage) -> CandidateBudget:
@@ -50,8 +127,8 @@ def open_candidate(session, idea_id: str | None, stage: Stage) -> CandidateBudge
     from qlab.budget.guard import NightBudget
     from qlab.budget.usage import UsageReading, Window
 
-    last = (session.query(TokenSpend).filter(TokenSpend.seven_day_util.is_not(None))
-            .order_by(TokenSpend.at.desc(), TokenSpend.id.desc()).first())
+    # Only this account's rows: another account's windows are another subscription's.
+    last = last_reading(session, check_account().email)
     now = datetime.now(UTC)
     if last is not None and last.at.replace(tzinfo=UTC) > now - timedelta(hours=5):
         reading = UsageReading("allowed", None, Window(
@@ -78,10 +155,11 @@ def run_agent(
             "run_agent needs a CandidateBudget, or ExplicitNoBudget(reason) to refuse one "
             f"explicitly; got {type(budget).__name__}"
         )
+    account = check_account()  # before anything else: a wrong account spends nothing
     # No MCP servers: no q-lab agent uses one, and the user's servers' tool
     # definitions otherwise ride along in every call -- ~140k tokens measured
     # 2026-10-24 on a one-word probe, ~1.3k without them.
-    args = [_claude_bin(), "-p", prompt, "--output-format", "stream-json", "--verbose",
+    args = ["-p", prompt, "--output-format", "stream-json", "--verbose",
             "--model", model, "--max-turns", str(max_turns), "--strict-mcp-config",
             *extra_args]
     if isinstance(budget, CandidateBudget):
@@ -94,8 +172,8 @@ def run_agent(
     else:
         stage, idea_id = "no-budget", None
 
-    done = subprocess.run(args, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True,
-                          text=True, check=False)
+    done = run_claude(args, account=account, cwd=cwd, stdin=subprocess.DEVNULL,
+                      capture_output=True, text=True)
     report = parse_stream(done.stdout.splitlines())
     usage, reading = report.usage, report.reading
     status = "ok" if done.returncode == 0 and not report.is_error else f"failed ({done.returncode})"
@@ -116,11 +194,13 @@ def run_agent(
         seven_day_util=reading.seven_day.utilization if reading and reading.seven_day else None,
         seven_day_resets_at=reading.seven_day.resets_at if reading and reading.seven_day else None,
         status=status,
+        account=account.email,
     ))
     session.flush()
     if isinstance(budget, CandidateBudget):
         budget.record(usage.total if usage else 0, reading)
-    return AgentResult(text=report.text, report=report, exit_code=done.returncode)
+    return AgentResult(text=report.text, report=report, exit_code=done.returncode,
+                       account=account.email)
 
 
 def probe(session: Session) -> AgentResult:
@@ -134,4 +214,5 @@ def probe(session: Session) -> AgentResult:
                      extra_args=("--system-prompt", "Answer in one word.", "--tools", ""))
 
 
-__all__ = ["CLAUDE_BIN_ENV", "AgentResult", "open_candidate", "probe", "run_agent"]
+__all__ = ["ACCOUNT_CACHE_SECONDS", "CLAUDE_BIN_ENV", "AgentResult", "check_account",
+           "claude_env", "open_candidate", "probe", "run_agent", "run_claude"]

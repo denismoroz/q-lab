@@ -503,6 +503,10 @@ class TokenSpend(Base):
         DateTime(timezone=True), nullable=True
     )
     status: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The Claude account the call ran under (night/account.yaml, checked before the call). The
+    # windows above are that account's: a calibration or a "last reading" built from another
+    # account's rows is wrong. Rows before 2026-10-28 are denis.moroz@toptal.com (migration).
+    account: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
 
 class Review(Base):

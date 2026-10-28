@@ -16,6 +16,22 @@ def _no_real_agent(monkeypatch) -> None:
     monkeypatch.setenv(CLAUDE_BIN_ENV, "/usr/bin/false")
 
 
+TEST_ACCOUNT = "moroz.denis@gmail.com"
+
+
+@pytest.fixture(autouse=True)
+def _right_account_logged_in(monkeypatch) -> None:
+    """The account check (`qlab.budget.agent.check_account`) asks `claude auth status`, which
+    would reach the real CLI and the owner's real login. Every test sees the expected account
+    logged in, with the per-process cache emptied; a test of the check sets its own status over
+    this (`agent._read_status`), or calls `agent._read_status_cli` against a fake binary."""
+    import qlab.budget.agent as agent
+
+    monkeypatch.setattr(agent, "_read_status", lambda account: {
+        "loggedIn": True, "email": TEST_ACCOUNT, "orgName": "test", "subscriptionType": "pro"})
+    monkeypatch.setattr(agent, "_checked", {})
+
+
 @pytest.fixture(autouse=True)
 def _noise_in_process(monkeypatch) -> None:
     """Noise books run in this process in tests (qlab.calibration.run); the one

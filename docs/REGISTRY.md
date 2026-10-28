@@ -142,7 +142,9 @@
 `at`, `stage`, `idea_id?`, `agent`, `tokens_in`, `tokens_out`, `usd_est`; с 2026-10-02
 ещё `model`, `tokens_cache_write`, `tokens_cache_read`, `five_hour_util`,
 `seven_day_util`, `seven_day_resets_at`, `status` — занятость окон подписки, которую вызов
-сообщил после себя (`docs/BUDGET.md`). Пишет только `qlab.budget.run_agent`, каждый вызов.
+сообщил после себя (`docs/BUDGET.md`); с 2026-10-28 ещё `account` — почта аккаунта Claude,
+под которым шёл вызов (окна у каждого аккаунта свои; прежние строки — рабочий
+denis.moroz@toptal.com). Пишет только `qlab.budget.run_agent`, каждый вызов.
 Нужен для главной метрики проекта — **цены одного выжившего** — и для калибровки гарда.
 
 ### `dossier`
