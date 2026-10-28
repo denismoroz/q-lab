@@ -120,3 +120,78 @@ uv run qlab night run --no-restamp            # ночь без этого эт�
 
 После ручного пересчёта аномалии проверяются командой `uv run qlab anomalies scan --passed`, ряды
 проверки вперёд — `uv run qlab forward-series rebuild --force`.
+
+## 5. Разовый пересчёт 28 октября 2026
+
+Перед ним — копия реестра (`data/qlab.db.bak-2026-10-28-recompute`), потом миграция, потом
+`qlab restamp run --all`. Пересчитано 35 идей и их вторых этапов; всё заняло около трёх часов,
+из них около двух с половиной — первая идея деревьев тренда: её второй этап на Hyperliquid получил
+новый запрос данных (планка ликвидности), и стенд заново докачал свечи всех 287 монет по одной;
+остальные идеи взяли готовое. Дальше `qlab anomalies scan --passed` и
+`qlab forward-series rebuild --force`. Теперь `qlab restamp run --all --dry-run` ничего не находит.
+
+Что видно:
+
+- **Статус изменился у трёх идей, и у всех причина одна.** `bv2-research-short-window-causal` и
+  `bv2-research-partial-hedge-causal` стали `rejected` (были `validated`), `bv2-binance-hl` стала
+  `bench` (была `validated`). Не прошло одно правило, `shape_aware_edge`: доход идеи должен быть
+  лучше 99% случайных книг сравнения (200 книг), а на новом прогоне он лучше 98,5% (у `bv2-binance-hl`
+  97,5%). Прежние прогоны давали ровно 99%. Случайные книги теперь считаются на той же основе, что и
+  сама стратегия (деньги стратегии), и разница в одну-две книги из двухсот переводит идею через
+  планку. Сами доход и просадка идей почти не изменились; значит, это не провал стратегии, а край
+  планки, и решение о том, оставлять ли такую планку, за владельцем. Статус двигал код по правилам.
+- Вторые этапы этих двух идей (`...-hl`) остались `validated` со старыми числами: первый этап больше
+  не пропускает дальше, а второй идёт только за выжившим первым.
+- У `xsmom-research-nobull-causal` и её второго этапа сработали признаки аномалий (см. таблицу);
+  второй этап теперь +14,1% в год вместо +41,0% (планка ликвидности $1 млн в сутки, как договорились).
+- Шесть идей Bv2 показывают одну и ту же прибавку «+3,8% → +7,9%» в год на деньгах стратегии при
+  просадке −19%: это одно и то же описание Bv2 на Binance, и основа процентов у него сменилась.
+- `frab-binance-spot-research-entry30`: −129,7% в год — это сумма (прибыль не вкладывается обратно),
+  а не склейка, поэтому может быть меньше −100%.
+- Второй этап четырёх идей, чей первый этап закрыт, не пересчитан (список в отчёте стенда).
+- Один сбой: `trend-tsmom-crypto` в общем прогоне упал (`BrokenProcessPool`: рабочий процесс умер),
+  отдельным запуском с тремя рабочими процессами прошёл за 43 секунды.
+
+Таблица: было → стало. «Доход в год» и «худшее падение» — на деньгах стратегии, если у прежнего
+прогона такой пары не было, то «было» — по счёту стенда. Признаки аномалий — `docs/ANOMALIES.md`.
+
+| идея | исход | статус | в год: было → стало | худшее падение: было → стало | сработавшие признаки |
+|---|---|---|---|---|---|
+| bv2-binance | needs-forward | bench | +3.8% → +7.9% | −8.8% → −19.5% | не сканировался (исход не из прошедших) |
+| bv2-binance-hl | paper → needs-forward | validated → bench | +30.4% → +22.1% | −7.2% → −7.7% | не сканировался (исход не из прошедших) |
+| frab | needs-forward | live | +5.1% → +5.9% | −0.0% → −0.1% | не сканировался (исход не из прошедших) |
+| strategy-b-v2 | needs-forward | paper | +22.8% → +21.8% | −7.5% → −7.8% | не сканировался (исход не из прошедших) |
+| trend-retune-weekly | shelf | bench | +5.3% → +5.3% | −6.3% → −6.3% | нет |
+| trend-binance-cap-gated-causal | needs-infrastructure | bench | +4.4% → +4.4% | −17.7% → −17.7% | прибыль на 1–3 монетах, прибыль на тысячной доле дней |
+| trend-binance-cap-gated-causal-hl | shelf | bench | +5.5% → +5.9% | −4.8% → −4.7% | нет |
+| trend-research-gate-hl-causal | shelf | bench | +4.4% → +4.4% | −17.7% → −17.7% | прибыль на 1–3 монетах, прибыль на тысячной доле дней |
+| trend-research-gate-hl-causal-hl | shelf | bench | +5.5% → +5.9% | −4.8% → −4.7% | нет |
+| trend-research-flat-choice | needs-infrastructure | bench | +4.5% → +4.5% | −17.7% → −17.7% | прибыль на 1–3 монетах, прибыль на тысячной доле дней, монеты, которых нет на Hyperliquid |
+| trend-research-flat-choice-hl | shelf | bench | +5.4% → +5.4% | −6.3% → −6.3% | нет |
+| trend-binance-cap-gated-causal-ov-gate | needs-infrastructure | bench | +7.0% → +7.0% | −12.5% → −12.5% | нет |
+| trend-binance-cap-gated-causal-ov-gate-hl | shelf | bench | +3.6% → +2.7% | −3.8% → −3.3% | прибыль на 1–3 монетах |
+| bv2-research-headroom-retune | paper | validated | +21.6% → +20.0% | −5.2% → −6.1% | нет |
+| xsmom-research-nobull-causal | paper | validated | +36.2% → +41.3% | −53.6% → −70.7% | невероятный день, прибыль на тысячной доле дней, прибыль на скачках от 50%, монеты, которых нет на Hyperliquid, замёрзшая цена, расхождение Binance и Hyperliquid |
+| xsmom-research-nobull-causal-hl | paper | validated | +41.0% → +14.1% | −28.2% → −26.2% | прибыль на 1–3 монетах, прибыль на тысячной доле дней, прибыль на скачках от 50%, прибыль на тонких/снятых монетах, расхождение Binance и Hyperliquid |
+| bv2-research-short-window-causal | paper → reject | validated → rejected | +2.0% → +8.4% | −4.5% → −19.3% | не сканировался (исход не из прошедших) |
+| bv2-research-short-window-causal-hl | paper | validated | не пересчитан | — | — |
+| bv2-research-partial-hedge-causal | paper → reject | validated → rejected | +2.0% → +8.4% | −4.5% → −19.3% | не сканировался (исход не из прошедших) |
+| bv2-research-partial-hedge-causal-hl | paper | validated | не пересчитан | — | — |
+| bv2-research-headroom-causal | paper | validated | +2.0% → +8.4% | −4.5% → −19.3% | нет |
+| bv2-research-headroom-causal-hl | paper | validated | +18.4% → +17.3% | −5.2% → −6.0% | нет |
+| frab-binance-spot-research-hold120 | needs-forward | bench | −6.1% → −6.2% | −0.5% → −0.5% | не сканировался (исход не из прошедших) |
+| frab-binance-spot-research-entry30 | needs-forward | bench | −72.7% → −129.7% | −4.8% → −5.0% | не сканировался (исход не из прошедших) |
+| xsmom-research-nobull | needs-forward | bench | +5.7% → +8.5% | −11.0% → −11.6% | не сканировался (исход не из прошедших) |
+| frab-research-no-avax | needs-forward | bench | +3.7% → +3.7% | −0.2% → −0.2% | не сканировался (исход не из прошедших) |
+| frab-research-live-vs-default-retune | needs-forward | bench | +9.4% → +9.0% | −0.1% → −0.1% | не сканировался (исход не из прошедших) |
+| frab-live-own-spot | needs-forward | bench | +3.9% → +3.8% | −0.2% → −0.2% | не сканировался (исход не из прошедших) |
+| frab-binance-spot-research-sw24 | needs-forward | bench | −4.9% → −5.0% | −0.5% → −0.5% | не сканировался (исход не из прошедших) |
+| frab-binance-spot-research-k3 | needs-forward | bench | +4.2% → +4.2% | −0.2% → −0.2% | не сканировался (исход не из прошедших) |
+| frab-binance-spot-300 | needs-forward | bench | −5.4% → −5.5% | −0.5% → −0.5% | не сканировался (исход не из прошедших) |
+| bv2-research-shared-pool-hl | needs-forward | bench | +19.0% → +19.2% | −4.4% → −5.1% | не сканировался (исход не из прошедших) |
+| bv2-research-shared-pool | needs-forward | bench | +3.8% → +7.9% | −8.8% → −19.5% | не сканировался (исход не из прошедших) |
+| bv2-research-headroom-retune-binance | needs-forward | bench | +3.8% → +7.9% | −8.8% → −19.5% | не сканировался (исход не из прошедших) |
+| bv2-research-headroom-retune-binance-hl | needs-forward | bench | +18.4% → +17.3% | −5.2% → −6.0% | не сканировался (исход не из прошедших) |
+| xyz-equity-bab | not-evaluable | candidate | +18.5% → — | −9.2% → — | не сканировался (исход не из прошедших) |
+| xyz-deployment-bab | not-evaluable | candidate | +10.1% → +7.2% | −36.1% → −37.3% | не сканировался (исход не из прошедших) |
+| trend-tsmom-crypto | not-evaluable | paper | +3.4% → +7.5% | −4.8% → −3.5% | не сканировался (исход не из прошедших) |

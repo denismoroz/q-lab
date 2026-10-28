@@ -55,6 +55,7 @@ data:
   spot_prices: perp
   start: '2025-01-01'
   end: '2026-10-26'
+  min_daily_volume_usd: 1000000.0
 costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
@@ -71,6 +72,8 @@ differs_from_source:
   stage 1 (trend-research-gate-hl-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
 noise_universe: panel
 measure_hedge_timing: false
 params_fixed_at: '2020-04-01'
@@ -155,6 +158,9 @@ sources:
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
     is 0.9'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
 regime_claim:
   bull: earns
   bear: earns
