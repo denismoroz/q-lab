@@ -4,6 +4,7 @@ the merge are real, on a throwaway repository."""
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 from datetime import date
@@ -44,20 +45,40 @@ def repo(tmp_path: Path) -> Path:
     return work
 
 
-def _config(repo: Path) -> dict:
-    return {"model": "sonnet", "max_turns": 5, "repos": {"demo": {
+def _config(repo: Path, **extra) -> dict:
+    return {"model": "sonnet", "max_turns": 5, **extra, "repos": {"demo": {
         "path": str(repo), "base": "main", "allowed": ["pkg/strategy/*"],
         "test_command": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "pkg"],
         "test_timeout_s": 120}}}
 
 
+class _Calls(list):
+    """The agent names called, in order; `.prompts`, `.args` and `.cwds` of the programmer's."""
+
+    def __init__(self):
+        super().__init__()
+        self.prompts: list[str] = []
+        self.args: list[tuple[str, ...]] = []
+        self.cwds: list[Path] = []
+
+
 def _agent(monkeypatch, write, review="VERDICT: OK"):
-    calls = []
+    """A fake run_agent. `write(worktree)` is the programmer's work; when it takes a second
+    argument that is the number of the programmer's call (0 for the first)."""
+    calls = _Calls()
+    takes_n = len(inspect.signature(write).parameters) > 1
 
     def fake(budget, prompt, *, session, agent, model, max_turns, cwd=None, extra_args=()):
         calls.append(agent)
         if agent == "programmer":
-            write(Path(cwd))
+            n = len(calls.prompts)
+            calls.prompts.append(prompt)
+            calls.args.append(tuple(extra_args))
+            calls.cwds.append(Path(cwd))
+            if takes_n:
+                write(Path(cwd), n)
+            else:
+                write(Path(cwd))
             return SimpleNamespace(text="made the window a setting", exit_code=0)
         return SimpleNamespace(text=review, exit_code=0)
 
@@ -199,19 +220,173 @@ def test_a_skipped_parity_test_is_named_and_ignored_data_is_linked(tmp_path):
 
 
 def test_a_retry_is_told_why_the_last_attempt_failed(repo, tmp_path, monkeypatch):
-    prompts = []
+    def no_test(wt: Path) -> None:
+        (wt / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 14\nX = 1\n")
 
-    def fake(budget, prompt, *, session, agent, model, max_turns, cwd=None, extra_args=()):
-        prompts.append(prompt)
-        if agent == "programmer":
-            (Path(cwd) / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 14\nX = 1\n")
-        return SimpleNamespace(text="VERDICT: OK", exit_code=0)
+    calls = _agent(monkeypatch, no_test)
+    cfg = _config(repo, fix_rounds=0)
+    req = _request([])
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert "previous attempt" not in calls.prompts[0]
+    assert "previous attempt" in calls.prompts[1]
+    assert "no test among the changes" in calls.prompts[1]
 
-    monkeypatch.setattr(prog, "run_agent", fake)
+
+def test_the_agent_may_run_the_tests_and_no_other_shell_command(repo, tmp_path, monkeypatch):
+    calls = _agent(monkeypatch, _good_change)
     req = _request([])
     prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
+    args = calls.args[0]
+    assert args[0] == "--allowedTools" and "--disallowedTools" not in args
+    tools = args[1].split(",")
+    assert tools == ["Read", "Glob", "Grep", "Write", "Edit",
+                     f"Bash({sys.executable} -m pytest:*)"]
+    assert "Bash" not in tools  # never an unrestricted shell
+    assert "KEEP GOING until ALL tests pass" in calls.prompts[0]
+    assert "You cannot run anything" not in calls.prompts[0]
+
+
+def test_the_shell_pattern_is_the_test_commands_prefix():
+    assert prog.tests_prefix(["uv", "run", "pytest", "-q", "-rs", "src/frab/strategy"]) == (
+        "uv run pytest")
+    assert prog.tools_pattern(["uv", "run", "pytest", "-q"]).endswith(",Bash(uv run pytest:*)")
+    assert prog.tests_prefix(["python", "-m", "pytest", "-q", "pkg"]) == "python -m pytest"
+
+
+def test_the_repositories_config_allows_three_attempts_and_three_fix_rounds():
+    config = prog.load_config()
+    assert config["max_attempts"] == 3 and config["fix_rounds"] == 3
+    for name, repo_cfg in config["repos"].items():
+        assert prog.tests_prefix(repo_cfg["test_command"]) == "uv run pytest", name
+    queue: list = []
+    req = _request(queue)
+    req.attempts = 2
+    assert prog.next_request(queue, config["max_attempts"]) is req  # the third attempt is allowed
+    req.attempts = 3
+    assert prog.next_request(queue, config["max_attempts"]) is None
+
+
+def _wrong_then_right(wt: Path, n: int) -> None:
+    """The first pass writes a test whose expected value is wrong (the code is right); the next
+    ones fix the test."""
+    _good_change(wt)
+    expected = "15" if n == 0 else "14"
+    (wt / "pkg" / "strategy" / "tests" / "test_window_setting.py").write_text(
+        "from pkg.strategy.signal import window\n\n\ndef test_default():\n"
+        f"    assert window() == {expected} and window(7) == 7\n")
+
+
+def test_a_failing_code_run_sends_the_same_worktree_back_for_a_fix_pass(
+        repo, tmp_path, monkeypatch):
+    calls = _agent(monkeypatch, _wrong_then_right)
+    req = _request([])
     prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
-    assert "previous attempt" not in prompts[0]
-    assert "previous attempt" in prompts[1] and "no test among the changes" in prompts[1]
+    assert req.status == "ready", req.problems
+    assert calls == ["programmer", "programmer", "programmer-review"]
+    assert req.attempts == 1 and req.fix_passes == 1 and req.problems == []
+    assert calls.cwds[0] == calls.cwds[1]  # one worktree for both passes
+    fix = calls.prompts[1]
+    assert "did NOT pass" in fix and "the tests failed" in fix and "14 == 15" in fix
+    assert "1. " in fix  # the problems are numbered
+    written = Path(req.worktree) / "pkg/strategy/tests/test_window_setting.py"
+    assert "15" not in written.read_text()
+
+
+def test_fix_rounds_are_bounded_and_then_the_attempt_fails(repo, tmp_path, monkeypatch):
+    def always_wrong(wt: Path) -> None:
+        _good_change(wt)
+        (wt / "pkg" / "strategy" / "tests" / "test_window_setting.py").write_text(
+            "from pkg.strategy.signal import window\n\n\ndef test_default():\n"
+            "    assert window() == 15\n")
+
+    calls = _agent(monkeypatch, always_wrong)
+    req = _request([])
+    prog.run_request(req, _config(repo, fix_rounds=2), budget=ExplicitNoBudget("t"),
+                     session=None, worktrees=tmp_path / "wt")
+    assert req.status == "failed" and req.attempts == 1 and req.fix_passes == 2
+    assert calls == ["programmer"] * 3  # the first pass and two fix passes, no review
+    assert any("the tests failed" in p for p in req.problems)
+    prog.run_request(req, _config(repo, fix_rounds=0), budget=ExplicitNoBudget("t"),
+                     session=None, worktrees=tmp_path / "wt")
+    assert calls.count("programmer") == 4 and req.fix_passes == 0  # fix_rounds 0: no fix pass
+
+
+def test_a_retry_edits_the_earlier_worktree_instead_of_recreating_it(
+        repo, tmp_path, monkeypatch):
+    def first_wrong_then_right(wt: Path, n: int) -> None:
+        if n == 1:
+            assert (wt / "pkg" / "strategy" / "tests" / "test_window_setting.py").is_file()
+        _wrong_then_right(wt, n)
+
+    calls = _agent(monkeypatch, first_wrong_then_right)
+    cfg = _config(repo, fix_rounds=0)
+    req = _request([])
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert req.status == "failed"
+    first_worktree, first_branch = req.worktree, req.branch
+    marker = Path(first_worktree) / "pkg" / "strategy" / "marker.py"
+    marker.write_text("KEPT = True\n")  # work of the earlier attempt a fresh start would lose
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert req.status == "ready", req.problems
+    assert (req.worktree, req.branch) == (first_worktree, first_branch)
+    assert calls.cwds[0] == calls.cwds[1]
+    assert marker.is_file()
+    retry = calls.prompts[1]
+    assert "CONTINUATION" in retry and "marker.py" in retry and "the tests failed" in retry
+    assert "from scratch again now" not in retry
+
+
+def test_a_retry_without_an_earlier_worktree_starts_fresh(repo, tmp_path, monkeypatch):
+    calls = _agent(monkeypatch, _good_change)
+    req = _request([])
+    req.attempts = 1  # an earlier attempt that left no worktree
+    req.problems = ["something"]
+    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert req.status == "ready", req.problems
+    assert "CONTINUATION" not in calls.prompts[0]
+
+
+def test_a_stray_file_is_undone_by_code_and_reported(repo, tmp_path, monkeypatch):
+    def stray_then_fine(wt: Path, n: int) -> None:
+        _good_change(wt)
+        if n == 0:
+            (wt / "README.md").write_text("changed\n")
+
+    calls = _agent(monkeypatch, stray_then_fine)
+    req = _request([])
+    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert req.status == "ready", req.problems
+    assert "README.md is outside" in calls.prompts[1] and "deleted or restored" in calls.prompts[1]
+    assert not (Path(req.worktree) / "README.md").exists()
+
+
+def test_a_budget_stop_mid_attempt_leaves_the_worktree_for_the_next_night(
+        repo, tmp_path, monkeypatch):
+    from qlab.budget import BudgetExhausted
+
+    seen = []
+
+    def fake(budget, prompt, *, session, agent, model, max_turns, cwd=None, extra_args=()):
+        seen.append(agent)
+        if len(seen) == 2:
+            raise BudgetExhausted("ceiling")
+        _wrong_then_right(Path(cwd), 0)
+        return SimpleNamespace(text="done", exit_code=0)
+
+    monkeypatch.setattr(prog, "run_agent", fake)
+    req = _request([])
+    with pytest.raises(BudgetExhausted):
+        prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                         worktrees=tmp_path / "wt")
+    assert req.status == "queued" and req.attempts == 1 and req.fix_passes == 1
+    assert any("the tests failed" in p for p in req.problems)  # saved for the next night
+    assert (Path(req.worktree) / "pkg/strategy/tests/test_window_setting.py").is_file()

@@ -12,9 +12,18 @@
 enabled: true
 model: sonnet        # docs/PLAN.md: the agents that write code run on sonnet
 reviewer_model: sonnet
-max_turns: 60
+max_turns: 80        # the agent runs the tests itself as it works: that takes turns
 per_night: 1
-max_attempts: 2      # a request that failed twice waits for the owner
+# Owner, 2026-10-28: «добавь в инструкцию доводить тесты до конца - если ошибка в них и в
+# коде - не останавливаться после пары попыток». The first real request (2026-10-26-1) stopped
+# after two attempts on the agent's OWN wrong test (its comment said the 30-day return was -5%,
+# the prices it built gave 0%) because the agent could not run anything and each retry began
+# from scratch. So: the agent runs the repository's test command itself (and nothing else in
+# the shell); a failed check by code sends the same worktree back for up to `fix_rounds` fix
+# passes inside one attempt; a retry edits the earlier attempt's worktree instead of
+# recreating it; a request that failed `max_attempts` times waits for the owner.
+max_attempts: 3
+fix_rounds: 3
 repos:
   frab:
     path: /Users/d/prj/funding-rate-arbitrage
