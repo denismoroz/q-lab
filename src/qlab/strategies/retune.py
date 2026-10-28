@@ -163,6 +163,10 @@ class Retune:
         key = (
             panel.snapshot_id, str(index[0]), str(index[-1]), len(index),
             hash(tuple(panel.prices.columns)), json.dumps(params, sort_keys=True, default=str),
+            # `tradeable` is part of the answer (a counterfactual that forbids some coin-days
+            # runs the same snapshot with another mask, docs/ANOMALIES.md): without it the
+            # cache returned the unmasked book for a masked panel.
+            int(pd.util.hash_pandas_object(panel.tradeable, index=False).sum()),
         )
         if key in _CACHE:
             self._last = _CACHE[key]

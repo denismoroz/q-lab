@@ -22,6 +22,13 @@ class ConstantSign:
         return w
 
 
+class MaskedSign(ConstantSign):
+    """`ConstantSign` that respects the panel's `tradeable` mask."""
+
+    def target_weights(self, panel, params):
+        return super().target_weights(panel, params).where(panel.tradeable, 0.0)
+
+
 def _panel(up_days: int, down_days: int) -> MarketPanel:
     n = up_days + down_days
     index = pd.date_range("2026-01-01", periods=n, freq="1D", tz="UTC")
@@ -97,3 +104,20 @@ def test_diagnostics_count_switches() -> None:
     assert d["retune_candidates"] == 2
     assert d["retune_switches"] >= 1
     assert 0 < d["retune_top_choice_share"] <= 1
+
+
+def test_the_cache_does_not_hand_a_masked_panel_the_unmasked_answer() -> None:
+    """Same snapshot id, columns and parameters but another `tradeable` mask: a different book
+    (found 2026-10-28 while building the anomaly toolkit's counterfactuals)."""
+    params = {**PARAMS, "inner_code_ref": "qlab.strategies.test_retune:MaskedSign"}
+    panel = _panel(60, 60)
+    first = Retune().run(panel, params)
+    mask = panel.tradeable.copy()
+    mask.iloc[40:, 0] = False  # A may not be held from bar 40 on
+    masked = MarketPanel(snapshot_id=panel.snapshot_id, prices=panel.prices,
+                         funding=panel.funding, tradeable=mask, meta={})
+    second = Retune().run(masked, params)
+    assert second is not first
+    assert (second.weights.iloc[41:, 0] == 0).all() and (first.weights.iloc[41:, 0] != 0).any()
+    again = Retune().run(panel, params)
+    assert again is first  # the same panel still hits the cache

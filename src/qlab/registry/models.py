@@ -548,6 +548,63 @@ class Assessment(Base):
     checks: Mapped[list] = mapped_column(JSON, nullable=False)
 
 
+class AnomalyScan(Base):
+    """`anomaly_scan` -- the anomaly detector's flags for one judged trial
+    (qlab.anomalies, docs/ANOMALIES.md). A flag decides nothing: it is recorded, like the year
+    signs, so the owner can later count which flag separates what. `flags` is the list of every
+    flag with its state (fires / quiet / not defined), value, line and detail; `fired` the names
+    of those that fired; `facts` what the re-run measured (positions, top days, top coins).
+    One row per trial and `config_version` of night/anomalies.yaml: a changed line is a new
+    version and the old scan stays what it was."""
+
+    __tablename__ = "anomaly_scan"
+    __table_args__ = (
+        UniqueConstraint("trial_id", "config_version", name="uq_anomaly_scan_trial_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    trial_id: Mapped[int] = mapped_column(ForeignKey("trial.id"), nullable=False, index=True)
+    config_version: Mapped[str] = mapped_column(String, nullable=False)
+    scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    route: Mapped[str | None] = mapped_column(String, nullable=True)
+    fired: Mapped[list] = mapped_column(JSON, nullable=False)
+    flags: Mapped[list] = mapped_column(JSON, nullable=False)
+    facts: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class AnomalyInvestigation(Base):
+    """`anomaly_investigation` -- the investigator agent's dossier on one flagged trial
+    (qlab.anomalies.investigator, docs/ANOMALIES.md). The agent changes no verdict, status or
+    code: `cause` is one of data-artifact / stand-bug / unrealistic-tradability / genuine /
+    unclear, kept only with evidence the code checked against the log of the toolkit calls the
+    agent really made; `evidence` holds the accepted items and `rejected` the others with the
+    reason. `caught_by` names the detector flags that pointed at the cause (empty: none did)
+    and `new_check` is the agent's proposal for a check that would have caught it, with
+    `new_check_status` the owner's decision on it. `programmer_requests` are the ids of code
+    requests it put in the programmer's queue. `dossier` is the Russian text."""
+
+    __tablename__ = "anomaly_investigation"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idea_id: Mapped[str] = mapped_column(ForeignKey("idea.id"), nullable=False, index=True)
+    trial_id: Mapped[int] = mapped_column(ForeignKey("trial.id"), nullable=False, index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    flags_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    cause: Mapped[str] = mapped_column(String, nullable=False)
+    summary: Mapped[str] = mapped_column(String, nullable=False)
+    dossier: Mapped[str] = mapped_column(String, nullable=False)
+    evidence: Mapped[list] = mapped_column(JSON, nullable=False)
+    rejected: Mapped[list] = mapped_column(JSON, nullable=False)
+    proposals: Mapped[list] = mapped_column(JSON, nullable=False)
+    caught_by: Mapped[list] = mapped_column(JSON, nullable=False)
+    new_check: Mapped[str | None] = mapped_column(String, nullable=True)
+    new_check_status: Mapped[str] = mapped_column(String, nullable=False, default="none")
+    programmer_requests: Mapped[list] = mapped_column(JSON, nullable=False)
+    tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class ResearchNote(Base):
     """`research_note` -- one researcher memo about one strategy's idea
     (qlab.agents.researcher, docs/RESEARCHER.md), kept in the registry so the

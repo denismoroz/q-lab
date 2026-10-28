@@ -8,6 +8,7 @@ import TrialTable from '../components/TrialTable.jsx'
 import YearView from '../components/YearView.jsx'
 import ForwardCharts from '../components/ForwardCharts.jsx'
 import OverlayPanels from '../components/OverlayPanels.jsx'
+import Anomalies from '../components/Anomalies.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -95,6 +96,7 @@ export default function IdeaDetail() {
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
             />
+            <Anomalies block={ideaQuery.data.anomalies} />
             <PaperCheck check={ideaQuery.data.paper_check} />
             <PaperRule rule={ideaQuery.data.paper_rule} />
             <Decay decay={ideaQuery.data.decay} />

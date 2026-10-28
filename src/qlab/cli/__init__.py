@@ -608,6 +608,11 @@ def evaluate_cmd(
             typer.echo(f"  {sign_line(reading)}")
         typer.echo("")
 
+    from qlab.anomalies.cli import evaluate_lines
+
+    for line in evaluate_lines(result.trial_id, result.routing.route):
+        typer.echo(line)
+
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
@@ -2547,5 +2552,10 @@ def year_signs_cmd(
     for line in year_signs.render_summary(summary):
         typer.echo(line)
 
+
+from qlab.anomalies.cli import anomalies_app, anomaly_app  # noqa: E402 - registered last
+
+app.add_typer(anomalies_app, name="anomalies")
+app.add_typer(anomaly_app, name="anomaly")
 
 __all__ = ["app"]

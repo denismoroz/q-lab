@@ -210,6 +210,7 @@ def create_app() -> FastAPI:
         detail["strategy"] = strategy_view(session, idea_id)
         detail["two_stage"] = _two_stage(session, idea)
         detail["causal_twin"] = _causal_twin(session, idea)
+        detail["anomalies"] = _anomalies(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -275,6 +276,17 @@ def create_app() -> FastAPI:
             return None
         return {"id": twin.id, "status": twin.status.value,
                 "two_stage": _two_stage(session, twin)}
+
+    def _anomalies(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """The anomaly detector's flags for the idea's latest scanned run, and the investigator's
+        dossier if the agent looked into it (qlab.anomalies, docs/ANOMALIES.md). The flags
+        decide nothing; null when the idea was never scanned. Never fails the page."""
+        from qlab.anomalies.report import idea_block
+
+        try:
+            return idea_block(session, idea_id)
+        except Exception:  # noqa: BLE001 - a view must not fail over a table an old registry lacks
+            return None
 
     def _latest_assessment(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The assessor agent's latest second opinion (docs/ASSESSOR.md). The

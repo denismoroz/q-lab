@@ -1,0 +1,184 @@
+# The anomaly detector and its investigator (qlab.anomalies, docs/ANOMALIES.md).
+#
+# Owner, 2026-10-28, after the XSMOM causal twin showed +313% in 2026 on Binance's history
+# (single days of +10 to +19% for a book of 20 positions) while the same mechanism earned +3.7%
+# on Hyperliquid over three months where Binance showed +63%: «давай введем агента который
+# будет искать такие аномалии и разбирать».
+#
+# Two halves. The detector is code only (no tokens): for every judged run of an idea that
+# passed, it re-runs the stored spec on the stored data and writes flags. A flag DECIDES
+# NOTHING -- it is recorded and counted, like the four year signs (rules 2026-10-28.2); the owner
+# decides later whether any flag should block a run. The investigator is an agent that reads
+# only flagged runs with a fixed read-only toolkit and writes a dossier; it changes no verdict,
+# status or code.
+#
+# Every line below is a number with its rationale. Nothing in the code has a default: a missing
+# key is an error. A changed line is a new `version`; scans are stored with the version they
+# were made under, so old scans stay what they were.
+
+version: "2026-10-28.2"
+enabled: true
+
+scan:
+  # Which runs are scanned: the latest routed run of an idea whose route is one of these --
+  # the runs that passed every rule they can be judged by (paper: passed and runnable now;
+  # shelf: passed, short of capital; needs-infrastructure: passed, not runnable here). These
+  # are the runs that reach the owner, where a false pass costs something.
+  routes: [paper, shelf, needs-infrastructure]
+  latest_only: true
+  # A scan re-runs a trial (seconds for a daily book, more for an hourly one); at most this
+  # many a night, the rest wait.
+  max_scans_per_night: 12
+
+flags:
+  implausible_day:
+    # A book moves with the market by its NET exposure and by its coins' own moves, which
+    # average out over its N positions. One coin's own daily move is `single_move`, the
+    # market's `market_move`, so a day's ordinary size is
+    #   sd = sqrt((|net| * market_move)^2 + (G * single_move)^2 / N)
+    # (G the gross exposure, net the signed exposure, N the positions; the day's means), and a
+    # day beyond `sigmas` such sizes is not ordinary.
+    single_move: 0.06
+    market_move: 0.05
+    sigmas: 8
+    provisional: true
+    rationale: >
+      PROVISIONAL. single_move is the rounded daily standard deviation of one mid-cap
+      perpetual's own move on Binance (about 5 to 6%), market_move that of the whole market
+      (about 4 to 5%). Eight of them is wide on purpose, because crypto's tails are fat: it
+      leaves a long-only book's crash day (2021-05-18 for the trend book, 1.4 times its sixth
+      line) quiet and fires on a dollar-neutral book of 20 positions that earns 12 to 19% in a
+      day (XSMOM's causal twin). Set on those two cases on 2026-10-28; to be moved by the
+      statistics (docs/ANOMALIES.md).
+
+  concentrated_instruments:
+    # Share of the run's total profit given by its best one and best three instruments.
+    min_instruments: 15
+    top1_share: 0.25
+    top3_share: 0.5
+    provisional: true
+    rationale: >
+      PROVISIONAL. A book that traded fifteen or more coins but earned half of everything on
+      three of them is a book of those three. Not defined below fifteen coins: a hand-picked
+      list of eight (Bv2's) rests on a few coins by design. A coin counts with its spot leg.
+
+  concentrated_coin_days:
+    # Share of the total profit given by the best coin-days (one coin on one day): the best
+    # `top_fraction` of the coin-days the book held, at least `min_top` of them.
+    top_fraction: 0.001
+    min_top: 1
+    # Not defined when the whole run earned less than this share of the strategy's capital: the
+    # share of a tiny sum is decided by noise (a hedged carry book nets a few percent in a year).
+    min_total: 0.05
+    share: 0.5
+    provisional: true
+    rationale: >
+      PROVISIONAL. XSMOM's causal twin earned 94% of its profit on its best 40 coin-days of
+      about 45,000 held (0.1% of them), each a coin that rose 100 to 300% in a day: a result
+      that rests on a thousandth of the days it traded is a lottery, not a rule. Half of the
+      profit on the best thousandth is declared as the first line; to be moved by the
+      statistics.
+
+  tail_move_coin_days:
+    # Share of the total profit earned on coin-days where the coin's own price moved by
+    # `min_move` or more in a day (either way) while the book held it.
+    min_move: 0.5
+    share: 0.4
+    provisional: true
+    rationale: >
+      PROVISIONAL, from docs/research/xsmom-anomaly-2026-10-28.md. XSMOM's causal twin earns 59%
+      of its profit on 187 such coin-days of 44,591 (0.4%), its Hyperliquid second stage 53%,
+      the trend book 22%, Bv2 0%. Forty percent sits between the two groups; a result that rests
+      on coins that doubled in a day is a lottery whatever the venue.
+
+  untradeable_coin_days:
+    # Share of the total profit earned on coin-days that are under `min_volume_usd` traded that
+    # day, or in the last `delist_days` days before a coin's last price (a coin that stopped
+    # trading).
+    min_volume_usd: 1000000
+    delist_days: 7
+    share: 0.2
+    provisional: true
+    rationale: >
+      PROVISIONAL. Under one million dollars a day a perpetual's close is a thin print; the
+      last week before a coin stops trading is the week of its collapse. A fifth of the profit
+      earned there is a result that rests on prices nobody could have traded at.
+
+  unlisted_on_execution_venue:
+    # Share of the profit, from the first day the execution venue's listing is known, earned on
+    # coins that venue did not list that day. Defined only for a run on another venue's data.
+    share: 0.3
+    provisional: true
+    rationale: >
+      PROVISIONAL. Stage 1 judges on Binance's long history but the lab trades on Hyperliquid
+      (docs/TWO_STAGE.md); ten of the ten best days of 2026 of XSMOM's causal twin were coins
+      Hyperliquid does not list, and restricted to listed coins its 2026 falls from +305% to
+      +27% (docs/research/xsmom-anomaly-2026-10-28.md). A third of the profit on coins that
+      cannot be bought where the money is traded is declared as the first line.
+
+  frozen_price:
+    # Share of held coin-days that sit in a stretch of `min_days` or more consecutive days with
+    # exactly zero price change.
+    min_days: 5
+    share: 0.002
+    provisional: true
+    rationale: >
+      PROVISIONAL. A price that does not move for five days is a coin that is not trading or a
+      stale print, not a market (BTCST was "held" for 243 days at a frozen price in XSMOM's
+      causal twin). A fifth of a percent of all held coin-days is declared as the first line.
+
+  venue_divergence:
+    # Stage 1 (Binance) against stage 2 (Hyperliquid) over the days both have: their totals as
+    # yearly figures differ by `gap_per_year` (a fraction, 0.5 = 50 points a year) or more.
+    min_common_days: 60
+    gap_per_year: 0.5
+    provisional: true
+    rationale: >
+      PROVISIONAL. The same mechanism on the same days should earn about the same; the owner's
+      case differed by +63% against +3.7% over three months. Under 60 common days two books
+      differ by chance, so the flag is not defined there.
+
+  stand_vs_paper:
+    # The stand's forward total against the production paper book's over one window
+    # (qlab.paper_check): absolute gap in total return.
+    gap: 0.05
+    provisional: true
+    rationale: >
+      PROVISIONAL. Five points of the strategy's capital over the same window is more than the
+      replay of the paper book explains (docs/FRAB_LIVE.md); the flag is not defined when the
+      windows differ.
+
+  too_good_for_family:
+    # Yearly return against the other ideas of the strategy's family: beyond
+    # Q3 + fence_iqr * (Q3 - Q1) of the family's latest runs.
+    min_members: 8
+    fence_iqr: 3.0
+    provisional: false
+    rationale: >
+      Tukey's far-out fence (three interquartile ranges beyond the third quartile), the
+      textbook line for a value that is not part of the same spread. Not defined with fewer than
+      eight other ideas in the family.
+
+investigator:
+  # The strong judge (docs/PLAN.md, "Модели для агентов системы": the Adversary, the red team,
+  # is the one place that needs a strong judge). The investigator is the same job aimed at our
+  # own results: it argues against a result that looks too good, reads evidence tables and has
+  # to separate a data artifact from a real mechanism. A weaker model that accepts the first
+  # story is exactly the failure this agent exists to prevent; the cost is bounded below.
+  model: opus
+  max_turns: 40
+  # One investigation's own ceiling in tokens, inside the guard's candidate cap (the smaller of
+  # the two holds).
+  max_tokens_per_investigation: 1500000
+  # At most this many investigations a night; passed ideas first.
+  max_per_night: 2
+  # A failed investigation (the agent crashed, the call failed) is tried again the next night,
+  # up to this many times for the same set of fired flags; then it waits for the flags to change.
+  max_attempts: 2
+  # At most this many code requests one investigation may put in the programmer's queue.
+  max_programmer_requests: 2
+  # Where each investigation's log of toolkit calls is kept (the code checks the dossier's
+  # evidence against it).
+  calls_dir: data/anomalies/calls
+  # Routes that mean "passed and on its way to the owner": investigated first.
+  passed_routes: [paper]

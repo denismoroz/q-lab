@@ -63,3 +63,6 @@ data/forward_series/
 
 # the overlays stage: its ledger, stored comparisons and diagnostics, hand runs' state (docs/OVERLAYS.md)
 data/overlays/
+
+# the anomaly stage: its ledger and the logs of the investigator's toolkit calls (docs/ANOMALIES.md)
+data/anomalies/
