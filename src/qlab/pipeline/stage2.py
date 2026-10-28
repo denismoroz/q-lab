@@ -73,6 +73,13 @@ class Stage2Config:
     """Coin -> the venue's spot token the lab has verified, with its source."""
     no_spot: Mapping[str, str] = field(default_factory=dict)
     """Coin -> why the venue has no usable spot token for it (a cited reason)."""
+    min_daily_volume_usd: float | None = None
+    """The execution venue's liquidity floor: a strategy that picks its coins from the venue's
+    whole listing trades a coin on a day in stage 2 only if the live engine would (owner,
+    2026-10-28, «да, делай», on docs/research/xsmom-anomaly-2026-10-28.md: 88% of an XSMOM
+    second stage's money came from coins under the live engine's $1M a day).
+    Stage 2 takes the stricter of this and stage 1's own floor; a named instrument list keeps
+    stage 1's. Cited in `cost_sources`."""
 
 
 def load_config(path: Path = CONFIG) -> Stage2Config:
@@ -91,13 +98,24 @@ def load_config(path: Path = CONFIG) -> Stage2Config:
             spot_legs={str(coin): SpotLeg(str(leg["token"]), " ".join(str(leg["source"]).split()))
                        for coin, leg in raw["spot_legs"].items()},
             no_spot={str(coin): " ".join(str(leg["source"]).split())
-                     for coin, leg in raw["no_spot"].items()})
+                     for coin, leg in raw["no_spot"].items()},
+            min_daily_volume_usd=(None if raw.get("min_daily_volume_usd") is None
+                                  else float(raw["min_daily_volume_usd"])))
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
-    absent = {"costs.taker_fee_bps", "costs.slippage_bps"} - set(config.cost_sources)
+    cited = {"costs.taker_fee_bps", "costs.slippage_bps"}
+    if config.min_daily_volume_usd is not None:
+        cited.add("min_daily_volume_usd")
+    absent = cited - set(config.cost_sources)
     if absent:
         raise ValueError(f"{path}: no source for {sorted(absent)}")
     return config
+
+
+def stricter_floor(stage1: float | None, venue: float | None) -> float | None:
+    """The higher of two liquidity floors; `None` means no floor."""
+    floors = [f for f in (stage1, venue) if f is not None]
+    return max(floors) if floors else None
 
 
 def survives(route: str | None, config: Stage2Config) -> bool:
@@ -267,7 +285,13 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         source=config.venue, interval=data.interval, include_spot=data.include_spot,
         spot_prices=data.spot_prices, spot_source=None,
         start=max(data.start, config.data_start), end=data.end, instruments=instruments,
-        min_daily_volume_usd=data.min_daily_volume_usd)
+        # The venue's floor is how its live engine picks coins from the listing, so it applies
+        # to a strategy that picks from the venue's whole listing; a named list (Bv2's coins
+        # and their spot tokens, FRAB's) is traded live whatever its volume, and the floor
+        # would drop spot tokens the live book holds.
+        min_daily_volume_usd=(data.min_daily_volume_usd if instruments is not None
+                              else stricter_floor(data.min_daily_volume_usd,
+                                                  config.min_daily_volume_usd)))
     # A list chosen later than the venue's data begins (a causal twin's hand-picked coins,
     # `instruments_chosen_at`) is judged from that day here as on the twin's own history:
     # earlier days know how the list ended up.
@@ -281,6 +305,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         f"The costs are {config.venue}'s (published base-tier taker fee, frab's slippage "
         f"estimate), not stage 1's.",
     ]
+    if child_data.min_daily_volume_usd != data.min_daily_volume_usd:
+        before = ("no floor" if data.min_daily_volume_usd is None
+                  else f"${data.min_daily_volume_usd:,.0f}")
+        notes.append(f"A coin is traded on a day only with at least "
+                     f"${child_data.min_daily_volume_usd:,.0f} of daily volume, the floor "
+                     f"{config.venue}'s live engine uses; stage 1 had {before}.")
     if dropped:
         notes.append(f"{len(dropped)} instrument(s) of stage 1 are not listed on {config.venue} "
                      f"and are not traded: {', '.join(dropped)}.")

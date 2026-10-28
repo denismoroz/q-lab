@@ -406,9 +406,28 @@ def test_the_shipped_config_cites_hyperliquids_costs_where_the_checker_finds_the
     # `derived:` formula that only needs the cited file to exist.
     (tmp_path / "research").mkdir()
     (tmp_path / "research" / "SCREENING.md").write_text("x", encoding="utf-8")
+    crypto = tmp_path / "research" / "cross_sectional" / "crypto"
+    crypto.mkdir(parents=True)
+    (crypto / "cryptodata.py").write_text("MIN_VOL_USD       = 1_000_000\n", encoding="utf-8")
     monkeypatch.setattr(sources, "FRAB_ROOT", tmp_path)
     child = stage2.translate(_spec(), config).spec
     assert source_problems(child) == []  # 4.5 appears in the cited doc, 0.9 = 4.4 - 3.5
+    # The live engine's floor (owner 2026-10-28): a strategy picking from the whole listing
+    # has none in stage 1 and takes $1M a day in stage 2; a named list keeps stage 1's.
+    assert config.min_daily_volume_usd == 1_000_000
+    assert _spec().data.instruments is None
+    assert child.data.min_daily_volume_usd == 1_000_000
+    named = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                        "end": LAST_DAY, "instruments": ["BTC", "ETH"]})
+    named_child = stage2.translate(named, config, venue_names={"BTC", "ETH"}).spec
+    assert named_child.data.min_daily_volume_usd is None
+
+
+def test_stage2_takes_the_stricter_of_the_two_liquidity_floors() -> None:
+    assert stage2.stricter_floor(None, None) is None
+    assert stage2.stricter_floor(None, 1e6) == 1e6
+    assert stage2.stricter_floor(5e6, 1e6) == 5e6
+    assert stage2.stricter_floor(5e5, None) == 5e5
 
 
 def test_a_config_without_a_key_or_a_cost_source_is_refused(tmp_path) -> None:
