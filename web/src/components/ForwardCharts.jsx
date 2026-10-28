@@ -78,12 +78,6 @@ function Caption({ stage, title, series }) {
             ` Как считал стенд раньше, от баланса книги со всеми отложенными деньгами: ${signed(series.stand_total_return)}.`}
         </p>
       )}
-      {series.base !== 'strategy_capital' && (
-        <p className="text-xs text-amber-700">
-          Этот ряд построен по-старому, от баланса книги. Пересчитать на деньгах стратегии:
-          uv run qlab forward-series rebuild --force
-        </p>
-      )}
       {typeof series.hold_total === 'number' && (
         <p className="text-slate-600">
           Если просто держать те же монеты{coins ? ` (${coins})` : ''} те же дни: {signed(series.hold_total)}
