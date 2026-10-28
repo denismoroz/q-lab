@@ -591,10 +591,11 @@ def evaluate_cmd(
 
     typer.echo("verdicts:")
     for row in result.rules_result.rows:
-        passed = "unknown" if row.passed is None else ("pass" if row.passed else "fail")
+        passed = ("not defined" if row.not_defined else "unknown" if row.passed is None
+                  else ("pass" if row.passed else "fail"))
         value_str = "?" if row.value is None else f"{row.value:g}"
         typer.echo(
-            f"  [{passed:<7}] {row.stage.value:<12} {row.rule_id:<24} "
+            f"  [{passed:<11}] {row.stage.value:<12} {row.rule_id:<24} "
             f"{row.metric}={value_str} {row.comparator}{row.threshold:g}"
         )
     typer.echo("")

@@ -78,7 +78,9 @@ def test_no_line_for_a_run_without_years_or_with_one_short_stretch(metrics) -> N
 
 def test_one_long_year_is_still_a_line() -> None:
     assert years_line({"year_2025_return": 0.1, "year_2025_days": 365,
-                       "years_counted": 1, "years_positive": 1}).endswith("прибыльных лет 1 из 1")
+                       "years_counted": 1, "years_positive": 1}).endswith(
+        "прибыльных лет 1 из 1; правила по годам (без лучшего года, доля лучшего года): "
+        "не определено — засчитанных лет меньше двух")
 
 
 # ---- rows and keys -----------------------------------------------------------------------

@@ -983,7 +983,8 @@ def _decide_fit_forward(
                     f"and which flatters it: {', '.join(failed)}"
                 ),
             )
-        unknown = [r.metric for r in selection.rows if r.passed is None and _conclusive(r)]
+        unknown = [r.metric for r in selection.rows
+                   if r.passed is None and not r.not_defined and _conclusive(r)]
         if unknown and forward is None:
             return RoutingDecision(
                 route="needs-more-data",

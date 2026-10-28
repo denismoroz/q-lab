@@ -1,0 +1,76 @@
+# Two decisive rules against profit that comes from one lucky period.
+#
+# The year-by-year view (rules 2026-10-27.2, docs/YEARS.md) showed two cases where a
+# total looked strong and rested on one period: the XSMOM twin (+36% a year over
+# 2020-2026, but the profit is in 2026's +312% and 2021; its best year gives 58% of the
+# profit) and the six-year Bv2 books (2021 alone gives 61% of the profit, while the
+# last two years earn about 3% a year). Those rules were informational. Owner,
+# 2026-10-28, answering the proposal in docs/YEARS.md (rules A and G together, A's line
+# above zero at the owner's 4% a year): «ок по предложению».
+#
+# What changes: two fatal rules in stage `edge`, read from the year summaries the stand
+# already writes for the judged part (`qlab.harness.metrics.year_breakdown`):
+#   * ex_best_year_floor: without its best calendar year, the strategy still earns at
+#     least 4% a year after costs;
+#   * best_year_share_cap: the best calendar year gives no more than half of the profit.
+# The informational readings of 2026-10-27.2 stay shown as they were (the zero-line
+# reading `ex_best_year_positive` beside the new 4% rule, and the plain
+# `best_year_share_of_profit` number beside the new cap); nothing else changes and no
+# existing threshold moves.
+#
+# "Not defined" (decision, owner's 2026-10-27 two-stage order, docs/TWO_STAGE.md): a
+# year summary exists only with at least two counted years (a year counts from 120 days
+# of the judged part; a partial first or last year counts the same way as before). Under
+# two counted years -- Hyperliquid, whose history is under two years, or a single-year
+# run -- the number is not defined, the rule does not apply (`skip_when_undefined`): its
+# row is written as "not defined", it neither passes nor fails, and it does not make
+# the run "needs more data". The long first stage proves; the short Hyperliquid stage
+# only checks agreement, so this rule belongs to the long history. When Hyperliquid's
+# history reaches two counted years the rule will start to apply there too, because it
+# follows the data, not the venue.
+#
+# Earlier verdicts are not rewritten: each keeps the rules version it was made under
+# (the registry stores it with the data range), and a graveyard idea is revived only on
+# data it had not seen. New runs use this version; every trial is still written.
+#
+# Note, not acted on: a separate analysis (docs/research/bv2-binance-vs-hl-2026-10-28.md)
+# found that for long Bv2 books the stand's percent base includes cash the book has set
+# aside, so the yearly numbers of long Bv2 runs may change once the owner settles the
+# base. These rules will then judge the corrected numbers.
+
+version: "2026-10-28.1"
+based_on: "2026-10-27.2"
+
+rules:
+  - id: ex_best_year_floor
+    stage: edge
+    metric: ann_return_net_ex_best_year
+    comparator: ">="
+    threshold: 0.04
+    fatal: true
+    skip_when_undefined: true
+    rationale: >
+      Owner, 2026-10-28, on the proposal in docs/YEARS.md: «ок по предложению». The
+      annualised net return of the judged part with every day of its best counted
+      calendar year removed must still be at least 4% a year. The line is the owner's
+      "acceptable" on his grading scale, "above 4% a year"
+      (seed/preregistration/2026-09-21-paper-bv2-trend.yaml). It differs on purpose from
+      `net_edge_positive` (above zero, rules 2026-10-03.1): that rule asks whether the
+      whole window earns anything, this one whether the result survives losing its
+      luckiest year. Not defined with fewer than two counted years (120 days or more
+      each): then the rule does not apply.
+  - id: best_year_share_cap
+    stage: edge
+    metric: best_year_share_of_profit
+    comparator: "<="
+    threshold: 0.5
+    fatal: true
+    skip_when_undefined: true
+    rationale: >
+      Owner, 2026-10-28, on the proposal in docs/YEARS.md: «ок по предложению». The best
+      counted calendar year gives no more than half of the judged part's profit (the
+      profit is the sum of the bars' net returns, so the shares add up). The line is the
+      proposal's own, with no source in the data: with seven equal years the best would
+      give 14%, with two 50%. Not defined with fewer than two counted years, and not
+      defined when the total profit is not positive (a loss is judged by
+      `net_edge_positive`): then the rule does not apply.

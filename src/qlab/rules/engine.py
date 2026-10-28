@@ -15,6 +15,10 @@ from dataclasses import dataclass
 
 from qlab.rules.schema import STAGE_ORDER, Rule, RuleKind, RuleSet, Stage
 
+NOT_DEFINED_NOTE = (
+    "not defined for this run (fewer than two counted calendar years, or no positive "
+    "profit to share): the rule does not apply, it neither passes nor fails")
+
 
 @dataclass(frozen=True, slots=True)
 class VerdictRow:
@@ -35,6 +39,10 @@ class VerdictRow:
     threshold: float
     passed: bool | None
     note: str | None = None
+    # True when the metric is absent because it is not defined for this run and the rule
+    # says it then does not apply (`Rule.skip_when_undefined`): `passed` is None, but the
+    # row is not "unknown" -- it neither fails the result nor makes it indecisive.
+    not_defined: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +118,9 @@ def evaluate(
 
     - A rule whose metric is missing from `metrics`, `None` or NaN gets a
       verdict of `passed=None` ("unknown") — this is neither a pass nor a
-      failure and never triggers a fatal stop.
+      failure and never triggers a fatal stop. Unless the rule says
+      `skip_when_undefined`: then the row is "not defined" (`not_defined=True`),
+      the rule does not apply, and the result stays decisive.
     - Stages are always processed in the fixed order preflight -> edge ->
       tail -> profile -> capacity -> correlation, regardless of the order
       rules appear in `ruleset.rules` or the order given in `stages`.
@@ -158,6 +168,23 @@ def evaluate(
             if isinstance(raw_value, float) and math.isnan(raw_value):
                 raw_value = None
 
+            if raw_value is None and rule.skip_when_undefined:
+                rows.append(
+                    VerdictRow(
+                        stage=stage,
+                        rule_id=rule.id,
+                        rules_version=ruleset.version,
+                        metric=rule.metric,
+                        value=None,
+                        comparator=rule.comparator.value,
+                        threshold=rule.threshold,
+                        passed=None,
+                        note=NOT_DEFINED_NOTE,
+                        not_defined=True,
+                    )
+                )
+                continue
+
             if raw_value is None:
                 rows.append(
                     VerdictRow(
@@ -201,7 +228,7 @@ def evaluate(
             break
 
     failed_rule_ids = tuple(row.rule_id for row in rows if row.passed is False)
-    decisive = not any(row.passed is None for row in rows)
+    decisive = not any(row.passed is None and not row.not_defined for row in rows)
 
     return EvaluationResult(
         rows=tuple(rows),

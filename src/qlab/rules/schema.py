@@ -232,6 +232,16 @@ class Rule(BaseModel):
     kind: RuleKind = RuleKind.STRATEGY
     fit_period: FitPeriodUse = FitPeriodUse.CONCLUSIVE
     on_short_forward: ShortForwardUse = ShortForwardUse.DECIDE
+    skip_when_undefined: bool = Field(
+        default=False,
+        description=(
+            "From 2026-10-28.1: a metric that is absent because it is NOT DEFINED for "
+            "this run (the year summaries with fewer than two counted years) means the "
+            "rule does not apply: the row is written as 'not defined', and it neither "
+            "passes nor fails, nor makes the result indecisive. Without this flag an "
+            "absent metric is 'unknown' and routes needs-more-data."
+        ),
+    )
     near_margin: float | None = Field(
         default=None,
         description=(

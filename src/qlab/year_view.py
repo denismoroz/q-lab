@@ -24,6 +24,8 @@ FULL_YEAR_DAYS = 360
 """A year with fewer days than this is marked with its day count in the line: a first
 or last year of the judged part, or a year with gaps in the data."""
 MINUS = "−"
+NOT_DEFINED_RU = ("; правила по годам (без лучшего года, доля лучшего года): не определено — "
+                  "засчитанных лет меньше двух")
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,9 @@ def years_line(metrics: Mapping[str, object] | None) -> str | None:
     counted, positive = m.get("years_counted"), m.get("years_positive")
     if isinstance(counted, int | float) and isinstance(positive, int | float):
         line += f"; прибыльных лет {positive:.0f} из {counted:.0f}"
+    if isinstance(counted, int | float) and counted < 2:
+        # Rules 2026-10-28.1: the two year rules do not apply, and the report says why.
+        line += NOT_DEFINED_RU
     return line
 
 
