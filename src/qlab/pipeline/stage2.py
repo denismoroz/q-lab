@@ -44,7 +44,7 @@ SPEC_DIR = Path("specs/generated/stage2")
 COMPOSED_CODE_REF = "qlab.strategies.blocks:Composed"
 RESULT_METRICS = ("ann_return_net", "total_return_net", "sharpe_net", "max_dd",
                   "noise_return_percentile", "noise_power", "min_capital_usd", "forward_days",
-                  "forward_days_needed", "selection_days")
+                  "forward_days_needed", "selection_days", "ann_return_net_ex_best_1pct")
 UNDECIDED = ("not-evaluable", "needs-more-data", "error")
 """Stage 2 routes that decided nothing: the idea waits."""
 
@@ -723,7 +723,7 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
         numbers = f" — {_numbers_ru(metrics)}" if metrics else ""
         lines.append(f"{head}, прогон {stage2.get('trial_id')}: {_route_ru(stage2.get('route'))}"
                      f"{numbers}; {window}{forward}")
-        if years := years_line(metrics):
+        if years := years_line(metrics, signs=True):
             lines.append(years)
         confirmation = stage2.get("confirmation")
         decided_by_history = bool(confirmation) and confirmation.get("status") != "not-applied"

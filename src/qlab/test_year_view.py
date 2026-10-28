@@ -77,10 +77,14 @@ def test_no_line_for_a_run_without_years_or_with_one_short_stretch(metrics) -> N
 
 
 def test_one_long_year_is_still_a_line() -> None:
-    assert years_line({"year_2025_return": 0.1, "year_2025_days": 365,
-                       "years_counted": 1, "years_positive": 1}).endswith(
-        "прибыльных лет 1 из 1; правила по годам (без лучшего года, доля лучшего года): "
-        "не определено — засчитанных лет меньше двух")
+    one_year = {"year_2025_return": 0.1, "year_2025_days": 365,
+                "years_counted": 1, "years_positive": 1, "years_positive_share": 1.0}
+    assert years_line(one_year) == "по годам: 2025 +10%; прибыльных лет 1 из 1"
+    # The reports add the four signs, and say which are not defined and why.
+    assert years_line(one_year, signs=True).endswith(
+        "прибыльных лет 1 из 1; признаки: А не определено (засчитанных лет меньше двух), "
+        "Б держится, В не определено (в прогоне нет этого числа), "
+        "Г не определено (засчитанных лет меньше двух)")
 
 
 # ---- rows and keys -----------------------------------------------------------------------
@@ -165,7 +169,7 @@ def test_stage2_report_prints_the_years_under_the_stage_line() -> None:
               "metrics": {**METRICS, "ann_return_net": 0.4}}
     lines = stage2.report_lines({"route": "paper"}, result)
     at = next(i for i, ln in enumerate(lines) if "прогон 7" in ln)
-    assert lines[at + 1] == years_line(METRICS)
+    assert lines[at + 1] == years_line(METRICS, signs=True)
 
     old = {**result, "metrics": {"ann_return_net": 0.4}}  # a run from before the view
     assert not any(ln.startswith("по годам") for ln in stage2.report_lines({"route": "paper"}, old))
@@ -189,7 +193,7 @@ def test_the_night_report_prints_the_years_under_the_watch_table(tmp_path, monke
 
     report = night.write_report(date(2026, 10, 27), state).read_text(encoding="utf-8")
 
-    assert f"- `with-years`: {years_line(METRICS)}" in report
+    assert f"- `with-years`: {years_line(METRICS, signs=True)}" in report
     assert "`old-run`: по годам" not in report
 
 

@@ -1,0 +1,99 @@
+# The four year signs are only recorded, none of them decides. Rules 2026-10-28.1 made two
+# of them decisive (ex_best_year_floor and best_year_share_cap, both fatal in stage `edge`);
+# the owner changed their mind the same day, 2026-10-28, after the first runs under that
+# version: «перепрогоняй. а дава пока не будем строить отказы, а просто соберем по признакам
+# проходи или нет по всем 4м признакам. когда наберем статистику - решим - какое правило -
+# лучше».
+#
+# What changes:
+#   * ex_best_year_floor and best_year_share_cap are retired: they no longer write verdict
+#     rows, fail a candidate or move a route. Nothing in the engine changes
+#     (`skip_when_undefined` stays supported; it is still the right way to say "the rule
+#     does not apply" the day a year rule is made decisive again).
+#   * All four signs (A, B, V, G of docs/YEARS.md) become informational readings with a
+#     line, so every run shows each of them as "holds / does not hold / not defined"
+#     (`qlab.year_signs`, `qlab evaluate`, the year view of the console and the night
+#     report). `qlab year-signs` collects them over the registry, so that when enough runs
+#     have piled up the owner can choose which sign, if any, should decide.
+#
+# The signs, each read from the year summaries the stand already writes for the judged part
+# (`qlab.harness.metrics.year_breakdown`); a sign is "not defined" when its metric is absent:
+#   A  ex_best_year_4pct          ann_return_net_ex_best_year >= 0.04
+#   B  years_positive_share       >= 0.667
+#   V  ex_best_1pct_positive      ann_return_net_ex_best_1pct > 0
+#   G  best_year_share_of_profit  <= 0.5
+# The zero-line reading `ex_best_year_positive` of 2026-10-27.2 is inherited as it was: it is
+# a weaker cousin of A, not one of the four signs, and the sign views leave it out.
+#
+# Earlier verdicts are not rewritten. No run was judged under 2026-10-28.1, so no verdict
+# carries a retired year rule; the runs whose year view was missing are re-run under this
+# version (docs/YEARS.md, "Решено владельцем 2026-10-28, вторая редакция").
+
+version: "2026-10-28.2"
+based_on: "2026-10-28.1"
+
+retired:
+  - id: ex_best_year_floor
+    retired_in: "2026-10-28.2"
+    reason: >
+      Owner, 2026-10-28: «а дава пока не будем строить отказы, а просто соберем по признакам
+      проходи или нет по всем 4м признакам. когда наберем статистику - решим - какое правило
+      - лучше». Sign A is recorded as the reading `ex_best_year_4pct` (same metric and line,
+      without a verdict); it decides nothing until the owner chooses a rule from the
+      statistics (`qlab year-signs`).
+  - id: best_year_share_cap
+    retired_in: "2026-10-28.2"
+    reason: >
+      Owner, 2026-10-28: «а дава пока не будем строить отказы, а просто соберем по признакам
+      проходи или нет по всем 4м признакам. когда наберем статистику - решим - какое правило
+      - лучше». Sign G is recorded as the reading `best_year_share_of_profit` (same metric
+      and line, without a verdict); it decides nothing until the owner chooses a rule from
+      the statistics (`qlab year-signs`).
+
+informational:
+  - id: ex_best_year_4pct
+    metric: ann_return_net_ex_best_year
+    comparator: ">="
+    threshold: 0.04
+    rationale: >
+      Sign A. Owner, 2026-10-28: «просто соберем по признакам проходи или нет по всем 4м
+      признакам». Without every day of its best counted calendar year the strategy still
+      earns at least 4% a year after costs. The line is the one from the proposal the owner
+      accepted in 2026-10-28.1 (the owner's grading scale, "acceptable: above 4% a year",
+      seed/preregistration/2026-09-21-paper-bv2-trend.yaml). Own id, because the older
+      `ex_best_year_positive` (zero line, kept as it was) is a different, weaker reading.
+      Not defined with fewer than two counted years (120 days or more each).
+  - id: years_positive_share
+    metric: years_positive_share
+    comparator: ">="
+    threshold: 0.667
+    rationale: >
+      Sign B. Owner, 2026-10-28: «просто соберем по признакам проходи или нет по всем 4м
+      признакам». At least two thirds of the counted calendar years (120 days or more in the
+      judged part) ended above zero. The line is the proposal's own (docs/YEARS.md, candidate
+      B); it has no source in the data. It sees how many years were positive, not how big
+      they were. Replaces the number-only reading of 2026-10-27.2 under the same id. Not
+      defined with no counted year.
+  - id: ex_best_1pct_positive
+    metric: ann_return_net_ex_best_1pct
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      Sign V. Owner, 2026-10-28: «просто соберем по признакам проходи или нет по всем 4м
+      признакам». The annualised net return without the best 1% of days (an existing
+      metric, T27) is above zero. Unchanged from 2026-10-27.2 (the same line and metric);
+      repeated here so that the four signs read together. A trend book earns in a few big
+      days by nature and fails it, which is part of what the statistics should show. Not
+      defined when fewer than two bars exist.
+  - id: best_year_share_of_profit
+    metric: best_year_share_of_profit
+    comparator: "<="
+    threshold: 0.5
+    rationale: >
+      Sign G. Owner, 2026-10-28: «просто соберем по признакам проходи или нет по всем 4м
+      признакам». The best counted calendar year gives no more than half of the judged
+      part's profit (the profit is the sum of the bars' net returns, so the shares add up).
+      The line is the proposal's own, with no source in the data: with seven equal years
+      the best would give 14%, with two 50%. Replaces the number-only reading of
+      2026-10-27.2 under the same id. Not defined with fewer than two counted years, and
+      not defined when the total profit is not positive.

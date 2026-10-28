@@ -53,7 +53,7 @@ rules:
       Owner, 2026-10-28, on the proposal in docs/YEARS.md: «ок по предложению». The
       annualised net return of the judged part with every day of its best counted
       calendar year removed must still be at least 4% a year. The line is the owner's
-      "acceptable" on his grading scale, "above 4% a year"
+      "acceptable" on the owner's grading scale, "above 4% a year"
       (seed/preregistration/2026-09-21-paper-bv2-trend.yaml). It differs on purpose from
       `net_edge_positive` (above zero, rules 2026-10-03.1): that rule asks whether the
       whole window earns anything, this one whether the result survives losing its

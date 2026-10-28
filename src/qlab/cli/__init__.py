@@ -600,6 +600,14 @@ def evaluate_cmd(
         )
     typer.echo("")
 
+    from qlab.year_signs import has_year_view, read_signs, sign_line
+
+    if has_year_view(result.metrics):
+        typer.echo("year signs (recorded, they decide nothing):")
+        for reading in read_signs(result.metrics, ruleset):
+            typer.echo(f"  {sign_line(reading)}")
+        typer.echo("")
+
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
@@ -2388,6 +2396,51 @@ def forward_series_rebuild_cmd(
     for idea_id, trial_id, outcome in done:
         typer.echo(f"{idea_id:<44} trial {trial_id:<7} {outcome}")
     typer.echo(f"total: {len(done)} runs looked at, series in {forward_series.store_dir()}")
+
+
+@app.command("year-signs")
+def year_signs_cmd(
+    all_trials: bool = typer.Option(
+        False, "--all-trials",
+        help="Count every judged trial, not only each idea's latest (every trial counts, as "
+             "in deflation)"),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of tables"),
+    rules_version: str | None = typer.Option(
+        None, "--rules", help="Rules version whose lines the signs use (default: latest)"),
+) -> None:
+    """The four year signs (docs/YEARS.md) over the registry: for each idea's latest judged
+    run, whether each of А Б В Г holds, fails or is not defined, then the totals and a split
+    by outcome and by stage. They decide nothing (rules 2026-10-28.2); the statistics are
+    for choosing, later, which sign should. Reads stored metrics only."""
+    import json
+
+    from qlab import year_signs
+
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+    with session_scope() as session:
+        rows = year_signs.collect(session, ruleset, all_trials=all_trials)
+    summary = year_signs.summarize(rows)
+    if as_json:
+        typer.echo(json.dumps({
+            "rules_version": ruleset.version, "all_trials": all_trials,
+            "signs": {s.letter: {"id": s.rule_id, "title": s.title}
+                      for s in year_signs.SIGNS},
+            "rows": [r.to_json() for r in rows], "summary": summary},
+            ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"rules: {ruleset.version}; "
+               + ("every judged trial" if all_trials else "latest judged trial of each idea"))
+    if not rows:
+        typer.echo("no judged trial with a year view in the registry")
+        return
+    for line in year_signs.render_table(rows):
+        typer.echo(line)
+    typer.echo("")
+    for spec in year_signs.SIGNS:
+        typer.echo(f"{spec.letter}: {spec.title}")
+    typer.echo("")
+    for line in year_signs.render_summary(summary):
+        typer.echo(line)
 
 
 __all__ = ["app"]

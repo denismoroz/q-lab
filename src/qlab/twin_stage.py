@@ -690,7 +690,7 @@ def entry_lines(e: Mapping) -> list[str]:
     if e.get("slow"):
         line += " (**дольше нормы**, см. `night/twins.yaml`)"
     out = [line]
-    years = years_line(e.get("metrics"))
+    years = years_line(e.get("metrics"), signs=True)
     if years:
         out.append(f"    - {years}")
     if e.get("stage2") is not None:

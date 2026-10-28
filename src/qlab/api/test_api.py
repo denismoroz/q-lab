@@ -813,8 +813,16 @@ def test_a_trial_carries_its_year_view_or_null(client, session_factory):
     readings = {r["id"]: r for r in view["readings"]}
     assert readings["ex_best_year_positive"]["holds"] is False
     assert readings["ex_best_1pct_positive"]["holds"] is True
-    assert readings["years_positive_share"]["threshold"] is None
-    assert readings["years_positive_share"]["holds"] is None
+    # The four signs А Б В Г (rules 2026-10-28.2) with their state and, when not defined, why.
+    assert readings["years_positive_share"]["threshold"] == 0.667
+    assert readings["years_positive_share"]["holds"] is False
+    signs = {s["letter"]: s for s in view["signs"]}
+    assert list(signs) == ["А", "Б", "В", "Г"]
+    assert signs["А"]["state"] == "fails" and signs["А"]["holds"] is False
+    assert signs["Б"]["state"] == "fails" and signs["Б"]["value"] == 0.5
+    assert signs["В"]["state"] == "holds"
+    assert signs["Г"]["state"] == "fails" and signs["Г"]["value"] == 1.2
+    assert signs["А"]["reason"] is None
     # The raw metrics are still all there, unchanged.
     assert trial["metrics"]["year_2021_return"] == 0.9
     assert client.get("/api/trials?limit=1").json()["items"][0]["year_view"]["best_year"] == 2021

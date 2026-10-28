@@ -54,7 +54,8 @@ STOP_STAGES = {"detectors": "определители режима",
 
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
-               "fit_ann_return_net", "fit_sharpe_net", "fit_max_dd", "selection_days")
+               "fit_ann_return_net", "fit_sharpe_net", "fit_max_dd", "selection_days",
+               "ann_return_net_ex_best_1pct")
 
 
 @dataclass
@@ -471,7 +472,7 @@ def write_report(day: date, state: dict) -> Path:
         # The same runs year by year (docs/YEARS.md): a total that rests on one lucky period
         # is visible at a glance. A description; no verdict reads it.
         lines += [f"- `{r.name}`: {line}" for r in group
-                  if not r.error and (line := years_line(r.metrics))]
+                  if not r.error and (line := years_line(r.metrics, signs=True))]
         if any(not r.error and years_line(r.metrics) for r in group):
             lines.append("")
     if state.get("waiting") or state.get("waiting_notes"):
@@ -654,6 +655,7 @@ def write_report(day: date, state: dict) -> Path:
 
     lines += publication_lines(state)
     lines += _forward_chart_lines(day)
+    lines += _year_signs_lines()
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     tokens = _token_lines(day)
     if account.get("ok") is False:
@@ -754,6 +756,23 @@ def _forward_chart_lines(day: date) -> list[str]:
                      f"{names}; {state}")
     lines.append("")
     return lines
+
+
+def _year_signs_lines() -> list[str]:
+    """The four year signs counted over the registry (`qlab.year_signs`, docs/YEARS.md): a few
+    lines with the totals and what they rest on; the table is `qlab year-signs`. A recording,
+    not a verdict. Empty when no run has a year view yet; a failure is one line."""
+    from qlab import year_signs
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    try:
+        with session_scope() as session:
+            body = year_signs.report_lines(session, load_latest())
+    except Exception as exc:  # noqa: BLE001 - a report line, not a failed night
+        return [f"## {year_signs.SECTION_TITLE}", "",
+                f"Не посчитано: {type(exc).__name__}: {exc}", ""]
+    return [f"## {year_signs.SECTION_TITLE}", "", *body, ""] if body else []
 
 
 def _funnel_lines(day: date) -> list[str]:

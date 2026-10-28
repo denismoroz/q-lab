@@ -460,7 +460,7 @@ def entry_lines(e: Mapping) -> list[str]:
             continue
         if line := _why_not(step, r):
             out.append(f"    - {line}")
-        elif years := years_line(r.get("metrics")):
+        elif years := years_line(r.get("metrics"), signs=True):
             out.append(f"    - {LABELS[step]}: {years}")
         if r.get("action") == "ran" and r.get("route_reason") and step != "baseline" \
                 and r.get("route") not in ("paper", "shelf"):

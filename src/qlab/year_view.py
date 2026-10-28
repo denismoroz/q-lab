@@ -6,7 +6,8 @@ the reports and the agents' briefs, and a structured form for the console's API.
 
 Nothing here computes a metric from returns: it only reads, orders and words what the
 stand already measured. Nothing here decides anything either -- the readings of the
-ruleset (`qlab.rules.engine.read_informational`) are shown, never enforced.
+ruleset (`qlab.rules.engine.read_informational`) and the four signs built on them
+(`qlab.year_signs`, rules 2026-10-28.2) are shown, never enforced.
 """
 
 from __future__ import annotations
@@ -24,8 +25,6 @@ FULL_YEAR_DAYS = 360
 """A year with fewer days than this is marked with its day count in the line: a first
 or last year of the judged part, or a year with gaps in the data."""
 MINUS = "−"
-NOT_DEFINED_RU = ("; правила по годам (без лучшего года, доля лучшего года): не определено — "
-                  "засчитанных лет меньше двух")
 
 
 @dataclass(frozen=True)
@@ -81,10 +80,14 @@ def _pct(value: float) -> str:
     return f"{'+' if value >= 0 else MINUS}{text}"
 
 
-def years_line(metrics: Mapping[str, object] | None) -> str | None:
+def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False) -> str | None:
     """One compact line, e.g. «по годам: 2020 +41%, 2021 +88%, 2026 (282 дн.) +1%; без
     лучшего года (2021): +4% в год; прибыльных лет 5 из 7». None when the run stored no
-    year view, or only a stretch too short to be called a year."""
+    year view, or only a stretch too short to be called a year.
+
+    With `signs`, the line ends with the four signs of the newest ruleset (А Б В Г, each
+    «держится / не держится / не определено» with the reason): the form the reports use.
+    The agents' briefs stay without them."""
     rows = year_rows(metrics)
     if not rows or not (len(rows) >= 2 or rows[0].counted):
         return None
@@ -98,9 +101,12 @@ def years_line(metrics: Mapping[str, object] | None) -> str | None:
     counted, positive = m.get("years_counted"), m.get("years_positive")
     if isinstance(counted, int | float) and isinstance(positive, int | float):
         line += f"; прибыльных лет {positive:.0f} из {counted:.0f}"
-    if isinstance(counted, int | float) and counted < 2:
-        # Rules 2026-10-28.1: the two year rules do not apply, and the report says why.
-        line += NOT_DEFINED_RU
+    if signs:
+        from qlab.year_signs import latest_ruleset, signs_sentence
+
+        ruleset = latest_ruleset()
+        if ruleset is not None and (tail := signs_sentence(m, ruleset)):
+            line += "; " + tail
     return line
 
 
@@ -115,10 +121,13 @@ def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None
     m = metrics or {}
     summary = {k: m[k] for k in SUMMARY_KEYS
                if isinstance(m.get(k), int | float) and m[k] == m[k]}
+    from qlab.year_signs import read_signs
+
     readings = [] if ruleset is None else [
         {"id": r.rule_id, "metric": r.metric, "value": r.value, "comparator": r.comparator,
          "threshold": r.threshold, "holds": r.holds}
         for r in read_informational(m, ruleset)]
+    signs = [] if ruleset is None else [r.to_json() for r in read_signs(m, ruleset)]
     return {
         "years": [{"year": r.year, "return": r.ret, "days": r.days, "max_dd": r.max_dd,
                    "sharpe": r.sharpe, "counted": r.counted, "partial": r.partial}
@@ -126,6 +135,7 @@ def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None
         "best_year": best_year(rows),
         "summary": summary,
         "readings": readings,
+        "signs": signs,
         "line": years_line(m),
     }
 

@@ -38,12 +38,10 @@ function YearTooltip({ active, payload }) {
   )
 }
 
-// A reading with a line says whether the result holds against it; one without a
-// line is not shown (the number above already is the reading).
-const READING_TITLE = {
-  ex_best_year_positive: 'без самого удачного года доходность выше нуля',
-  ex_best_1pct_positive: 'без 1% лучших дней доходность выше нуля',
-}
+// The four signs А Б В Г (docs/YEARS.md, rules 2026-10-28.2): each says whether the
+// result holds against its line, or that it is not defined for this run and why. They
+// are recorded to collect statistics and decide nothing.
+const SIGN_STATE = { holds: 'держится', fails: 'не держится', 'not defined': 'не определено' }
 
 export default function YearView({ view, compact = false }) {
   if (!view?.years?.length) return null
@@ -62,7 +60,7 @@ export default function YearView({ view, compact = false }) {
       ? ['доля лучшего года во всей прибыли', percent(summary.best_year_share_of_profit, 0)]
       : null,
   ].filter(Boolean)
-  const readings = (view.readings ?? []).filter((r) => r.holds != null && READING_TITLE[r.id])
+  const signs = view.signs ?? []
   const data = view.years.map((y) => ({ ...y, label: yearLabel(y), pct: y.return * 100 }))
 
   return (
@@ -100,11 +98,12 @@ export default function YearView({ view, compact = false }) {
           ))}
         </dl>
       )}
-      {readings.length > 0 && (
-        <ul className="mt-1 text-xs text-slate-500">
-          {readings.map((r) => (
-            <li key={r.id}>
-              {READING_TITLE[r.id]}: {r.holds ? 'держится' : 'не держится'} ({percent(r.value)})
+      {signs.length > 0 && (
+        <ul className="mt-1 text-xs text-slate-500" data-testid="year-signs">
+          {signs.map((s) => (
+            <li key={s.id}>
+              {s.letter}: {s.title} — {SIGN_STATE[s.state] ?? s.state}
+              {s.holds == null ? (s.reason ? ` (${s.reason})` : '') : ` (${percent(s.value)})`}
             </li>
           ))}
         </ul>
