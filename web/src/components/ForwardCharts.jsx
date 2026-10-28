@@ -69,6 +69,21 @@ function Caption({ stage, title, series }) {
         )}
         {typeof series.max_dd === 'number' && <>, худшее падение {signed(series.max_dd)}</>}
       </p>
+      {series.base === 'strategy_capital' && series.reinvested === false && (
+        <p className="text-xs text-slate-500">
+          Эта стратегия не вкладывает прибыль обратно в позиции, поэтому дни складываются, а не
+          склеиваются, и проценты считаются от денег, с которых она начала
+          (docs/CAPITAL_BASE.md).
+          {typeof series.stand_total_return === 'number' &&
+            ` Как считал стенд раньше, от баланса книги со всеми отложенными деньгами: ${signed(series.stand_total_return)}.`}
+        </p>
+      )}
+      {series.base !== 'strategy_capital' && (
+        <p className="text-xs text-amber-700">
+          Этот ряд построен по-старому, от баланса книги. Пересчитать на деньгах стратегии:
+          uv run qlab forward-series rebuild --force
+        </p>
+      )}
       {typeof series.hold_total === 'number' && (
         <p className="text-slate-600">
           Если просто держать те же монеты{coins ? ` (${coins})` : ''} те же дни: {signed(series.hold_total)}

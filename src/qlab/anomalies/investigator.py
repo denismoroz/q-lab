@@ -171,8 +171,11 @@ def build_prompt(session: Session, scan: Any, cfg: Config) -> str:
     trial = session.get(Trial, scan.trial_id)
     idea = session.get(Idea, scan.idea_id)
     metrics = (trial.metrics or {}) if trial is not None else {}
+    # The `cap_` numbers are the same run on the strategy's own money (docs/CAPITAL_BASE.md): a
+    # percent of the capital it started with, not of a balance grown with set-aside cash.
     nums = [(k, metrics.get(k)) for k in ("ann_return_net", "total_return_net", "max_dd",
-                                           "forward_days", "sharpe_net")]
+                                           "forward_days", "sharpe_net", "cap_ann_return",
+                                           "cap_total_return", "cap_max_dd")]
     headline = "Stand numbers: " + ", ".join(
         f"{k} {v:.4g}" for k, v in nums if isinstance(v, int | float)) + "."
     flags = [fl.FlagResult.from_json(f) for f in scan.flags]

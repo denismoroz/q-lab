@@ -46,6 +46,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab.capital_text import CAP_NUMBERS, capital_suffix
 from qlab.pipeline.spec import StrategySpec
 from qlab.twin import COIN_LIST_PARAMS, SECONDS_PER_INSTRUMENT, fetch_estimate, needs_listing
 
@@ -58,7 +59,7 @@ SECTION_TITLE = "Двойники и вторая ступень: ответ н�
 IN_WORK = ("candidate", "bench", "implemented", "speccing")
 TWIN_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "ann_return_net_ex_best_1pct",
                 "noise_return_percentile", "forward_days", "forward_days_needed",
-                "min_capital_usd")
+                "min_capital_usd", *CAP_NUMBERS)
 BINANCE = "binance"
 
 
@@ -631,7 +632,7 @@ def numbers_ru(m: Mapping[str, object]) -> str:
     days = m.get("forward_days")
     if isinstance(days, int | float) and days:
         parts.append(f"проверка вперёд {days:,.0f} дн.")
-    return ", ".join(parts)
+    return ", ".join(parts) + capital_suffix(m)
 
 
 def route_ru(route: str | None) -> str:

@@ -150,6 +150,49 @@ def test_the_two_stages_are_compared_on_their_stored_series(session) -> None:
     assert flag.value > 0.5
 
 
+def _store_capital_series(trial_id: int, idea_id: str, daily_return: float, *, reinvested: bool,
+                          days: int = 40) -> None:
+    index = pd.date_range("2026-01-01", periods=days, freq="D", tz="UTC")
+    stand = pd.Series(daily_return / 4, index=index)  # the stand's shares: a grown balance
+    forward_series.save(forward_series.build_payload(
+        trial_id=trial_id, idea_id=idea_id, venue="binance", interval="1d", net_return=stand,
+        hold_return=None, capital_return=pd.Series(daily_return, index=index),
+        reinvested=reinvested))
+
+
+def test_two_stages_are_set_against_each_other_on_the_strategys_own_money(session) -> None:
+    """Stage 1 of a strategy that sets money aside has a balance four times its capital, so its
+    stand shares are a quarter of stage 2's for the same dollars. On the strategy's own money
+    the two earned the same, and the flag stays quiet; read as the stand does, it would fire."""
+    _idea(session, "bv")
+    _idea(session, "bv-hl", parent="bv")
+    t1 = _trial(session, "bv")
+    t2 = _trial(session, "bv-hl", source="hyperliquid")
+    _store_capital_series(t1, "bv", 0.002, reinvested=False)
+    _store_capital_series(t2, "bv-hl", 0.002, reinvested=False)
+
+    capital = scan.trial_daily_capital(session, t1)
+    flag = scan.venue_flag(session, t1, CFG)
+
+    assert capital is not None and capital[1] is False
+    assert capital[0].sum() == pytest.approx(0.002 * 40)
+    assert flag.state == fl.QUIET and abs(flag.value) < 1e-9
+    assert flag.detail["stage1_total"] == pytest.approx(0.08)  # a sum, not compounded
+
+
+def test_stages_that_disagree_on_reinvesting_are_not_compared(session) -> None:
+    _idea(session, "mixed")
+    _idea(session, "mixed-hl", parent="mixed")
+    t1 = _trial(session, "mixed")
+    t2 = _trial(session, "mixed-hl", source="hyperliquid")
+    _store_capital_series(t1, "mixed", 0.002, reinvested=False)
+    _store_capital_series(t2, "mixed-hl", 0.002, reinvested=True)
+
+    flag = scan.venue_flag(session, t1, CFG)
+
+    assert flag.state == fl.UNDEFINED and "по-разному вкладывают" in flag.reason
+
+
 def test_an_idea_with_one_stage_has_an_undefined_venue_flag(session) -> None:
     _idea(session, "solo")
     t = _trial(session, "solo")

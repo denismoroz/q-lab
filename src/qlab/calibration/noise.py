@@ -56,6 +56,7 @@ import pandas as pd
 from qlab.harness.panel import MarketPanel
 from qlab.harness.strategy import ZERO_WEIGHT_TOL, validate_weights
 from qlab.pipeline.evaluate import resolve_strategy
+from qlab.strategies._inner import InnerCapital
 
 
 class StructuralMismatchError(ValueError):
@@ -643,7 +644,7 @@ def held_only(generator: GeneratorFn, reference: pd.DataFrame, panel: MarketPane
     return raw.reindex(columns=reference.columns, fill_value=0.0)
 
 
-class NoiseStrategy:
+class NoiseStrategy(InnerCapital):
     """A `qlab.harness.strategy.Strategy` whose weights are noise, built
     from a real reference strategy's own weights (docs/TASKS.md, T16).
 
@@ -681,6 +682,12 @@ class NoiseStrategy:
     """
 
     name = "noise"
+    # A noise book is read on the same money as the strategy it imitates (docs/CAPITAL_BASE.md):
+    # its weights are shares of the reference's book, so the reference's base and its declared
+    # reinvest choice are the noise book's. Otherwise a comparison on the strategy's own capital
+    # would set a strategy on one base against noise on another.
+    inner_code_key = "reference_code_ref"
+    inner_params_key = "reference_params"
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         generator_name = str(params["generator"])

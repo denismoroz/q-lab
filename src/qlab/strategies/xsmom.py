@@ -273,6 +273,12 @@ class XsmomCrossSectionalMomentum:
     # Rebalance rows are anchored to a weekday of daily bars (`_rebalance_rows`);
     # on intraday bars every bar of that weekday would rebalance.
     valid_intervals = ("1d",)
+    # Declared (docs/CAPITAL_BASE.md): the live engine sizes from a fixed budget
+    # (`effective = min(budget_cap, wallet)`, frab/strategy/xsmom/params.py): a profit above the
+    # budget lies free and is not put into positions, so the stand's weights are shares of a
+    # constant capital and the bars are summed. Owner, 2026-10-28: the live XSMOM ran on a
+    # fixed $257.
+    reinvests_profit = False
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         universe: Sequence[str] | None = params["universe"]

@@ -616,6 +616,29 @@ class _Driver:
                              **done})
 
 
+_RUN_CACHE: dict[tuple, LiveBv2Run] = {}
+_RUN_CACHE_SIZE = 16
+
+
+def _run_key(panel: MarketPanel, params: Mapping[str, object]) -> tuple:
+    """What a run depends on: the panel's numbers and the parameters. The weights and the base
+    (`LiveBv2.own_base`) of one run come from one pass of the driver, which on a six-year hourly
+    panel takes minutes; a run is a pure function of this key, so a second asker gets the first's
+    result."""
+    import hashlib
+    import json
+
+    digest = hashlib.sha1()
+    for frame in (panel.prices, panel.funding, panel.high, panel.volume, panel.tradeable):
+        if frame is not None:
+            digest.update(pd.util.hash_pandas_object(frame, index=True).to_numpy().tobytes())
+    index = panel.prices.index
+    return (panel.snapshot_id, len(index), str(index[0]), str(index[-1]),
+            hash(tuple(panel.prices.columns)), digest.hexdigest(),
+            json.dumps(dict(panel.meta), sort_keys=True, default=str),
+            json.dumps(dict(params), sort_keys=True, default=str))
+
+
 class LiveBv2:
     """See module docstring. `params` is handed unchanged to
     `B2Params.from_dict`, so frab's own validation applies -- except the keys
@@ -624,11 +647,46 @@ class LiveBv2:
 
     name = "bv2-live"
     valid_intervals = ("1h",)  # the live book counts its windows in hourly bars
+    reinvests_profit = False
+    """Declared (docs/CAPITAL_BASE.md): the book's position sizes are set in dollars when it
+    is created and the ratchet moves everything above them into cash, which never goes back
+    to work; carry on free money is off in the production parameters. A percent of the
+    strategy is therefore a sum of dollars over the money it started with, never a
+    compounding of shares."""
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
-        return self.run(panel, params).weights
+        return self.run(panel, params).weights.copy()
+
+    def own_base(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.Series:
+        """The book's equity at each bar over the capital the strategy started with
+        (`capital_usd`): the number the stand's weights, which are shares of that equity, have
+        to be multiplied by to become shares of the strategy's own money. Idle cash the ratchet
+        set aside is in the equity, so the base grows while the positions stay the size they
+        were set (docs/CAPITAL_BASE.md).
+
+        Refused (`CapitalBaseRefused`) with deposits: the capital would grow with every
+        payment, and what 100% then is belongs to the owner."""
+        from qlab.harness.strategy import CapitalBaseRefused
+
+        if params.get("deposit_usd") is not None or params.get("deposit_every") is not None:
+            raise CapitalBaseRefused(
+                "Bv2 with deposits (deposit_usd): the strategy's capital grows with every "
+                "payment, so a percent of it has no single base; the owner has not decided "
+                "what 100% is (docs/CAPITAL_BASE.md)")
+        rest = {k: v for k, v in params.items()
+                if k not in ("hedge_by", "universe", "deposit_usd", "deposit_every")}
+        capital = float(B2Params.from_dict(rest).capital_usd)
+        return (self.run(panel, params).book_equity / capital).rename("capital_base")
 
     def run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
+        key = _run_key(panel, params)
+        if key not in _RUN_CACHE:
+            if len(_RUN_CACHE) >= _RUN_CACHE_SIZE:
+                _RUN_CACHE.pop(next(iter(_RUN_CACHE)))
+            _RUN_CACHE[key] = self._run(panel, params)
+        return _RUN_CACHE[key]
+
+    def _run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
         params = dict(params)
         hedge_by = params.pop("hedge_by", None)
         universe = params.pop("universe", None)

@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.capital_text import CAP_NUMBERS
 from qlab.year_view import years_line
 
 MODEL = "opus"  # docs/PLAN.md, "Модели для агентов системы": the strong judge -> opus
@@ -136,7 +137,7 @@ def matches(claimed: float, actual: float) -> bool:
 FAMILY_KEYS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "noise_power", "forward_days", "forward_days_needed", "selection_days",
                "fit_ann_return_net", "fit_sharpe_net", "pre_ann_return_net", "pre_sharpe_net",
-               "pre_days")
+               "pre_days", *CAP_NUMBERS)
 
 
 def build_brief(session: Session, trial_id: int, *, paper: list[str] | None = None) -> Brief:

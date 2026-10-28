@@ -285,24 +285,35 @@ def frozen_price(*, frozen_days: int, held_coin_days: int, longest: list[dict],
 # 5. Two venues that disagree
 
 
-def _annual(total: float, days: int) -> float:
+def _annual(total: float, days: int, additive: bool = False) -> float:
+    if additive:
+        return total * 365.25 / days
     return -1.0 if 1.0 + total <= 0 else (1.0 + total) ** (365.25 / days) - 1.0
 
 
-def venue_divergence(stage1: pd.Series, stage2: pd.Series, line: FlagLine) -> FlagResult:
+def venue_divergence(stage1: pd.Series, stage2: pd.Series, line: FlagLine, *,
+                     additive: bool = False) -> FlagResult:
     """Stage 1 (Binance) and stage 2 (Hyperliquid) over the days both have (daily returns, UTC
     days): the same mechanism should earn about the same. Each side's total over the common
     window is turned into a yearly figure, and the flag fires when they differ by `gap_per_year`
     or more (the direction is in the detail). Not defined under `min_common_days`: a few weeks
-    of two books differ by chance."""
+    of two books differ by chance.
+
+    `additive` (docs/CAPITAL_BASE.md): the series are the days' returns on the strategy's own
+    money and its profit is not reinvested (Bv2, FRAB, XSMOM), so each total is the SUM of the
+    days and the yearly figure is linear; a ratio to a grown balance would make the long first
+    stage look smaller than the fresh second."""
     common = stage1.index.intersection(stage2.index)
     if len(common) < line.need("min_common_days"):
         return _undefined(line.name, f"общих дней меньше {line.need('min_common_days'):g}: "
                                      "на таком отрезке две книги расходятся и случайно")
     a, b = stage1.loc[common], stage2.loc[common]
-    total_a, total_b = float((1 + a).prod() - 1), float((1 + b).prod() - 1)
+    if additive:
+        total_a, total_b = float(a.sum()), float(b.sum())
+    else:
+        total_a, total_b = float((1 + a).prod() - 1), float((1 + b).prod() - 1)
     days = len(common)
-    ann_a, ann_b = _annual(total_a, days), _annual(total_b, days)
+    ann_a, ann_b = _annual(total_a, days, additive), _annual(total_b, days, additive)
     gap = ann_a - ann_b
     corr = _num(a.corr(b)) if a.std() > 0 and b.std() > 0 else None
     return FlagResult(

@@ -112,7 +112,7 @@ def session():
 
 
 def _stand(session, idea_id="bv2-x", *, ann=-0.34, days=505 / 24, forward=1.0,
-           start=date(2026, 10, 3), end=date(2026, 10, 24)):
+           start=date(2026, 10, 3), end=date(2026, 10, 24), extra=None):
     repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
                      asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER)
     spec = repo.add_spec(session, idea_id=idea_id, version=1, params={}, data_requirements={},
@@ -122,7 +122,7 @@ def _stand(session, idea_id="bv2-x", *, ann=-0.34, days=505 / 24, forward=1.0,
     trials = []
     for tag, route in (("old", TrialRoute.NEEDS_FORWARD), ("new", TrialRoute.NEEDS_FORWARD)):
         metrics = {"ann_return_net": ann if tag == "new" else 9.9, "forward_days": days,
-                   "judged_on_forward": forward}
+                   "judged_on_forward": forward, **((extra or {}) if tag == "new" else {})}
         trial = repo.add_trial(session, spec_id=spec.id, config_hash=tag, code_sha="x", params={},
                                status=TrialStatus.OK, metrics=metrics, route=route,
                                snapshot_id=f"snap-{idea_id}")
@@ -368,3 +368,55 @@ def test_the_console_shows_a_short_forward_test_as_its_total() -> None:
     assert out["long"] is None and out["selection"] is None and out["none"] is None
     assert out["wipeout"]["total"] == -1
     assert out["words"] == ["1 день", "2 дня", "5 дней", "11 дней", "21 день", "22 дня", "25 дней"]
+
+
+def test_a_strategy_that_does_not_reinvest_is_compared_in_points_of_its_capital(
+        session, tmp_path, monkeypatch) -> None:
+    """The stand's trial has its capital summaries (docs/CAPITAL_BASE.md): +20% a year on the
+    strategy's money, summed. The paper book (dollars) is read as a gain over the book's
+    `strategy_capital_usd`, the stand's total is linear in its days: one base, no compounding."""
+    days = 505 / 24
+    _stand(session, extra={"cap_ann_return": 0.20, "cap_reinvested": 0.0})
+    _fixed(monkeypatch, date(2026, 10, 3))
+    folder = tmp_path / "2026-10-25"
+    _paper_fixture(folder, date(2026, 9, 13), 24 * 45)
+    books = _books(tmp_path)
+    books["bv2-x"]["strategy_capital_usd"] = 100
+
+    lines = paper_check.run_paper_checks(session, date(2026, 10, 25), folder, books)
+
+    row = session.query(PaperCheck).one()
+    assert row.stand_return == pytest.approx(0.20 * days / 365.25)
+    first = 20 * 24
+    gain = (100.0 - 0.001 * (first + 505)) - (100.0 - 0.001 * first)  # the BTC leg moved
+    assert row.paper_return == pytest.approx(gain / 100.0)
+    assert "от денег стратегии" in lines[0]
+    assert "docs/CAPITAL_BASE.md" in row.note
+
+
+def test_a_stand_trial_from_before_the_capital_summaries_is_read_the_old_way(
+        session, tmp_path, monkeypatch) -> None:
+    _stand(session)  # no cap_ keys
+    _fixed(monkeypatch, date(2026, 10, 3))
+    folder = tmp_path / "2026-10-25"
+    _paper_fixture(folder, date(2026, 9, 13), 24 * 45)
+    books = _books(tmp_path)
+    books["bv2-x"]["strategy_capital_usd"] = 100
+
+    paper_check.run_paper_checks(session, date(2026, 10, 25), folder, books)
+
+    row = session.query(PaperCheck).one()
+    first = 20 * 24
+    assert row.paper_return == pytest.approx(
+        (200.0 - 0.001 * (first + 505)) / (200.0 - 0.001 * first) - 1), "a ratio, as before"
+    assert row.note == ""
+
+
+def test_the_stand_window_reads_the_capital_figure_when_the_trial_has_it(session) -> None:
+    _stand(session, extra={"cap_ann_return": 0.20, "cap_reinvested": 0.0})
+    stand = paper_check.stand_window(session, "bv2-x", date(2026, 10, 3))
+    assert stand.on_capital and stand.reinvested is False
+    assert stand.total == pytest.approx(0.20 * (505 / 24) / 365.25)
+    _stand(session, idea_id="trend-x", extra={"cap_ann_return": 0.5, "cap_reinvested": 1.0})
+    compounded = paper_check.stand_window(session, "trend-x", date(2026, 10, 3))
+    assert compounded.total == pytest.approx(1.5 ** ((505 / 24) / 365.25) - 1)

@@ -41,6 +41,7 @@ from qlab.harness.costs import CostModel
 from qlab.harness.gaps import holdable_gaps
 from qlab.harness.lookahead import lookahead_violation
 from qlab.harness.metrics import (
+    capital_metrics,
     compute_metrics,
     hold_benchmark,
     min_capital_usd,
@@ -48,7 +49,7 @@ from qlab.harness.metrics import (
     year_breakdown,
 )
 from qlab.harness.run import run_backtest
-from qlab.harness.strategy import Strategy, own_costs, validate_weights
+from qlab.harness.strategy import Strategy, capital_setup, own_costs, validate_weights
 from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
 from qlab.regimes import breakdown as regime_breakdown
@@ -1333,6 +1334,12 @@ def evaluate_spec(
             )
         weights = strategy.target_weights(panel, spec.params)
         validate_weights(panel, weights)
+        # The strategy's own money (docs/CAPITAL_BASE.md): a book that sets cash aside has an
+        # equity that outgrows its positions, so the stand's share of it understates a percent
+        # of the money the strategy was given. The base and the declared reinvest choice make
+        # the `cap_` summaries beside the stand's. Asked before the look-ahead check re-runs
+        # the strategy on altered panels, while the run that made the weights is still known.
+        capital = capital_setup(strategy, panel, spec.params)
         if check_lookahead:
             # Every candidate, every run (docs/LOOKAHEAD.md). A fresh instance,
             # so a strategy that remembers its last run (`diagnostics`) still
@@ -1366,8 +1373,12 @@ def evaluate_spec(
                 part_panel = _slice_rows(panel, lo, hi)
                 part_weights = weights.iloc[lo : hi + 1]
             result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
-                                  extra_cost=extra_cost)
+                                  extra_cost=extra_cost, **capital.kwargs)
             measured = compute_metrics(result)
+            if capital.refused is None:
+                measured.update(capital_metrics(result))
+            else:
+                measured["cap_base_refused"] = 1.0
             if years:
                 judged_run.update(result=result, panel=part_panel, weights=part_weights)
                 # The judged part year by year (docs/YEARS.md): a description, read by no rule.
@@ -1683,7 +1694,9 @@ def evaluate_spec(
             forward_series.store_from_run(
                 trial_id=trial_id, spec=spec, result=judged_run["result"],
                 part_panel=judged_run["panel"], part_weights=judged_run["weights"],
-                recorded_total=metrics.get("total_return_net"))
+                recorded_total=metrics.get("total_return_net"),
+                recorded_capital_total=metrics.get("cap_total_return"),
+                on_capital=capital.refused is None)
         except Exception:  # noqa: BLE001
             pass
 

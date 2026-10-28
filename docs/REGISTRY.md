@@ -64,7 +64,7 @@
 | `code_sha` | git sha кода стенда |
 | `params` json | |
 | `started_at`/`finished_at` | |
-| `metrics` json | `sharpe_net`, `ann_return_net`, `max_dd`, `turnover`, ... |
+| `metrics` json | `sharpe_net`, `ann_return_net`, `max_dd`, `turnover`, ...; рядом те же итоги на деньгах стратегии с приставкой `cap_` (`cap_ann_return`, `cap_max_dd`, `cap_year_2025_return`, ...) и `cap_reinvested` (1 — склейка, 0 — сумма), см. `docs/CAPITAL_BASE.md` |
 | `status` | `ok`/`error`/`not-evaluable` — последнее значит, что прогон установил **до расчёта**: проверить стратегию, названную идеей, нечем (T24). Бэктест не запускался, в дефляцию как испытание не идёт |
 | `route` | куда прогон направил идею: `paper`/`shelf`/`needs-infrastructure`/`needs-forward`/`reject`/`not-evaluable`/`needs-more-data`/`error`. Пишется вместе с прогоном (T31). `null` у импортированных и у всех прогонов до 2026-10-01 — тогда маршрут печатался и терялся, восстанавливать его значило бы угадывать капитал |
 | `route_reason` | почему |

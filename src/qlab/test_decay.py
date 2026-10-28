@@ -412,7 +412,7 @@ def _seed_night(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(paper_rule, "PAPER_DIR", tmp_path / "paper")
     monkeypatch.setattr(decay, "CONFIG", tmp_path / "decay.yaml")
     (tmp_path / "decay.yaml").write_text("alert_percentile: null\npreregistered: {}\n")
-    monkeypatch.setattr(decay, "stand_net_return",
+    monkeypatch.setattr(decay, "stand_run",
                         lambda session, spec_path, *, end, cut:
                         _stand_returns([0.001, -0.0005, 0.002] * 60, date(2026, 1, 1)))
     _trend_export(tmp_path / "paper" / "2026-10-25", datetime(2026, 9, 14, tzinfo=UTC), 24 * 30,

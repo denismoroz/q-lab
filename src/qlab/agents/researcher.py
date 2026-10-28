@@ -32,6 +32,7 @@ from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths, _revert
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.capital_text import capital_suffix
 from qlab.pipeline.sources import QLAB_ROOT
 from qlab.year_view import YEAR_KEY, years_line
 
@@ -402,7 +403,8 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
                 f"Шарп {m.get('sharpe_net', float('nan')):.2f}, "
                 f"просадка {m.get('max_dd', float('nan')):.1%}, "
                 f"обгоняет шум {m.get('noise_return_percentile', float('nan')):.0%}, "
-                f"нужно капитала ${m.get('min_capital_usd', float('nan')):,.0f}; {regimes}")
+                f"нужно капитала ${m.get('min_capital_usd', float('nan')):,.0f}; {regimes}"
+                f"{capital_suffix(m)}")
             if years := years_line(m):
                 lines.append(f"  - {years}")
             lines += second_stage_lines(experiment, judged, opened, result,

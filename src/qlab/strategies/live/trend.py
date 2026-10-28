@@ -118,6 +118,10 @@ class LiveTrendTSMOMEnsemble:
     # engine feeds it one close per day); fed hourly closes, "30" would mean
     # 30 hours. Daily only until frab's code says otherwise.
     valid_intervals = ("1d",)
+    # Declared (docs/CAPITAL_BASE.md): the paper book resizes its positions to weight times all
+    # its money at every rebalance (frab/strategy/trend/book.py), so profit is reinvested and
+    # the bars compound.
+    reinvests_profit = True
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         raw_params = dict(params)

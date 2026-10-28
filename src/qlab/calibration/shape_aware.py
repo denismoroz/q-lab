@@ -167,6 +167,14 @@ def evaluate_spec_with_shape_aware_bar(
             extra["noise_return_percentile"] = percentiles.return_percentile
         if percentiles.sharpe_percentile is not None:
             extra["noise_sharpe_percentile"] = percentiles.sharpe_percentile
+        # The same rank on the strategy's own money (docs/CAPITAL_BASE.md): the noise books are
+        # read on the base and the reinvest choice of the strategy they imitate, so both sides
+        # of the comparison are on one base. Read by no rule yet; the owner decides which
+        # return metric decides.
+        cap_noise = _usable_metric_values(noise_trials, series=series, metric="cap_ann_return")
+        cap_candidate = base_metrics.get("cap_ann_return")
+        if cap_noise and isinstance(cap_candidate, int | float) and cap_candidate == cap_candidate:
+            extra["noise_cap_return_percentile"] = noise_percentile(cap_candidate, cap_noise)
         # Can the bar tell a good strategy from luck on this window at all
         # (rules 2026-10-24.2)? Asked of the same noise books it ranks against.
         bar = next((r.threshold for r in ruleset.rules

@@ -202,6 +202,19 @@ def test_two_venues_that_differ_on_the_common_days_fire() -> None:
     assert near.state == fl.QUIET and abs(near.value) < 0.5
 
 
+def test_two_venues_of_a_book_that_does_not_reinvest_are_compared_by_sums() -> None:
+    """On the strategy's own money (docs/CAPITAL_BASE.md) the totals are sums and the yearly
+    figure is linear: 20 days of +0.2% a day are +4% in total, +73% a year, not the compounded
+    +107%."""
+    stage1, stage2 = days([0.002] * 20), days([0.002] * 20)
+    out = fl.venue_divergence(stage1, stage2, line("venue_divergence"), additive=True)
+    assert out.detail["stage1_total"] == pytest.approx(0.04)
+    assert out.detail["stage1_ann"] == pytest.approx(0.04 * 365.25 / 20)
+    assert out.state == fl.QUIET and out.value == pytest.approx(0.0)
+    compounded = fl.venue_divergence(stage1, stage2, line("venue_divergence"))
+    assert compounded.detail["stage1_total"] == pytest.approx(1.002 ** 20 - 1)
+
+
 def test_only_the_common_days_are_compared_and_a_short_overlap_is_not_defined() -> None:
     long_run = days([0.01] * 100, start="2026-01-01")
     short_run = days([0.0] * 100, start="2026-04-05")  # overlaps only the last 6 days

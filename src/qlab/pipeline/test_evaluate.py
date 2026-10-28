@@ -98,6 +98,21 @@ class ToyStrategy:
         return weights.where(panel.tradeable, 0.0)
 
 
+class BasedToy(ToyStrategy):
+    """A book that sets money aside (docs/CAPITAL_BASE.md): its weights are shares of a balance
+    that is `params["base"]` times the capital, and it does not reinvest its profit."""
+
+    name = "based-toy"
+    reinvests_profit = False
+
+    def own_base(self, panel: MarketPanel, params) -> pd.Series:
+        from qlab.harness.strategy import CapitalBaseRefused
+
+        if params.get("refuse"):
+            raise CapitalBaseRefused("deposits")
+        return pd.Series(float(params["base"]), index=panel.prices.index)
+
+
 class RaisingStrategy:
     """Always raises -- exercises the 'trial written even on failure' path."""
 
@@ -2103,3 +2118,50 @@ def test_a_list_that_names_spot_columns_finds_the_snapshot_built_for_it(
     assert find(listed, include_spot=False) == "snap-listed"
     assert find(listed, include_spot=True) == "snap-listed"
     assert find(["BTC", "ETH"], include_spot=False) is None  # a perp-only request
+
+
+_BASED_SOURCES = {key: "owner 2026-01-01: test fixture"
+                  for key in ("weight", "costs", "min_leg_notional", "base", "refuse")}
+
+
+def test_the_run_is_also_measured_on_the_strategys_own_money(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+
+    plain = evaluate_spec(_make_spec(params={"weight": 0.4}), session=session, ruleset=ruleset,
+                          deployable_capital_usd=1000.0)
+    m = plain.metrics
+    # no base and a reinvesting book: the capital figures ARE the stand's
+    assert m["cap_reinvested"] == 1.0
+    assert m["cap_ann_return"] == pytest.approx(m["ann_return_net"])
+    assert m["cap_total_return"] == pytest.approx(m["total_return_net"])
+    assert m["cap_max_dd"] == pytest.approx(m["max_dd"])
+    assert m["cap_sharpe"] == pytest.approx(m["sharpe_net"])
+
+    based = evaluate_spec(
+        _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
+                   params={"weight": 0.4, "base": 3.0}, sources=_BASED_SOURCES),
+        session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    b = based.metrics
+    assert b["ann_return_net"] == pytest.approx(m["ann_return_net"]), "the stand is unchanged"
+    assert b["cap_reinvested"] == 0.0
+    n, ppy = b["n_periods"], 365.25 * 24
+    # summed, three times the shares: the total is about three times the stand's
+    assert b["cap_total_return"] == pytest.approx(3.0 * b["total_return_net"], rel=0.05)
+    assert b["cap_ann_return"] == pytest.approx(b["cap_total_return"] * ppy / n)
+    trial = session.get(Trial, based.trial_id)
+    assert trial.metrics["cap_ann_return"] == pytest.approx(b["cap_ann_return"])
+
+
+def test_a_refused_base_leaves_the_capital_figures_out(session, tmp_path) -> None:
+    """The stand's figures must not be passed off as the strategy's in their place."""
+    _register_discovered(session, tmp_path)
+    result = evaluate_spec(
+        _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
+                   params={"weight": 0.4, "base": 3.0, "refuse": True},
+                   sources=_BASED_SOURCES),
+        session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
+        deployable_capital_usd=1000.0)
+    assert result.error is None
+    assert result.metrics["cap_base_refused"] == 1.0
+    assert not any(k.startswith("cap_") and k != "cap_base_refused" for k in result.metrics)

@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from qlab.harness.panel import MarketPanel
+from qlab.strategies._inner import InnerCapital
 from qlab.strategies._periods import periods_for
 
 BOOK = "book"
@@ -236,7 +237,7 @@ def _inner_run(panel: MarketPanel, params: Mapping[str, object], need_returns: b
     return weights, returns
 
 
-class Overlaid:
+class Overlaid(InnerCapital):
     """A strategy and a chain of overlays (module docstring). Every parameter is required."""
 
     name = "overlaid"

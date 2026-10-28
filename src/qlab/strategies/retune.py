@@ -31,6 +31,14 @@ Rules this wrapper keeps:
   the period is the spec's own `refit_every`.
 - **No eligible candidate -> no position** until the next re-tuning; the
   wrapper never falls back to a favourite.
+- **Candidates are compared on the strategy's own money** (docs/CAPITAL_BASE.md). A
+  candidate's score is read from its `capital_return` -- its share of its own book times the
+  inner strategy's base, summed or compounded as the inner strategy declares -- not from the
+  share of a book whose balance has grown with set-aside cash, which would weigh each
+  candidate's early years by a different balance. For an inner strategy with no base of its
+  own and a reinvesting book (trend) that IS the share, and nothing changes. The wrapper
+  itself has the base of the candidate it holds in each period (`own_base`) and the inner
+  strategy's reinvest choice (`profit_reinvested`).
 - **Each candidate runs as the inner strategy runs alone.** A candidate with
   path-dependent state (live trend's book-volatility scale) sees its OWN
   equity curve, not the composite's -- a documented approximation.
@@ -54,6 +62,7 @@ import pandas as pd
 from qlab.harness.costs import CostModel
 from qlab.harness.panel import MarketPanel
 from qlab.harness.run import run_backtest
+from qlab.harness.strategy import capital_setup, profit_reinvested
 
 _REQUIRED = ("inner_code_ref", "base_params", "grid", "refit_every", "window", "objective",
              "score_costs")
@@ -72,6 +81,11 @@ class RetuneRun:
     weights: pd.DataFrame
     choices: pd.Series  # re-tuning bar -> chosen candidate name (None = no position)
     candidate_returns: pd.DataFrame  # net return per decision row, per candidate
+    # The candidates' returns on the strategy's own money (what they are scored on) and the
+    # base of the candidate held at each bar (None: the inner strategy has no base of its own).
+    candidate_capital_returns: pd.DataFrame | None = None
+    base: pd.Series | None = None
+    reinvested: bool = True
 
 
 def expand_grid(base: Mapping[str, object], grid: Mapping[str, Mapping[str, Mapping]]) -> dict:
@@ -123,11 +137,11 @@ def refit_rows(index: pd.DatetimeIndex, refit_every: str,
     return starts
 
 
-def _score(returns: pd.Series, objective: str) -> float:
+def _score(returns: pd.Series, objective: str, reinvested: bool = True) -> float:
     if objective == "sharpe_net":
         std = returns.std(ddof=1)
         return float(returns.mean() / std) if std and not np.isnan(std) else float("nan")
-    return float((1.0 + returns).prod() - 1.0)
+    return float((1.0 + returns).prod() - 1.0) if reinvested else float(returns.sum())
 
 
 class Retune:
@@ -140,6 +154,21 @@ class Retune:
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         return self.run(panel, params).weights
+
+    def own_base(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.Series | None:
+        """The base (book equity over the strategy's capital) of the candidate held at each
+        bar: the series stitched from the candidates' own bases by the choice of each
+        period. In the bar a choice changes the new candidate's base is used, as its weights
+        are; the cost of re-placing positions is already in the stand's `net_return`
+        (docs/CAPITAL_BASE.md). None when the inner strategy has no base of its own."""
+        return self.run(panel, params).base
+
+    def profit_reinvested(self, params: Mapping[str, object]) -> bool:
+        """The inner strategy's choice (every candidate is the same strategy)."""
+        from qlab.pipeline.evaluate import resolve_strategy
+
+        inner = resolve_strategy(str(params["inner_code_ref"]))
+        return profit_reinvested(inner, dict(params["base_params"]))  # type: ignore[arg-type]
 
     def diagnostics(self) -> dict[str, float]:
         if self._last is None:
@@ -184,26 +213,36 @@ class Retune:
         inner = resolve_strategy(str(params["inner_code_ref"]))
         candidates = expand_grid(dict(params["base_params"]), dict(params["grid"]))  # type: ignore[arg-type]
 
+        reinvested = profit_reinvested(inner, dict(params["base_params"]))  # type: ignore[arg-type]
         weights_by: dict[str, pd.DataFrame] = {}
         returns_by: dict[str, pd.Series] = {}
+        capital_by: dict[str, pd.Series] = {}
+        bases_by: dict[str, pd.Series | None] = {}
         first_active: dict[str, pd.Timestamp | None] = {}
         for name, cand_params in candidates.items():
             w = inner.target_weights(panel, cand_params)
             weights_by[name] = w
-            returns_by[name] = run_backtest(panel, w, costs, panel.funding).net_return
+            setup = capital_setup(inner, panel, cand_params)
+            run = run_backtest(panel, w, costs, panel.funding, **setup.kwargs)
+            returns_by[name] = run.net_return
+            capital_by[name] = run.capital_return
+            bases_by[name] = setup.base
             active = w.abs().sum(axis=1) > 0
             first_active[name] = active.idxmax() if bool(active.any()) else None
         returns = pd.DataFrame(returns_by)
+        capital_returns = pd.DataFrame(capital_by)
 
         once = str(params["refit_every"]) == ONCE
         refits = np.flatnonzero(refit_rows(index, str(params["refit_every"]),
                                            params.get("choose_at")))
         choices: dict[pd.Timestamp, str | None] = {}
         out = np.zeros((len(index), len(panel.prices.columns)))
+        has_base = any(b is not None for b in bases_by.values())
+        base_out = np.full(len(index), np.nan) if has_base else None
         for n, row in enumerate(refits):
             tau = index[row]
             previous_refit = index[refits[n - 1]] if n > 0 else None
-            past = returns[returns.index < tau]
+            past = capital_returns[capital_returns.index < tau]
             if lookback is not None:
                 past = past[past.index >= tau - lookback]
             best, best_score = None, -np.inf
@@ -214,13 +253,16 @@ class Retune:
                 if started is None or (once and started >= tau) or (
                         not once and (previous_refit is None or started >= previous_refit)):
                     continue
-                score = _score(past[name][past.index >= started], objective)
+                score = _score(past[name][past.index >= started], objective, reinvested)
                 if not np.isnan(score) and score > best_score:
                     best, best_score = name, score
             choices[tau] = best
             stop = refits[n + 1] if n + 1 < len(refits) else len(index)
             if best is not None:
                 out[row:stop] = weights_by[best].to_numpy(dtype=float)[row:stop]
+                if base_out is not None and bases_by[best] is not None:
+                    held_base = bases_by[best].reindex(index).to_numpy(dtype=float)
+                    base_out[row:stop] = held_base[row:stop]
         weights = pd.DataFrame(out, index=index, columns=panel.prices.columns)
         weights = weights.where(panel.tradeable, 0.0)
 
@@ -228,6 +270,10 @@ class Retune:
             weights=weights,
             choices=pd.Series(choices, dtype=object, name="choice"),
             candidate_returns=returns,
+            candidate_capital_returns=capital_returns,
+            base=None if base_out is None else pd.Series(base_out, index=index,
+                                                         name="capital_base"),
+            reinvested=reinvested,
         )
         if len(_CACHE) >= _CACHE_SIZE:
             _CACHE.pop(next(iter(_CACHE)))

@@ -220,6 +220,11 @@ def test_writes_n_trials_plus_one_and_folds_percentile_into_candidate_metrics(se
     assert result.percentiles is not None
     assert result.percentiles.n_requested == 8
     assert 0.0 <= result.percentiles.return_percentile <= 1.0
+    # The same rank on the strategy's own money (docs/CAPITAL_BASE.md), from noise books that
+    # carry the capital figures too: a strategy without a base reads the same either way.
+    assert all("cap_ann_return" in t.evaluation.metrics for t in result.noise_trials)
+    assert result.candidate.metrics["noise_cap_return_percentile"] == pytest.approx(
+        result.candidate.metrics["noise_return_percentile"])
 
     # exactly n_trials + 1 real trial rows: the 8 noise trials plus the
     # candidate itself (CLAUDE.md: "trial пишется всегда").

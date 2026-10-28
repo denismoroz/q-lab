@@ -93,21 +93,24 @@ def daily_closes(equity: pd.Series) -> pd.Series:
     return closes.reindex(full).ffill()
 
 
-def max_drawdown(values: np.ndarray) -> float:
+def max_drawdown(values: np.ndarray, additive: bool = False) -> float:
     """The deepest fall from a running peak, as a negative fraction (0.0 when
-    the path never falls)."""
+    the path never falls). `additive`: the path is the strategy's money in multiples of the
+    capital it started with and profit is not reinvested (docs/CAPITAL_BASE.md), so the fall is
+    in points of that capital, not a share of the peak."""
     if len(values) == 0:
         return 0.0
     peak = np.maximum.accumulate(values)
-    return float((values / peak - 1.0).min())
+    return float((values - peak).min()) if additive else float((values / peak - 1.0).min())
 
 
-def daily_spread(values: np.ndarray) -> float | None:
+def daily_spread(values: np.ndarray, additive: bool = False) -> float | None:
     """The standard deviation of the day-to-day returns of a path of daily
-    closes; None with fewer than two returns."""
+    closes; None with fewer than two returns. `additive`: the day's return is the step in
+    points of the capital (the path is in multiples of it)."""
     if len(values) < 3:
         return None
-    returns = values[1:] / values[:-1] - 1.0
+    returns = values[1:] - values[:-1] if additive else values[1:] / values[:-1] - 1.0
     return float(np.std(returns, ddof=1))
 
 
@@ -119,20 +122,26 @@ class WindowMeasure:
     spread: float | None
 
 
-def rolling_windows(closes: pd.Series, n_days: int) -> list[WindowMeasure]:
+def rolling_windows(closes: pd.Series, n_days: int, additive: bool = False
+                    ) -> list[WindowMeasure]:
     """Every window of `n_days` days over a daily path: its total return, its
     deepest fall and its daily spread. Empty when the path is not longer than
-    one window."""
+    one window. `additive`: the path is money in multiples of the capital the strategy started
+    with, profit not reinvested; a window's total is then the gain over it in points of that
+    capital (`end - start`), not a ratio to the money the window started with, which would
+    shrink every gain made after a profit (docs/CAPITAL_BASE.md)."""
     values = closes.to_numpy(dtype=float)
     out: list[WindowMeasure] = []
     if n_days < 1:
         return out
     for i in range(0, len(values) - n_days):
         seg = values[i:i + n_days + 1]
-        if seg[0] == 0:
+        if seg[0] == 0 and not additive:
             continue
-        out.append(WindowMeasure(start=closes.index[i].date(), total=float(seg[-1] / seg[0] - 1),
-                                 max_dd=max_drawdown(seg), spread=daily_spread(seg)))
+        total = float(seg[-1] - seg[0]) if additive else float(seg[-1] / seg[0] - 1)
+        out.append(WindowMeasure(start=closes.index[i].date(), total=total,
+                                 max_dd=max_drawdown(seg, additive),
+                                 spread=daily_spread(seg, additive)))
     return out
 
 
@@ -256,6 +265,10 @@ class DecayResult:
     bands: list[BandCheck] = field(default_factory=list)
     alert: str | None = None  # "below" | "above" | None: only with a declared threshold
     note: str = ""
+    on_capital: bool = False
+    """The strategy does not reinvest, so every figure is in points of the capital it started
+    with (docs/CAPITAL_BASE.md), on the paper and the stand side alike."""
+    strategy_capital: float | None = None
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -282,24 +295,41 @@ def trim_flat_start(net_return: pd.Series) -> pd.Series:
     return net_return.iloc[nonzero[0]:] if nonzero.size else net_return.iloc[0:0]
 
 
-def stand_closes(net_return: pd.Series, until: pd.Timestamp) -> pd.Series:
+def stand_closes(net_return: pd.Series, until: pd.Timestamp, additive: bool = False
+                 ) -> pd.Series:
     """Daily closes of the stand's equity (start 1.0) up to and including the
-    day that ends at or before `until`."""
+    day that ends at or before `until`. `additive`: the series is the strategy's capital
+    return and the curve is 1 plus its running sum, not its compounding."""
     from qlab.diagnose import equity_from_returns
 
-    equity = equity_from_returns(trim_flat_start(net_return))
+    equity = equity_from_returns(trim_flat_start(net_return), additive=additive)
     return daily_closes(equity[equity.index <= until])
 
 
 def compare(*, idea_id: str, label: str, book: str, live: bool, realised: pd.Series,
             stand_net_return: pd.Series, bands: list[Band],
-            alert_percentile: float | None, realised_from: datetime | None = None
-            ) -> DecayResult | None:
+            alert_percentile: float | None, realised_from: datetime | None = None,
+            stand_capital_return: pd.Series | None = None, reinvested: bool = True,
+            strategy_capital: float | None = None) -> DecayResult | None:
     """The realised equity curve against the stand's net returns (decision-time
     index, the harness's `net_return`). None when the realised curve has fewer
-    than two rows from `realised_from`."""
+    than two rows from `realised_from`.
+
+    Both sides on the strategy's own money (docs/CAPITAL_BASE.md): `stand_capital_return` is
+    the stand's `capital_return` (default: `stand_net_return`, base 1) and `reinvested` the
+    strategy's declared choice. A strategy that does not reinvest (`reinvested` False) is read
+    in points of the capital it started with: the realised equity is divided by
+    `strategy_capital` (required then) and every window's total, fall and spread is a step of
+    that curve, so a gain made after profit has piled up is not shrunk by it, on either side."""
+    additive = not reinvested
+    if additive:
+        if not strategy_capital:
+            raise ValueError("a strategy that does not reinvest is read in points of its "
+                             "capital: `strategy_capital` (strategy_capital_usd) is required")
+        realised = realised / float(strategy_capital)  # now in multiples of the capital
+    stand_series = stand_net_return if stand_capital_return is None else stand_capital_return
     start = realised_from or realised.index[0].to_pydatetime()
-    done = window_return(realised, start)
+    done = window_return(realised, start, capital=1.0 if additive else None)
     if done is None:
         return None
     first, last = pd.Timestamp(done.first), pd.Timestamp(done.last)
@@ -309,11 +339,11 @@ def compare(*, idea_id: str, label: str, book: str, live: bool, realised: pd.Ser
 
     closes = daily_closes(part)
     path = np.concatenate([[float(part.iloc[0])], closes.to_numpy(dtype=float)])
-    realised_dd = max_drawdown(path)
-    realised_spread = daily_spread(closes.to_numpy(dtype=float))
+    realised_dd = max_drawdown(path, additive)
+    realised_spread = daily_spread(closes.to_numpy(dtype=float), additive)
 
-    history = stand_closes(stand_net_return, first)
-    windows = rolling_windows(history, n_days)
+    history = stand_closes(stand_series, first, additive)
+    windows = rolling_windows(history, n_days, additive)
     history_days = max(len(history) - 1, 0)
     note = ""
     if len(windows) < MIN_WINDOWS:
@@ -326,6 +356,7 @@ def compare(*, idea_id: str, label: str, book: str, live: bool, realised: pd.Ser
         history_to=history.index[-1].date() if len(history) else None,
         history_days=history_days, windows=len(windows),
         independent=history_days // n_days if n_days else 0,
+        on_capital=additive, strategy_capital=strategy_capital if additive else None,
         ret=_measured(done.total, [w.total for w in windows]),
         drawdown=_measured(realised_dd, [w.max_dd for w in windows]),
         spread=_measured(realised_spread, [w.spread for w in windows if w.spread is not None]),
@@ -450,12 +481,34 @@ class StandHistoryMissing(Exception):
     """The stand has nothing to compare with (panel not cached, too short)."""
 
 
+@dataclass(frozen=True)
+class StandRun:
+    """A strategy's history on the stand: the harness's `net_return` (a share of the book's own
+    equity), and the same bars on the strategy's own money -- `capital_return`, with the
+    strategy's declared `reinvested` choice (docs/CAPITAL_BASE.md)."""
+
+    net_return: pd.Series
+    capital_return: pd.Series
+    reinvested: bool = True
+
+    @classmethod
+    def of(cls, value: pd.Series | StandRun) -> StandRun:
+        """A plain net-return series (a stand function that knows nothing of the strategy's
+        money) is read the stand's old way: base 1, compounded."""
+        return value if isinstance(value, StandRun) else cls(value, value, True)
+
+
 def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Timestamp
                      ) -> pd.Series:
     """The spec's strategy run on its cached panel, the panel cut at `cut`
     (the first realised row), as the harness's `net_return`. Never fetches and
     never writes a trial: a recorded strategy is only described, as
     `qlab.diagnose.diagnose_spec` does."""
+    return stand_run(session, spec_path, end=end, cut=cut).net_return
+
+
+def stand_run(session: Session, spec_path: str, *, end: date, cut: pd.Timestamp) -> StandRun:
+    """`stand_net_return` with the strategy's own-money series beside it."""
     from qlab.night import with_end
     from qlab.pipeline.evaluate import resolve_cached_panel
     from qlab.pipeline.spec import load_spec
@@ -465,7 +518,7 @@ def stand_net_return(session: Session, spec_path: str, *, end: date, cut: pd.Tim
     if panel is None:
         raise StandHistoryMissing(f"the panel of {spec_path} is not cached")
     try:
-        return net_return_on_panel(spec, panel, cut=cut)
+        return run_on_panel(spec, panel, cut=cut)
     except StandHistoryMissing as exc:
         raise StandHistoryMissing(f"{spec_path}: {exc}") from exc
 
@@ -475,9 +528,16 @@ def net_return_on_panel(spec, panel, *, cut: pd.Timestamp | None = None) -> pd.S
     when one is given, as the harness's `net_return`. The honest start the evaluation
     uses applies: truncated history is cut, and with `required_instruments` the run
     covers the longest stretch in which the whole book existed."""
+    return run_on_panel(spec, panel, cut=cut).net_return
+
+
+def run_on_panel(spec, panel, *, cut: pd.Timestamp | None = None) -> StandRun:
+    """`net_return_on_panel` with the strategy's own-money series beside it: the base is the
+    one the strategy states for the SAME cut panel (a run that sees less of the history has the
+    book it would have had), and the reinvest choice is its declared one."""
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
-    from qlab.harness.strategy import own_costs
+    from qlab.harness.strategy import capital_setup, own_costs
     from qlab.pipeline.evaluate import _slice_rows, complete_book_window, resolve_strategy
 
     truncated = dict(panel.meta.get("history_truncated") or {})
@@ -500,9 +560,13 @@ def net_return_on_panel(spec, panel, *, cut: pd.Timestamp | None = None) -> pd.S
     weights = strategy.target_weights(seen, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    return run_backtest(seen, weights, costs, seen.funding,
-                        extra_cost=own_costs(strategy, seen, spec.params)
-                        ).net_return.iloc[first:]
+    capital = capital_setup(strategy, seen, spec.params)
+    result = run_backtest(seen, weights, costs, seen.funding,
+                          extra_cost=own_costs(strategy, seen, spec.params), **capital.kwargs)
+    if capital.refused is not None:  # no base: the stand's own reading, base 1, compounded
+        return StandRun(result.net_return.iloc[first:], result.net_return.iloc[first:], True)
+    return StandRun(result.net_return.iloc[first:], result.capital_return.iloc[first:],
+                    result.capital_reinvested)
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +632,11 @@ def result_lines(r: DecayResult) -> list[str]:
         lines.append(f"    {band_line(b)}")
     if r.alert == "below":
         lines.append("    Результат ниже порога тревоги, который задал владелец.")
+    if r.on_capital:
+        lines.append(
+            f"    Проценты здесь — от денег стратегии ({r.strategy_capital:g}), и у бумаги, и у "
+            f"стенда; прибыль в основу не добавляется, потому что стратегия не вкладывает её "
+            f"обратно (docs/CAPITAL_BASE.md).")
     return lines
 
 
@@ -606,11 +675,12 @@ def run_decay(session: Session, day: date, end: date, *, books: dict[str, dict] 
               ) -> tuple[list[DecayResult], list[str]]:
     """Every mapped book's check against the stand: (results, report lines).
     A book that cannot be computed is a report line; the others go on.
-    `stand_fn(session, spec_path, end=, cut=)` returns the stand's net returns
-    (default: the spec run on its cached panel)."""
+    `stand_fn(session, spec_path, end=, cut=)` returns the stand's `StandRun` (default: the
+    spec run on its cached panel) or, for a function that knows nothing of the strategy's own
+    money, just the net returns (read the old way: base 1, compounded)."""
     books = books if books is not None else load_all_books()
     config = config if config is not None else load_config()
-    stand_fn = stand_fn or stand_net_return
+    stand_fn = stand_fn or stand_run
     results: list[DecayResult] = []
     lines: list[str] = []
     for idea_id, cfg in books.items():
@@ -635,11 +705,13 @@ def run_decay(session: Session, day: date, end: date, *, books: dict[str, dict] 
                 if problem:  # the series starts at the strategy's money, by construction
                     lines.append(f"{label}: {problem}, сверка пропущена")
                     continue
-            net = stand_fn(session, cfg["spec"], end=end, cut=sub.index[0])
+            stand = StandRun.of(stand_fn(session, cfg["spec"], end=end, cut=sub.index[0]))
             result = compare(
                 idea_id=idea_id, label=label, book=cfg["book"], live=bool(cfg.get("live")),
-                realised=curve, stand_net_return=net, bands=bands_for(config, idea_id),
-                alert_percentile=config["alert_percentile"], realised_from=realised_from)
+                realised=curve, stand_net_return=stand.net_return, bands=bands_for(config, idea_id),
+                alert_percentile=config["alert_percentile"], realised_from=realised_from,
+                stand_capital_return=stand.capital_return, reinvested=stand.reinvested,
+                strategy_capital=float(cfg["strategy_capital_usd"]))
             if result is None:
                 lines.append(f"{label}: в выгрузке меньше двух точек, сверка пропущена")
                 continue
@@ -706,7 +778,7 @@ __all__ = [
     "StandHistoryMissing", "WindowMeasure", "alert_label", "band_line", "bands_for",
     "STRATEGY_PNL", "build_live_series", "capital_mismatch", "check_band", "compare",
     "daily_closes", "latest_decay", "live_exports",
-    "load_all_books", "load_config", "max_drawdown", "net_return_on_panel", "percentile_of",
-    "result_lines", "rolling_windows", "run_decay", "save_results", "stand_net_return",
-    "trim_flat_start",
+    "StandRun", "load_all_books", "load_config", "max_drawdown", "net_return_on_panel",
+    "percentile_of", "result_lines", "rolling_windows", "run_decay", "run_on_panel",
+    "save_results", "stand_net_return", "stand_run", "trim_flat_start",
 ]

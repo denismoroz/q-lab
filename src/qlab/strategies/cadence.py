@@ -34,6 +34,7 @@ import pandas as pd
 
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA
 from qlab.harness.panel import MarketPanel
+from qlab.strategies._inner import InnerCapital
 
 _REQUIRED = ("inner_code_ref", "inner_params", "entry_every", "exit_every")
 
@@ -47,7 +48,7 @@ def closes_period(index: pd.DatetimeIndex, period: pd.Timedelta) -> np.ndarray:
     return np.asarray((since_epoch % period) == pd.Timedelta(0))
 
 
-class SplitCadence:
+class SplitCadence(InnerCapital):
     """See module docstring. All params are required."""
 
     name = "split-cadence"

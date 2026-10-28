@@ -179,6 +179,9 @@ class BettingAgainstBeta:
     # `window_bars`/`min_observations` are counted in bars and the paper's
     # values are for daily data; on other bars they would mean other windows.
     valid_intervals = ("1d",)
+    # Declared (docs/CAPITAL_BASE.md): no live engine exists, so nothing says the money is not
+    # reinvested; weights are shares of the book and the bars compound, as the stand always did.
+    reinvests_profit = True
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         missing = [key for key in _REQUIRED if key not in params]

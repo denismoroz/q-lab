@@ -8,6 +8,13 @@ signs. Here both are measured over the stand's forward window:
 * the stand's return is the forward total of its latest routed trial,
   `(1 + ann_return_net) ** (forward_days / 365.25) - 1` -- the same figure the
   night report shows;
+* both are on the strategy's OWN money (docs/CAPITAL_BASE.md): the stand's figure is read from
+  the trial's `cap_` summaries (`cap_ann_return`), and for a strategy that does not reinvest
+  (Bv2, FRAB, XSMOM) the paper side is the gain in dollars over the book's
+  `strategy_capital_usd` and the stand side is linear in the days, not compounded. The stand's
+  share of a book whose balance has grown with set-aside cash is a smaller share of the
+  money the strategy was given, so setting it against a fresh paper book was a comparison of
+  two bases;
 * the paper return comes from the night's read-only export of the production
   books (`data/paper/<day>/`), from the first row at or after the window's
   start to the last row at or before its end;
@@ -58,6 +65,10 @@ class StandWindow:
     end: date
     forward_days: float
     total: float
+    on_capital: bool = False
+    """`total` is read from the trial's capital summaries (`cap_ann_return`); False for a trial
+    from before they existed, whose figure is the stand's old share of the grown book."""
+    reinvested: bool = True
 
 
 @dataclass
@@ -74,6 +85,9 @@ class PaperCheckResult:
     stand_window_start: date | None
     stand_window_end: date | None
     note: str
+    on_capital: bool = False
+    """Both returns are on the strategy's own money (`strategy_capital_usd`), summed rather
+    than compounded when the strategy does not reinvest."""
 
 
 def require_strategy_capital(books: dict[str, dict]) -> dict[str, dict]:
@@ -104,6 +118,15 @@ def forward_total(ann_return_net: float, forward_days: float) -> float:
     if growth <= 0:
         return -1.0  # a yearly loss of 100% or more is a total loss over any span
     return growth ** (forward_days / 365.25) - 1
+
+
+def forward_total_capital(cap_ann_return: float, forward_days: float, reinvested: bool) -> float:
+    """The forward test's total over its days from the run's yearly figure on the strategy's
+    own money: linear in the days for a strategy that does not reinvest (its yearly figure is
+    the total scaled to a year), compounded like `forward_total` for one that does."""
+    if not reinvested:
+        return cap_ann_return * forward_days / 365.25
+    return forward_total(cap_ann_return, forward_days)
 
 
 def _utc(ts_ms: int) -> datetime:
@@ -143,31 +166,42 @@ def equity_curve(csv: Path, *, column: str = "equity", strategy_id: int | None =
     return curve.astype(float)
 
 
-def window_return(curve: pd.Series, start: datetime, end: datetime | None = None
-                  ) -> WindowReturn | None:
+def window_return(curve: pd.Series, start: datetime, end: datetime | None = None, *,
+                  capital: float | None = None) -> WindowReturn | None:
     """Total return from the first row at or after `start` to the last row at
-    or before `end` (None: the last row). None when fewer than two rows fit."""
+    or before `end` (None: the last row). None when fewer than two rows fit.
+
+    `capital`: the book's `strategy_capital_usd`, for a strategy that does not reinvest
+    (docs/CAPITAL_BASE.md): the total is the gain in dollars over that money, not a ratio to
+    what the book held at the window's first row."""
     part = curve[curve.index >= pd.Timestamp(start)]
     if end is not None:
         part = part[part.index <= pd.Timestamp(end)]
-    if len(part) < 2 or part.iloc[0] == 0:
+    if len(part) < 2 or (part.iloc[0] == 0 and capital is None):
         return None
-    return WindowReturn(total=float(part.iloc[-1] / part.iloc[0] - 1),
+    total = (float(part.iloc[-1] - part.iloc[0]) / capital if capital is not None
+             else float(part.iloc[-1] / part.iloc[0] - 1))
+    return WindowReturn(total=total,
                         first=part.index[0].to_pydatetime(), last=part.index[-1].to_pydatetime(),
                         rows=len(part))
 
 
 def replay_window_return(csv: Path, first: datetime, last: datetime, *,
-                         strategy_id: int | None = None) -> float | None:
+                         strategy_id: int | None = None, capital: float | None = None
+                         ) -> float | None:
     """The replay's return on exactly the rows the paper window used: None
-    unless the replay has both end rows."""
+    unless the replay has both end rows. `capital`: as in `window_return`."""
     frame = pd.read_csv(csv)
     if strategy_id is not None and "strategy_id" in frame.columns:
         frame = frame[frame["strategy_id"] == strategy_id]
     curve = frame.drop_duplicates("ts_ms").set_index("ts_ms")["replay_equity"].sort_index()
     curve.index = pd.to_datetime(curve.index, unit="ms", utc=True)
     a, b = pd.Timestamp(first), pd.Timestamp(last)
-    if a not in curve.index or b not in curve.index or curve[a] == 0 or a == b:
+    if a not in curve.index or b not in curve.index or a == b:
+        return None
+    if capital is not None:
+        return float(curve[b] - curve[a]) / capital
+    if curve[a] == 0:
         return None
     return float(curve[b] / curve[a] - 1)
 
@@ -189,6 +223,9 @@ def stand_window(session: Session, idea_id: str, fixed_at: date | None) -> Stand
     if (metrics.get("judged_on_forward") != 1.0 or not isinstance(days, int | float) or days <= 0
             or not isinstance(ann, int | float)):
         return None
+    cap_ann, flag = metrics.get("cap_ann_return"), metrics.get("cap_reinvested")
+    on_capital = (isinstance(cap_ann, int | float) and cap_ann == cap_ann
+                  and isinstance(flag, int | float))
     end = (session.query(func.max(Verdict.data_range_end))
            .filter(Verdict.trial_id == trial.id).scalar())
     start = (session.query(func.min(Verdict.data_range_start))
@@ -200,6 +237,11 @@ def stand_window(session: Session, idea_id: str, fixed_at: date | None) -> Stand
     if end is None:
         end = (datetime.combine(start, datetime.min.time(), tzinfo=UTC)
                + timedelta(days=days) - timedelta(milliseconds=1)).date()
+    if on_capital:
+        reinvested = bool(flag)
+        return StandWindow(trial_id=trial.id, start=start, end=end, forward_days=float(days),
+                           total=forward_total_capital(float(cap_ann), days, reinvested),
+                           on_capital=True, reinvested=reinvested)
     return StandWindow(trial_id=trial.id, start=start, end=end, forward_days=float(days),
                        total=forward_total(ann, days))
 
@@ -222,17 +264,18 @@ def report_line(r: PaperCheckResult) -> str:
     differ = r.note.startswith("Отрезки разные")
     replay = ("" if r.replay_return is None
               else f", повтор бумаги на стенде {_fmt_pct(r.replay_return)}")
+    base = " (от денег стратегии)" if r.on_capital else ""
     if r.stand_return is None:
         return (f"{r.label}: за {_fmt_span(r.window_start, r.window_end)} бумага "
-                f"{_fmt_pct(r.paper_return)}{replay}; стенд за этот отрезок не посчитан. "
+                f"{_fmt_pct(r.paper_return)}{replay}{base}; стенд за этот отрезок не посчитан. "
                 f"{r.note}").strip()
     if not differ:
         return (f"{r.label}: за {_fmt_span(r.window_start, r.window_end)} бумага "
-                f"{_fmt_pct(r.paper_return)}, стенд {_fmt_pct(r.stand_return)}{replay}")
+                f"{_fmt_pct(r.paper_return)}, стенд {_fmt_pct(r.stand_return)}{replay}{base}")
     return (f"{r.label}: бумага за {_fmt_span(r.window_start, r.window_end)} "
             f"{_fmt_pct(r.paper_return)}{replay}; стенд за "
-            f"{_fmt_span(r.stand_window_start, r.stand_window_end)} {_fmt_pct(r.stand_return)} — "
-            f"отрезки разные, числа сравнивать нельзя")
+            f"{_fmt_span(r.stand_window_start, r.stand_window_end)} {_fmt_pct(r.stand_return)}"
+            f"{base} — отрезки разные, числа сравнивать нельзя")
 
 
 def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: date,
@@ -248,11 +291,17 @@ def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: dat
     if not paper_csv.is_file():
         return None, f"{label}: нет выгрузки бумажной книги ({cfg['paper_file']}), сверка пропущена"
     try:
-        fixed_at = load_spec(cfg["spec"]).params_fixed_at
+        spec = load_spec(cfg["spec"])
+        fixed_at = spec.params_fixed_at
     except Exception as exc:  # noqa: BLE001 - a broken spec file must not stop the night
         return None, (f"{label}: не удалось прочитать спецификацию {cfg['spec']} "
                       f"({type(exc).__name__})")
     stand = stand_window(session, idea_id, fixed_at)
+    # Both sides on the strategy's own money when the stand's trial has its capital summaries;
+    # a trial from before them is read the old way on both sides, so the two stay comparable.
+    on_capital = stand is not None and stand.on_capital
+    paper_capital = (None if not on_capital or stand.reinvested
+                     else float(cfg["strategy_capital_usd"]))
     start = stand.start if stand is not None else fixed_at
     if start is None:
         return None, f"{label}: у стенда не задана дата начала проверки вперёд, сверка пропущена"
@@ -265,8 +314,8 @@ def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: dat
 
     curve = equity_curve(paper_csv, strategy_id=cfg.get("strategy_id"),
                          sum_coins=bool(cfg.get("sum_coins")))
-    paper = window_return(curve, paper_from, end_ts) if end_ts is None or paper_from < end_ts \
-        else None
+    paper = (window_return(curve, paper_from, end_ts, capital=paper_capital)
+             if end_ts is None or paper_from < end_ts else None)
     if paper is None:
         if realised_from is not None and end_ts is not None and realised_from >= end_ts:
             return None, (f"{label}: бумага идёт с {_fmt_day(realised_from.date(), year=True)}, "
@@ -279,7 +328,7 @@ def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: dat
     replay_csv = folder / cfg["replay_file"] if cfg.get("replay_file") else None
     if replay_csv is not None and replay_csv.is_file():
         replay = replay_window_return(replay_csv, paper.first, paper.last,
-                                      strategy_id=cfg.get("strategy_id"))
+                                      strategy_id=cfg.get("strategy_id"), capital=paper_capital)
 
     notes: list[str] = []
     window_start = paper.first.date()
@@ -294,13 +343,20 @@ def check_book(session: Session, idea_id: str, cfg: dict, folder: Path, day: dat
                 f"Отрезки разные: проверка на стенде идёт с {_fmt_day(stand.start, year=True)} "
                 f"по {_fmt_day(stand.end, year=True)}, а у бумажной книги есть данные только "
                 f"с {_fmt_day(window_start, year=True)} по {_fmt_day(window_end, year=True)}.")
+        # A trial from before the capital summaries is read the old way on both sides (above):
+        # the comparison stays like for like and says nothing more.
+        if paper_capital is not None:
+            notes.append(f"Бумага — прибыль в долларах от денег стратегии ({paper_capital:g}), "
+                         f"стенд — на той же основе и без сложного процента: стратегия не "
+                         f"вкладывает прибыль обратно (docs/CAPITAL_BASE.md).")
     result = PaperCheckResult(
         idea_id=idea_id, book=cfg["book"], label=label, window_start=window_start,
         window_end=window_end, paper_return=paper.total,
         stand_return=stand.total if stand is not None else None,
         stand_trial_id=stand.trial_id if stand is not None else None, replay_return=replay,
         stand_window_start=stand.start if stand is not None else None,
-        stand_window_end=stand.end if stand is not None else None, note=" ".join(notes))
+        stand_window_end=stand.end if stand is not None else None, note=" ".join(notes),
+        on_capital=paper_capital is not None)
     return result, report_line(result)
 
 

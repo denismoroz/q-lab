@@ -4,6 +4,12 @@
 a trial's metrics. This module turns them back into rows, one plain-Russian line for
 the reports and the agents' briefs, and a structured form for the console's API.
 
+Every year key has a twin on the strategy's own money (`cap_year_2025_return`,
+docs/CAPITAL_BASE.md): the same year, read as a share of the capital the strategy started with
+and summed rather than compounded when the strategy does not reinvest its profit. The view
+shows both; `capital_view` gives the second under the stand's key names, so the same line, the
+same rows and the same four signs are asked of it.
+
 Nothing here computes a metric from returns: it only reads, orders and words what the
 stand already measured. Nothing here decides anything either -- the readings of the
 ruleset (`qlab.rules.engine.read_informational`) and the four signs built on them
@@ -16,11 +22,12 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from qlab.harness.metrics import COUNTED_YEAR_DAYS
+from qlab.harness.metrics import CAP_REINVESTED, COUNTED_YEAR_DAYS, as_stand_keys, cap_key
 
-YEAR_KEY = re.compile(r"^year_(\d{4})_(return|days|max_dd|sharpe)$")
+YEAR_KEY = re.compile(r"^(?:cap_)?year_(\d{4})_(return|days|max_dd|sharpe)$")
 SUMMARY_KEYS = ("years_counted", "years_positive", "years_positive_share",
                 "ann_return_net_ex_best_year", "best_year_share_of_profit")
+CAP_SUMMARY_KEYS = tuple(cap_key(k) for k in SUMMARY_KEYS)
 FULL_YEAR_DAYS = 360
 """A year with fewer days than this is marked with its day count in the line: a first
 or last year of the judged part, or a year with gaps in the data."""
@@ -47,7 +54,7 @@ class YearRow:
 def is_year_key(key: str) -> bool:
     """A per-year key or a summary of them: what a part-specific copy of the metrics
     (`fit_`, `pre_`) leaves out and what a stage's result copies whole."""
-    return bool(YEAR_KEY.match(key)) or key in SUMMARY_KEYS
+    return bool(YEAR_KEY.match(key)) or key in SUMMARY_KEYS or key in CAP_SUMMARY_KEYS
 
 
 def year_keys(metrics: Mapping[str, object]) -> list[str]:
@@ -55,12 +62,27 @@ def year_keys(metrics: Mapping[str, object]) -> list[str]:
     return sorted(k for k in metrics if is_year_key(k))
 
 
+def capital_view(metrics: Mapping[str, object] | None) -> dict[str, object]:
+    """The year view on the strategy's own money, under the stand's key names (empty for a
+    run from before the capital summaries): feed it to `year_rows`, `years_line`,
+    `year_view` or `qlab.year_signs.read_signs` to read the capital twin of what they show."""
+    return as_stand_keys(metrics)
+
+
+def reinvests(metrics: Mapping[str, object] | None) -> bool | None:
+    """Whether the run's capital summaries compound (True) or sum (False); None when the run
+    has none."""
+    flag = (metrics or {}).get(CAP_REINVESTED)
+    return None if not isinstance(flag, int | float) else bool(flag)
+
+
 def year_rows(metrics: Mapping[str, object] | None) -> list[YearRow]:
     """The per-year rows stored in `metrics`, oldest first. Empty when none were stored
-    (a run from before the view existed)."""
+    (a run from before the view existed). Reads the stand's keys; ask `capital_view(metrics)`
+    for the capital twin."""
     parts: dict[int, dict[str, float]] = {}
     for key, value in (metrics or {}).items():
-        found = YEAR_KEY.match(key)
+        found = YEAR_KEY.match(key) if not key.startswith("cap_") else None
         if found and isinstance(value, int | float) and value == value:
             parts.setdefault(int(found.group(1)), {})[found.group(2)] = float(value)
     return [YearRow(year=year, ret=p["return"], days=int(p["days"]),
@@ -80,14 +102,19 @@ def _pct(value: float) -> str:
     return f"{'+' if value >= 0 else MINUS}{text}"
 
 
-def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False) -> str | None:
+def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False,
+               capital: bool = True) -> str | None:
     """One compact line, e.g. «по годам: 2020 +41%, 2021 +88%, 2026 (282 дн.) +1%; без
     лучшего года (2021): +4% в год; прибыльных лет 5 из 7». None when the run stored no
     year view, or only a stretch too short to be called a year.
 
     With `signs`, the line ends with the four signs of the newest ruleset (А Б В Г, each
     «держится / не держится / не определено» with the reason): the form the reports use.
-    The agents' briefs stay without them."""
+    The agents' briefs stay without them.
+
+    With `capital` (the default) and a run that has the year view on the strategy's own money
+    (docs/CAPITAL_BASE.md), the same line on that money follows when it differs from the
+    stand's: «На деньгах стратегии (…): 2025 +15%, …»."""
     rows = year_rows(metrics)
     if not rows or not (len(rows) >= 2 or rows[0].counted):
         return None
@@ -107,22 +134,26 @@ def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False) -> 
         ruleset = latest_ruleset()
         if ruleset is not None and (tail := signs_sentence(m, ruleset)):
             line += "; " + tail
+    if capital and (cap := capital_view(m)):
+        cap_line = years_line(cap, signs=signs, capital=False)
+        if cap_line and cap_line != line:
+            how = ("прибыль не вкладывается обратно, годы складываются" if reinvests(m) is False
+                   else "прибыль вкладывается, годы склеиваются")
+            line += f". На деньгах стратегии ({how}): " + cap_line.removeprefix("по годам: ")
     return line
 
 
-def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None:
-    """The console's form of the view: the rows, the summaries and, with a ruleset, its
-    informational readings. None when the run stored no year view."""
+def _view_of(m: Mapping[str, object], ruleset) -> dict | None:
+    """The view of one set of year keys (the stand's, or the capital twin under the stand's
+    names)."""
     from qlab.rules.engine import read_informational
-
-    rows = year_rows(metrics)
-    if not rows:
-        return None
-    m = metrics or {}
-    summary = {k: m[k] for k in SUMMARY_KEYS
-               if isinstance(m.get(k), int | float) and m[k] == m[k]}
     from qlab.year_signs import read_signs
 
+    rows = year_rows(m)
+    if not rows:
+        return None
+    summary = {k: m[k] for k in SUMMARY_KEYS
+               if isinstance(m.get(k), int | float) and m[k] == m[k]}
     readings = [] if ruleset is None else [
         {"id": r.rule_id, "metric": r.metric, "value": r.value, "comparator": r.comparator,
          "threshold": r.threshold, "holds": r.holds}
@@ -140,5 +171,24 @@ def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None
     }
 
 
-__all__ = ["FULL_YEAR_DAYS", "SUMMARY_KEYS", "YEAR_KEY", "YearRow", "best_year", "is_year_key",
-           "year_keys", "year_rows", "year_view", "years_line"]
+def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None:
+    """The console's form of the view: the rows, the summaries and, with a ruleset, its
+    informational readings. None when the run stored no year view.
+
+    `capital` is the same view on the strategy's own money (docs/CAPITAL_BASE.md), with
+    `reinvested` saying whether its years compound or sum; None for a run from before the
+    capital summaries."""
+    m = metrics or {}
+    view = _view_of(m, ruleset)
+    if view is None:
+        return None
+    capital = _view_of(capital_view(m), ruleset)
+    if capital is not None:
+        capital["reinvested"] = reinvests(m)
+    view["capital"] = capital
+    return view
+
+
+__all__ = ["CAP_SUMMARY_KEYS", "FULL_YEAR_DAYS", "SUMMARY_KEYS", "YEAR_KEY", "YearRow",
+           "best_year", "capital_view", "is_year_key", "reinvests", "year_keys", "year_rows",
+           "year_view", "years_line"]

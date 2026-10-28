@@ -608,6 +608,23 @@ def evaluate_cmd(
             typer.echo(f"  {sign_line(reading)}")
         typer.echo("")
 
+    if "cap_ann_return" in result.metrics:
+        # The same run on the strategy's own money (docs/CAPITAL_BASE.md). No rule reads it yet.
+        from qlab.year_view import capital_view
+
+        m = result.metrics
+        how = "profit not reinvested, bars summed" if m.get("cap_reinvested") == 0.0 \
+            else "profit reinvested, bars compounded"
+        typer.echo(f"on the strategy's own money ({how}; no rule reads this yet):")
+        typer.echo(f"  per year {m['cap_ann_return']:+.1%} (stand {m['ann_return_net']:+.1%}), "
+                   f"worst fall {m['cap_max_dd']:+.1%} (stand {m['max_dd']:+.1%}), "
+                   f"Sharpe {m['cap_sharpe']:.2f} (stand {m['sharpe_net']:.2f})")
+        capital_metrics_view = capital_view(m)
+        if has_year_view(capital_metrics_view):
+            for reading in read_signs(capital_metrics_view, ruleset):
+                typer.echo(f"  {sign_line(reading)}")
+        typer.echo("")
+
     from qlab.anomalies.cli import evaluate_lines
 
     for line in evaluate_lines(result.trial_id, result.routing.route):
@@ -2517,6 +2534,10 @@ def year_signs_cmd(
     as_json: bool = typer.Option(False, "--json", help="Print JSON instead of tables"),
     rules_version: str | None = typer.Option(
         None, "--rules", help="Rules version whose lines the signs use (default: latest)"),
+    capital: bool = typer.Option(
+        False, "--capital",
+        help="Read the signs off the year summaries on the strategy's own money "
+             "(docs/CAPITAL_BASE.md); runs from before them are left out"),
 ) -> None:
     """The four year signs (docs/YEARS.md) over the registry: for each idea's latest judged
     run, whether each of А Б В Г holds, fails or is not defined, then the totals and a split
@@ -2528,18 +2549,19 @@ def year_signs_cmd(
 
     ruleset = load(rules_version) if rules_version is not None else load_latest()
     with session_scope() as session:
-        rows = year_signs.collect(session, ruleset, all_trials=all_trials)
+        rows = year_signs.collect(session, ruleset, all_trials=all_trials, on_capital=capital)
     summary = year_signs.summarize(rows)
     if as_json:
         typer.echo(json.dumps({
-            "rules_version": ruleset.version, "all_trials": all_trials,
+            "rules_version": ruleset.version, "all_trials": all_trials, "on_capital": capital,
             "signs": {s.letter: {"id": s.rule_id, "title": s.title}
                       for s in year_signs.SIGNS},
             "rows": [r.to_json() for r in rows], "summary": summary},
             ensure_ascii=False, indent=2))
         return
     typer.echo(f"rules: {ruleset.version}; "
-               + ("every judged trial" if all_trials else "latest judged trial of each idea"))
+               + ("every judged trial" if all_trials else "latest judged trial of each idea")
+               + ("; on the strategy's own money" if capital else ""))
     if not rows:
         typer.echo("no judged trial with a year view in the registry")
         return

@@ -186,6 +186,10 @@ class Composed:
     # Every duration is in calendar days and volatility is put in daily units,
     # so the same params mean the same on these bars (checked in test_composed).
     valid_intervals = ("1d", "4h", "1h")
+    # Declared (docs/CAPITAL_BASE.md): generated ideas have no live engine; weights are shares of
+    # the book and the bars compound, as the stand always did. The money to start with is the
+    # owner's choice on the day it is run.
+    reinvests_profit = True
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         missing = [key for key in REQUIRED_KEYS if key not in params]

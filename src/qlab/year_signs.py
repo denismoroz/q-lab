@@ -228,15 +228,20 @@ def stage_of(idea: Any, spec: Any) -> str:
         else STAGE_OTHER
 
 
-def collect(session: Session, ruleset: RuleSet, *, all_trials: bool = False) -> list[SignRow]:
+def collect(session: Session, ruleset: RuleSet, *, all_trials: bool = False,
+            on_capital: bool = False) -> list[SignRow]:
     """The signs of the registry's judged trials, one row per idea (its latest trial) or, with
     `all_trials`, one row per trial -- every trial counts, the deflation way.
+
+    `on_capital` reads the signs off the year summaries on the strategy's own money
+    (`cap_year_*`, docs/CAPITAL_BASE.md) instead of the stand's; a trial from before those
+    summaries has none and is left out.
 
     A judged trial is one that carries a route and a year view. Of an idea's trials the
     latest such one is taken (the highest id), so a later run without a year view does not
     hide an earlier one that has it. Calibration noise books are not ideas to judge."""
     from qlab.registry.models import Idea, Spec, Trial
-    from qlab.year_view import year_rows
+    from qlab.year_view import capital_view, year_rows
 
     query = (session.query(Trial, Spec, Idea).join(Spec, Trial.spec_id == Spec.id)
              .join(Idea, Spec.idea_id == Idea.id)
@@ -246,6 +251,8 @@ def collect(session: Session, ruleset: RuleSet, *, all_trials: bool = False) -> 
     rows: list[SignRow] = []
     for trial, spec, idea in query:
         metrics = trial.metrics or {}
+        if on_capital:
+            metrics = capital_view(metrics)
         if not year_rows(metrics):
             continue
         counted = _number(metrics, "years_counted")
@@ -336,7 +343,8 @@ SECTION_TITLE = "Четыре признака по годам: статисти
 
 def report_lines(session: Session, ruleset: RuleSet) -> list[str]:
     """The morning report's few lines: the totals over each idea's latest judged run, and
-    what they rest on. The table and the cross-tables are `qlab year-signs`."""
+    what they rest on. The table and the cross-tables are `qlab year-signs`; with
+    `--capital` they are read on the strategy's own money (docs/CAPITAL_BASE.md)."""
     latest = collect(session, ruleset)
     every = collect(session, ruleset, all_trials=True)
     if not latest:
@@ -351,7 +359,16 @@ def report_lines(session: Session, ruleset: RuleSet) -> list[str]:
         t = summary["totals"][spec.letter]
         lines.append(f"- {spec.letter} ({spec.title}): держится {t[HOLDS]}, не держится "
                      f"{t[FAILS]}, не определено {t[UNDEFINED]}")
-    lines += ["", "Таблица по идеям и разрезы по исходу и этапу: `uv run qlab year-signs`."]
+    capital = summarize(collect(session, ruleset, on_capital=True))
+    if capital["trials"]:
+        lines += ["", "То же на деньгах стратегии (docs/CAPITAL_BASE.md), для "
+                  f"{capital['ideas']} идей, у которых прогон уже посчитан так:"]
+        for spec in SIGNS:
+            t = capital["totals"][spec.letter]
+            lines.append(f"- {spec.letter}: держится {t[HOLDS]}, не держится {t[FAILS]}, "
+                         f"не определено {t[UNDEFINED]}")
+    lines += ["", "Таблица по идеям и разрезы по исходу и этапу: `uv run qlab year-signs` "
+              "(`--capital` — на деньгах стратегии)."]
     return lines
 
 

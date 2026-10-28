@@ -34,7 +34,7 @@ from qlab.harness.costs import CostModel
 from qlab.harness.gaps import held_through, holdable_gaps, marked_through
 from qlab.harness.panel import MarketPanel
 from qlab.harness.run import RunResult, run_backtest
-from qlab.harness.strategy import ZERO_WEIGHT_TOL, own_costs
+from qlab.harness.strategy import ZERO_WEIGHT_TOL, capital_setup, own_costs
 
 RECONCILE_TOLERANCE = 1e-9
 """How far the taken-apart sum may sit from `run_backtest`'s net return per bar."""
@@ -59,6 +59,10 @@ class StoredRun:
     extra_cost: pd.Series | None
     route: str | None = None
     metrics: dict = field(default_factory=dict)
+    capital: Any = None
+    """The strategy's base and declared reinvest choice (`qlab.harness.strategy.CapitalSetup`),
+    so the run can also be read on the strategy's own money (docs/CAPITAL_BASE.md); None reads
+    it as the stand always did."""
 
     @property
     def interval(self) -> str:
@@ -79,8 +83,9 @@ class StoredRun:
     def backtest(self, weights: pd.DataFrame | None = None) -> RunResult:
         """The judged rows run through the harness, with `weights` or the stored book."""
         part_panel, part_weights = self.part(weights)
+        capital = {} if self.capital is None else self.capital.kwargs
         return run_backtest(part_panel, part_weights, self.costs, part_panel.funding,
-                            extra_cost=self.extra_cost)
+                            extra_cost=self.extra_cost, **capital)
 
 
 def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) -> StoredRun:
@@ -127,6 +132,7 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
         strategy = resolve_strategy(spec.code_ref)
         weights = strategy.target_weights(panel, spec.params)
         extra = own_costs(strategy, panel, spec.params)
+        capital = capital_setup(strategy, panel, spec.params)
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary
         raise RunUnavailable(f"the run could not be repeated: {type(exc).__name__}: {exc}") from exc
     return StoredRun(
@@ -135,7 +141,7 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
         costs=CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                         slippage_bps=spec.costs.slippage_bps),
         extra_cost=extra, route=None if trial.route is None else str(trial.route.value),
-        metrics=dict(trial.metrics))
+        metrics=dict(trial.metrics), capital=capital)
 
 
 # --------------------------------------------------------------------------

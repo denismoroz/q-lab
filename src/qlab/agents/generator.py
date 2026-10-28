@@ -56,6 +56,7 @@ from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
+from qlab.capital_text import CAP_NUMBERS, capital_suffix
 from qlab.directions import active_directions, generator_text
 from qlab.pipeline.sources import QLAB_ROOT
 from qlab.year_view import year_keys, years_line
@@ -77,7 +78,7 @@ OWN = "own"
 """The `# mechanism:` header of a self-made mechanism (StrategySpec.own_mechanism)."""
 MECHANISM_HEADER = re.compile(r"^#\s*mechanism:\s*(\S+)\s*$", re.MULTILINE)
 RESULT_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
-                  "min_capital_usd", "forward_days", "forward_days_needed")
+                  "min_capital_usd", "forward_days", "forward_days_needed", *CAP_NUMBERS)
 
 
 # --------------------------------------------------------------------------
@@ -842,7 +843,8 @@ def result_line(r: GeneratedResult) -> str:
             f"в год {pct('ann_return_net')}, "
             f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}, "
             f"просадка {pct('max_dd')}, "
-            f"обгоняет шум {pct('noise_return_percentile').lstrip('+')}")
+            f"обгоняет шум {pct('noise_return_percentile').lstrip('+')}"
+            f"{capital_suffix(m)}")
 
 
 __all__ = ["GenerateOutcome", "GeneratedResult", "GeneratedSpec", "MODEL", "Mechanism",

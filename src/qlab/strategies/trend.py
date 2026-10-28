@@ -96,6 +96,10 @@ class TrendTSMOMEnsemble:
     # (see target_weights), so the same params mean the same thing on these
     # bars; checked by test_trend.test_position_size_does_not_depend_on_bar_size.
     valid_intervals = ("1d", "4h", "1h")
+    # Declared (docs/CAPITAL_BASE.md): the live trend book sizes every position as weight times
+    # ALL the book's money at each rebalance, so profit goes back into positions and the
+    # bars compound (frab/strategy/trend/book.py).
+    reinvests_profit = True
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         lookbacks_days: Sequence[float] = params["lookbacks_days"]

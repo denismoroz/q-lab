@@ -7,12 +7,20 @@ export const SHORT_FORWARD_DAYS = 90
 
 // null unless the run's own figures are a forward test shorter than
 // SHORT_FORWARD_DAYS; else the total over its days and the yearly figure.
+// On the strategy's own money (docs/CAPITAL_BASE.md) when the run has it: the yearly figure is
+// `cap_ann_return`, and the total is linear in the days for a strategy that does not reinvest
+// its profit (`cap_reinvested` 0), compounded otherwise -- the same as
+// qlab.paper_check.forward_total_capital.
 export function shortForwardReturn(metrics) {
   const m = metrics ?? {}
   const days = m.forward_days
-  const ann = m.ann_return_net
+  const onCapital = typeof m.cap_ann_return === 'number' && typeof m.cap_reinvested === 'number'
+  const ann = onCapital ? m.cap_ann_return : m.ann_return_net
   if (m.judged_on_forward !== 1 || typeof days !== 'number' || typeof ann !== 'number') return null
   if (!(days > 0) || days >= SHORT_FORWARD_DAYS) return null
+  if (onCapital && m.cap_reinvested === 0) {
+    return { days: Math.round(days), total: (ann * days) / 365.25, yearly: ann }
+  }
   const growth = 1 + ann
   const total = growth <= 0 ? -1 : Math.pow(growth, days / 365.25) - 1
   return { days: Math.round(days), total, yearly: ann }

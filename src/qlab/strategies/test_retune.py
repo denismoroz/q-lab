@@ -106,6 +106,53 @@ def test_diagnostics_count_switches() -> None:
     assert 0 < d["retune_top_choice_share"] <= 1
 
 
+class BasedSign(ConstantSign):
+    """The same book, but one that sets money aside: its base is a number the params give, and it
+    declares that its profit is not reinvested (docs/CAPITAL_BASE.md)."""
+
+    name = "based-sign"
+    reinvests_profit = False
+
+    def own_base(self, panel, params):
+        return pd.Series(float(params["base"]), index=panel.prices.index)
+
+
+BASED = {
+    **PARAMS,
+    "inner_code_ref": "qlab.strategies.test_retune:BasedSign",
+    "grid": {"side": {"long": {"sign": 1, "base": 2.0}, "short": {"sign": -1, "base": 3.0}}},
+}
+
+
+def test_the_base_is_stitched_from_the_candidate_chosen_in_each_period() -> None:
+    from qlab.harness.strategy import own_base, profit_reinvested
+
+    panel = _panel(60, 60)
+    run = Retune().run(panel, BASED)
+    chosen = run.choices.dropna()
+    assert chosen.loc[:"2026-02-28"].eq("long").all()
+    assert chosen.loc["2026-04-15":].eq("short").all()
+    base = run.base
+    assert base.loc["2026-02-10":"2026-02-28"].eq(2.0).all()
+    assert base.loc["2026-04-20":].eq(3.0).all()
+    # the strategy-side hook is the same series, and the choice is the inner strategy's
+    pd.testing.assert_series_equal(own_base(Retune(), panel, BASED), base)
+    assert profit_reinvested(Retune(), BASED) is False
+    ratio = run.candidate_capital_returns["long"] / run.candidate_returns["long"]
+    assert ratio.dropna().eq(2.0).all(), "a candidate is scored on its own base"
+
+
+def test_an_inner_strategy_without_a_base_gives_a_retune_without_one() -> None:
+    from qlab.harness.strategy import own_base, profit_reinvested
+
+    panel = _panel(60, 60)
+    assert own_base(Retune(), panel, PARAMS) is None
+    assert profit_reinvested(Retune(), PARAMS) is True
+    run = Retune().run(panel, PARAMS)
+    pd.testing.assert_frame_equal(run.candidate_capital_returns, run.candidate_returns,
+                                  check_names=False)
+
+
 def test_the_cache_does_not_hand_a_masked_panel_the_unmasked_answer() -> None:
     """Same snapshot id, columns and parameters but another `tradeable` mask: a different book
     (found 2026-10-28 while building the anomaly toolkit's counterfactuals)."""

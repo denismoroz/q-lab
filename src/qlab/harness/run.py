@@ -41,6 +41,16 @@ class RunResult:
     for every `t`:
 
         net_return.loc[t] == gross_return.loc[t] + accrual.loc[t] - cost.loc[t]
+
+    `net_return` is a share of the book's own equity at that bar, which is the number the
+    stand has always reported. `capital_return` is the same bar as a share of the strategy's
+    OWN money, the capital it started with (docs/CAPITAL_BASE.md): `net_return` times the
+    strategy's base (its book equity over that capital -- 1 for a book whose weights already
+    are shares of the capital, and for most strategies). `capital_reinvested` is the
+    strategy's declared property: True when its profit goes back into positions (the bars
+    then compound, as the stand always did), False when it does not (the bars are summed).
+    A result built by hand without them keeps the stand's reading: `capital_return` is
+    `net_return` and the bars compound.
     """
 
     snapshot_id: str
@@ -49,6 +59,12 @@ class RunResult:
     turnover: pd.Series
     cost: pd.Series
     accrual: pd.Series
+    capital_return: pd.Series | None = None
+    capital_reinvested: bool = True
+
+    def __post_init__(self) -> None:
+        if self.capital_return is None:
+            object.__setattr__(self, "capital_return", self.net_return.rename("capital_return"))
 
 
 def run_backtest(
@@ -57,6 +73,8 @@ def run_backtest(
     costs: CostModel,
     accrual: pd.DataFrame | object,
     extra_cost: pd.Series | None = None,
+    capital_base: pd.Series | None = None,
+    capital_reinvested: bool = True,
 ) -> RunResult:
     """Simulate the book described by `weights` on `panel`.
 
@@ -82,6 +100,16 @@ def run_backtest(
             equity per decision bar, indexed like the weights. Added to
             `cost`; a decision bar it does not name pays none. `None` (the
             default) is no such costs, as before.
+
+        capital_base: the strategy's base at each bar (its book equity over the capital it
+            started with, `qlab.harness.strategy.own_base`), indexed like the panel. The
+            result's `capital_return` is `net_return * capital_base`. `None` (the default):
+            the base is 1 and `capital_return` is `net_return`. A bar the base does not
+            name takes the nearest known one (the series is a book balance, it has no
+            holes inside a run).
+        capital_reinvested: whether the strategy puts its profit back into positions
+            (`qlab.harness.strategy.profit_reinvested`); recorded on the result for the
+            capital metrics. The default is the stand's compounding.
 
     Returns:
         A `RunResult` covering `panel.prices.index[:-1]`.
@@ -156,6 +184,11 @@ def run_backtest(
 
     net_return = gross_return + accrual_series - cost
 
+    capital_return = None
+    if capital_base is not None:
+        base = capital_base.reindex(keep).ffill().bfill().fillna(1.0)
+        capital_return = (net_return * base).rename("capital_return")
+
     return RunResult(
         snapshot_id=panel.snapshot_id,
         net_return=net_return.rename("net_return"),
@@ -163,4 +196,6 @@ def run_backtest(
         turnover=turnover.rename("turnover"),
         cost=cost.rename("cost"),
         accrual=accrual_series.rename("accrual"),
+        capital_return=capital_return,
+        capital_reinvested=capital_reinvested,
     )

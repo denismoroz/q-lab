@@ -118,8 +118,8 @@ def test_compare_venues_sets_the_two_stages_side_by_side(monkeypatch) -> None:
     index = pd.date_range("2026-01-01", periods=60, freq="D", tz="UTC")
     series = {11: pd.Series(0.01, index=index),
               12: pd.Series(0.0, index=index[20:])}
-    monkeypatch.setattr(scan, "trial_daily_returns",
-                        lambda session, trial_id, **kw: series[trial_id])
+    monkeypatch.setattr(scan, "trial_daily_capital",
+                        lambda session, trial_id, **kw: (series[trial_id], True))
     runs = {11: toy.toy_run(11, "x", "binance"), 12: toy.toy_run(12, "x-hl", "hyperliquid")}
     monkeypatch.setattr(toolkit, "load_run", lambda session, trial_id, **kw: runs[trial_id])
 

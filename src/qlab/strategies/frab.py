@@ -105,6 +105,9 @@ class FrabFundingHarvest:
     # The signal window is in funding ticks, which settle hourly on
     # Hyperliquid; the live engine and every FRAB spec run on hourly bars.
     valid_intervals = ("1h",)
+    # Declared (docs/CAPITAL_BASE.md): positions are sized in dollars over a constant budget;
+    # what the strategy earns stays on the account and is not put back into positions.
+    reinvests_profit = False
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         spot_columns: Mapping[str, str] = params["spot_columns"]

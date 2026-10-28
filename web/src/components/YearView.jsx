@@ -43,6 +43,57 @@ function YearTooltip({ active, payload }) {
 // are recorded to collect statistics and decide nothing.
 const SIGN_STATE = { holds: 'держится', fails: 'не держится', 'not defined': 'не определено' }
 
+// docs/CAPITAL_BASE.md: the same years read on the strategy's own money. The stand's column is a
+// share of a book whose balance has grown with money set aside (Bv2), compounded; this one is a
+// share of the capital the strategy started with, summed when it does not reinvest its profit.
+function CapitalYears({ view }) {
+  const capital = view.capital
+  if (!capital?.years?.length) return null
+  const stand = new Map(view.years.map((y) => [y.year, y]))
+  const summed = capital.reinvested === false
+  const differs = capital.years.some((y) => {
+    const s = stand.get(y.year)
+    return !s || Math.abs(s.return - y.return) > 0.0005
+  })
+  if (!differs) return null
+  return (
+    <div className="mt-2" data-testid="year-view-capital">
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        на деньгах стратегии
+        {summed ? ' — прибыль не вкладывается обратно, годы складываются' : ' — со сложным процентом'}
+      </div>
+      <table className="mt-1 text-sm tabular-nums">
+        <thead>
+          <tr className="text-left text-xs text-slate-500">
+            <th className="pr-4 font-normal">год</th>
+            <th className="pr-4 font-normal">как считает стенд</th>
+            <th className="font-normal">на деньгах стратегии</th>
+          </tr>
+        </thead>
+        <tbody>
+          {capital.years.map((y) => (
+            <tr key={y.year}>
+              <td className="pr-4">{yearLabel(y)}</td>
+              <td className="pr-4">{percent(stand.get(y.year)?.return)}</td>
+              <td className="font-medium">{percent(y.return)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {(capital.signs ?? []).length > 0 && (
+        <ul className="mt-1 text-xs text-slate-500" data-testid="year-signs-capital">
+          {capital.signs.map((s) => (
+            <li key={s.id}>
+              {s.letter}: {s.title} — {SIGN_STATE[s.state] ?? s.state}
+              {s.holds == null ? (s.reason ? ` (${s.reason})` : '') : ` (${percent(s.value)})`}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function YearView({ view, compact = false }) {
   if (!view?.years?.length) return null
   const summary = view.summary ?? {}
@@ -108,6 +159,7 @@ export default function YearView({ view, compact = false }) {
           ))}
         </ul>
       )}
+      <CapitalYears view={view} />
       <p className="mt-1 text-xs text-slate-400">
         Столбец — доходность за календарный год после комиссий (неполный год — за его дни, бледный:
         меньше 120 дней, в сводках не участвует). «Без лучшего года» — доходность в год, если

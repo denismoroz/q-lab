@@ -195,6 +195,10 @@ class LiveFrab:
 
     name = "frab-live"
     valid_intervals = ("1h",)  # the live engine decides on hourly ticks
+    # Declared (docs/CAPITAL_BASE.md): the stand's budget is a constant divisor of dollar
+    # positions (`budget_cap_usdc`); the result stays on the account, free, and is not put back
+    # into positions. `LiveFrabBinanceSpot` and `LiveFrabAllBinance` inherit it.
+    reinvests_profit = False
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         return self.run(panel, params).weights

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab.capital_text import CAP_NUMBERS, capital_suffix
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
@@ -44,7 +45,8 @@ SPEC_DIR = Path("specs/generated/stage2")
 COMPOSED_CODE_REF = "qlab.strategies.blocks:Composed"
 RESULT_METRICS = ("ann_return_net", "total_return_net", "sharpe_net", "max_dd",
                   "noise_return_percentile", "noise_power", "min_capital_usd", "forward_days",
-                  "forward_days_needed", "selection_days", "ann_return_net_ex_best_1pct")
+                  "forward_days_needed", "selection_days", "ann_return_net_ex_best_1pct",
+                  *CAP_NUMBERS)
 UNDECIDED = ("not-evaluable", "needs-more-data", "error")
 """Stage 2 routes that decided nothing: the idea waits."""
 
@@ -705,7 +707,8 @@ def _numbers_ru(m: Mapping[str, object]) -> str:
     return (f"в год {_pct(m.get('ann_return_net'))}, "
             f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}, "
             f"просадка {_pct(m.get('max_dd'))}, "
-            f"обгоняет шум {_pct(beat).lstrip('+') if beat is not None else '—'}")
+            f"обгоняет шум {_pct(beat).lstrip('+') if beat is not None else '—'}"
+            f"{capital_suffix(m)}")
 
 
 def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | None) -> list[str]:

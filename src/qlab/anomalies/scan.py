@@ -255,6 +255,39 @@ def trial_daily_returns(session: Session, trial_id: int, *, run: StoredRun | Non
     return daily(stored.backtest().net_return, "compound")
 
 
+def trial_daily_capital(session: Session, trial_id: int, *, run: StoredRun | None = None
+                        ) -> tuple[pd.Series, bool] | None:
+    """The judged part's return by UTC day on the strategy's OWN money (docs/CAPITAL_BASE.md) and
+    whether its bars compound (True) or are summed (False: Bv2, FRAB, XSMOM, which do not put
+    their profit back into positions). Two stages of one idea are set against each other on this
+    one base. Taken from the stored forward series when it is already on the strategy's money,
+    else the stored spec is run again. None when neither is possible."""
+    from qlab import forward_series
+
+    payload = forward_series.load(trial_id)
+    older: tuple[pd.Series, bool] | None = None
+    if payload is not None and payload.get("points"):
+        frame = pd.DataFrame(payload["points"], columns=["day", "strategy", "hold"])
+        curve = frame["strategy"].astype(float)
+        curve.index = pd.DatetimeIndex(pd.to_datetime(frame["day"], utc=True))
+        growth = 1.0 + curve
+        ratio = (growth / growth.shift(1) - 1.0).iloc[1:]
+        if payload.get("base") == "strategy_capital":
+            if payload.get("reinvested", True) is False:
+                return curve.diff().iloc[1:], False
+            return ratio, True
+        older = (ratio, True)  # a series from before the capital base: the stand's reading
+    try:
+        stored = run or load_run(session, trial_id)
+    except Exception:  # noqa: BLE001 - a trial that cannot be re-run keeps what is stored, if any
+        return older
+    result = stored.backtest()
+    refused = stored.capital is not None and stored.capital.refused is not None
+    reinvested = True if refused else result.capital_reinvested
+    series = result.net_return if refused else result.capital_return
+    return daily(series, "compound" if reinvested else "sum"), reinvested
+
+
 def counterpart_trial(session: Session, trial_id: int) -> tuple[int, int, str] | None:
     """(stage-1 trial, stage-2 trial, "this is stage 1 / 2") for a trial whose idea has both
     stages (docs/TWO_STAGE.md), else None. Each side is its idea's latest routed trial."""
@@ -280,11 +313,16 @@ def venue_flag(session: Session, trial_id: int, cfg: Config, *, run: StoredRun |
     if pair is None:
         return fl._undefined(line.name, "у идеи нет второй ступени на другой бирже")
     first, second, _ = pair
-    a = trial_daily_returns(session, first, run=run if first == trial_id else None)
-    b = trial_daily_returns(session, second, run=run if second == trial_id else None)
+    # Both stages on the strategy's own money (docs/CAPITAL_BASE.md): a fresh second-stage book
+    # against a first stage whose balance has grown with set-aside cash is not like with like.
+    a = trial_daily_capital(session, first, run=run if first == trial_id else None)
+    b = trial_daily_capital(session, second, run=run if second == trial_id else None)
     if a is None or b is None:
         return fl._undefined(line.name, "дневной ряд одной из ступеней построить не удалось")
-    result = fl.venue_divergence(a, b, line)
+    if a[1] != b[1]:
+        return fl._undefined(line.name, "две ступени по-разному вкладывают прибыль: "
+                                        "сравнивать их итоги нельзя")
+    result = fl.venue_divergence(a[0], b[0], line, additive=not a[1])
     result.detail.update(stage1_trial=first, stage2_trial=second)
     return result
 
@@ -379,5 +417,6 @@ def scan_trial(session: Session, trial_id: int, cfg: Config, *, run: StoredRun |
 
 __all__ = ["ScanResult", "by_coin", "coin_day_details", "coin_day_frames", "coin_of",
            "counterpart_trial", "delist_mask", "family_flag", "frozen_stretches", "listing_flag",
-           "family_returns", "paper_flag", "run_flags", "scan_trial", "trial_daily_returns",
+           "family_returns", "paper_flag", "run_flags", "scan_trial", "trial_daily_capital",
+           "trial_daily_returns",
            "venue_flag"]

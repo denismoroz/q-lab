@@ -90,6 +90,9 @@ class Diagnosis:
     regimes: list[RegimeReturn] | None = None  # None: no stored regime labels
     worst_months: list[MonthReturn] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    on_capital: bool = False
+    """Falls and months are on the strategy's own money (docs/CAPITAL_BASE.md)."""
+    reinvested: bool = True
 
 
 def choose_cut(index: pd.DatetimeIndex, *, params_fixed_at: date | None, share: float | None,
@@ -129,23 +132,31 @@ def _day(index: pd.DatetimeIndex, row: int) -> date:
     return (index[-1] + step).date()
 
 
-def equity_from_returns(net_return: pd.Series) -> pd.Series:
+def equity_from_returns(net_return: pd.Series, additive: bool = False) -> pd.Series:
     """Equity (start 1.0) at the END of each period, preceded by the start point.
-    A return is indexed by decision time t and realised over (t, t+1]."""
+    A return is indexed by decision time t and realised over (t, t+1].
+
+    `additive` (docs/CAPITAL_BASE.md): the series is the strategy's `capital_return` and its
+    profit is not reinvested, so the curve is the capital (1.0) plus the running sum of the
+    returns -- money in multiples of the capital the strategy started with -- not their
+    compounding."""
     if len(net_return) == 0:
         return pd.Series([1.0], index=pd.DatetimeIndex([pd.Timestamp("1970-01-01", tz="UTC")]))
     step = (net_return.index.to_series().diff().median() if len(net_return) > 1
             else pd.Timedelta(days=1))
     ends = net_return.index + step
-    growth = (1.0 + net_return).cumprod()
+    growth = 1.0 + net_return.cumsum() if additive else (1.0 + net_return).cumprod()
     return pd.concat([pd.Series([1.0], index=net_return.index[:1]),
                       pd.Series(growth.to_numpy(), index=ends)])
 
 
-def deepest_drawdowns(equity: pd.Series, top: int = TOP_DRAWDOWNS) -> list[Drawdown]:
+def deepest_drawdowns(equity: pd.Series, top: int = TOP_DRAWDOWNS, additive: bool = False
+                      ) -> list[Drawdown]:
     """The `top` deepest peak-to-recovery episodes of an equity curve, deepest
     first. An episode runs from a running maximum until the curve regains it
-    (`recovered`) or to the end of the data (`recovered` is None)."""
+    (`recovered`) or to the end of the data (`recovered` is None). `additive`: the curve is
+    money in multiples of the starting capital and a depth is the fall in points of that
+    capital, not a share of the peak."""
     values = equity.to_numpy(dtype=float)
     episodes: list[Drawdown] = []
     peak_i = 0
@@ -156,7 +167,8 @@ def deepest_drawdowns(equity: pd.Series, top: int = TOP_DRAWDOWNS) -> list[Drawd
         episodes.append(Drawdown(
             peak=equity.index[peak_i].date(), trough=equity.index[trough_i].date(),
             recovered=None if recovered_i is None else equity.index[recovered_i].date(),
-            depth=float(values[trough_i] / values[peak_i] - 1.0)))
+            depth=float(values[trough_i] - values[peak_i]) if additive
+            else float(values[trough_i] / values[peak_i] - 1.0)))
 
     for i in range(1, len(values)):
         if values[i] >= values[peak_i]:
@@ -173,15 +185,19 @@ def deepest_drawdowns(equity: pd.Series, top: int = TOP_DRAWDOWNS) -> list[Drawd
     return sorted(episodes, key=lambda e: e.depth)[:top]
 
 
-def worst_months(net_return: pd.Series, n: int = WORST_MONTHS) -> list[MonthReturn]:
+def worst_months(net_return: pd.Series, n: int = WORST_MONTHS, additive: bool = False
+                 ) -> list[MonthReturn]:
     """The `n` calendar months with the lowest compounded return, worst first.
-    A return belongs to the month in which its period ends."""
+    A return belongs to the month in which its period ends. `additive`: the months' returns are
+    sums (a strategy that does not reinvest, docs/CAPITAL_BASE.md)."""
     if len(net_return) == 0:
         return []
     equity = equity_from_returns(net_return)
     by_end = pd.Series(net_return.to_numpy(), index=equity.index[1:])
     months = by_end.groupby(by_end.index.strftime("%Y-%m"))
-    rows = [MonthReturn(month=str(month), ret=float((1.0 + part).prod() - 1.0), periods=len(part))
+    rows = [MonthReturn(month=str(month),
+                        ret=float(part.sum()) if additive else float((1.0 + part).prod() - 1.0),
+                        periods=len(part))
             for month, part in months]
     return sorted(rows, key=lambda m: m.ret)[:n]
 
@@ -198,13 +214,21 @@ def regime_returns(net_return: pd.Series, regimes: RegimeSeries, periods_per_yea
 
 
 def describe(net_return: pd.Series, *, idea_id: str, cut: Cut, held_out_days: int,
-             regimes: RegimeSeries | None) -> Diagnosis:
-    """The evidence over `net_return`, which must already end before the cut."""
+             regimes: RegimeSeries | None, capital_return: pd.Series | None = None,
+             reinvested: bool = True) -> Diagnosis:
+    """The evidence over `net_return`, which must already end before the cut.
+
+    The falls and the worst months are read from `capital_return` (the strategy's own money,
+    docs/CAPITAL_BASE.md; default `net_return`), summed when `reinvested` is False. The
+    regime breakdown stays on the stand's `net_return`: it is compared with BTC's own return
+    over the same days, not with another strategy's."""
     notes: list[str] = []
     if len(net_return) < 2:
         return Diagnosis(idea_id, None, None, cut, len(net_return), held_out_days,
                          notes=["fewer than two periods before the cut: nothing to describe"])
-    equity = equity_from_returns(net_return)
+    drawn = net_return if capital_return is None else capital_return.reindex(net_return.index)
+    additive = not reinvested
+    equity = equity_from_returns(drawn, additive)
     ppy = float(pd.Timedelta(days=365.25) / net_return.index.to_series().diff().median())
     regime_rows = regime_returns(net_return, regimes, ppy) if regimes is not None else None
     if regimes is None:
@@ -212,21 +236,28 @@ def describe(net_return: pd.Series, *, idea_id: str, cut: Cut, held_out_days: in
     return Diagnosis(
         idea_id=idea_id, first=net_return.index[0].date(), last=equity.index[-1].date(),
         cut=cut, periods=len(net_return), held_out_days=held_out_days,
-        drawdowns=deepest_drawdowns(equity), regimes=regime_rows,
-        worst_months=worst_months(net_return), notes=notes)
+        drawdowns=deepest_drawdowns(equity, additive=additive), regimes=regime_rows,
+        worst_months=worst_months(drawn, additive=additive), notes=notes,
+        on_capital=capital_return is not None, reinvested=reinvested)
 
 
 def diagnose_returns(net_return: pd.Series, *, idea_id: str, params_fixed_at: date | None,
                      share: float | None, regimes: RegimeSeries | None,
-                     selects_causally: bool = False) -> Diagnosis:
+                     selects_causally: bool = False, capital_return: pd.Series | None = None,
+                     reinvested: bool = True) -> Diagnosis:
     """Cut a whole-window return series and describe the part before the cut.
     The series-level entry point `diagnose_spec` reduces to, usable on any
-    return series (the strategy is not run here)."""
+    return series (the strategy is not run here). `capital_return` and `reinvested`: the same
+    bars on the strategy's own money (docs/CAPITAL_BASE.md), cut at the same row."""
     cut = choose_cut(net_return.index, params_fixed_at=params_fixed_at, share=share,
                      selects_causally=selects_causally)
     held_out = (net_return.index[-1].date() - cut.day).days if cut.row < len(net_return) else 0
-    return describe(net_return.iloc[:cut.row], idea_id=idea_id, cut=cut,
-                    held_out_days=max(held_out, 0), regimes=regimes)
+    before = net_return.iloc[:cut.row]
+    return describe(before, idea_id=idea_id, cut=cut,
+                    held_out_days=max(held_out, 0), regimes=regimes,
+                    capital_return=None if capital_return is None else capital_return.reindex(
+                        before.index),
+                    reinvested=reinvested)
 
 
 def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries | None
@@ -236,7 +267,7 @@ def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries |
     fetched). No trial is written -- see the module docstring."""
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
-    from qlab.harness.strategy import own_costs
+    from qlab.harness.strategy import capital_setup, own_costs
     from qlab.pipeline.evaluate import (
         _slice_rows,
         complete_book_window,
@@ -264,13 +295,17 @@ def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries |
     weights = strategy.target_weights(seen, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    net_return = run_backtest(seen, weights, costs, seen.funding,
-                              extra_cost=own_costs(strategy, seen, spec.params)
-                              ).net_return.iloc[first:]
+    capital = capital_setup(strategy, seen, spec.params)
+    result = run_backtest(seen, weights, costs, seen.funding,
+                          extra_cost=own_costs(strategy, seen, spec.params), **capital.kwargs)
+    net_return = result.net_return.iloc[first:]
     held_out = (index[last].date() - cut.day).days if cut_row <= last else 0
     return describe(net_return, idea_id=spec.idea_id,
                     cut=Cut(cut_row, cut.day, cut.source), held_out_days=max(held_out, 0),
-                    regimes=regimes)
+                    regimes=regimes,
+                    capital_return=(None if capital.refused is not None
+                                    else result.capital_return.iloc[first:]),
+                    reinvested=result.capital_reinvested)
 
 
 def _pct(value: float | None) -> str:
@@ -285,6 +320,10 @@ def render(diagnosis: Diagnosis) -> list[str]:
              + (f": {d.first} .. {d.last}, {d.periods} periods." if d.first else "."),
              f"The data after the cut ({d.held_out_days} days) is held out."]
     lines += [f"- note: {n}" for n in d.notes]
+    if d.on_capital and not d.reinvested:
+        lines += ["- note: drawdowns and months are on the strategy's own money: the sum of its "
+                  "returns, depth in points of the capital it started with, not a share of the "
+                  "peak (docs/CAPITAL_BASE.md)"]
     if d.drawdowns:
         lines += ["", "Deepest drawdowns (peak -> trough -> recovery, depth):"]
         lines += [f"- {e.peak} -> {e.trough} -> "

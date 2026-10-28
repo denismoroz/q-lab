@@ -29,6 +29,16 @@ pass). Without stage 1's history the old behaviour stands, and the run's reason 
 
 Stage 1's history is read back by re-running its backtest on the data snapshot of its
 own trial (CPU only: no agent, no tokens, no download, no trial written).
+
+**Both sides on the strategy's own money** (docs/CAPITAL_BASE.md). The stage 2 result and
+stage 1's segments are compared as shares of the capital the strategy started with
+(`cap_total_return`, and stage 1's `capital_return`), summed rather than compounded for a
+strategy that does not reinvest (Bv2). A share of a book whose balance has grown with set-aside
+cash is a smaller share of the money the strategy was given, and stage 1's years of history
+have grown that balance while stage 2's fresh book has not: the old comparison set stage 2's
+result against segments about four times too small (Bv2: «74 из 100» became 42). The
+positivity rule keeps reading the stand's `total_return_net`, which only has to be above zero;
+a run without `cap_total_return`, or a history without a capital series, is compared the old way.
 """
 
 from __future__ import annotations
@@ -77,6 +87,10 @@ class Stage1History:
     """Stage 1's net returns from the date its parameters were fixed (forward)."""
     noise_power: float | None
     """The power of stage 1's own noise comparison, from its trial's metrics."""
+    capital_return: pd.Series | None = None
+    """The same bars as shares of the strategy's own money (None: not known, read the old way)."""
+    reinvested: bool = True
+    """The strategy's declared choice: True compounds the segments, False sums them."""
 
 
 def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
@@ -101,12 +115,15 @@ def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
         raise Stage1HistoryMissing(
             f"stage 1's data snapshot {trial.snapshot_id} cannot be read: {exc}") from exc
     try:
-        net = decay.net_return_on_panel(spec, panel)
+        run = decay.run_on_panel(spec, panel)
     except decay.StandHistoryMissing as exc:
         raise Stage1HistoryMissing(str(exc)) from exc
-    forward = net[net.index >= pd.Timestamp(spec.params_fixed_at, tz="UTC")]
+    since = pd.Timestamp(spec.params_fixed_at, tz="UTC")
+    forward = run.net_return[run.net_return.index >= since]
+    capital = run.capital_return[run.capital_return.index >= since]
     power = (trial.metrics or {}).get("noise_power")
-    return Stage1History(trial_id, forward, None if power is None else float(power))
+    return Stage1History(trial_id, forward, None if power is None else float(power),
+                         capital_return=capital, reinvested=run.reinvested)
 
 
 # --------------------------------------------------------------------------
@@ -126,11 +143,13 @@ class Segments:
     history_to: date | None
 
 
-def segments_of(net_return: pd.Series, window_days: int) -> Segments:
+def segments_of(net_return: pd.Series, window_days: int, additive: bool = False) -> Segments:
     """Every `window_days`-day window of a net-return series (`qlab.decay.rolling_windows`,
-    the one the paper check uses)."""
-    closes = decay.daily_closes(equity_from_returns(decay.trim_flat_start(net_return)))
-    windows = decay.rolling_windows(closes, window_days) if len(closes) > 1 else []
+    the one the paper check uses). `additive`: the series is the strategy's capital return and
+    its profit is not reinvested, so a window's total is the sum of its bars (the gain in
+    points of the capital), not a ratio to what the history held when the window began."""
+    closes = decay.daily_closes(equity_from_returns(decay.trim_flat_start(net_return), additive))
+    windows = decay.rolling_windows(closes, window_days, additive) if len(closes) > 1 else []
     history_days = max(len(closes) - 1, 0)
     return Segments(
         totals=tuple(w.total for w in windows), window_days=window_days,
@@ -170,6 +189,9 @@ class Confirmation:
     independent_segments: int | None = None
     window_days: int | None = None
     total_return: float | None = None
+    """The stage 2 total the segments were compared with (on the strategy's own money when
+    `on_capital`)."""
+    on_capital: bool = False
     stage1_trial_id: int | None = None
     stage1_from: str | None = None
     stage1_to: str | None = None
@@ -266,31 +288,40 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     # power only lets good strategies fail -- it does not let empty ones pass a 99% bar.
 
     days = window_days_of(ctx.metrics, ctx.spec.data.interval)
-    total = ctx.metrics.get(TOTAL_METRIC)
-    if days is None or total is None or total != total:
+    stand_total = ctx.metrics.get(TOTAL_METRIC)
+    if days is None or stand_total is None or stand_total != stand_total:
         return not_applied("the stage 2 window has no total return to compare", **known)
-    seg = segments_of(history.net_return, days)
+    # Both sides on the strategy's own money when both have it and agree on how it grows.
+    cap_total = ctx.metrics.get("cap_total_return")
+    cap_flag = ctx.metrics.get("cap_reinvested")
+    on_capital = (history.capital_return is not None
+                  and isinstance(cap_total, int | float) and cap_total == cap_total
+                  and isinstance(cap_flag, int | float) and bool(cap_flag) == history.reinvested)
+    total = float(cap_total) if on_capital else float(stand_total)
+    seg = segments_of(history.capital_return if on_capital else history.net_return, days,
+                      additive=on_capital and not history.reinvested)
     if len(seg.totals) < decay.MIN_WINDOWS:
         return not_applied(
             f"stage 1's forward history ({seg.history_days} days) holds fewer than "
             f"{decay.MIN_WINDOWS} windows of the stage 2 length ({days} days)",
-            window_days=days, total_return=float(total),
+            window_days=days, total_return=float(total), on_capital=on_capital,
             stage1_noise_power=history.noise_power, **known)
     percentile = decay.percentile_of(float(total), list(seg.totals))
     assert percentile is not None  # the sample is not empty
 
-    result = evaluate_rules({TOTAL_METRIC: float(total), CONSISTENCY_METRIC: percentile},
+    result = evaluate_rules({TOTAL_METRIC: float(stand_total), CONSISTENCY_METRIC: percentile},
                             _rules(ruleset.version, alert))
     failed = set(result.failed_rule_ids)
+    money = " (both on the strategy's own money)" if on_capital else ""
     where = (f"{percentile:.0f} of 100 same-length segments of stage 1's forward history "
              f"(trial {history.trial_id}, {seg.history_from} .. {seg.history_to}, "
              f"{len(seg.totals)} segments, {seg.independent} not overlapping) were worse "
-             f"than {_pct(float(total))} over {days} days; the owner's alarm is the bottom "
-             f"{alert:g} of 100")
+             f"than {_pct(float(total))} over {days} days{money}; "
+             f"the owner's alarm is the bottom {alert:g} of 100")
     base = dict(
         alert_percentile=alert, percentile=percentile, segments=len(seg.totals),
         independent_segments=seg.independent, window_days=days, total_return=float(total),
-        stage1_trial_id=history.trial_id,
+        on_capital=on_capital, stage1_trial_id=history.trial_id,
         stage1_from=seg.history_from.isoformat() if seg.history_from else None,
         stage1_to=seg.history_to.isoformat() if seg.history_to else None,
         noise_power=float(power), stage1_noise_power=history.noise_power,
@@ -299,12 +330,14 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     numbers = {
         "stage1_segment_percentile": percentile, "stage1_segments": float(len(seg.totals)),
         "stage1_independent_segments": float(seg.independent),
+        "stage1_on_capital": 1.0 if on_capital else 0.0,
         "stage1_trial_id": float(history.trial_id), "stage1_alert_percentile": alert,
         "stage1_window_days": float(days)}
     if failed:
         what = []
         if POSITIVE_RULE in failed:
-            what.append(f"its total return after costs, {_pct(float(total)):s}, is not above zero")
+            what.append(
+                f"its total return after costs, {_pct(float(stand_total)):s}, is not above zero")
         if CONSISTENCY_RULE in failed:
             what.append("it is inconsistent with stage 1: " + where)
         reason = "; ".join(what)

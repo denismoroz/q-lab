@@ -28,6 +28,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab.capital_text import CAP_NUMBERS
 from qlab.pipeline.spec import StrategySpec, load_spec
 from qlab.year_view import year_keys, years_line
 
@@ -56,7 +57,7 @@ STOP_STAGES = {"detectors": "определители режима",
 KEY_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "noise_return_percentile",
                "forward_days", "forward_days_needed", "fit_window_days", "noise_power",
                "fit_ann_return_net", "fit_sharpe_net", "fit_max_dd", "selection_days",
-               "ann_return_net_ex_best_1pct")
+               "ann_return_net_ex_best_1pct", *CAP_NUMBERS)
 
 
 @dataclass

@@ -9,8 +9,11 @@ for the console and the morning report.
 * **The judged part** is the one the rules read: the forward test, from the spec's
   `params_fixed_at` (or, for a causal chooser, from its first choice) to the end of the
   data (docs/FIT_VS_FORWARD.md). Nothing before it is drawn: the fit period is not a test.
-* **Money** is the strategy's: the run's net return compounded from zero, a share of the
-  book's own capital, never of the account balance (CLAUDE.md, the money rule).
+* **Money** is the strategy's: the run's `capital_return` (a share of the capital the
+  strategy started with, never of the account balance or of a book balance that has grown
+  with money set aside, CLAUDE.md money rule, docs/CAPITAL_BASE.md) from zero: compounded
+  for a strategy that reinvests its profit, summed for one that does not. The old stand
+  figure (a share of the grown book, compounded) is kept beside as `stand_total_return`.
 * **Two sources, one result.** `evaluate_spec` stores the series of every run that stays
   alive (`STORED_ROUTES`) from the very backtest the verdict rests on. For runs made before
   this existed, `replay` re-runs the stored spec on the stored snapshot -- CPU only, no
@@ -69,44 +72,79 @@ def _drawdown(growth: pd.Series) -> float:
     return float((growth / peak - 1.0).min())
 
 
-def _annual(total: float, days: int) -> float | None:
+def _annual(total: float, days: int, reinvested: bool = True) -> float | None:
     if days <= 0:
         return None
+    if not reinvested:
+        return total * 365.25 / days
     return -1.0 if 1.0 + total <= 0 else (1.0 + total) ** (365.25 / days) - 1.0
+
+
+def _by_day(returns: pd.Series, days: pd.DatetimeIndex, reinvested: bool) -> pd.Series:
+    """Bars of one UTC day as one day's return: compounded, or summed for a book whose profit
+    is not reinvested."""
+    values = returns.astype(float)
+    if reinvested:
+        return (1.0 + values).groupby(days).prod() - 1.0
+    return values.groupby(days).sum()
+
+
+def _curve(daily: pd.Series, reinvested: bool) -> pd.Series:
+    """The cumulative fraction from zero, day by day."""
+    return (1.0 + daily).cumprod() - 1.0 if reinvested else daily.cumsum()
 
 
 def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: str | None,
                   net_return: pd.Series, hold_return: pd.Series | None,
                   hold_coins: list[str] | None = None, source: str = "evaluate",
-                  recorded_total: float | None = None) -> dict[str, Any]:
+                  recorded_total: float | None = None,
+                  capital_return: pd.Series | None = None, reinvested: bool = True,
+                  recorded_capital_total: float | None = None) -> dict[str, Any]:
     """The judged part's money by day, as a plain mapping that `save` writes.
 
-    `net_return` is the harness's per-bar net return (indexed by decision time); bars of
-    one UTC day are compounded into one point. `points` are `[date, strategy, hold]`,
-    cumulative fractions from zero (0.05 is +5% of the strategy's capital), the first
-    point being the zero line on the eve of the first day. `hold` is null when the
-    book holds nothing. `recorded_total` is the trial's own `total_return_net` for the
-    same part; `matches_trial` says whether this series reproduces it."""
+    The line is drawn from `capital_return` (the stand's `net_return` when none is given):
+    each bar's share of the capital the strategy started with, indexed by decision time. Bars
+    of one UTC day are compounded into one point, or summed when `reinvested` is False (a
+    strategy that does not put its profit back into positions, docs/CAPITAL_BASE.md); the
+    dotted "just hold the coins" line is read the same way. `points` are `[date, strategy,
+    hold]`, cumulative fractions from zero (0.05 is +5% of the strategy's capital), the first
+    point being the zero line on the eve of the first day. `hold` is null when the book holds
+    nothing. `stand_total_return` is the old reading of the same bars (compounded shares of
+    the book's grown equity). `recorded_total` is the trial's own `total_return_net` for the
+    same part and `recorded_capital_total` its `cap_total_return`; `matches_trial` says whether
+    this series reproduces the capital one when the trial recorded it, else the stand one."""
     if len(net_return) == 0:
         raise ValueError("no returns to draw")
-    days = pd.DatetimeIndex(net_return.index).tz_convert("UTC").normalize()
-    daily = (1.0 + net_return.astype(float)).groupby(days).prod() - 1.0
-    growth = (1.0 + daily).cumprod()
-    hold_growth = None
+    drawn = net_return if capital_return is None else capital_return
+    days = pd.DatetimeIndex(drawn.index).tz_convert("UTC").normalize()
+    curve = _curve(_by_day(drawn, days, reinvested), reinvested)
+    stand_total = float((1.0 + net_return.astype(float)).prod()) - 1.0
+    hold_curve = None
     if hold_return is not None:
-        hold_daily = (1.0 + hold_return.reindex(net_return.index).fillna(0.0).astype(float)
-                      ).groupby(days).prod() - 1.0
-        hold_growth = (1.0 + hold_daily).cumprod()
+        hold_curve = _curve(
+            _by_day(hold_return.reindex(drawn.index).fillna(0.0), days, reinvested), reinvested)
 
-    first_day = growth.index[0]
+    first_day = curve.index[0]
     points: list[list[Any]] = [[(first_day - pd.Timedelta(days=1)).date().isoformat(), 0.0,
-                                None if hold_growth is None else 0.0]]
-    for day in growth.index:
-        points.append([day.date().isoformat(), float(growth[day]) - 1.0,
-                       None if hold_growth is None else float(hold_growth[day]) - 1.0])
-    n_days = int((growth.index[-1] - first_day).days) + 1
-    total = float(growth.iloc[-1]) - 1.0
-    hold_total = None if hold_growth is None else float(hold_growth.iloc[-1]) - 1.0
+                                None if hold_curve is None else 0.0]]
+    for day in curve.index:
+        points.append([day.date().isoformat(), float(curve[day]),
+                       None if hold_curve is None else float(hold_curve[day])])
+    n_days = int((curve.index[-1] - first_day).days) + 1
+    total = float(curve.iloc[-1])
+    hold_total = None if hold_curve is None else float(hold_curve.iloc[-1])
+    if reinvested:
+        max_dd = _drawdown(1.0 + curve)
+    else:
+        max_dd = float((curve - curve.cummax().clip(lower=0.0)).min())
+    if recorded_capital_total is not None:
+        matches: bool | None = abs(total - recorded_capital_total) <= MATCH_TOLERANCE
+        recorded = recorded_capital_total
+    elif recorded_total is not None:
+        matches = abs(stand_total - recorded_total) <= MATCH_TOLERANCE
+        recorded = recorded_total
+    else:
+        matches, recorded = None, None
     return {
         "format": FORMAT,
         "trial_id": trial_id,
@@ -114,20 +152,22 @@ def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: s
         "venue": venue,
         "interval": interval,
         "start": first_day.date().isoformat(),
-        "end": growth.index[-1].date().isoformat(),
+        "end": curve.index[-1].date().isoformat(),
         "days": n_days,
+        "base": "strategy_capital" if capital_return is not None else "stand",
+        "reinvested": reinvested,
         "total_return": total,
-        "ann_return": _annual(total, n_days),
-        "max_dd": _drawdown(growth),
+        "ann_return": _annual(total, n_days, reinvested),
+        "max_dd": max_dd,
+        "stand_total_return": stand_total,
         "hold_total": hold_total,
-        "hold_ann": None if hold_total is None else _annual(hold_total, n_days),
+        "hold_ann": None if hold_total is None else _annual(hold_total, n_days, reinvested),
         "hold_coins": hold_coins,
         "points": points,
         "built_by": source,
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "recorded_total": recorded_total,
-        "matches_trial": (None if recorded_total is None
-                          else abs(total - recorded_total) <= MATCH_TOLERANCE),
+        "recorded_total": recorded,
+        "matches_trial": matches,
     }
 
 
@@ -152,6 +192,7 @@ def load(trial_id: int, store: Path | None = None) -> dict[str, Any] | None:
 
 def store_from_run(*, trial_id: int, spec: Any, result: Any, part_panel: Any,
                    part_weights: pd.DataFrame, recorded_total: float | None,
+                   recorded_capital_total: float | None = None, on_capital: bool = True,
                    store: Path | None = None) -> Path:
     """Write the series of a run `evaluate_spec` has just made, from the very backtest
     result the verdict rests on."""
@@ -161,7 +202,10 @@ def store_from_run(*, trial_id: int, spec: Any, result: Any, part_panel: Any,
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
         hold_return=hold_returns(part_panel.prices, part_weights, result.net_return.index),
-        hold_coins=held_coins(part_weights), source="evaluate", recorded_total=recorded_total)
+        hold_coins=held_coins(part_weights), source="evaluate", recorded_total=recorded_total,
+        capital_return=result.capital_return if on_capital else None,
+        reinvested=result.capital_reinvested if on_capital else True,
+        recorded_capital_total=recorded_capital_total if on_capital else None)
     return save(payload, store)
 
 
@@ -228,7 +272,7 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
     from qlab.harness.costs import CostModel
     from qlab.harness.metrics import held_coins, hold_returns
     from qlab.harness.run import run_backtest
-    from qlab.harness.strategy import own_costs
+    from qlab.harness.strategy import capital_setup, own_costs
     from qlab.pipeline.evaluate import (
         _slice_rows,
         complete_book_window,
@@ -276,20 +320,27 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
         costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                           slippage_bps=spec.costs.slippage_bps)
         extra_cost = own_costs(strategy, panel, spec.params)
+        capital = capital_setup(strategy, panel, spec.params)
         lo, hi = rows.split.forward
         part_panel = _slice_rows(panel, lo, hi)
         part_weights = weights.iloc[lo:hi + 1]
         result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
-                              extra_cost=extra_cost)
+                              extra_cost=extra_cost, **capital.kwargs)
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary
         return Replay(None, f"прогон не удалось повторить: {type(exc).__name__}: {exc}")
     recorded = trial.metrics.get("total_return_net")
+    recorded_capital = trial.metrics.get("cap_total_return")
+    drawn_on_capital = capital.refused is None
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
         hold_return=hold_returns(part_panel.prices, part_weights, result.net_return.index),
         hold_coins=held_coins(part_weights), source="rebuild",
-        recorded_total=recorded if isinstance(recorded, int | float) else None)
+        recorded_total=recorded if isinstance(recorded, int | float) else None,
+        capital_return=result.capital_return if drawn_on_capital else None,
+        reinvested=result.capital_reinvested if drawn_on_capital else True,
+        recorded_capital_total=(recorded_capital if drawn_on_capital
+                                and isinstance(recorded_capital, int | float) else None))
     return Replay(payload)
 
 

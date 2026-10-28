@@ -21,6 +21,8 @@ for the same reason (rules 2026-10-27.2, docs/YEARS.md).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 
@@ -170,8 +172,13 @@ def effective_profitable_days_share(net_return: pd.Series) -> float:
     return effective_profitable_days(net_return) / n
 
 
-def ann_return_net_ex_best_1pct(net_return: pd.Series) -> float:
+def ann_return_net_ex_best_1pct(net_return: pd.Series, *, additive: bool = False) -> float:
     """Annualised net return recomputed with the best 1% of days removed.
+
+    `additive` (docs/CAPITAL_BASE.md): the bars are shares of a constant capital, so days
+    are summed instead of compounded and the annual figure is the sum scaled by
+    `periods_per_year / n_remaining`, never a power. The default is the stand's own
+    compounding.
 
     NOT parameter-free -- unlike `fragility_days`, this bakes in a specific
     fraction (1%) chosen because it is the form most readers expect
@@ -213,7 +220,8 @@ def ann_return_net_ex_best_1pct(net_return: pd.Series) -> float:
         # days", as above. On hourly bars the best 1% of HOURS -- 41 of
         # 4,081 -- is where any crypto holding earns: BTC held 2026-05..10
         # read +1.2% a year and -81% without them (fixed 2026-10-24).
-        net_return = (1.0 + net_return).resample("1D").prod() - 1.0
+        net_return = (net_return.resample("1D").sum() if additive
+                      else (1.0 + net_return).resample("1D").prod() - 1.0)
     n = len(net_return)
     if n < 2:
         return float("nan")
@@ -225,6 +233,8 @@ def ann_return_net_ex_best_1pct(net_return: pd.Series) -> float:
     if n_remaining == 0:
         return float("nan")
 
+    if additive:
+        return float(remaining.sum() * ppy / n_remaining)
     total_growth = float((1.0 + remaining).prod())
     return -1.0 if total_growth <= 0.0 else total_growth ** (ppy / n_remaining) - 1.0
 
@@ -239,9 +249,16 @@ SHARPE_YEAR_DAYS = 60
 few weeks' mean to their spread says nothing."""
 
 
-def year_breakdown(net_return: pd.Series) -> dict[str, float]:
+def year_breakdown(net_return: pd.Series, *, additive: bool = False) -> dict[str, float]:
     """The judged part's result year by year, and three summaries of how evenly the
     years share it. Flat numeric keys, because `trial.metrics` is a flat mapping.
+
+    `additive` (docs/CAPITAL_BASE.md): the bars are shares of the strategy's constant
+    capital and profit is not reinvested, so a year's return is the SUM of its bars, its
+    fall is measured in points of the capital from the year's running peak (the year
+    starts at 0), and "without the best year" sums what remains and scales it by
+    `periods_per_year / bars` instead of raising a growth to a power. The default is the
+    stand's own compounding; the keys are the same either way.
 
     Per calendar year `Y` (UTC) present in the series:
         year_Y_return: the year's compounded net return, `(1 + r).prod() - 1`. NOT
@@ -279,10 +296,16 @@ def year_breakdown(net_return: pd.Series) -> dict[str, float]:
     for year, bars in net_return.groupby(net_return.index.year):
         year = int(year)
         days = int(bars.index.normalize().nunique())
-        equity = (1.0 + bars).cumprod()
-        out[f"year_{year}_return"] = float(equity.iloc[-1] - 1.0)
+        if additive:
+            curve = bars.cumsum()
+            out[f"year_{year}_return"] = float(curve.iloc[-1])
+            out[f"year_{year}_max_dd"] = float((curve - curve.cummax().clip(lower=0.0)).min())
+        else:
+            equity = (1.0 + bars).cumprod()
+            out[f"year_{year}_return"] = float(equity.iloc[-1] - 1.0)
+            out[f"year_{year}_max_dd"] = float(
+                (equity / equity.cummax().clip(lower=1.0) - 1.0).min())
         out[f"year_{year}_days"] = days
-        out[f"year_{year}_max_dd"] = float((equity / equity.cummax().clip(lower=1.0) - 1.0).min())
         std = bars.std(ddof=1)
         if days >= SHARPE_YEAR_DAYS and len(bars) >= 2 and std and not pd.isna(std):
             out[f"year_{year}_sharpe"] = float(bars.mean() / std * np.sqrt(ppy))
@@ -299,9 +322,12 @@ def year_breakdown(net_return: pd.Series) -> dict[str, float]:
 
     best = max(counted, key=lambda year: counted[year])
     rest = net_return[net_return.index.year != best]
-    growth = float((1.0 + rest).prod())
-    out["ann_return_net_ex_best_year"] = (
-        -1.0 if growth <= 0.0 else growth ** (ppy / len(rest)) - 1.0)
+    if additive:
+        out["ann_return_net_ex_best_year"] = float(rest.sum() * ppy / len(rest))
+    else:
+        growth = float((1.0 + rest).prod())
+        out["ann_return_net_ex_best_year"] = (
+            -1.0 if growth <= 0.0 else growth ** (ppy / len(rest)) - 1.0)
     total = float(net_return.sum())
     if total > 0.0:
         out["best_year_share_of_profit"] = float(
@@ -448,6 +474,115 @@ def compute_metrics(result: RunResult) -> dict[str, float]:
         "effective_profitable_days": effective_profitable_days(r),
         "effective_profitable_days_share": effective_profitable_days_share(r),
     }
+
+
+# ---- the same summaries on the strategy's own money (docs/CAPITAL_BASE.md) -----------------
+
+#: A stand key whose capital twin is not simply `cap_<key>`.
+_CAP_RENAMED = {
+    "ann_return_net": "cap_ann_return",
+    "total_return_net": "cap_total_return",
+    "sharpe_net": "cap_sharpe",
+    "max_dd": "cap_max_dd",
+    "ann_return_net_ex_best_1pct": "cap_ann_return_ex_best_1pct",
+    "ann_return_net_ex_best_year": "cap_ann_return_ex_best_year",
+    "best_year_share_of_profit": "cap_best_year_share_of_profit",
+}
+CAP_STAND_KEYS = {v: k for k, v in _CAP_RENAMED.items()}
+"""The stand key each non-year `cap_` key is the capital twin of."""
+CAP_REINVESTED = "cap_reinvested"
+"""1.0 when the run's capital summaries compound (the book reinvests its profit), 0.0 when they
+sum (it does not)."""
+
+
+def cap_key(stand_key: str) -> str:
+    """The capital twin of a stand metric key: `ann_return_net` -> `cap_ann_return`,
+    `year_2025_return` -> `cap_year_2025_return`, `years_positive_share` ->
+    `cap_years_positive_share`."""
+    if stand_key in _CAP_RENAMED:
+        return _CAP_RENAMED[stand_key]
+    return f"cap_{stand_key}"
+
+
+def stand_key_of(key: str) -> str | None:
+    """The stand key a `cap_` key is the twin of; None for a key that is not one."""
+    if key in CAP_STAND_KEYS:
+        return CAP_STAND_KEYS[key]
+    if key.startswith("cap_year_") or key.startswith("cap_years_"):
+        return key[len("cap_"):]
+    return None
+
+
+def as_stand_keys(metrics: Mapping[str, object] | None) -> dict[str, object]:
+    """The `cap_` entries of `metrics` under the stand's own key names: `cap_year_2025_return`
+    becomes `year_2025_return`, `cap_ann_return` becomes `ann_return_net`. What the year view
+    and the four year signs read, so they can be asked of the capital summaries with the code
+    that reads the stand's. Entries that are not capital twins are left out."""
+    out: dict[str, object] = {}
+    for key, value in (metrics or {}).items():
+        twin = stand_key_of(key)
+        if twin is not None:
+            out[twin] = value
+    return out
+
+
+def capital_metrics(result: RunResult) -> dict[str, float]:
+    """The run's summaries on the strategy's own money, `cap_` keys beside the stand's.
+
+    The series is `result.capital_return`: each bar's dollars over the capital the strategy
+    started with (the stand's share times the strategy's `own_base`; just the stand's share
+    for a book whose weights already are shares of that capital). Whether profit is
+    reinvested is the strategy's declared property (`result.capital_reinvested`):
+
+      * reinvested (a trend book resizes its positions to all its money): compounded, exactly
+        the stand's formulas, so on a base of 1 every `cap_` figure equals its stand twin;
+      * not reinvested (Bv2 sets cash aside, FRAB and spot run on a constant budget, XSMOM
+        live runs on a fixed budget): bars are summed, never compounded. The total is the sum,
+        "per year" is the sum scaled by `periods_per_year / n`, the deepest fall is the fall
+        of the running profit from its peak in points of the capital (the curve starts at 0,
+        so the fall from the start counts), and the "without the best ..." summaries sum what
+        remains.
+
+    Keys: `cap_ann_return`, `cap_total_return`, `cap_sharpe`, `cap_max_dd`,
+    `cap_ann_return_ex_best_1pct`, `cap_reinvested`, and the year view under `cap_year_*`,
+    `cap_years_*`, `cap_ann_return_ex_best_year`, `cap_best_year_share_of_profit` (keys with
+    an undefined value are left out, as in `year_breakdown`).
+
+    Raises:
+        ValueError: `result.capital_return` is empty.
+    """
+    r = result.capital_return
+    n = len(r)
+    if n == 0:
+        raise ValueError("cannot compute capital metrics from an empty capital_return series")
+    additive = not result.capital_reinvested
+    out: dict[str, float] = {CAP_REINVESTED: 0.0 if additive else 1.0}
+    growth = float((1.0 + r).prod())
+    total = float(r.sum()) if additive else growth - 1.0
+    out[cap_key("total_return_net")] = total
+    if n < 2:
+        out[cap_key("ann_return_net")] = float("nan")
+        out[cap_key("sharpe_net")] = float("nan")
+    else:
+        ppy = periods_per_year(r.index)
+        if additive:
+            ann = total * ppy / n
+        else:
+            ann = -1.0 if growth <= 0.0 else growth ** (ppy / n) - 1.0
+        std = r.std(ddof=1)
+        out[cap_key("ann_return_net")] = float(ann)
+        out[cap_key("sharpe_net")] = (
+            float("nan") if not std or pd.isna(std) else float(r.mean() / std * np.sqrt(ppy)))
+    if additive:
+        curve = r.cumsum()
+        out[cap_key("max_dd")] = float((curve - curve.cummax().clip(lower=0.0)).min())
+    else:
+        equity = (1.0 + r).cumprod()
+        out[cap_key("max_dd")] = float((equity / equity.cummax() - 1.0).min())
+    out[cap_key("ann_return_net_ex_best_1pct")] = ann_return_net_ex_best_1pct(
+        r, additive=additive)
+    out.update({cap_key(k): v for k, v in year_breakdown(r, additive=additive).items()})
+    return out
 
 
 def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float) -> float:

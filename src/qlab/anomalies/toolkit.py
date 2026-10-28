@@ -445,23 +445,29 @@ def compare_venues(session: Session, idea_id: str, *, coins: int = 6) -> Output:
     the months side by side, and each stage's best-earning coins over that window with whether
     the other venue lists them."""
     from qlab import forward_series
-    from qlab.anomalies.scan import trial_daily_returns
+    from qlab.anomalies.scan import trial_daily_capital
 
     found = forward_series.stage_runs(session, idea_id)
     if found is None or not found[0] or any(s.trial_id is None for s in found[1]):
         return Output([f"{idea_id} has no two-stage answer (stage 1 and stage 2 both run) in "
                        "the registry"], {})
     s1, s2 = found[1][0], found[1][1]
-    a, b = (trial_daily_returns(session, s.trial_id) for s in (s1, s2))
-    if a is None or b is None:
+    # Both stages on the strategy's own money (docs/CAPITAL_BASE.md), summed when it does not
+    # reinvest its profit.
+    pair = [trial_daily_capital(session, s.trial_id) for s in (s1, s2)]
+    if pair[0] is None or pair[1] is None:
         return Output(["a stage's daily series could not be built"], {})
+    (a, reinvested_a), (b, reinvested_b) = pair
+    if reinvested_a != reinvested_b:
+        return Output(["the two stages do not agree on whether the profit is reinvested: "
+                       "their totals are not comparable"], {})
     common = a.index.intersection(b.index)
     if len(common) == 0:
         return Output(["the two stages share no days"], {})
     a, b = a.loc[common], b.loc[common]
 
     def tot(r: pd.Series) -> float:
-        return float((1 + r).prod() - 1)
+        return float(r.sum()) if not reinvested_a else float((1 + r).prod() - 1)
 
     corr = float(a.corr(b)) if a.std() > 0 and b.std() > 0 else float("nan")
     lines = [f"{idea_id}: stage 1 = {s1.idea_id} (trial {s1.trial_id}, {s1.source}), stage 2 = "
@@ -469,9 +475,15 @@ def compare_venues(session: Session, idea_id: str, *, coins: int = 6) -> Output:
              f"common window: {common.min().date()} to {common.max().date()} ({len(common)} days)",
              f"total return over it: stage 1 {_pct(tot(a))}, stage 2 {_pct(tot(b))}; "
              f"correlation of daily returns {corr:.2f}", "",
-             "by month (compounded):"]
-    months = pd.DataFrame({"s1": (1 + a).groupby([a.index.year, a.index.month]).prod() - 1,
-                           "s2": (1 + b).groupby([b.index.year, b.index.month]).prod() - 1})
+             "by month (" + ("compounded" if reinvested_a else "summed, on the strategy's own "
+                             "money") + "):"]
+
+    def by_month(r: pd.Series) -> pd.Series:
+        grouped = r.groupby([r.index.year, r.index.month])
+        return (1 + r).groupby([r.index.year, r.index.month]).prod() - 1 if reinvested_a \
+            else grouped.sum()
+
+    months = pd.DataFrame({"s1": by_month(a), "s2": by_month(b)})
     lines += _table(["month", "stage 1", "stage 2", "difference"], [
         [f"{y}-{m:02d}", _pct(r.s1), _pct(r.s2), _pct(r.s1 - r.s2)]
         for (y, m), r in months.iterrows()][-MAX_ROWS:])

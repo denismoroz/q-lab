@@ -32,6 +32,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from qlab.harness.panel import MarketPanel
+from qlab.strategies._inner import InnerCapital
 
 _REQUIRED = ("inner_code_ref", "inner_params", "trade_in")
 
@@ -85,7 +86,7 @@ def open_at(index: pd.DatetimeIndex, labels: pd.Series, trade_in: set[str]):
     return at_bar.isin(trade_in).to_numpy()
 
 
-class RegimeGate:
+class RegimeGate(InnerCapital):
     name = "regime-gate"
 
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:

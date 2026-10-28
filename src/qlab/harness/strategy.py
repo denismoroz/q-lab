@@ -24,6 +24,7 @@ nothing stops a `target_weights` implementation from reading
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import pandas as pd
@@ -167,6 +168,7 @@ def validate_weights(panel: MarketPanel, weights: pd.DataFrame) -> None:
             f"{first_row} in {first_cols}"
         )
 
+
 def own_costs(strategy: object, panel: MarketPanel, params: Mapping[str, object]
               ) -> pd.Series | None:
     """The costs a strategy pays that are not a rate on turnover -- a flat fee for
@@ -176,3 +178,68 @@ def own_costs(strategy: object, panel: MarketPanel, params: Mapping[str, object]
     `qlab.harness.run.run_backtest(extra_cost=...)`."""
     method = getattr(strategy, "extra_costs", None)
     return method(panel, params) if callable(method) else None
+
+
+class CapitalBaseRefused(ValueError):
+    """A strategy cannot say what its base is in this configuration (Bv2 with deposits: the
+    strategy's capital would grow with every payment, and what "100%" then means is the
+    owner's decision, docs/CAPITAL_BASE.md)."""
+
+
+def own_base(strategy: object, panel: MarketPanel, params: Mapping[str, object]
+             ) -> pd.Series | None:
+    """The base of the strategy's weights at each bar, as a multiple of the capital it
+    started with (docs/CAPITAL_BASE.md), or None when its weights already are shares of that
+    capital (it defines no `own_base(panel, params)`). Every caller that backtests a strategy
+    asks this beside `own_costs` (through `capital_setup`) and hands the answer to
+    `qlab.harness.run.run_backtest(capital_base=...)`.
+
+    The stand's weights are shares of the book's equity at the bar; a book that sets money
+    aside (Bv2's ratchet) has an equity that grows while its positions do not, so a share
+    of it is a smaller share of the money the strategy was given. The base is that equity
+    over that money. Raises `CapitalBaseRefused` for a configuration whose base is not
+    defined."""
+    method = getattr(strategy, "own_base", None)
+    return method(panel, params) if callable(method) else None
+
+
+def profit_reinvested(strategy: object, params: Mapping[str, object]) -> bool:
+    """Whether the strategy puts its profit back into positions (docs/CAPITAL_BASE.md), so
+    that its bars compound; False when it does not and they are summed.
+
+    It is the strategy's declared property, never guessed: a class attribute
+    `reinvests_profit: bool`, or, for a wrapper whose answer is its inner strategy's, a
+    method `profit_reinvested(params)`. A strategy that declares nothing is reinvesting: the
+    stand's compounding, as it was before the declaration existed."""
+    method = getattr(strategy, "profit_reinvested", None)
+    if callable(method):
+        return bool(method(params))
+    return bool(getattr(strategy, "reinvests_profit", True))
+
+
+@dataclass(frozen=True)
+class CapitalSetup:
+    """What a backtest needs to read a run on the strategy's own money."""
+
+    base: pd.Series | None
+    reinvested: bool
+    refused: str | None = None
+    """Why the base is refused (`CapitalBaseRefused`), or None. A refused run has no capital
+    summaries: the caller leaves the `cap_` metrics out instead of passing off the stand's
+    as the strategy's."""
+
+    @property
+    def kwargs(self) -> dict[str, object]:
+        """The keyword arguments `run_backtest` takes."""
+        return {"capital_base": self.base, "capital_reinvested": self.reinvested}
+
+
+def capital_setup(strategy: object, panel: MarketPanel, params: Mapping[str, object]
+                  ) -> CapitalSetup:
+    """The strategy's base and its declared reinvest choice, for `run_backtest(**setup.kwargs)`
+    (the sibling of `own_costs`)."""
+    reinvested = profit_reinvested(strategy, params)
+    try:
+        return CapitalSetup(own_base(strategy, panel, params), reinvested)
+    except CapitalBaseRefused as exc:
+        return CapitalSetup(None, reinvested, refused=str(exc))
