@@ -131,7 +131,7 @@ live_books:
   # is not this number, the night refuses to build the series until the owner aligns them.
   # Budget 120 and five slots since 2026-10-27 (was 90 and four): the owner changed the row on
   # the host between 01:50 and 05:01 UTC that day (the export of 01:50 still had 90; the fifth
-  # position, SOL, opened at 05:01). Asked whether he made the change, the owner, 2026-10-28:
+  # position, SOL, opened at 05:01). Asked whether they made the change, the owner, 2026-10-28:
   # «да я». A budget is a base of every percent, so the realised period starts again at the
   # first hour surely under the new budget; the stretch 2026-10-10 -- 2026-10-27 on 90
   # (+0.10%, docs/research/frab-second-opinion-2026-10-28.md) stays in the exports of those
