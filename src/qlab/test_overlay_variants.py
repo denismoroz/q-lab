@@ -69,7 +69,11 @@ def test_meta_gate_is_offered_only_where_decisions_are_declared() -> None:
 def test_a_variant_id_names_its_base_and_its_overlays() -> None:
     assert ov.variant_id("xsmom-causal", ("own_results", "gradual_entry")) == \
         "xsmom-causal-ov-own-enter"
-    assert ov.variant_id("b", ("vol_target",), "d30-max1") == "b-ov-vol-d30-max1"
+    point = ov.point_slug("vol_target:d30-max1")
+    assert point == "vol-d30-max1" and ov.variant_id("b", ("vol_target",), point) == \
+        "b-ov-vol-d30-max1"
+    pair = ov.point_slug("own_results:w30-f0.5-smooth-up7+gradual_entry:k2-d3-plain")
+    assert pair == "own-w30-f0p5-smooth-up7_enter-k2-d3-plain"
     assert ov.base_of("xsmom-causal-ov-own-enter") == "xsmom-causal"
     assert ov.base_of("xsmom-causal") is None and ov.is_variant_id("a-ov-b")
 
@@ -163,9 +167,10 @@ def test_a_fixed_variant_is_one_point_of_the_family_on_the_bases_own_dates() -> 
     base = synthetic_base(params_fixed_at="2023-01-15",
                           params_fixed_evidence="docs/OVERLAYS.md: the day the numbers were fixed")
     point = get("gradual_entry").grid()["k3-d7-profit"]
-    spec = ov.build_variant(base, ("gradual_entry",), base_cite="docs/OVERLAYS.md",
-                            kind=ov.KIND_FIXED,
-                            point=("k3-d7-profit", [{"name": "gradual_entry", "params": point}]))
+    spec = ov.build_variant(
+        base, ("gradual_entry",), base_cite="docs/OVERLAYS.md", kind=ov.KIND_FIXED,
+        point=(ov.point_slug("gradual_entry:k3-d7-profit"),
+               [{"name": "gradual_entry", "params": point}]))
     assert spec.code_ref == ov.OVERLAID and not spec.selects_causally
     assert spec.params_fixed_at == base.params_fixed_at
     assert spec.idea_id == "toy-ov-enter-k3-d7-profit"

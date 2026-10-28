@@ -2445,6 +2445,10 @@ def overlays_run_cmd(
     data_end: str = typer.Option(
         "base", "--data-end", help="'base': each base's last run, so no snapshot is fetched "
         "(default); 'night': the last closed day"),
+    fixed: bool = typer.Option(
+        False, "--fixed", help="Variants with FIXED numbers instead of the monthly causal choice: "
+        "one idea per point of the family of each chain named with --chain (every point is a "
+        "trial; read the family as a whole, never its best point)"),
     stage2: bool = typer.Option(
         False, "--stage2/--no-stage2", help="Also send a variant that survives stage 1 to the "
         "second stage on Hyperliquid (fetches that venue's candles unless a snapshot exists)"),
@@ -2468,7 +2472,8 @@ def overlays_run_cmd(
     overlay_stage.overlays_stage(
         day, end, state, noise_trials=noise_trials, deployable_capital_usd=capital,
         only=set(only) or None, chains_only=set(chain) or None, max_variants=max_variants,
-        data_end=data_end, second_stage=stage2, dry_run=dry_run)
+        data_end=data_end, second_stage=stage2, dry_run=dry_run,
+        kinds=("fixed",) if fixed else ("causal",))
     for line in overlay_stage.report_lines(state.get("overlays")):
         typer.echo(line)
     for name, text in (state.get("stage_errors") or {}).items():

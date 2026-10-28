@@ -92,9 +92,10 @@ def chains(overlay_names: Sequence[str]) -> list[tuple[str, ...]]:
 
 
 def variant_id(base_id: str, chain: Sequence[str], point: str | None = None) -> str:
-    """`<base>-ov-<short>[-<short>][-<point label>]`."""
-    slug = "-".join(get(n).short for n in chain)
-    return f"{base_id}{INFIX}{slug}" + (f"-{point}" if point else "")
+    """`<base>-ov-<short>[-<short>]` for a causal variant; a fixed one is named by its point
+    (`point_slug`, which already carries the overlays' short names): `<base>-ov-<point>`."""
+    slug = point or "-".join(get(n).short for n in chain)
+    return f"{base_id}{INFIX}{slug}"
 
 
 def family(chain: Sequence[str], extra_grids: Mapping[str, Mapping] | None = None
@@ -115,6 +116,16 @@ def family(chain: Sequence[str], extra_grids: Mapping[str, Mapping] | None = Non
         label = "+".join(f"{name}:{point_label}" for name, point_label, _ in combo)
         out[label] = [{"name": name, "params": params} for name, _, params in combo]
     return out
+
+
+def point_slug(label: str) -> str:
+    """A family label (`own_results:w30-f0.5-smooth-up7+gradual_entry:k2-d3-plain`) as the tail of
+    an idea id: short overlay names, no characters that are awkward in a file name or a URL."""
+    parts = []
+    for part in label.split("+"):
+        name, _, point = part.partition(":")
+        parts.append(f"{get(name).short}-{point}".replace(".", "p"))
+    return "_".join(parts)
 
 
 def family_warmup_days(candidates: Mapping[str, list[dict]]) -> float:
@@ -332,4 +343,4 @@ def write_variant(spec_dir: Path, base_id: str, spec: StrategySpec) -> Path:
 __all__ = ["CANONICAL_ORDER", "INFIX", "KIND_CAUSAL", "KIND_FIXED", "OVERLAID", "TITLE_RU",
            "available_overlays", "base_of", "build_variant", "chains", "family",
            "family_warmup_days", "first_trading_day", "forward_start", "is_variant_id",
-           "variant_id", "variant_path", "variant_yaml", "write_variant"]
+           "point_slug", "variant_id", "variant_path", "variant_yaml", "write_variant"]

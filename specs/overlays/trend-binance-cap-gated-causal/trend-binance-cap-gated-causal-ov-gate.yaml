@@ -1,0 +1,208 @@
+# Overlay variant of trend-binance-cap-gated-causal (qlab overlays, src/qlab/overlay_variants.py):
+# the same strategy with a chain of overlays on its weights (docs/OVERLAYS.md).
+# Written by code, not by hand.
+idea_id: trend-binance-cap-gated-causal-ov-gate
+title: 'Trend по капитализации на Binance 2019–2026, торгует только на росте и падении (определитель режима
+  только по прошлому): числа выбирает код раз в месяц только по прошлому, история Binance с 2019: надстройки
+  — не торговать в одном из рыночных состояний'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.overlays:Overlaid
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+      base_params:
+        inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+        inner_params:
+          coins: null
+          top_k_by_market_cap: 25
+          exclude_tags:
+          - stablecoin
+          top_k_requires_history: true
+          capital_usd: 3000.0
+          lookbacks:
+          - 30
+          - 60
+          - 90
+          - 120
+          vol_window: 30
+          vol_target_daily: 0.02
+          leverage_cap: 3.0
+          risk_scale: 0.2
+          book_vol_target_ann: 0.14
+          book_vol_window_days: 60
+          book_vol_min_days: 20
+          book_vol_scale_min: 0.25
+          book_vol_scale_max: 2.0
+          book_vol_prior_ann: 0.3
+          min_history_days: 151
+      grid:
+        gate:
+          always:
+            trade_in:
+            - bull
+            - flat
+            - bear
+          only_bull_bear:
+            trade_in:
+            - bull
+            - bear
+      refit_every: M
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 3.5
+        slippage_bps: 0.9
+    overlays: []
+    costs:
+      taker_fee_bps: 3.5
+      slippage_bps: 0.9
+  grid:
+    overlay:
+      market_gate:skip-bull:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - flat
+            - bear
+      market_gate:skip-flat:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - bear
+      market_gate:skip-bear:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - flat
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-10-26'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of trend-binance-cap-gated: the numbers it trades are chosen by code, every month, from
+  returns realised before the choice (the base trend-binance-cap against its regime-gated experiment);
+  the data is Binance''s history, a proxy for binance''s market, with the original''s costs and minimum
+  leg.'
+- 'Overlay variant of trend-binance-cap-gated-causal (qlab.overlay_variants, docs/OVERLAYS.md): the same
+  strategy with market_gate applied to its target weights; the strategy''s own numbers are untouched.
+  The numbers of the overlays are chosen by code every month from the past only.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2020-07-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  base can first trade on 2020-04-01; the longest warm-up of the overlay family (market_gate) is 30 days,
+  so the overlay can first act on 2020-05-01; a candidate is eligible only after one whole month re-tuning
+  period, so the first re-tuning after 2020-05-01 is 2020-06-01 and the first choice is made at the one
+  after it, 2020-07-01. The family is declared whole in docs/OVERLAYS.md before any run: 3 candidates,
+  none chosen by looking at the data it is judged on. What this does not prove: the family itself (which
+  overlays and which settings are offered) was written by people who had seen the market.'
+sources:
+  base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
+    «раз в неделю/день или месяц»'
+  base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  base_params.inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/trend-binance-cap-gated.yaml: the same window end'
+  base_params.inner_params.base_params.inner_params.top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule
+    declared 2026-10-02: 25 largest, stablecoins excluded)'
+  base_params.inner_params.base_params.inner_params.exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared
+    2026-10-02: 25 largest, stablecoins excluded)'
+  base_params.inner_params.base_params.inner_params.top_k_requires_history: docs/TREND_LIVE_REPLAY.md
+    (the 151-day rule, owner 2026-10-02)
+  base_params.inner_params.base_params.inner_params.coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_code_ref: src/qlab/strategies/live/trend.py
+  base_params.inner_params.inner_code_ref: 'src/qlab/strategies/regime_gate.py: the wrapper of trend-binance-cap-gated'
+  base_params.inner_params.grid.gate.always: 'specs/trend-binance-cap.yaml: the unchanged book of trend-binance-cap,
+    every regime traded'
+  base_params.inner_params.grid.gate.only_bull_bear.trade_in: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md:
+    every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке:
+    книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва» -- the regimes the source
+    says trend earns in; nothing is claimed for flat'
+  base_params.inner_params.score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line
+    32: «taker 3.5 + проскальзывание»'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
+    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  base_params.inner_code_ref: 'specs/trend-binance-cap-gated-causal.yaml: the base''s code_ref, unchanged'
+  inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
+  base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
+    it'
+  base_params.costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 +
+    проскальзывание»'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line
+    32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+regime_claim:
+  bull: earns
+  bear: earns
+selects_causally: true

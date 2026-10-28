@@ -296,9 +296,12 @@ class _Run:
         from qlab import night
         from qlab.overlay_variants import (
             KIND_CAUSAL,
+            KIND_FIXED,
             available_overlays,
             build_variant,
             chains,
+            family,
+            point_slug,
         )
         from qlab.registry.db import session_scope
 
@@ -306,15 +309,29 @@ class _Run:
             end = (last_run_end(session, base.idea_id) if self.data_end == DATA_END_BASE
                    else None) or self.end
         extra = {"meta_gate": get_meta_grid(self.config, base.idea_id)}
-        planned = [(chain, kind) for chain in chains(available_overlays(extra))
-                   for kind in self.kinds if kind == KIND_CAUSAL and self.wanted(chain)]
+        planned: list[tuple[tuple[str, ...], str, tuple[str, list[dict]] | None]] = []
+        for chain in chains(available_overlays(extra)):
+            if not self.wanted(chain):
+                continue
+            for kind in self.kinds:
+                if kind == KIND_CAUSAL:
+                    planned.append((chain, kind, None))
+                elif kind == KIND_FIXED and not self.chains_only:
+                    note = ("варианты с фиксированными числами строятся только для названных "
+                            "цепочек (`--chain`): каждая точка семейства — отдельная идея")
+                    if note not in self.block["notes"]:
+                        self.block["notes"].append(note)
+                    break
+                elif kind == KIND_FIXED:
+                    planned += [(chain, kind, (point_slug(label), steps))
+                                for label, steps in family(chain, extra).items()]
         entry_base = {"base": base.idea_id, "strategy": base.strategy, "end": end.isoformat(),
                       "variants": []}
         active = False
-        for chain, kind in planned:
+        for chain, kind, point in planned:
             try:
                 spec = build_variant(base.spec, chain, base_cite=base.path.as_posix(), kind=kind,
-                                     extra_grids=extra, end=end)
+                                     point=point, extra_grids=extra, end=end)
             except ValueError as exc:
                 self.block["entries"].append({
                     "base": base.idea_id, "variant": None, "chain": list(chain),

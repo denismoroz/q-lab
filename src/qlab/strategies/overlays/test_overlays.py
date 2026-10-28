@@ -465,3 +465,45 @@ def test_every_grid_is_a_family_not_one_value() -> None:
     assert len(OWN_RESULTS.grid()) == 5 * 3 * 2 * 2     # windows x floors x modes x speeds
     assert {p["window_days"] for p in OWN_RESULTS.grid().values()} == {7, 14, 30, 60, 90}
     assert {p["floor"] for p in OWN_RESULTS.grid().values()} == {0.0, 0.25, 0.5}
+
+
+def test_the_meta_gate_holds_only_on_the_days_the_second_level_says_earn(monkeypatch) -> None:
+    """The stored level-2 decisions (`qlab regimes meta`) gate the book like any detector: a
+    decision stamped at a close is known from that close on, and nothing is held before the
+    first one."""
+    import qlab.meta_label as meta_label
+
+    panel = make_panel(rows=60, cols=3, snapshot="meta-gate")
+    stamps = pd.date_range("2022-01-11", periods=50, freq="1D", tz="UTC")
+    trade = pd.Series([k % 4 != 0 for k in range(50)], index=stamps)
+    monkeypatch.setattr(meta_label, "load_decisions",
+                        lambda name: pd.DataFrame({"trade": trade}))
+    weights = Overlaid().target_weights(panel, overlaid(
+        [{"name": "meta_gate", "params": {"name": "toy"}}], inner=f"{__name__}:Constant"))
+    held = weights.abs().sum(axis=1) > 0
+    assert not held.loc[:"2022-01-10"].any()            # no decision known yet
+    assert held.loc["2022-01-12"] and not held.loc["2022-01-11"]
+    assert not held.loc["2022-01-15"]                   # a "cash" decision (k = 4)
+    assert get("meta_gate").grid_for(["a", "b"]) == {"meta-a": {"name": "a"},
+                                                      "meta-b": {"name": "b"}}
+    assert get("meta_gate").grid() == {}                # offered only where declared
+
+
+def test_the_inner_strategys_own_flat_fees_are_kept() -> None:
+    class Fees:
+        name = "fees"
+
+        def target_weights(self, panel, params):
+            return Constant().target_weights(panel, params)
+
+        def extra_costs(self, panel, params):
+            return pd.Series(0.001, index=panel.prices.index)
+
+    import sys
+
+    sys.modules[__name__].Fees = Fees
+    panel = make_panel(rows=10)
+    params = overlaid([], inner=f"{__name__}:Fees")
+    costs = Overlaid().extra_costs(panel, params)
+    assert costs is not None and (costs == 0.001).all()
+    assert Overlaid().extra_costs(panel, overlaid([])) is None

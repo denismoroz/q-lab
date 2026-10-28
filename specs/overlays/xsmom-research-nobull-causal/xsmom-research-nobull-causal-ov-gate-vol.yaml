@@ -1,0 +1,203 @@
+# Overlay variant of xsmom-research-nobull-causal (qlab overlays, src/qlab/overlay_variants.py):
+# the same strategy with a chain of overlays on its weights (docs/OVERLAYS.md).
+# Written by code, not by hand.
+idea_id: xsmom-research-nobull-causal-ov-gate-vol
+title: 'XSMOM, честный универс, 20 ног: не держать книгу, когда рынок растёт (определитель режима только
+  по прошлому): числа выбирает код раз в месяц только по прошлому, история Binance с 2019: надстройки
+  — не торговать в одном из рыночных состояний + уменьшать размер, когда собственные результаты стали
+  неспокойнее обычного'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.overlays:Overlaid
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+      base_params:
+        inner_code_ref: qlab.strategies.xsmom:XsmomCrossSectionalMomentum
+        inner_params:
+          universe: null
+          lookbacks_days:
+          - 14
+          - 21
+          - 30
+          - 45
+          - 60
+          rebalance_days: 7
+          anchor_dow: 3
+          n_positions: 20
+      grid:
+        gate:
+          always:
+            trade_in:
+            - bull
+            - flat
+            - bear
+          only_flat_bear:
+            trade_in:
+            - flat
+            - bear
+      refit_every: M
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 3.5
+        slippage_bps: 0.9
+    overlays: []
+    costs:
+      taker_fee_bps: 3.5
+      slippage_bps: 0.9
+  grid:
+    overlay:
+      market_gate:skip-bull+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - flat
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-bull+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - flat
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+      market_gate:skip-flat+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-flat+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+      market_gate:skip-bear+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - flat
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-bear+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - flat
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-10-26'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 12.0
+simultaneous_legs: 1
+execution_venue: hyperliquid
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of xsmom-research-nobull: the numbers it trades are chosen by code, every month, from returns
+  realised before the choice (the base xsmom-honest-20legs against its regime-gated experiment); the data
+  is Binance''s history, a proxy for hyperliquid''s market, with the original''s costs and minimum leg.'
+- 'Overlay variant of xsmom-research-nobull-causal (qlab.overlay_variants, docs/OVERLAYS.md): the same
+  strategy with market_gate, vol_target applied to its target weights; the strategy''s own numbers are
+  untouched. The numbers of the overlays are chosen by code every month from the past only.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2020-08-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  base can first trade on 2020-01-01; the longest warm-up of the overlay family (market_gate, vol_target)
+  is 180 days, so the overlay can first act on 2020-06-29; a candidate is eligible only after one whole
+  month re-tuning period, so the first re-tuning after 2020-06-29 is 2020-07-01 and the first choice is
+  made at the one after it, 2020-08-01. The family is declared whole in docs/OVERLAYS.md before any run:
+  6 candidates, none chosen by looking at the data it is judged on. What this does not prove: the family
+  itself (which overlays and which settings are offered) was written by people who had seen the market.'
+sources:
+  base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
+    «раз в неделю/день или месяц»'
+  base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  base_params.inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/xsmom/xsmom-research-nobull.yaml: the same window end'
+  base_params.inner_params.base_params.inner_code_ref: specs/xsmom-honest-20legs.yaml (unchanged)
+  base_params.inner_params.base_params.inner_params: specs/xsmom-honest-20legs.yaml params, unchanged;
+    their own sources are listed there
+  base_params.inner_params.inner_code_ref: 'src/qlab/strategies/regime_gate.py: the wrapper of xsmom-research-nobull'
+  base_params.inner_params.grid.gate.always: 'specs/xsmom-honest-20legs.yaml: the unchanged book of xsmom-honest-20legs,
+    every regime traded'
+  base_params.inner_params.grid.gate.only_flat_bear.trade_in: 'data/research/xsmom-2026-10-26.md, drawdown
+    evidence before the cut: bull -2.3% over 92 days (xsmom-honest-20legs, BTC +90.0%), -5.6% over 68
+    days (xsmom), -8.7% over 92 days (xsmom-frozen-universe); flat +32.0% and bear +12.7% for xsmom-honest-20legs'
+  base_params.inner_params.score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line
+    32: «taker 3.5 + проскальзывание»'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
+    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0'
+  base_params.inner_code_ref: 'specs/research/xsmom/xsmom-research-nobull-causal.yaml: the base''s code_ref,
+    unchanged'
+  inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
+  base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
+    it'
+  base_params.costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 +
+    проскальзывание»'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line
+    32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+selects_causally: true

@@ -281,6 +281,20 @@ def test_at_most_the_nightly_cap_of_bases_and_a_finished_base_does_not_take_a_pl
     assert {e["base"] for e in third["overlays"]["entries"]} == {BV2}
 
 
+def test_fixed_variants_are_one_idea_per_point_and_only_for_named_chains(world, registry) -> None:
+    state = run_stage(world, only=[XSMOM], kinds=("fixed",))
+    assert stands(world) == [] and any("--chain" in n for n in state["overlays"]["notes"])
+    run_stage(world, only=[XSMOM], chains_only=["gradual_exit"], kinds=("fixed",))
+    expected = [f"{XSMOM}-ov-exit-k{k}-d{d}" for k in (2, 3) for d in (3, 7)]
+    assert sorted(stands(world)) == sorted(expected)
+    spec = load_spec(world.specs / "overlays" / XSMOM / f"{expected[0]}.yaml")
+    base = load_spec(world.specs / f"{XSMOM}.yaml")
+    assert spec.code_ref == "qlab.strategies.overlays:Overlaid"
+    assert spec.params_fixed_at == base.params_fixed_at      # the base's own dates, not a choice
+    with registry.session_scope() as s:                  # every point is a trial of the family
+        assert overlay_compare.family_trials(s, XSMOM) == 1 + 4
+
+
 def test_an_explicit_request_is_not_capped(world) -> None:
     run_stage(world, only=[TREND, XSMOM])
     assert len(stands(world)) == 2 * VARIANTS_PER_BASE
