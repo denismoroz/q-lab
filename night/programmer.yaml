@@ -59,10 +59,17 @@ repos:
   qlab:
     path: .
     base: main
-    # Strategy code and blocks only: the verdict machinery (harness, pipeline, rules, the
-    # registry) is never the agent's to change.
+    # Strategy code and blocks, and since 2026-10-28 the stand's measurement and data code and
+    # the anomaly checks: a fix or a new check proposed by the anomaly investigator
+    # (docs/ANOMALIES.md) lives there. Owner, 2026-10-28: «да, расширь программисту папки».
+    # What decides stays closed: the pipeline, the rules and the registry are never the
+    # agent's to change. Nothing reaches main without the owner's `qlab code merge`.
     allowed:
       - src/qlab/strategies/*
+      - src/qlab/harness/*
+      - src/qlab/data/*
+      - src/qlab/anomalies/*
       - docs/BLOCKS.md
+      - docs/ANOMALIES.md
     test_command: [uv, run, pytest, -q, -p, no:cacheprovider, src/qlab]
     test_timeout_s: 1800
