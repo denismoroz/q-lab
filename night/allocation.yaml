@@ -85,10 +85,11 @@ short_evidence:
   live: hold_current
   other: no_weight
 
-# The money for strategies, in USD. THE OWNER CONFIRMS THIS. 3000 is the number the night already
-# runs on (qlab.night.run, `deployable_capital_usd`, since 2026-10-03) and the capital of the
-# trend paper books; no owner statement of "the deployable capital is $3000" was found. The
-# figures the owner has stated: «уверенности нет на размещение более 1к» (rules/2026-09-20.2.yaml,
+# The money for strategies, in USD. Confirmed by the owner, 2026-10-28, asked whether $3000 is
+# the deployable capital the shelf's capital rule compares against: «пока $3000». Until then it
+# was the number the night ran on (qlab.night.run, `deployable_capital_usd`, since 2026-10-03)
+# and the capital of the trend paper books, with no owner statement. Earlier figures the owner
+# stated: «уверенности нет на размещение более 1к» (rules/2026-09-20.2.yaml,
 # 2026-09-20), the capital $5-15k (docs/PLAN.md, "Границы"), the horizon «100-120к». The report
 # shows the split at each of `capital_ladder_usd` as well, so the answer to "what if it is
 # 1000 / 5000 / 15000" is in front of the owner.
