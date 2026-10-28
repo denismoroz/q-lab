@@ -504,6 +504,14 @@ def _new_survivor(plan: Plan, entry: dict, stage2_config, planned: set) -> Plan 
                 "первый этап сегодня стал выжившим: второй ещё не проведён")
 
 
+# The same steps for other stages that run an idea the way the night's waiting stage does
+# (`qlab.restamp`): one idea's first stage on the stand, its second stage on Hyperliquid, and the
+# plan of the second stage owed by a first stage that has just become a survivor.
+rerun_idea = _rerun_idea
+rerun_stage2 = _rerun_stage2
+new_survivor = _new_survivor
+
+
 def followed_ideas(entries: list[dict] | None) -> set[str]:
     """Ideas this stage follows (the report's "on the bench, but not followed" leaves
     them out); one with no spec file is not followed."""
@@ -570,5 +578,6 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
 
 
 __all__ = ["Basis", "Due", "Plan", "SECTION_TITLE", "WAITING_ROUTES", "days_before_decision",
-           "decide_due", "followed_ideas", "plan_waiting", "read_basis", "report_lines",
-           "spec_files", "waiting_stage", "watched_idea_ids"]
+           "decide_due", "followed_ideas", "new_survivor", "plan_waiting", "read_basis",
+           "report_lines", "rerun_idea", "rerun_stage2", "spec_files", "waiting_stage",
+           "watched_idea_ids"]

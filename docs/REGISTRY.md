@@ -62,6 +62,7 @@
 | `config_hash` | sha256 от нормализованных params |
 | `snapshot_id` FK? | null допустим только для импортированных исторических прогонов |
 | `code_sha` | git sha кода стенда |
+| `stand_version` str? | версия способа измерения (`qlab.harness.version`, `docs/RESTAMP.md`); пусто у всех прогонов до 2026-10-28 и у импортированных: старше первой версии |
 | `params` json | |
 | `started_at`/`finished_at` | |
 | `metrics` json | `sharpe_net`, `ann_return_net`, `max_dd`, `turnover`, ...; рядом те же итоги на деньгах стратегии с приставкой `cap_` (`cap_ann_return`, `cap_max_dd`, `cap_year_2025_return`, ...) и `cap_reinvested` (1 — склейка, 0 — сумма), см. `docs/CAPITAL_BASE.md` |

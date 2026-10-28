@@ -781,6 +781,10 @@ def night_run_cmd(
         None, "--overlays/--no-overlays",
         help="Every overlay and pair on the strategies that passed, each compared with its base "
         "(no tokens; default: with --twins; docs/OVERLAYS.md)"),
+    restamp: bool = typer.Option(
+        True, "--restamp/--no-restamp",
+        help="Run again the ideas whose latest run was measured under an older stand or rules "
+        "version (no tokens; docs/RESTAMP.md)"),
     anomalies: bool = typer.Option(
         True, "--anomalies/--no-anomalies",
         help="The anomaly detector on the passed runs (no tokens), then the investigator on the "
@@ -812,7 +816,7 @@ def night_run_cmd(
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
                director=director, waiting=waiting, twins=twins, overlays=overlays,
-               anomalies=anomalies,
+               anomalies=anomalies, restamp=restamp,
                programmer=programmer,
                catalogue=catalogue, cards=cards,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
@@ -870,6 +874,54 @@ def twins_run_cmd(
                            deployable_capital_usd=capital, only=ideas, max_new=max_new,
                            dry_run=dry_run, allow_heavy=allow_heavy)
     for line in twin_stage.report_lines(state.get("twins")):
+        typer.echo(line)
+    for name, text in (state.get("stage_errors") or {}).items():
+        typer.echo(f"error in {name}: {text}", err=True)
+
+
+restamp_app = typer.Typer(
+    help="Run again the results measured an older way (docs/RESTAMP.md).", no_args_is_help=True)
+app.add_typer(restamp_app, name="restamp")
+
+
+@restamp_app.command("run")
+def restamp_run_cmd(
+    idea: list[str] = typer.Option(  # noqa: B008
+        [], "--idea", help="Recompute these ideas, stale or not (repeat the option); a second "
+        "stage stands for its first stage"),
+    all_ideas: bool = typer.Option(
+        False, "--all", help="Every stale idea, without the night's cap"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be done, do nothing"),
+    max_ideas: int | None = typer.Option(
+        None, "--max-ideas", help="At most this many ideas (default: the night's cap, none with "
+        "--all or --idea)"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+    capital: float = typer.Option(3000.0, "--capital"),
+) -> None:
+    """The night's restamp stage by hand (src/qlab/restamp.py): every idea whose latest run was
+    made under an older stand version or judged under older rules is run again on the stand (and
+    its second stage on Hyperliquid), the same spec on the same days; its forward series is
+    rebuilt. Trials are written to the registry like any run (deflation counts them); old trials
+    and verdicts stay. Code only: no agent, no tokens. Without --all or --idea the night's cap
+    holds. The state of a hand run is kept apart in data/restamp/runs/, never in a night's."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import night, restamp
+
+    if not (idea or all_ideas or dry_run or max_ideas):
+        typer.echo("nothing asked: name ideas with --idea, take every stale one with --all, "
+                   "cap with --max-ideas, or look with --dry-run", err=True)
+        raise typer.Exit(2)
+    night.STATE_DIR = _Path("data/restamp/runs")  # a hand run never touches a night's state
+    day, end = _date.today(), night.last_closed_day()
+    state = night.load_state(day)
+    state.pop("restamp", None)  # this call reports itself; the day's done-markers stay
+    restamp.restamp_stage(day, end, state, noise_trials=noise_trials,
+                          deployable_capital_usd=capital, only=set(idea) or None,
+                          no_cap=all_ideas, dry_run=dry_run, max_ideas=max_ideas)
+    for line in restamp.report_lines(state.get("restamp"), even_if_quiet=True) \
+            or ["nothing is out of date"]:
         typer.echo(line)
     for name, text in (state.get("stage_errors") or {}).items():
         typer.echo(f"error in {name}: {text}", err=True)

@@ -351,6 +351,11 @@ class Trial(Base):
         _enum_column(TrialRoute), nullable=True, index=True
     )
     route_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Which way of measuring a run the trial was made under (`qlab.harness.version`,
+    # docs/RESTAMP.md). Null for every trial written before the column existed and for imported
+    # ones: older than the first version. A column, as `code_sha` is, not a metric: it is read in
+    # a query (which ideas are stale) and is a string among numbers.
+    stand_version: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Verdict(Base):

@@ -1,0 +1,30 @@
+# The night's "restamp" stage (qlab.restamp, docs/RESTAMP.md).
+#
+# Owner, 2026-10-28, on several changes that altered how results are measured in one day (year
+# signs, the percent of the strategy's own money, stage 2's liquidity floor, the anomaly detector):
+# «да, делай» to a mechanism that corrects the old results by itself. An idea whose latest run was
+# made under an older stand version (qlab.harness.version) or judged under an older rules version
+# is run again, the same spec on the same days, through the same path the night uses for that kind
+# of idea (stage 1 on the stand, stage 2 on Hyperliquid), so that its numbers are measured the
+# present way. Every run is a trial that deflation counts; old trials and verdicts stay as they
+# were. Code only: no agent, no tokens, outside the budget guard.
+
+enabled: true
+
+# At most this many ideas a night (an idea is its stage 1 run, 200 random books, and its stage 2
+# run; Bv2 on hourly data takes several minutes more). What does not fit waits for the next night;
+# the report names it. `qlab restamp run --all` and `--idea` are not capped.
+max_ideas_per_night: 4
+
+# An idea that took longer than this many minutes is reported as slow (the stage never cuts a run
+# it has started; it only checks the night's stop time between ideas).
+slow_idea_minutes: 30
+
+# An idea whose recomputation failed is tried again on the next nights, up to this many failures
+# under the same stand and rules versions; then it waits for a version change (or a hand run).
+max_attempts: 2
+
+# Order of the night: ideas that passed or live in production first (the ones that reach the owner),
+# then the rest, the idea with more reasons to be recomputed first, then the newer run.
+passed_statuses: [live, paper, validated]
+passed_routes: [paper, shelf, needs-infrastructure]

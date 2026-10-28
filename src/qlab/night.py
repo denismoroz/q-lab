@@ -45,6 +45,7 @@ STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
                "twins": "двойники и вторая ступень",
                "twins-research": "двойники экспериментов исследователя",
+               "restamp": "пересчёт старых результатов",
                "anomalies": "аномалии", "overlays": "надстройки",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
@@ -491,6 +492,12 @@ def write_report(day: date, state: dict) -> Path:
 
         if body := twins_lines(state["twins"]):
             lines += [f"## {TWINS_TITLE}", "", *body, ""]
+    if state.get("restamp"):
+        from qlab.restamp import SECTION_TITLE as RESTAMP_TITLE
+        from qlab.restamp import report_lines as restamp_lines
+
+        if body := restamp_lines(state["restamp"]):
+            lines += [f"## {RESTAMP_TITLE}", "", *body, ""]
     if state.get("anomalies"):
         from qlab.anomalies.report import SECTION_TITLE as ANOMALIES_TITLE
         from qlab.anomalies.report import report_lines as anomalies_lines
@@ -856,7 +863,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
         twins: bool | None = None, overlays: bool | None = None,
-        anomalies: bool = True, noise_trials: int = 200,
+        anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True) -> Path:
@@ -870,9 +877,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     unless given: it is the cheap, high-value part of the recheck, and runs right after the
     waiting stage and once more after the researcher. `overlays` (every overlay and pair on a
     strategy that passed, `qlab.overlay_stage`) follows `twins`, which it comes right after.
-    `anomalies` (`qlab.anomalies.stage`: the code detector on the passed runs, then the
-    investigator on the flagged ones, bounded and guarded) runs before the overlays, because an
-    overlay base must have been scanned with no flag fired (`qlab.overlay_stage.anomaly_refusal`).
+    `restamp` (`qlab.restamp`: the ideas whose latest run was measured under an older stand or
+    rules version, run again, bounded) comes right after the twins and before the anomalies, which
+    then scan the new runs. `anomalies` (`qlab.anomalies.stage`: the code detector on the passed
+    runs, then the investigator on the flagged ones, bounded and guarded) runs before the
+    overlays, because an overlay base must have been scanned with no flag fired
+    (`qlab.overlay_stage.anomaly_refusal`).
     Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
@@ -935,6 +945,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         from qlab.twin_stage import twins_stage
 
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
+                deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+        save_state(day, state)
+    if restamp and not past_stop(stop_at, state, "restamp"):
+        # Results measured an older way are measured again (docs/RESTAMP.md). Code only. Before
+        # the anomalies stage: it scans the runs this one has just made.
+        guarded(day, state, "restamp", restamp_stage, day, end, state, noise_trials=noise_trials,
                 deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
         save_state(day, state)
     if anomalies and not past_stop(stop_at, state, "anomalies"):
@@ -1036,6 +1052,15 @@ def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
             f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
         save_state(day, state)
         return None
+
+
+def restamp_stage(*args, **kwargs):
+    """The restamp stage (`qlab.restamp.restamp_stage`), reached through the night so that the
+    suite can keep whole-night tests off the owner's registry (conftest.py); a test of the stage
+    calls the function of `qlab.restamp` itself."""
+    from qlab import restamp
+
+    return restamp.restamp_stage(*args, **kwargs)
 
 
 def anomalies_stage(*args, **kwargs):

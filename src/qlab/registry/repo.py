@@ -201,13 +201,22 @@ def add_trial(
     source: TrialSource = TrialSource.QLAB,
     route: TrialRoute | None = None,
     route_reason: str | None = None,
+    stand_version: str | None = None,
 ) -> Trial:
     """Append a `trial` row. Trial is append-only — this never updates an
     existing row; every run, including discarded ones, gets its own row.
 
     `route`/`route_reason` are set at insert time, never afterwards: the
     pipeline decides the route before it writes the trial, so the row is
-    complete the moment it exists."""
+    complete the moment it exists.
+
+    `stand_version` is the way of measuring the run was made under
+    (`qlab.harness.version`): the current one for a run of ours, none for an imported trial,
+    which no stand measured. A caller may pass its own to record a run under another."""
+    if stand_version is None and source == TrialSource.QLAB:
+        from qlab.harness.version import STAND_VERSION
+
+        stand_version = STAND_VERSION
     trial = Trial(
         spec_id=spec_id,
         config_hash=config_hash,
@@ -224,6 +233,7 @@ def add_trial(
         source=source,
         route=route,
         route_reason=route_reason,
+        stand_version=stand_version,
     )
     session.add(trial)
     session.flush()
