@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  q-lab daily off-machine backup to dis@10.8.0.5:qlab-backup/ (docs/BACKUP.md).
+  Runs ops/backup-daily.sh once a day at 09:30 local time, after the night (03:20) has ended. launchd runs a
+  calendar job that was missed while the Mac slept as soon as it wakes, and
+  each run copies the whole state, so a missed day is caught up by the next.
+  Install:   cp ops/com.qlab.backup.plist ~/Library/LaunchAgents/ &&
+             launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.backup.plist
+  Remove:    launchctl bootout gui/$(id -u)/com.qlab.backup &&
+             rm ~/Library/LaunchAgents/com.qlab.backup.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.qlab.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/d/prj/q-lab/ops/backup-daily.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/d/prj/q-lab/data/backup/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/d/prj/q-lab/data/backup/logs/launchd.err</string>
+</dict>
+</plist>

@@ -60,6 +60,7 @@ data/implement/
 
 # the forward test chart's daily series, one file per run (docs/FORWARD_CHART.md); rebuilt by `qlab forward-series rebuild`
 data/forward_series/
+data/backup/
 
 # the overlays stage: its ledger, stored comparisons and diagnostics, hand runs' state (docs/OVERLAYS.md)
 data/overlays/
