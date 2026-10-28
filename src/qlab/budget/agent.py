@@ -166,8 +166,9 @@ def run_agent(
         budget.check()
         from qlab.budget.guard import usd_per_token
 
-        usd_cap = budget.remaining() * usd_per_token(session, model)
-        args += ["--max-budget-usd", f"{usd_cap:.4f}"]
+        if not budget.night.limits_off:  # the owner turned the guard's caps off
+            usd_cap = budget.remaining() * usd_per_token(session, model)
+            args += ["--max-budget-usd", f"{usd_cap:.4f}"]
         stage, idea_id = budget.stage.name.lower(), budget.idea_id
     else:
         stage, idea_id = "no-budget", None

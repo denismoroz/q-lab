@@ -438,6 +438,10 @@ def write_report(day: date, state: dict) -> Path:
                   f"{account.get('message')} Этапы без агентов (перепроверки, бумажные книги, "
                   "распад) прошли как обычно, а шаги агентов остановлены без траты токенов и "
                   "продолжатся в следующую ночь, когда вход будет выполнен.", ""]
+    if off := state.get("limits_off"):
+        lines += ["**Ограничения гарда токенов этой ночью были выключены владельцем** "
+                  f"(night/budget_off.yaml): {off}. Ночь остановилась бы только на лимитах "
+                  "самой подписки; сколько она потратила — в разделе «Токены».", ""]
     if errors := state.get("stage_errors"):
         lines += ["## Сбои стадий", "",
                   "Стадия упала, ночь пошла дальше; несделанное повторится при следующем запуске.",
@@ -794,6 +798,9 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     state.pop("stopped_at", None)  # a resumed night gets its own stop time
     state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
     state["account"] = account_state()  # the report says which account the agents ran under
+    from qlab.budget.guard import limits_off
+
+    state["limits_off"] = limits_off()  # the report says so when the guard's ceilings were off
     if detectors and "detectors" not in state:
         # Before the watch list: strategies on it read these files
         # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.

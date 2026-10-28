@@ -83,3 +83,14 @@ def _no_real_implement_ledgers(monkeypatch, tmp_path_factory) -> None:
     monkeypatch.setattr(implement_run, "LEDGER", folder / "ledger.json")
     monkeypatch.setattr(implement_run, "BASELINE_DIR", folder / "baselines")
     monkeypatch.setattr(agent_blocks, "REGISTRY", folder / "agent_blocks.yaml")
+
+
+@pytest.fixture(autouse=True)
+def _guard_limits_on(monkeypatch, tmp_path_factory) -> None:
+    """The owner's switch that turns the guard's ceilings off (night/budget_off.yaml) is a real
+    file: while it is in force every test of the guard would see no ceilings. Tests see no
+    switch; a test of the switch sets its own over this."""
+    import qlab.budget.guard as guard
+
+    monkeypatch.setattr(guard, "LIMITS_OFF_FILE",
+                        tmp_path_factory.mktemp("budget") / "budget_off.yaml")

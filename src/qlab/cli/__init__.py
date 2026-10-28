@@ -1458,7 +1458,10 @@ def budget_status_cmd() -> None:
     typer.echo(f"calibration      {cal.util_per_token * 1e8:.2f} pp of the week per million "
                f"tokens ({cal.source}); "
                f"cheapest call {cal.min_call_tokens:,} tokens")
-    typer.echo(f"tokens tonight   about {night.tokens_left():,}")
+    if night.limits_off:
+        typer.echo(f"guard limits     OFF -- {night.limits_off}")
+    else:
+        typer.echo(f"tokens tonight   about {night.tokens_left():,}")
     typer.echo("spent this week  " + (", ".join(f"{k} {v:,}" for k, v in by_stage.items())
                                      or "nothing"))
 

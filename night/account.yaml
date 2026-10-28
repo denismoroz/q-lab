@@ -6,7 +6,7 @@
 # the quota of the owner's WORK account, denis.moroz@toptal.com (organisation Stablepay, a
 # Team plan), since at least 2026-10-08 -- the `claude` CLI on this machine is logged in to
 # it, and every ledger row's weekly reset is Thursday 18:00 UTC, which is that account's.
-# The owner's own account is the Pro plan below (weekly reset Thursday 05:00 UTC). The work
+# The owner's own account is the one below, a Max 5x plan (weekly reset Thursday 05:00 UTC). The work
 # CLI must stay on Stablepay, so q-lab keeps a Claude config directory of its own:
 # every `claude` call of q-lab gets CLAUDE_CONFIG_DIR=<config_dir> in its environment and is
 # an independent login. One-time login by the owner:

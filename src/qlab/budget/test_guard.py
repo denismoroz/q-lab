@@ -217,3 +217,57 @@ def test_calibration_ignores_calls_before_the_plan_change(session, fake_claude) 
     later = datetime(2999, 1, 1, tzinfo=UTC)
     assert calibrate(session, since=later).source == "prior"
     assert calibrate(session, since=None).source == "ledger (1 pairs)"
+
+
+def _switch_off(monkeypatch, tmp_path, text: str) -> None:
+    import qlab.budget.guard as guard
+
+    path = tmp_path / "budget_off.yaml"
+    path.write_text(text)
+    monkeypatch.setattr(guard, "LIMITS_OFF_FILE", path)
+
+
+def test_the_owners_switch_lifts_the_guards_ceilings_until_its_moment(
+        session, fake_claude, monkeypatch, tmp_path) -> None:
+    until = (NOW + timedelta(hours=6)).isoformat()
+    _switch_off(monkeypatch, tmp_path, f"until: {until}\nreason: see what a night spends\n")
+    night = NightBudget.open(session, _reading(0.65), now=NOW)  # past the 70% target's reach
+    assert night.limits_off and "see what a night spends" in night.limits_off
+    assert night.target_util == 1.0
+    candidate = night.stage(Stage.IMPLEMENT, candidates=3).candidate("idea")
+    args_log = fake_claude(_events(0.80, 5_000_000))
+    run_agent(candidate, "work", session=session, agent="implementer", model="haiku", max_turns=3)
+    assert "--max-budget-usd" not in args_log.read_text()
+    assert session.query(TokenSpend).one().tokens_cache_write  # still written to the ledger
+    candidate.check()  # 80% of the week and five million tokens: no cap of the guard's own
+
+    fake_claude(_events(0.80, 40_000, status="rejected"))  # the subscription's own limit stays
+    run_agent(candidate, "more", session=session, agent="implementer", model="haiku",
+              max_turns=3)
+    with pytest.raises(NightExhausted, match="rejected"):
+        night.check()
+
+
+def test_the_switch_lapses_by_itself_and_needs_a_moment_and_a_reason(
+        monkeypatch, tmp_path) -> None:
+    from qlab.budget.guard import limits_off
+
+    _switch_off(monkeypatch, tmp_path, f"until: {NOW.isoformat()}\nreason: r\n")
+    assert limits_off(NOW) is None  # expired at its moment
+    assert limits_off(NOW - timedelta(minutes=1))
+    _switch_off(monkeypatch, tmp_path, "reason: forever\n")
+    with pytest.raises(ValueError, match="until"):
+        limits_off(NOW)
+    _switch_off(monkeypatch, tmp_path, f"until: {(NOW + timedelta(hours=1)).isoformat()}\n")
+    with pytest.raises(ValueError, match="reason"):
+        limits_off(NOW)
+
+
+def test_the_shipped_switch_if_any_lapses_within_a_week() -> None:
+    """A switch left in night/ must not keep the guard off for good."""
+    from qlab.budget.guard import limits_off
+
+    shipped = Path(__file__).resolve().parents[3] / "night" / "budget_off.yaml"
+    if not shipped.exists():
+        return
+    assert limits_off(datetime.now(UTC) + timedelta(days=7), shipped) is None

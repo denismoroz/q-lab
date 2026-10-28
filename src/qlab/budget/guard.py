@@ -38,7 +38,9 @@ import enum
 import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import yaml
 from sqlalchemy.orm import Session
 
 from qlab.budget.usage import UsageReading
@@ -65,6 +67,43 @@ USD_PER_TOKEN_PRIOR = 0.079919 / 39_906
 """The same call's reported `total_cost_usd` (list price) per token; used to
 turn a token cap into the CLI's own `--max-budget-usd` stop until the ledger
 has calls."""
+
+
+LIMITS_OFF_FILE = Path(__file__).resolve().parents[3] / "night" / "budget_off.yaml"
+"""The owner's switch that turns the guard's own ceilings off until a stated moment
+(`limits_off`). Absent or expired, the guard works as usual."""
+
+UNLIMITED_TOKENS = 10**12
+"""What is left tonight while the owner has the guard's ceilings off: more than any night
+spends, so no stage or candidate is cut by a cap of the guard's own."""
+
+
+def limits_off(now: datetime | None = None, path: Path | None = None) -> str | None:
+    """The owner's reason when the guard's own ceilings are off at `now`, else None.
+
+    Owner, 2026-10-28: «давай пока отключим проверку лимитов. посмотрим что получится и
+    завтра решим что с этим делать». The switch always carries an `until` moment and lapses
+    by itself after it, so a forgotten file never leaves the guard off. Off means: no 70%
+    target, no night, stage or candidate caps, no `--max-budget-usd`. What stays: the account
+    check, and the stop on the subscription's own limits (a refusal or a full window), which
+    no switch can lift since the calls would fail anyway."""
+    path = path or LIMITS_OFF_FILE
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    until = data.get("until")
+    if until is None:
+        raise ValueError(f"{path}: the switch needs an `until` moment")
+    if not isinstance(until, datetime):
+        until = datetime.fromisoformat(str(until))
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=UTC)
+    if (now or datetime.now(UTC)) >= until:
+        return None
+    reason = str(data.get("reason") or "").strip()
+    if not reason:
+        raise ValueError(f"{path}: turning the guard off needs a stated reason")
+    return f"{reason} (until {until:%Y-%m-%d %H:%M} UTC)"
 
 
 class Stage(enum.IntEnum):
@@ -221,6 +260,7 @@ class NightBudget:
     current_util: float
     spent_tokens: int = 0
     stopped: str | None = None
+    limits_off: str | None = None  # the owner's reason while the ceilings are off
     _stage_spent: dict[Stage, int] = field(default_factory=dict)
 
     @classmethod
@@ -233,13 +273,17 @@ class NightBudget:
         now = now or datetime.now(UTC)
         start = reading.seven_day.utilization
         nights = nights_until(reading.seven_day.resets_at, now)
-        target = start + max(0.0, WEEKLY_CEILING - start) / nights
+        off = limits_off(now)
+        # Off: the only weekly stop left is the window itself being full.
+        target = 1.0 if off else start + max(0.0, WEEKLY_CEILING - start) / nights
         budget = cls(start_util=start, target_util=target, resets_at=reading.seven_day.resets_at,
-                     calibration=calibrate(session), current_util=start)
+                     calibration=calibrate(session), current_util=start, limits_off=off)
         budget.observe(reading)
         return budget
 
     def tokens_left(self) -> int:
+        if self.limits_off:
+            return UNLIMITED_TOKENS
         return max(0, int((self.target_util - self.current_util) / self.calibration.util_per_token))
 
     def observe(self, reading: UsageReading | None) -> None:
@@ -339,5 +383,6 @@ __all__ = [
     "calibrate",
     "current_account",
     "last_reading",
+    "limits_off",
     "nights_until",
 ]
