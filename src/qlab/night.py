@@ -653,6 +653,7 @@ def write_report(day: date, state: dict) -> Path:
     from qlab.publications.stage import report_lines as publication_lines
 
     lines += publication_lines(state)
+    lines += _forward_chart_lines(day)
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     tokens = _token_lines(day)
     if account.get("ok") is False:
@@ -714,6 +715,45 @@ def _paper_rule_lines(replay_lines: list[str]) -> list[str]:
             return report_lines(session, replay_lines=replay_lines)
     except Exception as exc:  # noqa: BLE001
         return [f"**{RULE_TITLE}** не посчитано: {type(exc).__name__}: {exc}"]
+
+
+CONSOLE_URL = "http://localhost:5890"
+FORWARD_CHARTS_TITLE = "Графики прошедших идей"
+
+
+def _forward_chart_lines(day: date) -> list[str]:
+    """For each idea that passed every rule tonight (a `paper` run written on the report's day),
+    where to see how it did on its forward test: the console's idea page draws one chart per
+    stage (`qlab.forward_series`, docs/FORWARD_CHART.md). Markdown cannot draw a chart, so this
+    is a link and a word on what is ready. Empty when nothing passed; a failure is one line."""
+    from qlab import forward_series
+    from qlab.registry.db import session_scope
+
+    since = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+    try:
+        with session_scope() as session:
+            passed = forward_series.passed_on(session, since, since + timedelta(days=1))
+    except Exception as exc:  # noqa: BLE001
+        return [f"## {FORWARD_CHARTS_TITLE}", "",
+                f"Не посчитано: {type(exc).__name__}: {exc}", ""]
+    if not passed:
+        return []
+    lines = [f"## {FORWARD_CHARTS_TITLE}", "",
+             "Как идея отработала на проверке вперёд, день за днём и по этапам (деньги стратегии, "
+             "проценты от её капитала). График рисует консоль на странице идеи; здесь только "
+             "ссылка.", ""]
+    for entry in passed:
+        stages = entry["stages"]
+        ready = [s for s in stages if s["has_series"]]
+        names = ", ".join(
+            (f"этап {s['stage']}" if len(stages) > 1 else "проверка вперёд")
+            + (f" ({s['venue']})" if s["venue"] else "") for s in stages)
+        state = ("графики готовы" if len(ready) == len(stages) else
+                 "ряд по дням ещё не построен: `uv run qlab forward-series rebuild`")
+        lines.append(f"- **{entry['idea_id']}**: {CONSOLE_URL}/ideas/{entry['idea_id']} — "
+                     f"{names}; {state}")
+    lines.append("")
+    return lines
 
 
 def _funnel_lines(day: date) -> list[str]:

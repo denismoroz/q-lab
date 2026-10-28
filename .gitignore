@@ -57,3 +57,6 @@ data/carder/
 
 # the implementer's post-guard runs: which step of which card is done (docs/IMPLEMENTER.md)
 data/implement/
+
+# the forward test chart's daily series, one file per run (docs/FORWARD_CHART.md); rebuilt by `qlab forward-series rebuild`
+data/forward_series/

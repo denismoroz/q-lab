@@ -388,6 +388,19 @@ def create_app() -> FastAPI:
         ]
         return page
 
+    @app.get("/api/ideas/{idea_id}/forward")
+    def idea_forward(idea_id: str, session: SessionDep) -> dict[str, Any]:
+        """How a passed idea did on its forward test, one stored daily series per stage
+        (qlab.forward_series, docs/FORWARD_CHART.md). For an idea that did not pass: `passed`
+        false and a plain-Russian `reason`, no series. A stage whose series is not stored
+        yet carries a `message` instead."""
+        from qlab.forward_series import forward_view
+
+        view = forward_view(session, idea_id)
+        if view is None:
+            raise HTTPException(status_code=404, detail=f"idea not found: {idea_id}")
+        return view
+
     # ------------------------------------------------------------------
     # 3. Candidate cards
     # ------------------------------------------------------------------

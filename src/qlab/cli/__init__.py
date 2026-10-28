@@ -2365,4 +2365,28 @@ def pool_allocation_cmd(
     typer.echo("\n".join(out["lines"]))
 
 
+forward_series_app = typer.Typer(
+    help="Daily chart data of a passed idea's forward test (docs/FORWARD_CHART.md).",
+    no_args_is_help=True)
+app.add_typer(forward_series_app, name="forward-series")
+
+
+@forward_series_app.command("rebuild")
+def forward_series_rebuild_cmd(
+    idea: list[str] = typer.Option(  # noqa: B008
+        None, "--idea", help="An idea id (repeat for several); default: every validated idea"),
+    force: bool = typer.Option(False, "--force", help="Rebuild series that already exist"),
+) -> None:
+    """Build the missing daily series of the passed ideas' stages by re-running their stored
+    specs on the stored data snapshots (CPU only: no network, no agent, no trial, no verdict).
+    The console and the morning report draw the forward test's chart from these files."""
+    from qlab import forward_series
+
+    with session_scope() as session:
+        done = forward_series.rebuild(session, list(idea) if idea else None, force=force)
+    for idea_id, trial_id, outcome in done:
+        typer.echo(f"{idea_id:<44} trial {trial_id:<7} {outcome}")
+    typer.echo(f"total: {len(done)} runs looked at, series in {forward_series.store_dir()}")
+
+
 __all__ = ["app"]

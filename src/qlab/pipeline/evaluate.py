@@ -33,6 +33,7 @@ from typing import Literal
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from qlab import forward_series
 from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import PANEL_RULES_VERSION, build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
@@ -1087,6 +1088,50 @@ def _decide_fit_forward(
         )
     return routing
 
+
+@dataclass(frozen=True, slots=True)
+class JudgedRows:
+    """Which rows of the panel a run judges, and how it splits them: the window the
+    verdict is rendered on (`first..last`), its parts, the causal chooser's warm-up
+    and the part the rules read (`judged`: the forward test when there is one)."""
+
+    first: int
+    last: int
+    split: PeriodSplit
+    warmup: tuple[int, int] | None
+    judged: tuple[int, int]
+
+
+def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage | None,
+                ruleset: RuleSet) -> JudgedRows:
+    """The rows `evaluate_spec` judges. Kept apart from the run so that whoever replays
+    a stored run (the forward test's chart, `qlab.forward_series`) cuts the very same
+    part -- a second copy of this logic would drift from the verdict's."""
+    index = panel.prices.index
+    first, last = 0, len(index) - 1
+    if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
+        first, last = coverage.window
+    if spec.judged_from is not None:
+        # Warm-up before the first judged day (StrategySpec.judged_from).
+        first = max(first, min(
+            int(index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC"))), last))
+    if ruleset.splits_fit_forward:
+        split = split_at_fixed_date(index, first, last, spec.params_fixed_at,
+                                    spec.params_fit_from)
+    else:
+        split = PeriodSplit(selection=None, forward=(first, last))
+    warmup = None
+    if ruleset.splits_fit_forward and spec.selects_causally:
+        # The strategy picks its own parameters causally (T38): before its
+        # first choice it is warming up, not fitted -- nothing to judge
+        # there, and no selection period to protect.
+        warmup, split = split.selection, PeriodSplit(selection=None, forward=split.forward)
+    judged = split.forward if split.forward is not None else split.selection
+    if judged is None:  # the whole window is shorter than two bars
+        judged = (first, last)
+    return JudgedRows(first=first, last=last, split=split, warmup=warmup, judged=judged)
+
+
 def evaluate_spec(
     spec: StrategySpec,
     *,
@@ -1297,15 +1342,6 @@ def evaluate_spec(
             if violation is not None:
                 raise ValueError(violation)
 
-        first, last = 0, len(panel.prices.index) - 1
-        if coverage is not None and coverage.coverage < 1.0 and coverage.window is not None:
-            first, last = coverage.window
-        if spec.judged_from is not None:
-            # Warm-up before the first judged day (StrategySpec.judged_from).
-            first = max(first, min(
-                int(panel.prices.index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC"))),
-                last))
-
         costs = CostModel(
             taker_fee_bps=spec.costs.taker_fee_bps, slippage_bps=spec.costs.slippage_bps
         )
@@ -1316,6 +1352,9 @@ def evaluate_spec(
         extra_cost = own_costs(strategy, panel, spec.params)
         index = panel.prices.index
         bar = INTERVAL_TO_TIMEDELTA.get(spec.data.interval)
+        # The judged part's backtest, kept for the forward test's chart
+        # (`qlab.forward_series`): the very result the verdict rests on.
+        judged_run: dict[str, object] = {}
 
         def _measure(lo: int, hi: int, *, forward_part: bool = False,
                      years: bool = False) -> dict[str, float]:
@@ -1329,6 +1368,7 @@ def evaluate_spec(
                                   extra_cost=extra_cost)
             measured = compute_metrics(result)
             if years:
+                judged_run.update(result=result, panel=part_panel, weights=part_weights)
                 # The judged part year by year (docs/YEARS.md): a description, read by no rule.
                 measured.update(year_breakdown(result.net_return))
             measured.update(hold_benchmark(part_panel.prices, part_weights))
@@ -1423,20 +1463,8 @@ def evaluate_spec(
             return span / pd.Timedelta(days=1)
 
         split_mode = ruleset.splits_fit_forward
-        split = (
-            split_at_fixed_date(index, first, last, spec.params_fixed_at, spec.params_fit_from)
-            if split_mode
-            else PeriodSplit(selection=None, forward=(first, last))
-        )
-        warmup = None
-        if split_mode and spec.selects_causally:
-            # The strategy picks its own parameters causally (T38): before its
-            # first choice it is warming up, not fitted -- nothing to judge
-            # there, and no selection period to protect.
-            warmup, split = split.selection, PeriodSplit(selection=None, forward=split.forward)
-        judged = split.forward if split.forward is not None else split.selection
-        if judged is None:  # the whole window is shorter than two bars
-            judged = (first, last)
+        rows = judged_rows(spec, panel, coverage, ruleset)
+        first, split, warmup, judged = rows.first, rows.split, rows.warmup, rows.judged
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None,
                            years=True)
         if spec.judged_from is not None and first > 0:
@@ -1645,6 +1673,18 @@ def evaluate_spec(
     trial_id, decision = _record(
         status=TrialStatus.OK, metrics=metrics, routing=routing, data_end=range_end
     )
+    if (update_idea_status and routing.route in forward_series.STORED_ROUTES and judged_run
+            and metrics.get("judged_on_forward") == 1.0):
+        # The forward test's daily money, for the console and the morning report. A failure to
+        # write it must not fail a run whose trial and verdicts are already on record:
+        # `qlab forward-series rebuild` makes it again from the stored spec.
+        try:
+            forward_series.store_from_run(
+                trial_id=trial_id, spec=spec, result=judged_run["result"],
+                part_panel=judged_run["panel"], part_weights=judged_run["weights"],
+                recorded_total=metrics.get("total_return_net"))
+        except Exception:  # noqa: BLE001
+            pass
 
     decided_at = datetime.now(UTC)
 
@@ -1712,6 +1752,7 @@ __all__ = [
     "forward_years_needed",
     "split_at_fixed_date",
     "Evaluation",
+    "JudgedRows",
     "RouteReview",
     "RoutingContext",
     "RoutingDecision",
@@ -1719,6 +1760,7 @@ __all__ = [
     "complete_book_window",
     "decide_route",
     "evaluate_spec",
+    "judged_rows",
     "not_evaluable_reasons",
     "resolve_cached_panel",
     "resolve_panel",

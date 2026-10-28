@@ -6,6 +6,7 @@ import { Absent, Json, Pager, Panel, QueryState, StatusBadge } from '../componen
 import { VerdictLegend, VerdictList } from '../components/Verdict.jsx'
 import TrialTable from '../components/TrialTable.jsx'
 import YearView from '../components/YearView.jsx'
+import ForwardCharts from '../components/ForwardCharts.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -86,6 +87,7 @@ export default function IdeaDetail() {
           <>
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <TwoStages stages={ideaQuery.data.two_stage} />
+            <ForwardCharts ideaId={ideaQuery.data.id} />
             <Assessment
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}

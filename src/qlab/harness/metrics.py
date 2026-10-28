@@ -309,17 +309,23 @@ def year_breakdown(net_return: pd.Series) -> dict[str, float]:
     return out
 
 
+def held_coins(weights: pd.DataFrame) -> list[str]:
+    """The coins a book holds at any time, a coin traded as spot and perp counted once,
+    as spot: what "just hold the same coins" means."""
+    from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
+
+    held = [c for c in weights.columns if weights[c].abs().sum() > 0]
+    return [c for c in held if c.endswith(SPOT_COLUMN_SUFFIX)
+            or f"{c}{SPOT_COLUMN_SUFFIX}" not in held]
+
+
 def hold_benchmark(prices: pd.DataFrame, weights: pd.DataFrame) -> dict[str, float]:
     """Holding, long and equally weighted, the coins the book holds -- what a
     reader compares a strategy with before anything else (owner, 2026-10-24:
     the assessor read "without its best 1%" as luck with nothing to compare
     it to). A coin traded as spot and perp counts once, as spot. No costs, no
     funding; rebalanced every bar. Empty when the book holds nothing."""
-    from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
-
-    held = [c for c in weights.columns if weights[c].abs().sum() > 0]
-    coins = [c for c in held if c.endswith(SPOT_COLUMN_SUFFIX)
-             or f"{c}{SPOT_COLUMN_SUFFIX}" not in held]
+    coins = held_coins(weights)
     if not coins:
         return {}
     r = prices[coins].pct_change().iloc[1:].fillna(0.0).mean(axis=1)
@@ -331,6 +337,19 @@ def hold_benchmark(prices: pd.DataFrame, weights: pd.DataFrame) -> dict[str, flo
         "hold_ann_return": -1.0 if growth <= 0 else growth ** (ppy / len(r)) - 1.0,
         "hold_ann_return_ex_best_1pct": ann_return_net_ex_best_1pct(r),
     }
+
+
+def hold_returns(prices: pd.DataFrame, weights: pd.DataFrame, index: pd.DatetimeIndex
+                 ) -> pd.Series | None:
+    """The per-bar returns of the same hold-the-coins book, on the harness's own clock:
+    the value at decision time `t` is the return realised over `(t, t+1]`, exactly like
+    `RunResult.net_return`, so the two series can be laid side by side. None when the book
+    holds nothing. Display only -- no rule reads it."""
+    coins = held_coins(weights)
+    if not coins:
+        return None
+    forward = prices[coins].pct_change().shift(-1).fillna(0.0).mean(axis=1)
+    return forward.reindex(index).fillna(0.0).rename("hold_return")
 
 
 def compute_metrics(result: RunResult) -> dict[str, float]:

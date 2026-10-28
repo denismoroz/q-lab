@@ -94,3 +94,11 @@ def _guard_limits_on(monkeypatch, tmp_path_factory) -> None:
 
     monkeypatch.setattr(guard, "LIMITS_OFF_FILE",
                         tmp_path_factory.mktemp("budget") / "budget_off.yaml")
+
+
+@pytest.fixture(autouse=True)
+def _forward_series_in_tmp(monkeypatch, tmp_path_factory) -> None:
+    """`evaluate_spec` stores a passed run's forward-test series under data/forward_series (the
+    console's chart, docs/FORWARD_CHART.md); a test that runs it writes into a temporary folder
+    instead of the owner's real one. A test of the series sets its own over this."""
+    monkeypatch.setenv("QLAB_FORWARD_SERIES", str(tmp_path_factory.mktemp("forward_series")))
