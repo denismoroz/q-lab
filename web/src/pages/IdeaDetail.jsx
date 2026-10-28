@@ -7,6 +7,7 @@ import { VerdictLegend, VerdictList } from '../components/Verdict.jsx'
 import TrialTable from '../components/TrialTable.jsx'
 import YearView from '../components/YearView.jsx'
 import ForwardCharts from '../components/ForwardCharts.jsx'
+import OverlayPanels from '../components/OverlayPanels.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -88,6 +89,7 @@ export default function IdeaDetail() {
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <TwoStages stages={ideaQuery.data.two_stage} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
+            <OverlayPanels ideaId={ideaQuery.data.id} />
             <CausalTwin twin={ideaQuery.data.causal_twin} />
             <Assessment
               assessment={ideaQuery.data.assessment}

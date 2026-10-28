@@ -11,8 +11,9 @@ test.
 **What is generated** for a base spec: every single overlay and every pair, no triples. A pair is
 an unordered combination applied in a fixed order -- book-level overlays first (they decide how
 big the book is), position-level ones last (they decide how the book gets there) -- so that
-(A, B) and (B, A) are not two variants. Other orders are possible by hand
-(`qlab overlays run --chain`). Triples are left out because the count grows too fast: with n
+(A, B) and (B, A) are not two variants. Another order, or a longer chain, is possible by writing a
+spec by hand with the `Overlaid` wrapper, which does not limit the chain; the night builds none.
+Triples are left out because the count grows too fast: with n
 overlays there are n singles, n(n-1)/2 pairs and n(n-1)(n-2)/6 triples, each a stand run and a
 trial that deflation counts, and a family tested ever more widely finds ever more luck
 (docs/T27_DEFLATION.md).

@@ -414,6 +414,18 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail=f"idea not found: {idea_id}")
         return view
 
+    @app.get("/api/ideas/{idea_id}/overlays")
+    def idea_overlays(idea_id: str, session: SessionDep) -> dict[str, Any]:
+        """The idea's overlay variants against it (or, for a variant, against its base), each with
+        its stored comparison and verdict, and the base's forward series described
+        (qlab.overlay_compare, qlab.overlay_diagnostics, docs/OVERLAYS.md). Read-only."""
+        from qlab.overlay_compare import view
+
+        found = view(session, idea_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"idea not found: {idea_id}")
+        return found
+
     # ------------------------------------------------------------------
     # 3. Candidate cards
     # ------------------------------------------------------------------

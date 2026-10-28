@@ -22,6 +22,9 @@ export const fetchIdea = (ideaId) => getJson(`/api/ideas/${encodeURIComponent(id
 export const fetchForward = (ideaId) =>
   getJson(`/api/ideas/${encodeURIComponent(ideaId)}/forward`)
 
+export const fetchOverlays = (ideaId) =>
+  getJson(`/api/ideas/${encodeURIComponent(ideaId)}/overlays`)
+
 export const fetchIdeaPage = (ideaId, resource, { limit, offset }) =>
   getJson(
     `/api/ideas/${encodeURIComponent(ideaId)}/${resource}?limit=${limit}&offset=${offset}`,

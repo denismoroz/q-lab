@@ -430,6 +430,31 @@ def test_a_survivor_goes_to_the_second_stage_and_a_rejected_one_does_not(world) 
     assert [c[1] for c in world.calls if c[0] == "stage2"] == [f"{XSMOM}-ov-enter"]
 
 
+def test_a_survivor_run_without_its_second_stage_owes_it_and_a_later_night_does_it(
+        world) -> None:
+    world.results[f"{XSMOM}-ov-enter"] = "paper"
+    world.results[f"{XSMOM}-ov-own"] = "reject"
+    config = yaml.safe_load(world.config.read_text())
+    config["bases"] = [XSMOM]
+    world.config.write_text(yaml.safe_dump(config), encoding="utf-8")
+    run_stage(world, only=[XSMOM], chains_only=["own_results", "gradual_entry"],
+              second_stage=False)
+    assert [c for c in world.calls if c[0] == "stage2"] == []
+    ledger = overlay_stage.load_ledger(world.ledger)
+    assert ledger[f"{XSMOM}-ov-enter"]["stage2_pending"] is True      # a survivor: owed
+    assert ledger[f"{XSMOM}-ov-own"]["stage2_pending"] is False       # rejected: nothing owed
+    state = run_stage(world, chains_only=["own_results", "gradual_entry"])  # a later night
+    assert [c[1] for c in world.calls if c[0] == "stage2"] == [f"{XSMOM}-ov-enter"]
+    assert len(stands(world)) == 2                                    # no first-stage re-run
+    late = [e for e in state["overlays"]["entries"] if e["action"] == "stage2-late"]
+    assert len(late) == 1 and late[0]["stage2"]["route"] == "paper"
+    assert overlay_stage.load_ledger(world.ledger)[f"{XSMOM}-ov-enter"]["stage2_pending"] is False
+    run_stage(world, chains_only=["own_results", "gradual_entry"])    # and only once
+    assert len([c for c in world.calls if c[0] == "stage2"]) == 1
+    body = "\n".join(overlay_stage.report_lines(state["overlays"], {}))
+    assert "вторых этапов, долгов прошлых ночей: 1" in body
+
+
 def test_the_variant_is_compared_on_the_bases_data_and_the_base_is_described(world) -> None:
     state = run_stage(world, only=[XSMOM], chains_only=["own_results"])
     compare = [c for c in world.calls if c[0] == "compare"]
@@ -514,7 +539,9 @@ def test_the_shipped_config_is_read_and_puts_trend_and_xsmom_first_and_bv2_last(
     config = overlay_stage.load_config(ROOT / "night" / "overlays.yaml")
     assert config.enabled and config.priority == ("trend", "xsmom", "bv2")
     assert config.max_variants_per_night >= 1 and config.max_bases_per_night >= 1
-    assert "xsmom-research-nobull-causal" in config.bases and "trend-tsmom-crypto" in config.bases
+    assert "xsmom-research-nobull-causal" in config.bases
+    assert "trend-binance-cap-gated-causal" in config.bases
+    assert config.bases[-1] == "bv2-research-headroom-causal"       # the control comes last
 
 
 # ---- the night ----------

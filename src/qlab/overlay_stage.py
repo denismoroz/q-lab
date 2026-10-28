@@ -327,6 +327,8 @@ class _Run:
                 entry_base["variants"].append(spec.idea_id)
                 if not self.dry_run:
                     self.catch_up(base, spec, entry_base)
+                    if known.get("stage2_pending") and self.second_stage and not self.full():
+                        self.catch_up_stage2(base, spec, known, end)
                 continue  # done once; nothing changed since
             if self.full() or (not active and len(self.block["bases"]) >= self.base_limit):
                 self.block["deferred"].append(spec.idea_id)
@@ -350,7 +352,8 @@ class _Run:
                 entry_base["variants"].append(spec.idea_id)
                 self.ledger[spec.idea_id] = {
                     "fingerprint": stamp, "day": self.day.isoformat(), "base": base.idea_id,
-                    "route": entry.get("route"), "trial": entry.get("trial")}
+                    "route": entry.get("route"), "trial": entry.get("trial"),
+                    "stage2_pending": bool(entry.get("stage2_pending"))}
                 save_ledger(self.ledger, self.ledger_path)
                 self.state["done"][f"overlays:{spec.idea_id}"] = datetime.now(UTC).isoformat()
             night.save_state(self.day, self.state)
@@ -385,6 +388,27 @@ class _Run:
             self.block["notes"].append(
                 f"сравнение с базой для `{spec.idea_id}` не вышло ({type(exc).__name__}: "
                 f"{str(exc)[:120]}); повторится в следующую ночь")
+
+    def catch_up_stage2(self, base: Base, spec: StrategySpec, known: dict, end: date) -> None:
+        """The second stage a survivor owes (its first run was made without it): done now, one
+        stand run, no new first-stage trial."""
+        from qlab import night, twin_stage
+
+        entry = {"base": base.idea_id, "variant": spec.idea_id, "action": "stage2-late",
+                 "chain": [], "route": known.get("route"), "trial": known.get("trial")}
+        try:
+            twin_stage.second_stage(spec, entry, end=end, noise_trials=self.noise_trials,
+                                    deployable_capital_usd=self.deployable_capital_usd,
+                                    config=self.stage2())
+        except Exception as exc:  # noqa: BLE001 - tried again tomorrow
+            entry.update(action="error", error=f"{type(exc).__name__}: {exc}")
+            self.block["entries"].append(entry)
+            return
+        self.block["entries"].append(entry)
+        self.block["new"] += 1
+        self.ledger[spec.idea_id] = {**known, "stage2_pending": False}
+        save_ledger(self.ledger, self.ledger_path)
+        night.save_state(self.day, self.state)
 
     def describe_base(self, base: Base, entry_base: dict, end: date) -> None:
         """The three readings of the base's forward series, stored and kept in the report."""
@@ -431,6 +455,14 @@ class _Run:
             twin_stage.second_stage(spec, entry, end=end, noise_trials=self.noise_trials,
                                     deployable_capital_usd=self.deployable_capital_usd,
                                     config=self.stage2())
+        else:
+            # A survivor whose second stage was not asked for (a hand run that must not fetch
+            # Hyperliquid's candles) keeps it owed: a later night does it.
+            from qlab.pipeline import stage2
+
+            config = self.stage2()
+            entry["stage2_pending"] = config is not None and stage2.survives(
+                entry.get("route"), config)
         entry["total_seconds"] = round(time.monotonic() - started, 1)
 
     def stage2(self):
@@ -543,8 +575,10 @@ def report_lines(block: dict | None, tables: dict[str, dict] | None = None) -> l
         "поправка учитывает, что вариантов много. Токены не тратятся.", ""]
     lines += [f"- {n}" for n in block.get("notes") or []]
     ran = [e for e in entries if e.get("action") == "run"]
-    lines.append(f"Вариантов прогнано за ночь: {len(ran)}, сбоев: "
-                 f"{sum(e.get('action') == 'error' for e in entries)}.")
+    late = [e for e in entries if e.get("action") == "stage2-late"]
+    lines.append(f"Вариантов прогнано за ночь: {len(ran)}"
+                 + (f", вторых этапов, долгов прошлых ночей: {len(late)}" if late else "")
+                 + f", сбоев: {sum(e.get('action') == 'error' for e in entries)}.")
     if block.get("deferred"):
         lines.append("Не уместились в ночной предел и ждут следующей ночи: "
                      f"{', '.join(block['deferred'])}.")
@@ -568,6 +602,11 @@ def report_lines(block: dict | None, tables: dict[str, dict] | None = None) -> l
             elif e.get("slow"):
                 lines.append(f"    - `{e.get('variant')}`: **дольше нормы** "
                              f"({e.get('seconds')} с, см. `night/overlays.yaml`)")
+            if e.get("stage2") is not None and e.get("action") != "error":
+                from qlab.pipeline.stage2 import report_lines as stage2_lines
+
+                lines += [f"    - `{e.get('variant')}`: {ln}" for ln in
+                          stage2_lines({"route": e.get("route")}, e["stage2"])]
         lines.append("")
     for e in entries:
         if not e.get("variant") and e.get("action") == "error":

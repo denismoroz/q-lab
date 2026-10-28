@@ -360,8 +360,34 @@ def table(session, base_id: str, store: Path | None = None) -> dict:
                        for v in (HELPED, NOT_HELPED, UNDISTINGUISHABLE)}}
 
 
+def view(session, idea_id: str, store: Path | None = None) -> dict | None:
+    """What the console shows on an idea's page: for a base, its variants against it; for a
+    variant, its own comparison and the base's table; the base's diagnostics where stored. None
+    for an unknown idea. Everything is read from the registry and the stored files."""
+    from qlab import overlay_diagnostics
+    from qlab.funnel import ROUTE_TITLE
+    from qlab.overlay_variants import base_of
+    from qlab.registry.models import Idea
+
+    if session.get(Idea, idea_id) is None:
+        return None
+    base_id = base_of(idea_id) or idea_id
+    role = "variant" if base_of(idea_id) else "base"
+    shown = table(session, base_id, store)
+    for row in shown["variants"]:
+        row["route_ru"] = ROUTE_TITLE.get(row["route"] or "", row["route"])
+        row["name"] = row["idea_id"][len(base_id):].lstrip("-").removeprefix("ov-")
+    diagnostics = overlay_diagnostics.load(base_id, store)
+    return {
+        "idea_id": idea_id, "role": role, "base_id": base_id, "table": shown,
+        "diagnostics": diagnostics,
+        "diagnostics_lines": overlay_diagnostics.lines_ru(diagnostics) if diagnostics else None,
+        "alpha": ALPHA, "min_days": MIN_DAYS,
+    }
+
+
 __all__ = ["ALPHA", "HELPED", "MIN_DAYS", "NOT_HELPED", "N_BOOT", "UNDISTINGUISHABLE",
            "VERDICT_RU", "bootstrap_difference", "compare_series", "compare_specs", "corrected_p",
            "daily_from", "family_size", "family_trials", "load_record", "prepare",
            "save_record", "sharpe", "store_dir", "table", "variants_of", "verdict",
-           "window_metrics"]
+           "view", "window_metrics"]

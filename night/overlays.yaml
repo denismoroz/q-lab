@@ -25,13 +25,16 @@ slow_variant_minutes: 20
 # name): trend and XSMOM first, Bv2 last, as a control.
 priority: [trend, xsmom, bv2]
 
-# Bases named by hand, in this order, before the discovered ones. These are the strategies the
-# owner follows: the paper book (trend-tsmom-crypto) and the causal versions that passed or wait.
+# Bases named by hand, in this order, before the discovered ones: the causal versions that passed
+# stage 1 or wait for capital or an adapter, and Bv2 last, as a control (priority puts trend and
+# XSMOM ahead of it anyway). `trend-tsmom-crypto`, the idea behind the paper book, is NOT a base:
+# its spec (specs/trend.yaml) leaves out the whole-book volatility target of the live book, so
+# every run of it is `not-evaluable` (trial 9158) and a variant of it would be too; the trend
+# bases below run the same strategy through its live transcription.
 bases:
   - xsmom-research-nobull-causal
   - trend-binance-cap-gated-causal
   - trend-research-gate-hl-causal
-  - trend-tsmom-crypto
   - bv2-research-headroom-causal
 
 # Also take every idea that passed stage 1 (status validated, or a latest run that passed every
