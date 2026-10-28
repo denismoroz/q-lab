@@ -13,9 +13,11 @@ guard.
 
 **Which bases.** The ideas listed in `night/overlays.yaml` (`bases`), then, when `auto` is on,
 every idea that passed stage 1 (`qlab.forward_series.passed_ideas`: status `validated` or a
-latest run that passed every rule), minus variants, second stages and ideas with no single spec
-file. Order: the strategies of `priority` first (the config puts trend and XSMOM first and Bv2 as
-a control), the listed ones before the discovered ones.
+latest run that passed every rule), minus variants, second stages, ideas with no single spec
+file, and ideas whose latest run has no anomaly scan or a fired anomaly flag (owner 2026-10-28:
+overlays only on bases without anomaly flags; docs/ANOMALIES.md). Order: the strategies of
+`priority` first (the config puts trend and XSMOM first and Bv2 as a control), the listed ones
+before the discovered ones.
 
 **Bounded.** At most `max_bases_per_night` bases and `max_variants_per_night` NEW variants a
 night; what does not fit waits and the report names it. The night's stop time is checked before
@@ -131,7 +133,8 @@ class Base:
 def find_bases(session, specs: dict[str, list[Path]], config: Config, *,
                only: Collection[str] | None = None) -> tuple[list[Base], dict[str, str]]:
     """(the bases in the order they are taken, ideas named in `only` that cannot be one with the
-    reason). Without `only`: the listed ones and, with `auto`, every idea that passed stage 1."""
+    reason). Without `only`: the listed ones and, with `auto`, every idea that passed stage 1.
+    A base whose latest run has no anomaly scan or a fired flag is refused (`anomaly_refusal`)."""
     from qlab.forward_series import passed_ideas
     from qlab.overlay_variants import is_variant_id
     from qlab.pipeline.spec import load_spec
@@ -161,6 +164,9 @@ def find_bases(session, specs: dict[str, list[Path]], config: Config, *,
             except Exception as exc:  # noqa: BLE001 - a broken file fails in its own run
                 refused[idea_id] = f"the spec does not load: {exc}"
                 continue
+            if (flagged := anomaly_refusal(session, idea_id)) is not None:
+                refused[idea_id] = flagged
+                continue
             found.append(Base(idea_id, path, spec, strategy_key(spec.code_ref, spec.params),
                               idea_id in config.bases))
 
@@ -171,6 +177,26 @@ def find_bases(session, specs: dict[str, list[Path]], config: Config, *,
         return order, listing, base.idea_id
 
     return sorted(found, key=rank), refused
+
+
+def anomaly_refusal(session, idea_id: str) -> str | None:
+    """Why the idea cannot be a base because of the anomaly detector, or None. Owner, 2026-10-28,
+    «1, 2, 3 делай», on: overlays run only on bases without anomaly flags (an overlay on a result
+    that is a tail lottery measures nothing, docs/research/xsmom-anomaly-2026-10-28.md). The base's
+    latest routed trial must have been scanned (the night's anomalies stage runs before this one)
+    and no flag of it may fire."""
+    from qlab.anomalies.store import latest_scan
+    from qlab.registry.stages import latest_routed
+
+    found = latest_routed(session, idea_id)
+    if found is None:
+        return "no routed run"
+    scan = latest_scan(session, found[0].id)
+    if scan is None:
+        return f"run {found[0].id} has no anomaly scan yet"
+    if scan.fired:
+        return f"anomaly flags on run {found[0].id}: {', '.join(scan.fired)}"
+    return None
 
 
 def last_run_end(session, idea_id: str) -> date | None:

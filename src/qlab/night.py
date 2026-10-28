@@ -45,7 +45,7 @@ STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
                "twins": "двойники и вторая ступень",
                "twins-research": "двойники экспериментов исследователя",
-               "overlays": "надстройки",
+               "anomalies": "аномалии", "overlays": "надстройки",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
@@ -491,6 +491,15 @@ def write_report(day: date, state: dict) -> Path:
 
         if body := twins_lines(state["twins"]):
             lines += [f"## {TWINS_TITLE}", "", *body, ""]
+    if state.get("anomalies"):
+        from qlab.anomalies.report import SECTION_TITLE as ANOMALIES_TITLE
+        from qlab.anomalies.report import report_lines as anomalies_lines
+        from qlab.registry.db import session_scope as anomalies_session
+
+        with anomalies_session() as session:
+            body = anomalies_lines(state["anomalies"], session)
+        if body:
+            lines += [f"## {ANOMALIES_TITLE}", "", *body, ""]
     if state.get("overlays"):
         from qlab.overlay_stage import SECTION_TITLE as OVERLAYS_TITLE
         from qlab.overlay_stage import report_lines as overlays_lines
@@ -846,7 +855,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
-        twins: bool | None = None, overlays: bool | None = None, noise_trials: int = 200,
+        twins: bool | None = None, overlays: bool | None = None,
+        anomalies: bool = True, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True) -> Path:
@@ -860,6 +870,9 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     unless given: it is the cheap, high-value part of the recheck, and runs right after the
     waiting stage and once more after the researcher. `overlays` (every overlay and pair on a
     strategy that passed, `qlab.overlay_stage`) follows `twins`, which it comes right after.
+    `anomalies` (`qlab.anomalies.stage`: the code detector on the passed runs, then the
+    investigator on the flagged ones, bounded and guarded) runs before the overlays, because an
+    overlay base must have been scanned with no flag fired (`qlab.overlay_stage.anomaly_refusal`).
     Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
@@ -923,6 +936,11 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
 
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
                 deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+        save_state(day, state)
+    if anomalies and not past_stop(stop_at, state, "anomalies"):
+        # Too-good results (docs/ANOMALIES.md): flags by code on the passed runs, the
+        # investigator agent on the flagged ones. Before the overlays: a base must be clean.
+        guarded(day, state, "anomalies", anomalies_stage, day, end, state, stop_at=stop_at)
         save_state(day, state)
     if (overlays if overlays is not None else run_twins) \
             and not past_stop(stop_at, state, "overlays"):
@@ -1018,6 +1036,15 @@ def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
             f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
         save_state(day, state)
         return None
+
+
+def anomalies_stage(*args, **kwargs):
+    """The anomalies stage (`qlab.anomalies.stage.anomalies_stage`), reached through the night so
+    that the suite can keep whole-night tests off the owner's registry and the agent (conftest.py);
+    a test of the stage calls the function of `qlab.anomalies.stage` itself."""
+    from qlab.anomalies import stage
+
+    return stage.anomalies_stage(*args, **kwargs)
 
 
 def overlays_stage(*args, **kwargs):

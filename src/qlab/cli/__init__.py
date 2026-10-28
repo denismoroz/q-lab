@@ -781,6 +781,10 @@ def night_run_cmd(
         None, "--overlays/--no-overlays",
         help="Every overlay and pair on the strategies that passed, each compared with its base "
         "(no tokens; default: with --twins; docs/OVERLAYS.md)"),
+    anomalies: bool = typer.Option(
+        True, "--anomalies/--no-anomalies",
+        help="The anomaly detector on the passed runs (no tokens), then the investigator on the "
+        "flagged ones (tokens, guarded; docs/ANOMALIES.md)"),
     programmer: bool = typer.Option(
         True, "--programmer/--no-programmer",
         help="The programmer agent on its queue (tokens; docs/PROGRAMMER.md)"),
@@ -808,6 +812,7 @@ def night_run_cmd(
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
                director=director, waiting=waiting, twins=twins, overlays=overlays,
+               anomalies=anomalies,
                programmer=programmer,
                catalogue=catalogue, cards=cards,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)

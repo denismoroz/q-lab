@@ -52,6 +52,7 @@ def _no_real_agent_ledgers(monkeypatch) -> None:
     monkeypatch.setattr(night, "programmer_stage", lambda *a, **kw: None)
     monkeypatch.setattr(night, "catalogue_stage", lambda *a, **kw: None)
     monkeypatch.setattr(night, "cards_stage", lambda *a, **kw: None)
+    monkeypatch.setattr(night, "anomalies_stage", lambda *a, **kw: None)
     # The overlays stage runs variants on the stand against the real registry and writes spec
     # files and a ledger (2026-10-28: a night test that did not patch it ran two variants of a
     # real base). A test of the stage calls qlab.overlay_stage.overlays_stage directly.

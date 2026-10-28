@@ -53,6 +53,16 @@ STAGE2_CONFIG = stage2.Stage2Config(
                                                          "needs-forward"))
 
 
+_REAL_ANOMALY_REFUSAL = overlay_stage.anomaly_refusal
+
+
+@pytest.fixture(autouse=True)
+def _bases_scanned_clean(monkeypatch):
+    """The worlds here have no anomaly scans; a base counts as scanned with no flag fired. The
+    tests of the anomaly gate set their own over this."""
+    monkeypatch.setattr(overlay_stage, "anomaly_refusal", lambda session, idea_id: None)
+
+
 @pytest.fixture()
 def registry(tmp_path, monkeypatch):
     monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
@@ -180,6 +190,29 @@ def test_bases_are_the_listed_ones_then_those_that_passed_in_the_order_of_priori
     # trend before xsmom before bv2 (priority), the listed one ahead of the discovered ones
     assert [b.idea_id for b in found] == [TREND, XSMOM, BV2]
     assert found[1].listed and not found[0].listed and found[2].strategy == "bv2"
+
+
+def test_a_base_must_be_scanned_with_no_anomaly_flag_fired(world, registry, monkeypatch) -> None:
+    """Owner 2026-10-28: overlays only on bases without anomaly flags."""
+    import qlab.anomalies.store as anomaly_store
+    import qlab.registry.stages as stages
+    from qlab.waiting import spec_files
+
+    trial = types.SimpleNamespace(id=7)
+    scans = {XSMOM: types.SimpleNamespace(fired=["tail_move_coin_days", "frozen_price"]),
+             TREND: types.SimpleNamespace(fired=[]), BV2: None}
+    current = {}
+    monkeypatch.setattr(stages, "latest_routed",
+                        lambda session, idea_id: current.update(id=idea_id) or (trial, None))
+    monkeypatch.setattr(anomaly_store, "latest_scan",
+                        lambda session, trial_id: scans[current["id"]])
+    monkeypatch.setattr(overlay_stage, "anomaly_refusal", _REAL_ANOMALY_REFUSAL)
+    config = overlay_stage.load_config(world.config)
+    auto = types.SimpleNamespace(**{**config.__dict__, "auto": True, "bases": (XSMOM,)})
+    with registry.session_scope() as s:
+        found, refused = overlay_stage.find_bases(s, spec_files(world.specs), auto)
+    assert [b.idea_id for b in found] == [TREND]
+    assert "tail_move_coin_days" in refused[XSMOM] and "no anomaly scan" in refused[BV2]
 
 
 def test_a_variant_a_second_stage_and_an_idea_without_one_spec_are_no_base(
@@ -553,7 +586,8 @@ def test_the_shipped_config_is_read_and_puts_trend_and_xsmom_first_and_bv2_last(
     config = overlay_stage.load_config(ROOT / "night" / "overlays.yaml")
     assert config.enabled and config.priority == ("trend", "xsmom", "bv2")
     assert config.max_variants_per_night >= 1 and config.max_bases_per_night >= 1
-    assert "xsmom-research-nobull-causal" in config.bases
+    # Owner 2026-10-28: XSMOM's base is a tail lottery, its overlay variants were retired.
+    assert "xsmom-research-nobull-causal" not in config.bases
     assert "trend-binance-cap-gated-causal" in config.bases
     assert config.bases[-1] == "bv2-research-headroom-causal"       # the control comes last
 
@@ -590,6 +624,24 @@ def _run_night(**kw):
     flags = dict(graveyard=False, implement=False, search=False, detectors=False, assess=False,
                  director=False, programmer=False, catalogue=False, decay=False)
     return night.run(DAY, **{**flags, **kw})
+
+
+def test_the_anomaly_stage_runs_before_the_overlays_so_a_base_is_scanned_first(
+        tmp_path, monkeypatch) -> None:
+    order: list[str] = []
+    _night_env(tmp_path, monkeypatch, order)
+
+    def fake_anomalies(day, end, state, **kw):
+        order.append("anomalies")
+        state["anomalies"] = {"scanned": []}
+
+    monkeypatch.setattr(night, "anomalies_stage", fake_anomalies)
+    _run_night(paper=False, research=False)
+    assert order == ["waiting", "twins", "anomalies", "overlays"]
+    order.clear()
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state2")
+    _run_night(paper=False, research=False, anomalies=False)
+    assert order == ["waiting", "twins", "overlays"]
 
 
 def test_the_stage_runs_right_after_the_twins_and_follows_them_unless_given(
