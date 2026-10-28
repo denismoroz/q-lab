@@ -57,7 +57,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-09-20'
+  end: '2026-10-27'
   instruments:
   - AVAX
   - AVAX-SPOT
@@ -79,6 +79,8 @@ differs_from_source:
   stage 1 (bv2-research-headroom-retune-binance) on hyperliquid''s own perpetual contracts listed at each
   bar; nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
+  it are warm-up.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
   AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
   lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
@@ -116,7 +118,12 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-research-headroom-retune-bin
   wrapper''s choices inside it are not.
 
   '
+judged_from: '2025-06-01'
 sources:
+  instruments_chosen_at: 'specs/bv2-binance.yaml: params_fixed_at = 2025-06-01, the end of the window
+    the coin list was fitted on (params_fit_from 2023-06-01)'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2025-06-01); the days before are warm-up'
   min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
     min_order_usd
   base_params: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
@@ -167,3 +174,4 @@ regime_claim:
   bear: beats_market
 review_answers: {}
 selects_causally: true
+instruments_chosen_at: '2025-06-01'

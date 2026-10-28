@@ -8,6 +8,7 @@ annotation_snapshots:
 - '2026-10-25'
 - '2026-10-26'
 - '2026-10-27'
+- '2026-10-28'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -1133,12 +1134,10 @@ instruments:
         NFLX), quoted in USD. Netflix provides subscription video entertainment and
         advertising-supported streaming.'
   xyz:NIFTY:
-    listed_from: '2026-10-01'
-    listed_from_basis: first_listing_snapshot
-    delisted_since: '2026-10-01'
-    delisted_basis: on_or_before_first_snapshot
+    listed_from: '2026-10-27'
+    listed_from_basis: first_candle
     history:
-    - valid_from: '2026-10-01'
+    - valid_from: '2026-10-27'
       observed_on: '2026-10-25'
       asset_class: unclassified
       class_key: unclassified
@@ -1304,12 +1303,10 @@ instruments:
         RDDT), quoted in USD. Reddit operates an online platform organized into user-created
         communities where users share and discuss content.'
   xyz:RELIANCE:
-    listed_from: '2026-10-12'
-    listed_from_basis: first_listing_snapshot
-    delisted_since: '2026-10-12'
-    delisted_basis: seen_delisted
+    listed_from: '2026-10-27'
+    listed_from_basis: first_candle
     history:
-    - valid_from: '2026-10-12'
+    - valid_from: '2026-10-27'
       observed_on: '2026-10-25'
       asset_class: unclassified
       class_key: unclassified

@@ -9,21 +9,131 @@ ideas:
     таймфреймам. ведь таймфреймы они как матрешки - чем ниже тем больше колебаний. если рассмотреть варианты
     определения тренда по более высокому таймфрейму а включать по более низкому... в качестве основы по
     тренду брать не биткоин а монету на которой работать - вот такие идеи
+  status: carded
+  card: cards/bv2-fast-release-by-own-trend.yaml
+  notes: карточка написана 2026-10-28; в очереди реализации
+  attempts: 2
+  problems: []
+  review_blocks: []
+  review_notes:
+  - '`carder.readings_ru[1]` and `grid[fast_entry]` contradict each other. The reading says "тренд даёт
+    медленное правило", but `fast_entry`=1 and `new_block.rule_ru` say the slow rule "не участвует". The
+    idea''s own wording is "trend by the higher timeframe, enter by the lower". That is closest to the
+    `fast_entry`=0 variant, where "slow says down AND fast is not above zero" is required before the hedge
+    goes on. Say so in `readings_ru`. The `fast_entry`=1 variant is a third, fast-only reading and should
+    be labeled that way.'
+  - In `grid[fast_entry]` and `hypothesis_ru`, `fast_entry`=0 is described as "включение остаётся по медленному
+    правилу". With step 4, the hedge cannot switch on while the fast return is above zero, so the entry
+    is also delayed by the fast window. Describe it as "включение по медленному правилу плюс короткий
+    доход не выше нуля", so the entry-side question is visibly covered.
+  - The grid has a redundant cell, (`fast_window_hours`=0, `fast_entry`=1), which equals the baseline.
+    Mention that it is the same as the baseline, or drop the cell, to save a run.
+  - '`vs_tried[bv2-sig-momentum-sign].difference_ru` repeats itself ("окно... короче 3 дней" appears twice).
+    It also has a broken line wrap. Fix it by saying once: "то же правило, сочетание знаков доходов через
+    «и»; окна 12 и 24 часа, оба короче 3 дней, самого короткого из перебранных".'
+  - 'In `new_block.rule_ru`, "залог" is used in "размер, залог, продажа…" before its explanation a few
+    lines later. "Храповик" and "продажа выросшей части монеты по порогу книги" are never explained. Give
+    a short gloss at first use, for example "порог: когда монета выросла на столько-то, часть её продаётся".'
+  - In `new_block.rule_ru`, the "спот" explanation is crammed into one long line. Break it into sentences
+    so it reads like the rest of the rule.
+  - 'The title is very long. A shorter one, such as "Bv2: страховку снимают, когда монета растёт за 12–24
+    часа", reads better.'
+- id: idea-0002
+  date: '2026-10-28'
+  source: agent:director
+  text: 'Каждый день сверять живые сделки FRAB с тем, что стенд насчитал бы за те же часы на тех же монетах,
+    и показывать, на чём они расходятся: цена исполнения, комиссии, плата за финансирование, время входа
+    и выхода'
   status: new
   card: null
-  notes: 2 попыток карточника не приняты кодом или проверяющим; решает владелец (`qlab idea retry`, `qlab
-    idea reject`)
-  attempts: 1
-  problems:
-  - 'reviewer: `carder.hypothesis_ru`, `new_block.rule_ru`, `grid`. The idea asks to find the trend on
-    a higher timeframe and switch the hedge on by a lower one, as well as to take it off more often. The
-    draft keeps the entry on the slow rule unchanged and only adds a fast release. That is the narrower
-    half of the question. No variant enters on a lower timeframe, and the card never says it is leaving
-    that half out. It should either add an entry-side variant or say plainly that it is excluded and why.'
-  - 'reviewer: `vs_tried[bv2-sig-momentum-sign].difference_ru`. It says the new window is "короче суток",
-    but the 24-hour value is not shorter than a day. Only 12 hours is. Reword it to "12 and 24 hours,
-    both shorter than the 3-day minimum already tried". The card should also state that the rule is the
-    same "and" combination of return signs, with a window from outside the tried range.'
-  - 'reviewer: `new_block.rule_ru`. "Спот", "залог" and "запас маржи" are used with no explanation at
-    first use. The card rules require each term to be explained where it first appears. An engineer who
-    has only the card cannot tell what "запас маржи" refers to, since it is a spec parameter, `hedge_margin_headroom`.'
+  notes: из записки docs/research/director-2026-10-28.md
+  attempts: 0
+- id: idea-0003
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'Стенд FRAB должен учитывать остаток монеты, который остаётся после продажи из-за округления до
+    лота биржи: этот остаток не прикрыт контрактом и двигается с ценой, как на живом счёте; тогда сверка
+    живых денег со стендом покажет, сколько он стоит'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-28.md
+  attempts: 0
+- id: idea-0004
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'FRAB с короткой ногой на другой бирже (Pacifica или Extended) и монетой на Hyperliquid: биржа
+    контракта — настройка стратегии; для этого нужны загрузчики ставок и свечей Pacifica и Extended, у
+    обеих история ставок за год без ключа'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-28.md
+  attempts: 0
+- id: idea-0005
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'FRAB на длинной истории Binance (BTC, ETH, SOL, AVAX с 2019–2020 годов): правило окупаемости
+    берёт комиссии той биржи, где идёт торговля, а сигнал читает её платежи раз в 8 часов'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-28.md
+  attempts: 0
+- id: idea-0006
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'Bv2: добавить третье, короткое окно (несколько дней), которое может только включить страховку,
+    но не снять её; снимает страховку, как сейчас, правило 14 и 30 дней. Цель — резкие падения посреди
+    роста, не добавляя перестановок в боковике.'
+  status: new
+  card: null
+  notes: из записки docs/research/bv2-2026-10-28.md
+  attempts: 0
+- id: idea-0007
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'Для корзины 10 самых ликвидных монет пусть список кандидатов строит код: все монеты, у которых
+    на дату пересмотра уже есть и монета, и бессрочный контракт с нужной историей, а не список, заданный
+    вручную задним числом.'
+  status: new
+  card: null
+  notes: из записки docs/research/bv2-2026-10-28.md
+  attempts: 0
+- id: idea-0008
+  date: '2026-10-28'
+  source: agent:researcher
+  text: Входить в монету только если ожидаемая плата по контракту за минимальный срок держания покрывает
+    не только комиссии покупки и продажи, но и фиксированную плату за перевод залога между Binance и Hyperliquid
+    — тогда малый бюджет перестанет терять на мелких входах
+  status: new
+  card: null
+  notes: из записки docs/research/frab-binance-spot-2026-10-28.md
+  attempts: 0
+- id: idea-0009
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'Реинвестирование для FRAB со спотом на Binance: размер мест растёт вместе с деньгами стратегии,
+    а накопленная на Binance прибыль выводится только когда наберётся заданная сумма — как предлагал владелец'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-binance-spot-2026-10-28.md
+  attempts: 0
+- id: idea-0010
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'XSMOM: брать в книгу только монеты, у которых средний оборот за прошлые дни на день решения не
+    меньше $1 млн в день (порог живого движка «vol>=$1M»), и проверить на истории Binance с выбором по
+    прошлому: глубокие провалы книги на 20 ног (−24.5% в марте 2025, −28.2% зимой) вчетверо и вдвое мельче
+    на оборотистых монетах, а на большом капитале мелкие монеты неисполнимы.'
+  status: new
+  card: null
+  notes: из записки docs/research/xsmom-2026-10-28.md
+  attempts: 0
+- id: idea-0011
+  date: '2026-10-28'
+  source: agent:researcher
+  text: 'Обёртка для любой стратегии: уменьшать размер книги, когда её собственные колебания за прошлые
+    дни выросли, и увеличивать, когда упали (работа Barroso и Santa-Clara «Momentum has its moments»,
+    2015); первым проверить на XSMOM, у которой провалы приходят в дёрганые периоды.'
+  status: new
+  card: null
+  notes: из записки docs/research/xsmom-2026-10-28.md
+  attempts: 0

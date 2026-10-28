@@ -45,12 +45,16 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-26'
+  end: '2026-10-27'
   instruments:
   - AVAX
+  - AVAX-SPOT
   - BTC
+  - BTC-SPOT
   - ETH
+  - ETH-SPOT
   - SOL
+  - SOL-SPOT
 costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
@@ -63,8 +67,20 @@ differs_from_source:
   stage 1 (bv2-research-short-window) on hyperliquid''s own perpetual contracts listed at each bar; nothing
   was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
-- '4 instrument(s) of stage 1 are not listed on hyperliquid and are not traded: AVAX-SPOT, BTC-SPOT, ETH-SPOT,
-  SOL-SPOT.'
+- 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
+  AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
+  at 21.3% of the window: the lab''s price-parity check (src/qlab/data/snapshot.py spot_is_another_asset)
+  keeps only the bars where it is 1:1).'
+- 'BTC-SPOT is hyperliquid''s UBTC/USDC spot token (docs/TASKS.md line 635 (spotMeta read 2026-09-22):
+  BTC is UBTC (@142), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13: UBTC, UETH, USOL are 1:1 with the perp, deep books, safe).'
+- 'ETH-SPOT is hyperliquid''s UETH/USDC spot token (docs/TASKS.md line 636 (spotMeta read 2026-09-22):
+  ETH is UETH (@151), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13).'
+- 'SOL-SPOT is hyperliquid''s USOL/USDC spot token (docs/TASKS.md line 637 (spotMeta read 2026-09-22):
+  SOL is USOL (@156), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13).'
 noise_universe: held
 measure_hedge_timing: false
 required_instruments:
@@ -120,6 +136,18 @@ sources:
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
     is 0.9'
+  data.spot_legs.AVAX: 'docs/TASKS.md line 638 (spotMeta read 2026-09-22): AVAX is UAVAX (@306), bridge_safe
+    in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+    lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its
+    bars at 21.3% of the window: the lab''s price-parity check (src/qlab/data/snapshot.py spot_is_another_asset)
+    keeps only the bars where it is 1:1'
+  data.spot_legs.BTC: 'docs/TASKS.md line 635 (spotMeta read 2026-09-22): BTC is UBTC (@142), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13: UBTC,
+    UETH, USOL are 1:1 with the perp, deep books, safe'
+  data.spot_legs.ETH: 'docs/TASKS.md line 636 (spotMeta read 2026-09-22): ETH is UETH (@151), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+  data.spot_legs.SOL: 'docs/TASKS.md line 637 (spotMeta read 2026-09-22): SOL is USOL (@156), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
 regime_claim:
   bull: earns
   bear: beats_market

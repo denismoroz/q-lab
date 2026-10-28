@@ -1,4 +1,5 @@
 # Cards the implementer agent writes code and a spec for, one stage-2 slot
 # each night inside the token budget (qlab.night, docs/IMPLEMENTER.md). A card
 # stopped by the budget stays queued.
-cards: []
+cards:
+  - cards/bv2-fast-release-by-own-trend.yaml
