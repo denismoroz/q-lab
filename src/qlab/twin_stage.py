@@ -208,13 +208,14 @@ def find_candidates(session, specs: Mapping[str, list[Path]], *, only: Collectio
     Without `only`: every idea in work whose latest routed trial is `needs-forward`. With
     `only`: those ideas, whatever their status, if their route is `needs-forward`. A twin, a
     second stage and an idea that chooses its numbers causally already are never candidates."""
+    from qlab.overlay_variants import is_variant_id
     from qlab.pipeline.spec import load_spec
     from qlab.registry.models import Idea
     from qlab.registry.stages import is_stage2_child, latest_routed
     from qlab.twin import RETUNE, TWIN_SUFFIX, normalize_ref
     wanted = list(only) if only is not None else [
         i.id for i in session.query(Idea).order_by(Idea.id)
-        if i.status.value in IN_WORK and not is_stage2_child(i)]
+        if i.status.value in IN_WORK and not is_stage2_child(i) and not is_variant_id(i.id)]
     found: list[Candidate] = []
     refused: dict[str, str] = {}
     for idea_id in wanted:
@@ -226,6 +227,10 @@ def find_candidates(session, specs: Mapping[str, list[Path]], *, only: Collectio
         route = None if routed is None else getattr(routed[0].route, "value", routed[0].route)
         if is_stage2_child(idea) or idea_id.endswith(TWIN_SUFFIX):
             refused[idea_id] = "a twin or a second stage"
+            continue
+        if is_variant_id(idea_id):
+            refused[idea_id] = ("an overlay variant: its overlay numbers are chosen by code "
+                                "from the past already (qlab.overlay_stage)")
             continue
         if route != "needs-forward":
             refused[idea_id] = f"its latest route is {route}, not needs-forward"

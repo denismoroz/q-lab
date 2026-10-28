@@ -755,6 +755,10 @@ def night_run_cmd(
         None, "--twins/--no-twins",
         help="Causal twins and the second stage for ideas waiting for forward data "
         "(no tokens; default: with --waiting)"),
+    overlays: bool | None = typer.Option(
+        None, "--overlays/--no-overlays",
+        help="Every overlay and pair on the strategies that passed, each compared with its base "
+        "(no tokens; default: with --twins; docs/OVERLAYS.md)"),
     programmer: bool = typer.Option(
         True, "--programmer/--no-programmer",
         help="The programmer agent on its queue (tokens; docs/PROGRAMMER.md)"),
@@ -781,7 +785,8 @@ def night_run_cmd(
     path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
                implement=implement, search=search, detectors=detectors, assess=assess,
                research=research, generate=generate, decay=decay,
-               director=director, waiting=waiting, twins=twins, programmer=programmer,
+               director=director, waiting=waiting, twins=twins, overlays=overlays,
+               programmer=programmer,
                catalogue=catalogue, cards=cards,
                noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
     typer.echo(f"report: {path}")
@@ -2396,6 +2401,106 @@ def forward_series_rebuild_cmd(
     for idea_id, trial_id, outcome in done:
         typer.echo(f"{idea_id:<44} trial {trial_id:<7} {outcome}")
     typer.echo(f"total: {len(done)} runs looked at, series in {forward_series.store_dir()}")
+
+
+overlays_app = typer.Typer(
+    help="Overlays: when and how much a strategy holds (docs/OVERLAYS.md).",
+    no_args_is_help=True)
+app.add_typer(overlays_app, name="overlays")
+
+
+@overlays_app.command("run")
+def overlays_run_cmd(
+    only: list[str] = typer.Option(  # noqa: B008
+        [], "--only", help="Take these bases (repeat the option); without it: the night's own "
+        "selection, capped"),
+    chain: list[str] = typer.Option(  # noqa: B008
+        [], "--chain", help="Only the variants made of these overlays, e.g. own_results or "
+        "own_results+gradual_entry (repeat the option)"),
+    max_variants: int | None = typer.Option(
+        None, "--max-variants", help="At most this many new variants (default: the night's cap, "
+        "none with --only)"),
+    data_end: str = typer.Option(
+        "base", "--data-end", help="'base': each base's last run, so no snapshot is fetched "
+        "(default); 'night': the last closed day"),
+    stage2: bool = typer.Option(
+        False, "--stage2/--no-stage2", help="Also send a variant that survives stage 1 to the "
+        "second stage on Hyperliquid (fetches that venue's candles unless a snapshot exists)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be done, do nothing"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+    capital: float = typer.Option(3000.0, "--capital"),
+) -> None:
+    """The night's overlays stage by hand (src/qlab/overlay_stage.py): every overlay and pair on
+    the named bases, run on the stand, compared with the base. Trials are written to the registry
+    like any run (deflation counts them). Code only: no agent, no tokens. The state of a hand run
+    is kept apart in data/overlays/runs/, never in a night's."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import night, overlay_stage
+
+    night.STATE_DIR = _Path("data/overlays/runs")  # a hand run never touches a night's state
+    day, end = _date.today(), night.last_closed_day()
+    state = night.load_state(day)
+    state.pop("overlays", None)  # this call reports itself; the day's done-markers stay
+    overlay_stage.overlays_stage(
+        day, end, state, noise_trials=noise_trials, deployable_capital_usd=capital,
+        only=set(only) or None, chains_only=set(chain) or None, max_variants=max_variants,
+        data_end=data_end, second_stage=stage2, dry_run=dry_run)
+    for line in overlay_stage.report_lines(state.get("overlays")):
+        typer.echo(line)
+    for name, text in (state.get("stage_errors") or {}).items():
+        typer.echo(f"error in {name}: {text}", err=True)
+
+
+@overlays_app.command("table")
+def overlays_table_cmd(
+    idea: str = typer.Argument(..., help="The base idea"),  # noqa: B008
+) -> None:
+    """A base's overlay variants against it, from the stored comparisons (no run)."""
+    from qlab import overlay_compare, overlay_stage
+
+    with session_scope() as session:
+        table = overlay_compare.table(session, idea)
+    lines = overlay_stage.table_lines(table)
+    typer.echo(f"{idea}: {table['family_size']} variants compared, "
+               f"{table['family_trials']} trials in the family; {table['counts']}")
+    for line in lines:
+        typer.echo(line)
+
+
+@overlays_app.command("diagnostics")
+def overlays_diagnostics_cmd(
+    idea: list[str] = typer.Argument(  # noqa: B008
+        ..., help="Ideas whose forward series to describe"),
+    data_end: str = typer.Option("base", "--data-end", help="'base': the idea's last run; "
+                                 "'night': the last closed day"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Store the result for the console"),
+) -> None:
+    """The three readings of an idea's forward series (docs/OVERLAYS.md): from every possible
+    entry day, does a good period predict the next, and by market state known at the time. They
+    describe and decide nothing. Reads the spec file and the snapshot on disk; no network."""
+    from qlab import night, overlay_diagnostics, overlay_stage
+    from qlab.waiting import spec_files
+
+    files = spec_files(Path("specs"))
+    for idea_id in idea:
+        paths = files.get(idea_id) or []
+        if len(paths) != 1:
+            typer.echo(f"{idea_id}: {'no spec file' if not paths else 'several spec files'}")
+            continue
+        from qlab.pipeline.spec import load_spec
+
+        spec = load_spec(paths[0])
+        with session_scope() as session:
+            end = (overlay_stage.last_run_end(session, idea_id)
+                   if data_end == "base" else None) or night.last_closed_day()
+            payload = overlay_diagnostics.compute_for_spec(night.with_end(spec, end), session)
+        if save:
+            overlay_diagnostics.save(payload)
+        typer.echo(f"## {idea_id}")
+        for line in overlay_diagnostics.lines_ru(payload):
+            typer.echo(line)
 
 
 @app.command("year-signs")

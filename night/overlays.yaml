@@ -1,0 +1,48 @@
+# The night's "overlays" stage (qlab.overlay_stage, docs/OVERLAYS.md).
+#
+# Owner, 2026-10-28: «это все идеи для платформы. было бы здорово проверять разные варианты
+# возможно их можно смиксовать». An overlay changes WHEN and HOW MUCH a strategy holds (a gate on
+# market states, volatility and own-results scaling, gradual entry and exit). For a strategy that
+# passed stage 1 the stage runs every single overlay and every pair (no triples) as a variant of it,
+# each variant's numbers chosen monthly from the past only, each run a counted trial, and compares
+# each variant with the base on the same days. Code only: no agent, no tokens, outside the budget
+# guard.
+
+enabled: true
+
+# At most this many bases get NEW variants a night, and at most this many NEW variants are run in
+# all (a variant is a stand run with 200 random books and a trial that deflation counts). What
+# does not fit waits for the next night; the report names it. An explicit
+# `qlab overlays run --only IDEA` is not capped.
+max_bases_per_night: 2
+max_variants_per_night: 6
+
+# A variant whose stand run takes longer than this many minutes is reported as slow (the stage
+# never cuts a run it has started; it only checks the night's stop time between variants).
+slow_variant_minutes: 20
+
+# Which strategies are taken first (the strategy at the bottom of the wrappers, by its module
+# name): trend and XSMOM first, Bv2 last, as a control.
+priority: [trend, xsmom, bv2]
+
+# Bases named by hand, in this order, before the discovered ones. These are the strategies the
+# owner follows: the paper book (trend-tsmom-crypto) and the causal versions that passed or wait.
+bases:
+  - xsmom-research-nobull-causal
+  - trend-binance-cap-gated-causal
+  - trend-research-gate-hl-causal
+  - trend-tsmom-crypto
+  - bv2-research-headroom-causal
+
+# Also take every idea that passed stage 1 (status validated, or a latest run that passed every
+# rule), minus variants and second stages.
+auto: true
+
+# A variant that survives stage 1 goes on to the second stage on Hyperliquid, as a causal twin does
+# (qlab.pipeline.stage2).
+second_stage: true
+
+# Stored level-2 decision sets (`qlab regimes meta`, data/regimes/meta-<name>) built for a base's
+# own strategy: the `meta_gate` overlay is offered only for a base listed here. None is listed:
+# the stored sets were learned for other books than the bases above.
+meta_decisions: {}

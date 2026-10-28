@@ -44,6 +44,7 @@ STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
                "twins": "двойники и вторая ступень",
                "twins-research": "двойники экспериментов исследователя",
+               "overlays": "надстройки",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
@@ -197,8 +198,10 @@ def unwatched_bench(watch: list[str], spec_dir: Path = Path("specs")) -> list[st
     with session_scope() as session:
         # The second stage of a generated idea (docs/TWO_STAGE.md) waits with its parent,
         # which is named; naming both would count one idea twice.
+        # An overlay variant is judged against its base on one fixed history
+        # (qlab.overlay_stage); it needs no place on the watch list.
         bench = [i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.BENCH)
-                 if not is_stage2_child(i)]
+                 if not is_stage2_child(i) and "-ov-" not in i.id]
     return sorted(i for i in bench if i not in watched)
 
 
@@ -487,6 +490,12 @@ def write_report(day: date, state: dict) -> Path:
 
         if body := twins_lines(state["twins"]):
             lines += [f"## {TWINS_TITLE}", "", *body, ""]
+    if state.get("overlays"):
+        from qlab.overlay_stage import SECTION_TITLE as OVERLAYS_TITLE
+        from qlab.overlay_stage import report_lines as overlays_lines
+
+        if body := overlays_lines(state["overlays"]):
+            lines += [f"## {OVERLAYS_TITLE}", "", *body, ""]
     if idle := state.get("unwatched_bench"):
         lines += ["## На скамейке, но не в списке наблюдения", "",
                   "Проверка вперёд у этих идей не растёт: либо добавить в `night/watchlist.yaml`, "
@@ -836,7 +845,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
-        twins: bool | None = None, noise_trials: int = 200, deployable_capital_usd: float = 3000.0,
+        twins: bool | None = None, overlays: bool | None = None, noise_trials: int = 200,
+        deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -847,8 +857,9 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     researcher and the generator; a night without the researcher is a partial
     one). `twins` (causal twins and the second stage, `qlab.twin_stage`) follows `waiting`
     unless given: it is the cheap, high-value part of the recheck, and runs right after the
-    waiting stage and once more after the researcher. Nothing new starts after `stop_at`
-    (`past_stop`); the report says where the night stopped."""
+    waiting stage and once more after the researcher. `overlays` (every overlay and pair on a
+    strategy that passed, `qlab.overlay_stage`) follows `twins`, which it comes right after.
+    Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
@@ -911,6 +922,14 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
 
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
                 deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+        save_state(day, state)
+    if (overlays if overlays is not None else run_twins) \
+            and not past_stop(stop_at, state, "overlays"):
+        # Overlays on the strategies that passed (qlab.overlay_stage): when and how much to
+        # hold, every variant a counted trial, compared with its base. Code only.
+        guarded(day, state, "overlays", overlays_stage, day, end, state,
+                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                stop_at=stop_at)
         save_state(day, state)
     if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
         reconciled = guarded(day, state, "paper", paper_reconciliation, day)
@@ -998,6 +1017,15 @@ def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
             f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
         save_state(day, state)
         return None
+
+
+def overlays_stage(*args, **kwargs):
+    """The overlays stage (`qlab.overlay_stage.overlays_stage`), reached through the night so that
+    the suite can keep the tests that run a whole night off the owner's real registry and files
+    (conftest.py); a test of the stage calls the function of `qlab.overlay_stage` itself."""
+    from qlab import overlay_stage
+
+    return overlay_stage.overlays_stage(*args, **kwargs)
 
 
 PROGRAMMER = Path("night/programmer.yaml")

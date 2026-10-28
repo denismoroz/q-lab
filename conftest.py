@@ -52,6 +52,10 @@ def _no_real_agent_ledgers(monkeypatch) -> None:
     monkeypatch.setattr(night, "programmer_stage", lambda *a, **kw: None)
     monkeypatch.setattr(night, "catalogue_stage", lambda *a, **kw: None)
     monkeypatch.setattr(night, "cards_stage", lambda *a, **kw: None)
+    # The overlays stage runs variants on the stand against the real registry and writes spec
+    # files and a ledger (2026-10-28: a night test that did not patch it ran two variants of a
+    # real base). A test of the stage calls qlab.overlay_stage.overlays_stage directly.
+    monkeypatch.setattr(night, "overlays_stage", lambda *a, **kw: None)
 
 
 @pytest.fixture(autouse=True)
@@ -102,3 +106,10 @@ def _forward_series_in_tmp(monkeypatch, tmp_path_factory) -> None:
     console's chart, docs/FORWARD_CHART.md); a test that runs it writes into a temporary folder
     instead of the owner's real one. A test of the series sets its own over this."""
     monkeypatch.setenv("QLAB_FORWARD_SERIES", str(tmp_path_factory.mktemp("forward_series")))
+
+
+@pytest.fixture(autouse=True)
+def _overlay_files_in_tmp(monkeypatch, tmp_path_factory) -> None:
+    """The overlays' stored comparisons and diagnostics (data/overlays, docs/OVERLAYS.md) go to a
+    temporary folder in tests. A test of the stage sets its own over this."""
+    monkeypatch.setenv("QLAB_OVERLAYS", str(tmp_path_factory.mktemp("overlays")))
