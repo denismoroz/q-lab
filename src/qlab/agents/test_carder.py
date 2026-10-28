@@ -820,7 +820,8 @@ def test_the_report_names_what_came_what_was_carded_duplicates_and_questions() -
 
 def test_the_config_and_the_queue_of_the_repository_are_well_formed() -> None:
     config = carder.load_config()
-    assert config["enabled"] is True and config["per_night"] == 1 and config["max_attempts"] == 3
+    assert config["enabled"] is True and config["max_attempts"] == 3
+    assert config["per_night"] == 3 and config["max_waiting"] == 3  # owner, 2026-10-28
     assert config["model"] == "sonnet" and config["edit_max_turns"] == 15
     assert config["fix_notes"] is True
     inbox = yaml.safe_load((ROOT / "ideas/inbox.yaml").read_text(encoding="utf-8"))["ideas"]

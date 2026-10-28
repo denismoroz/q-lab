@@ -162,6 +162,20 @@ def test_one_idea_a_night_in_the_search_stages_budget(stage_env) -> None:
     assert stage_env.ran == ["idea-0001"]
 
 
+def test_several_ideas_a_night_until_the_waiting_places_are_full(stage_env) -> None:
+    """Owner, 2026-10-28: «да, ставь 3» -- several ideas a night, several cards waiting."""
+    stage_env.config.write_text(stage_env.config.read_text().replace(
+        "per_night: 1\n", "per_night: 3\nmax_waiting: 2\n"))
+    inbox = ideas.load()
+    ideas.add(inbox, "the third idea, long enough to be one", source="owner", day=DAY)
+    ideas.save(inbox)
+    state = {"done": {}}
+    real_cards_stage(DAY, state, config=stage_env.config)
+    assert stage_env.ran == ["idea-0001", "idea-0002"]  # two places, so the third waits
+    assert state["cards"]["waiting_for"] == "cards/idea-0001.yaml"
+    assert [e["status"] for e in ideas.load()] == ["carded", "carded", "new"]
+
+
 def test_while_a_card_waits_for_the_implementer_no_idea_is_taken(stage_env, monkeypatch) -> None:
     state = {"done": {}}
     real_cards_stage(DAY, state, config=stage_env.config)

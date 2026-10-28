@@ -5,7 +5,7 @@ Owner, 2026-10-27: «задача фреймворка генерировать 
 loop stopped half-way: the generator composes only blocks that exist, the researcher changes only
 numbers of strategies that exist, and the implementer writes new code only from a card that a
 person wrote by hand. Nobody turned an idea that needs new code into a card. This agent does it,
-one idea a night:
+up to `per_night` ideas a night (night/carder.yaml):
 
 1. code picks the oldest `new` idea of the inbox (`ideas/inbox.yaml`: the owner's, or an idea the
    researcher or the research director put in a memo's ```ideas block);
@@ -921,7 +921,7 @@ def sync_implemented(ideas: list[dict], *, states: Path | None = None,
 
 
 def pending_cards(ideas: list[dict]) -> list[dict]:
-    """Cards of the carder the implementer has not taken: at most one at a time."""
+    """Cards of the carder the implementer has not taken: at most `max_waiting` at a time."""
     return inbox.by_status(ideas, "carded")
 
 

@@ -2,11 +2,11 @@
 # генерировать подобные идеи и проверять» -- an idea that needs NEW code reaches the stand
 # without a person writing its card.
 #
-# One idea a night, in the search stage's share of the budget (the share CLAUDE.md cuts first),
-# AFTER the implement stage has run: a card written tonight is implemented on the NEXT night's
-# implement stage (the top of the cut order), not tonight at the cost of the stages behind it.
-# At most one card of the carder waits for the implementer at a time (qlab.agents.carder,
-# pending_cards): the next idea waits until that card is taken. Code checks the draft, a
+# Up to `per_night` ideas a night, in the search stage's share of the budget (the share CLAUDE.md
+# cuts first), AFTER the implement stage has run: a card written tonight is implemented on the
+# NEXT night's implement stage (the top of the cut order), not tonight at the cost of the stages
+# behind it. At most `max_waiting` cards of the carder wait for the implementer at a time
+# (qlab.agents.carder, pending_cards): further ideas wait until a card is taken. Code checks the draft, a
 # reviewer agent checks the meaning; a card that passes is moved to cards/ and queued in
 # night/implement_queue.yaml. Nothing is committed or pushed. The owner closes an idea with
 # `qlab idea reject ID --why ...` and puts a refused one back with `qlab idea retry ID`.
@@ -20,7 +20,10 @@ max_turns: 40        # a full writing of a draft (the first attempt, or a missin
 edit_max_turns: 15
 fix_notes: true      # an accepted draft with wording notes gets ONE edit pass for them (the
                      # result is checked by code; a failed pass leaves the draft as it was)
-per_night: 1
+# Owner, 2026-10-28, on one idea a night with ten waiting: «да, ставь 3». Was 1 (2026-10-27, for
+# the budget: ~1.25M tokens an idea with all its attempts and reviews; a retry is an edit now).
+per_night: 3
+max_waiting: 3       # cards of the carder waiting for the implementer at a time (was 1)
 # An idea refused three times waits for the owner (status needs-owner). Was 2: two attempts were
 # one write and one retry, and a fresh retry bred fresh problems. A retry is an edit now, a
 # fraction of a writing, so a third attempt is affordable and usually the one that converges.

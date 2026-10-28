@@ -1025,9 +1025,9 @@ def _restore_idea(idea: dict, kept: dict) -> None:
 def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     """The carder agent (`qlab.agents.carder`, docs/IDEAS.md): up to `per_night` ideas of the
     inbox turned into a card for the implementer (or answered "repeat" / a question to the
-    owner), in the search stage's budget. At most one card of the carder waits for the
-    implementer: while one does, no idea is taken (and no tokens are spent). Resumable: an idea
-    done tonight is not repeated."""
+    owner), in the search stage's budget. At most `max_waiting` cards of the carder wait for the
+    implementer: while that many do, no idea is taken (and no tokens are spent). Resumable: an
+    idea done tonight is not repeated."""
     from qlab import ideas
     from qlab import tried as tried_module
     from qlab.agents import carder
@@ -1047,7 +1047,8 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     if moved := carder.sync_implemented(inbox):
         entry["moved"] = moved
         ideas.save(inbox)
-    if waiting := carder.pending_cards(inbox):
+    max_waiting = int(cfg.get("max_waiting", 1))
+    if len(waiting := carder.pending_cards(inbox)) >= max_waiting:
         entry["waiting_for"] = waiting[0]["card"]
         save_state(day, state)
         return
@@ -1055,6 +1056,9 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     done = {e["id"] for e in entry["entries"]}
     max_attempts = int(cfg.get("max_attempts", 3))
     for _ in range(int(cfg.get("per_night", 1)) - len(done)):
+        if len(waiting := carder.pending_cards(inbox)) >= max_waiting:
+            entry["waiting_for"] = waiting[0]["card"]  # tonight's cards filled the places
+            break
         idea = ideas.oldest_new(inbox, max_attempts=max_attempts)
         if idea is None or idea["id"] in done:
             break
