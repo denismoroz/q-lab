@@ -121,7 +121,7 @@ def main(argv: list[str]) -> None:
                 with session_scope() as session:
                     result = evaluate_spec(
                         spec, session=session, ruleset=ruleset,
-                        deployable_capital_usd=slots * footprint, update_idea_status=False,
+                        update_idea_status=False,
                         check_lookahead=False, check_sources=False)
                 break
             except OperationalError:

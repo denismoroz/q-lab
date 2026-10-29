@@ -779,7 +779,6 @@ def test_the_command_dry_run_lists_what_would_be_done_and_changes_nothing(
 
 def _real_stage(world, day, end, state, **kw):
     kw.pop("noise_trials", None)
-    kw.pop("deployable_capital_usd", None)
     return _ORIGINAL(day, end, state, noise_trials=1, config_path=world.config,
                      spec_dir=world.specs, ledger_path=world.ledger, watch_config=world.watch,
                      **kw)
