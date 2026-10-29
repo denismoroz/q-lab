@@ -35,6 +35,7 @@ from pathlib import Path
 import yaml
 
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
+from qlab.costs import venue_costs
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
@@ -90,12 +91,20 @@ def load_config(path: Path = CONFIG) -> Stage2Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     try:
         costs = raw["costs"]
+        sources = {str(k): " ".join(str(v).split()) for k, v in costs["sources"].items()}
+        if "taker_fee_bps" in costs:  # numbers of its own: a config written before the table
+            taker, slippage = float(costs["taker_fee_bps"]), float(costs["slippage_bps"])
+        else:  # the venue's row of the cost table (qlab.costs, night/costs.yaml): one source
+            row = venue_costs(str(raw["venue"]))
+            if row is None:
+                raise ValueError(f"{path}: night/costs.yaml has no row for {raw['venue']!r}")
+            taker, slippage = row.taker_fee_bps, row.slippage_bps
+            sources.update({"costs.taker_fee_bps": row.sources["taker_fee_bps"],
+                            "costs.slippage_bps": row.sources["slippage_bps"]})
         config = Stage2Config(
             enabled=bool(raw["enabled"]), venue=str(raw["venue"]),
             data_start=date.fromisoformat(str(raw["data_start"])),
-            taker_fee_bps=float(costs["taker_fee_bps"]),
-            slippage_bps=float(costs["slippage_bps"]),
-            cost_sources={str(k): " ".join(str(v).split()) for k, v in costs["sources"].items()},
+            taker_fee_bps=taker, slippage_bps=slippage, cost_sources=sources,
             stage1_survives=tuple(str(r) for r in raw["stage1_survives"]),
             spot_legs={str(coin): SpotLeg(str(leg["token"]), " ".join(str(leg["source"]).split()))
                        for coin, leg in raw["spot_legs"].items()},
@@ -532,7 +541,7 @@ def _settle(session, result: Stage2Result, combined: Combined, *, rules_version:
 
 
 def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id: int | None,
-               noise_trials: int, deployable_capital_usd: float,
+               noise_trials: int,
                config: Stage2Config | None = None, spec_dir: Path = SPEC_DIR,
                venue_names: Collection[str] | None = None,
                measure: bool = False) -> Stage2Result:
@@ -565,8 +574,7 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
             result.skipped = (f"the second stage's idea id {result.idea_id!r} belongs to another "
                               f"idea of the registry, not to a second stage of {spec.idea_id!r}")
             return result
-        _run(spec, result, config, noise_trials=noise_trials,
-             deployable_capital_usd=deployable_capital_usd, spec_dir=spec_dir,
+        _run(spec, result, config, noise_trials=noise_trials, spec_dir=spec_dir,
              venue_names=venue_names, measure=measure)
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the idea waits
         result.status = "error"
@@ -600,7 +608,7 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config) -> None:
 
 
 def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
-         noise_trials: int, deployable_capital_usd: float, spec_dir: Path,
+         noise_trials: int, spec_dir: Path,
          venue_names: Collection[str] | None, measure: bool) -> None:
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.evaluate import evaluate_spec, resolve_panel
@@ -663,13 +671,11 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         if extra:
             evaluation = evaluate_spec(
                 child, session=session, ruleset=ruleset,
-                deployable_capital_usd=deployable_capital_usd,
                 not_evaluable_extra=extra)
         else:
             review = {} if reviewer is None else {"review_route": reviewer}
             evaluation = evaluate_spec_with_shape_aware_bar(
-                child, session=session, ruleset=ruleset,
-                deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials,
+                child, session=session, ruleset=ruleset, n_trials=noise_trials,
                 **review).candidate
         if reviewer is not None and reviewer.outcome is not None:
             result.confirmation = dataclasses.asdict(reviewer.outcome)

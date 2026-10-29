@@ -131,7 +131,7 @@ def _check(tmp_path: Path, mechanisms, text: str, name: str) -> list[str]:
     path.write_text(text, encoding="utf-8")
     _, problems = gen.check_generated(path, mechanisms=mechanisms, data_end=DATA_END,
                                       reference=None)
-    return problems
+    return [p for p in problems if not p.startswith("fixation:")]  # not what these tests ask
 
 
 def _blocks_problems(problems: list[str]) -> list[str]:

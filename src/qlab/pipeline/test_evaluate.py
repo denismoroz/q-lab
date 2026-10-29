@@ -387,7 +387,7 @@ def _result(
 
 def test_decide_route_needs_more_data_takes_priority() -> None:
     result = _result(decisive=False, overall_passed=False, unknown=("mystery",))
-    routing = decide_route(result, {}, deployable_capital_usd=1000)
+    routing = decide_route(result, {})
     assert routing.route == "needs-more-data"
 
 
@@ -395,28 +395,27 @@ def test_decide_route_reject_on_failed_rule() -> None:
     result = _result(
         decisive=True, overall_passed=False, failed_fatal="capital_fit", failed=("capital_fit",)
     )
-    routing = decide_route(result, {"min_capital_usd": 1.0}, deployable_capital_usd=1000)
+    routing = decide_route(result, {"min_capital_usd": 1.0})
     assert routing.route == "reject"
     assert "capital_fit" in routing.reason
 
 
-def test_decide_route_shelf_when_over_deployable() -> None:
+def test_decide_route_paper_whatever_capital_the_run_needed() -> None:
+    """There is no common sum to be short of (rules 2026-10-29.3): a run that passed every rule
+    routes `paper`, and the capital it needed is carried for step 4 of the ladder, which compares
+    it with the strategy's own money."""
     result = _result(decisive=True, overall_passed=True)
-    routing = decide_route(result, {"min_capital_usd": 5000.0}, deployable_capital_usd=1000)
-    assert routing.route == "shelf"
-    assert routing.required_capital_usd == 5000.0
-
-
-def test_decide_route_paper_when_affordable() -> None:
-    result = _result(decisive=True, overall_passed=True)
-    routing = decide_route(result, {"min_capital_usd": 500.0}, deployable_capital_usd=1000)
-    assert routing.route == "paper"
+    for needed in (500.0, 5000.0, 5_000_000.0):
+        routing = decide_route(result, {"min_capital_usd": needed})
+        assert routing.route == "paper"
+        assert routing.required_capital_usd == needed
+    assert decide_route(result, {}).required_capital_usd is None
 
 
 def test_decide_route_never_returns_live() -> None:
     for decisive, overall_passed in [(False, False), (True, False), (True, True)]:
         result = _result(decisive=decisive, overall_passed=overall_passed)
-        routing = decide_route(result, {"min_capital_usd": 1.0}, deployable_capital_usd=1_000_000)
+        routing = decide_route(result, {"min_capital_usd": 1.0})
         assert routing.route != "live"
 
 
@@ -430,7 +429,7 @@ def test_route_paper_when_passed_and_affordable(session, tmp_path) -> None:
     spec = _make_spec(params={"weight": 0.4})
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.routing.route == "paper"
@@ -462,7 +461,6 @@ def test_extra_metrics_mapping_is_merged_and_persisted(session, tmp_path) -> Non
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1000.0,
         extra_metrics={"noise_return_percentile": 0.995},
     )
 
@@ -486,7 +484,6 @@ def test_extra_metrics_callable_sees_the_computed_base_metrics(session, tmp_path
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1000.0,
         extra_metrics=_extra,
     )
 
@@ -517,7 +514,6 @@ def test_extra_metrics_omitted_key_reads_as_unknown_not_a_pass(session, tmp_path
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1000.0,
         extra_metrics=lambda _base: {},
     )
 
@@ -540,7 +536,6 @@ def test_extra_metrics_raising_is_recorded_as_an_error_trial(session, tmp_path) 
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1000.0,
         extra_metrics=_boom,
     )
 
@@ -552,15 +547,15 @@ def test_extra_metrics_raising_is_recorded_as_an_error_trial(session, tmp_path) 
     assert trial.metrics is None
 
 
-def test_route_shelf_when_min_capital_exceeds_deployable(session, tmp_path) -> None:
+def test_route_paper_and_the_capital_it_needed_when_min_capital_is_large(session, tmp_path) -> None:
     _register_discovered(session, tmp_path)
     spec = _make_spec(params={"weight": 0.001})  # min_capital_usd = 12000
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
-    assert result.routing.route == "shelf"
+    assert result.routing.route == "paper"
     assert result.routing.required_capital_usd == pytest.approx(12000.0)
     assert result.rules_result.overall_passed is True
 
@@ -578,7 +573,7 @@ def test_the_capital_a_book_needs_is_measured_from_its_orders_not_its_weights(
                                "min_leg_notional": "owner 2026-01-01: test fixture"})
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["min_capital_usd"] == pytest.approx(12.0 / 0.3)
@@ -592,8 +587,7 @@ def test_the_capital_a_book_needs_is_measured_from_its_orders_not_its_weights(
 def test_a_book_that_declares_no_orders_keeps_the_weights_number(session, tmp_path) -> None:
     _register_discovered(session, tmp_path)
     result = evaluate_spec(_make_spec(params={"weight": 0.4}), session=session,
-                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
-                           deployable_capital_usd=1000.0)
+                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]))
     assert result.metrics["min_capital_usd"] == pytest.approx(30.0)
     assert not any(k in result.metrics for k in ("min_capital_weights_usd",
                                                  "min_capital_from_orders", "orders_opening",
@@ -613,7 +607,7 @@ def test_route_reject_on_fatal_capital_fit(session, tmp_path) -> None:
     )
     ruleset = _ruleset([strict_capital_fit, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.routing.route == "reject"
@@ -632,7 +626,7 @@ def test_route_needs_more_data_when_metric_unknown(session, tmp_path) -> None:
     )
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, mystery_rule])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.rules_result.decisive is False
@@ -655,7 +649,7 @@ def test_honest_universe_rejects_hand_picked_universe(session, tmp_path) -> None
     )
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["point_in_time_universe"] == 0.0
@@ -668,7 +662,7 @@ def test_trial_written_even_when_strategy_raises(session, tmp_path) -> None:
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:RaisingStrategy")
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is not None
     assert "blew up" in result.error
@@ -691,7 +685,7 @@ def test_missing_code_ref_is_recorded_as_error_trial(session, tmp_path) -> None:
     spec = _make_spec(code_ref="qlab.pipeline.no_such_module:Nope")
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is not None
     trial = session.get(Trial, result.trial_id)
@@ -706,7 +700,7 @@ def test_snapshot_not_refetched_when_already_registered(session, tmp_path) -> No
     spec = _make_spec(params={"weight": 0.4})
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.routing.route == "paper"
@@ -726,7 +720,7 @@ def test_venue_metrics_present_for_configured_hyperliquid_source(session, tmp_pa
     spec = _make_spec(params={"weight": 0.4})
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["venue_supported"] == 1.0
@@ -755,7 +749,7 @@ def test_frab_like_multileg_spec_passes_atomic_execution_via_recovery(session, t
     )
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, atomic_rule])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["atomic_execution"] == 1.0
@@ -783,7 +777,7 @@ def test_failed_venue_supported_names_the_venue_and_the_instruments(session, tmp
     )
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, venue_rule])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["venue_supported"] == 0.0
@@ -828,7 +822,7 @@ def test_two_leg_binance_spec_without_an_execution_venue_stays_undecided(session
     spec = _binance_spec(session, tmp_path, simultaneous_legs=2)
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert "atomic_execution" not in result.metrics
@@ -844,7 +838,7 @@ def test_two_leg_binance_proxy_reads_execution_facts_from_hyperliquid(session, t
     spec = _binance_spec(session, tmp_path, simultaneous_legs=2, execution_venue="hyperliquid")
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert result.metrics["atomic_execution"] == 1.0
@@ -859,7 +853,7 @@ def test_single_leg_binance_spec_is_unchanged_without_an_execution_venue(session
     spec = _binance_spec(session, tmp_path)
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.metrics["atomic_execution"] == 1.0
     assert result.metrics["venue_supported"] == 0.0
@@ -873,7 +867,7 @@ def test_an_execution_venue_equal_to_the_data_source_changes_nothing(session, tm
     spec = _make_spec(params={"weight": 0.4}, simultaneous_legs=2, execution_venue=SOURCE)
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.routing.route == "paper"
     assert "execution_venue" not in result.routing.reason
@@ -885,7 +879,7 @@ def test_an_unconfigured_execution_venue_is_named_in_the_route(session, tmp_path
     spec = _binance_spec(session, tmp_path, execution_venue="no-such-venue")
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert "venue_supported" not in result.metrics
     assert result.routing.route == "needs-more-data"
@@ -902,7 +896,7 @@ def test_passed_venue_supported_has_no_venue_explanation(session, tmp_path) -> N
     )
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, venue_rule])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.routing.route == "paper"
     assert "adapter" not in result.routing.reason
@@ -965,7 +959,7 @@ def test_venue_metrics_absent_when_venue_unconfigured(session, tmp_path) -> None
     )
     ruleset = _ruleset([venue_rule])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
     assert "venue_supported" not in result.metrics
@@ -986,8 +980,8 @@ def test_repeated_evaluation_reuses_registry_spec_row(session, tmp_path) -> None
     spec = _make_spec(params={"weight": 0.4})
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    first = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
-    second = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    first = evaluate_spec(spec, session=session, ruleset=ruleset)
+    second = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert first.trial_id != second.trial_id
     first_trial = session.get(Trial, first.trial_id)
@@ -1016,7 +1010,7 @@ def test_unexpressed_mechanism_routes_not_evaluable_without_running_the_strategy
     )
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1034,7 +1028,7 @@ def test_not_evaluable_never_moves_an_idea_to_rejected(session, tmp_path) -> Non
     spec = _make_spec(unexpressed_mechanisms=["something the interface cannot carry"])
 
     evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.CANDIDATE
@@ -1046,7 +1040,7 @@ def test_required_instrument_absent_from_data_is_not_evaluable(session, tmp_path
     spec = _make_spec(required_instruments=["BTC", "AVAX-SPOT"])
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1069,7 +1063,7 @@ def test_book_never_complete_is_not_evaluable(session, tmp_path) -> None:
     spec = _make_spec(required_instruments=["BTC", "ETH"])
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1095,7 +1089,7 @@ def test_partial_book_is_judged_only_where_it_was_complete(session, tmp_path) ->
     spec = _make_spec(required_instruments=["BTC", "ETH"])
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "paper"
@@ -1154,7 +1148,6 @@ def test_reject_moves_candidate_to_rejected_and_names_the_trial(session, tmp_pat
         spec,
         session=session,
         ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
-        deployable_capital_usd=1e9,
     )
 
     assert evaluation.routing.route == "reject"
@@ -1176,25 +1169,25 @@ def test_paper_route_stops_at_validated_because_paper_is_the_owners_gate(
         _make_spec(),
         session=session,
         ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-        deployable_capital_usd=1e9,
     )
 
     assert evaluation.routing.route == "paper"
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.VALIDATED
 
 
-def test_shelf_route_moves_to_bench(session, tmp_path) -> None:
+def test_a_run_that_needs_much_capital_is_validated_not_benched(session, tmp_path) -> None:
+    """The shelf is gone (rules 2026-10-29.3): the run passed every rule, so the idea is validated
+    and waits for the owner; whether it fits its money is step 4 of the ladder."""
     _register_discovered(session, tmp_path)
 
     evaluation = evaluate_spec(
         _make_spec(),
         session=session,
         ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-        deployable_capital_usd=0.01,
     )
 
-    assert evaluation.routing.route == "shelf"
-    assert session.get(Idea, IDEA_ID).status == IdeaStatus.BENCH
+    assert evaluation.routing.route == "paper"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.VALIDATED
 
 
 def test_backtest_never_overrides_a_production_status(session, tmp_path) -> None:
@@ -1207,7 +1200,6 @@ def test_backtest_never_overrides_a_production_status(session, tmp_path) -> None
         _make_spec(),
         session=session,
         ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
-        deployable_capital_usd=1e9,
     )
 
     assert evaluation.routing.route == "reject"
@@ -1222,7 +1214,6 @@ def test_update_idea_status_false_leaves_status_alone(session, tmp_path) -> None
         _make_spec(),
         session=session,
         ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
-        deployable_capital_usd=1e9,
         update_idea_status=False,
     )
 
@@ -1238,7 +1229,7 @@ def test_error_trial_records_its_route_and_moves_nothing(session, tmp_path) -> N
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:RaisingStrategy")
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     trial = session.get(Trial, evaluation.trial_id)
@@ -1259,7 +1250,7 @@ def test_universe_with_erased_delisted_history_is_not_evaluable(session, tmp_pat
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:RaisingStrategy")
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1277,7 +1268,7 @@ def test_exploratory_run_computes_everything_but_decides_nothing(session, tmp_pa
     )
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1296,7 +1287,7 @@ def test_exploratory_flag_changes_nothing_when_there_is_no_reason(session, tmp_p
     spec = _make_spec(exploratory="nothing to override")
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "paper"
@@ -1322,7 +1313,7 @@ NO_SUCH_VENUE_METRIC = Rule(
 def test_decide_route_needs_infrastructure_when_only_infrastructure_fails() -> None:
     result = _result(decisive=True, overall_passed=False, failed=("venue_supported",))
     result = dataclasses.replace(result, failed_infrastructure_rule_ids=("venue_supported",))
-    routing = decide_route(result, {"min_capital_usd": 50.0}, deployable_capital_usd=1000)
+    routing = decide_route(result, {"min_capital_usd": 50.0})
     assert routing.route == "needs-infrastructure"
     assert "venue_supported" in routing.reason
 
@@ -1333,7 +1324,7 @@ def test_decide_route_rejects_when_a_strategy_rule_also_fails() -> None:
         failed=("venue_supported", "net_edge_positive"),
     )
     result = dataclasses.replace(result, failed_infrastructure_rule_ids=("venue_supported",))
-    routing = decide_route(result, {"min_capital_usd": 50.0}, deployable_capital_usd=1000)
+    routing = decide_route(result, {"min_capital_usd": 50.0})
     assert routing.route == "reject"
     assert "net_edge_positive" in routing.reason and "missing infrastructure" in routing.reason
 
@@ -1347,7 +1338,6 @@ def test_missing_infrastructure_benches_the_idea_and_keeps_the_strategy_verdict(
         _make_spec(),
         session=session,
         ruleset=_ruleset([NO_SUCH_VENUE_METRIC, CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
-        deployable_capital_usd=1e9,
     )
 
     assert evaluation.routing.route == "needs-infrastructure"
@@ -1369,7 +1359,7 @@ def test_strategy_not_valid_on_the_spec_interval_is_not_evaluable(session, tmp_p
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:DailyOnlyToy")
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]), deployable_capital_usd=1e9
+        spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS])
     )
 
     assert evaluation.routing.route == "not-evaluable"
@@ -1392,7 +1382,6 @@ def test_truncated_history_moves_the_judged_window_to_where_it_is_honest(
 
     evaluation = evaluate_spec(
         _make_spec(), session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-        deployable_capital_usd=1e9,
     )
 
     assert evaluation.metrics["history_truncated_instruments"] == 2.0
@@ -1452,7 +1441,7 @@ def test_unknown_fixed_date_makes_a_pass_wait_for_forward_not_paper(session, tmp
     spec = _explicit_long(session, tmp_path)
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     # The hand-picked universe fails honest_universe, but on the selection
     # period that is informational: it neither rejects nor admits.
@@ -1467,7 +1456,7 @@ def test_conclusive_failure_on_the_selection_period_rejects(session, tmp_path) -
     spec = _explicit_long(session, tmp_path)
     ruleset = _split_ruleset([CAPITAL_FIT_TIGHT, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.routing.route == "reject"
     assert "selection period" in result.routing.reason
@@ -1488,7 +1477,7 @@ def test_a_list_chosen_after_the_judged_part_began_is_not_point_in_time(session,
         instruments_chosen_at=date(2026, 3, 1), sources=LIST_SOURCES)
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.metrics["judged_on_forward"] == 1.0
     assert result.metrics["point_in_time_universe"] == 0.0  # the list is younger than the days
@@ -1500,7 +1489,7 @@ def test_a_list_chosen_when_the_judged_part_began_is_point_in_time(session, tmp_
         instruments_chosen_at=date(2026, 1, 6), sources=LIST_SOURCES)
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.metrics["point_in_time_universe"] == 1.0  # fixed when the forward test began
 
@@ -1516,12 +1505,11 @@ def test_a_causal_twin_with_a_late_list_is_judged_only_from_the_day_the_list_was
                 sources=LIST_SOURCES)
 
     spec = _explicit_long(session, tmp_path, **twin)
-    unjudged = evaluate_spec(spec, session=session, ruleset=ruleset,
-                             deployable_capital_usd=1000.0)
+    unjudged = evaluate_spec(spec, session=session, ruleset=ruleset)
     assert unjudged.metrics["point_in_time_universe"] == 0.0  # judged from the first choice
 
     cut = evaluate_spec(spec.model_copy(update={"judged_from": date(2026, 1, 6)}),
-                        session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+                        session=session, ruleset=ruleset)
     assert cut.metrics["point_in_time_universe"] == 1.0
     assert cut.metrics["judged_on_forward"] == 1.0
     assert cut.metrics["selection_days"] == 0.0  # a causal chooser has no selection period
@@ -1537,7 +1525,7 @@ def test_forward_test_is_judged_and_a_fixed_list_is_honest_there(session, tmp_pa
     )
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.metrics["judged_on_forward"] == 1.0
     assert result.metrics["point_in_time_universe"] == 1.0  # list fixed before the forward test
@@ -1561,7 +1549,7 @@ def test_the_year_view_describes_the_judged_part_alone(session, tmp_path) -> Non
     )
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     m = result.metrics
     assert m["judged_on_forward"] == 1.0
@@ -1605,7 +1593,7 @@ def test_short_failing_forward_test_waits_long_failing_one_rejects() -> None:
 
     short = decide_fit_forward_route(
         ruleset=ruleset, selection=selection, forward=forward,
-        metrics={**base, "forward_days": 30.0}, deployable_capital_usd=1000.0,
+        metrics={**base, "forward_days": 30.0},
         params_fixed_at=date(2026, 1, 1),
     )
     assert short.route == "needs-forward"
@@ -1613,7 +1601,7 @@ def test_short_failing_forward_test_waits_long_failing_one_rejects() -> None:
 
     long = decide_fit_forward_route(
         ruleset=ruleset, selection=selection, forward=forward,
-        metrics={**base, "forward_days": 9500.0}, deployable_capital_usd=1000.0,
+        metrics={**base, "forward_days": 9500.0},
         params_fixed_at=date(2026, 1, 1),
     )
     assert long.route == "reject"
@@ -1624,8 +1612,8 @@ def test_short_passing_forward_test_also_waits() -> None:
     ruleset = _split_ruleset([NET_EDGE])
     passing = _rows(("net_edge", True))
     base = {"fit_sharpe_net": 0.5, "forward_days_needed": 9000.0, "min_capital_usd": 10.0}
-    kwargs = dict(ruleset=ruleset, selection=passing, forward=passing,
-                  deployable_capital_usd=1000.0, params_fixed_at=date(2026, 1, 1))
+    kwargs = dict(ruleset=ruleset, selection=passing, forward=passing, params_fixed_at=date(2026,
+                                                                                            1, 1))
 
     assert decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 18.0}).route \
         == "needs-forward"
@@ -1637,8 +1625,7 @@ def test_without_forward_resolution_the_window_is_judged_as_before(session, tmp_
     spec = _explicit_long(
         session, tmp_path, params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test"
     )
-    result = evaluate_spec(spec, session=session, ruleset=_ruleset([HONEST_UNIVERSE]),
-                           deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([HONEST_UNIVERSE]))
     assert result.routing.route == "reject"
     assert "judged_on_forward" not in result.metrics
 
@@ -1655,7 +1642,7 @@ def test_causal_selection_is_judged_from_its_first_choice_without_waiting(sessio
     )
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     # No selection period: the forward test's own route stands, even when short.
     assert result.routing.route == "paper"
@@ -1677,8 +1664,8 @@ NOISE_BAR = Rule(id="shape_aware_edge", stage=Stage.EDGE, metric="shape_aware_ed
 def test_forward_only_noise_miss_on_a_short_window_waits() -> None:
     ruleset = _split_ruleset([NET_EDGE, NOISE_BAR])
     noise_miss = _rows(("net_edge", True), ("shape_aware_edge", False))
-    kwargs = dict(ruleset=ruleset, selection=None, forward=noise_miss,
-                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 7, 1))
+    kwargs = dict(ruleset=ruleset, selection=None, forward=noise_miss, params_fixed_at=date(2025,
+                                                                                            7, 1))
     base = {"sharpe_net": 0.75, "forward_days_needed": 4000.0, "min_capital_usd": 10.0}
 
     short = decide_fit_forward_route(**kwargs, metrics={**base, "forward_days": 447.0})
@@ -1692,7 +1679,7 @@ def test_forward_only_economic_floor_miss_still_rejects() -> None:
     ruleset = _split_ruleset([NET_EDGE, NOISE_BAR])
     floor_miss = _rows(("net_edge", False), ("shape_aware_edge", False))
     route = decide_fit_forward_route(
-        ruleset=ruleset, selection=None, forward=floor_miss, deployable_capital_usd=1000.0,
+        ruleset=ruleset, selection=None, forward=floor_miss,
         params_fixed_at=date(2025, 7, 1),
         metrics={"sharpe_net": 0.2, "forward_days_needed": 9e4, "forward_days": 447.0},
     )
@@ -1713,8 +1700,7 @@ def test_a_strategy_that_reads_the_future_is_an_error_not_a_verdict(session, tmp
     _register_discovered(session, tmp_path)
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:PeekingStrategy")
 
-    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-                           deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
 
     assert result.routing.route == "error"
     assert "look-ahead" in result.routing.reason
@@ -1728,8 +1714,7 @@ def test_a_spec_with_an_unsourced_number_does_not_start(session, tmp_path) -> No
     spec = _make_spec(params={"weight": 0.4}, sources={"costs": "owner 2026-01-01: test"})
 
     with pytest.raises(SpecSourceError, match="no source for weight"):
-        evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-                      deployable_capital_usd=1000.0)
+        evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
     assert session.query(Trial).count() == 0
 
 
@@ -1739,8 +1724,8 @@ def test_a_forward_test_that_missed_a_regime_waits() -> None:
     passing = _rows(("net_edge", True))
     base = {"sharpe_net": 2.0, "forward_days_needed": 100.0, "forward_days": 400.0,
             "min_capital_usd": 10.0, "regime_bull_days": 120.0, "regime_flat_days": 200.0}
-    kwargs = dict(ruleset=ruleset, selection=None, forward=passing,
-                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 1, 1))
+    kwargs = dict(ruleset=ruleset, selection=None, forward=passing, params_fixed_at=date(2025, 1,
+                                                                                         1))
 
     missed = decide_fit_forward_route(**kwargs, metrics={**base, "regime_bear_days": 12.0})
     assert missed.route == "needs-forward" and "bear 12 days" in missed.reason
@@ -1860,7 +1845,7 @@ def test_a_forward_test_spent_in_cash_is_measured_not_an_error(session, tmp_path
     spec = spec.model_copy(update={"params": {"weight": 0.4, "cash_from": "2026-01-06"}})
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0,
+    result = evaluate_spec(spec, session=session, ruleset=ruleset,
                            check_lookahead=False, check_sources=False)
 
     assert result.error is None
@@ -1886,8 +1871,7 @@ def test_a_noise_book_of_the_wrong_shape_is_not_evaluable_not_an_error(session, 
     _register_discovered(session, tmp_path)
     spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:UnmatchedNoise")
 
-    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]),
-                           deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
 
     assert result.error is None and result.metrics is None
     assert result.routing.route == "not-evaluable"
@@ -1902,7 +1886,7 @@ def test_failed_informational_rules_are_named_not_called_nothing(session, tmp_pa
     spec = _explicit_long(session, tmp_path)  # no params_fixed_at
     ruleset = _split_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE_INFO])
 
-    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.routing.route == "needs-forward"
     assert "nothing against" not in result.routing.reason
@@ -1932,7 +1916,7 @@ def test_a_forward_test_a_third_of_the_data_decides() -> None:
     failing = _rows(("net_edge", False))
     base = {"fit_sharpe_net": 0.5, "fit_window_days": 731.0,
             "forward_days_needed": HOLDOUT.days_needed(731.0), "min_capital_usd": 10.0}
-    kwargs = dict(ruleset=ruleset, selection=passing, deployable_capital_usd=1000.0,
+    kwargs = dict(ruleset=ruleset, selection=passing,
                   params_fixed_at=date(2025, 6, 1))
 
     early = decide_fit_forward_route(**kwargs, forward=passing,
@@ -1949,7 +1933,7 @@ def test_the_holdout_is_measured_against_the_declared_fitting_window(session, tm
     """A declared fitting window counts in full even where the run's data does
     not cover it; without one, the run's own data before the fix date."""
     ruleset = _holdout_ruleset([CAPITAL_FIT_GENEROUS])
-    kwargs = dict(session=session, ruleset=ruleset, deployable_capital_usd=1000.0,
+    kwargs = dict(session=session, ruleset=ruleset,
                   check_lookahead=False, check_sources=False)
 
     declared = _explicit_long(session, tmp_path, params_fit_from=date(2025, 12, 1),
@@ -1991,7 +1975,7 @@ def test_a_noise_bar_that_cannot_tell_does_not_reject() -> None:
     base = {"fit_sharpe_net": 1.0, "fit_window_days": 100.0, "forward_days_needed": 50.0,
             "forward_days": 400.0, "min_capital_usd": 10.0}
     kwargs = dict(ruleset=ruleset, selection=selection, forward=failing_bar,
-                  deployable_capital_usd=1000.0, params_fixed_at=date(2025, 6, 1))
+                  params_fixed_at=date(2025, 6, 1))
 
     weak = decide_fit_forward_route(**kwargs, metrics={**base, "noise_power": 0.01})
     assert weak.route == "needs-forward"
@@ -2011,7 +1995,7 @@ def test_with_no_selection_period_a_powerless_bar_waits_too() -> None:
                       holdout_share=HOLDOUT, noise_power=POWER)
     failing_bar = _rows(("net_edge", True), ("shape_aware_edge", False))
     routing = decide_fit_forward_route(
-        ruleset=ruleset, selection=None, forward=failing_bar, deployable_capital_usd=1000.0,
+        ruleset=ruleset, selection=None, forward=failing_bar,
         params_fixed_at=date(2025, 6, 1),
         metrics={"forward_days": 400.0, "noise_power": 0.03, "min_capital_usd": 10.0})
     assert routing.route == "needs-forward"
@@ -2076,7 +2060,7 @@ def test_a_strategys_own_costs_reach_the_net_return(session, tmp_path) -> None:
                           sources={"flat_fee": "owner 2026-01-01: test fixture",
                                    "costs": "owner 2026-01-01: test fixture",
                                    "min_leg_notional": "owner 2026-01-01: test fixture"})
-        return evaluate_spec(spec, session=session, ruleset=rules, deployable_capital_usd=1000.0,
+        return evaluate_spec(spec, session=session, ruleset=rules,
                              check_lookahead=False)
 
     free = run()
@@ -2100,10 +2084,10 @@ def test_judged_from_starts_the_judged_window_after_the_warm_up(session, tmp_pat
     data = {"source": SOURCE, "interval": INTERVAL, "start": START, "end": end}
 
     whole = evaluate_spec(_make_spec(params={"weight": 0.4}, data=data), session=session,
-                          ruleset=rules, deployable_capital_usd=1000.0, check_lookahead=False)
+                          ruleset=rules, check_lookahead=False)
     judged = evaluate_spec(_make_spec(params={"weight": 0.4}, data=data,
                                       judged_from=date(2026, 1, 3)),
-                           session=session, ruleset=rules, deployable_capital_usd=1000.0,
+                           session=session, ruleset=rules,
                            check_lookahead=False)
 
     assert "skipped_warmup_days" not in whole.metrics
@@ -2127,8 +2111,7 @@ def test_judged_from_never_moves_the_forward_boundary(session, tmp_path) -> None
                                       "end": end},
         judged_from=date(2026, 1, 3), params_fixed_at=date(2025, 6, 1),
         params_fixed_evidence="owner 2026-01-01: test fixture")
-    result = evaluate_spec(spec, session=session, ruleset=ruleset,
-                           deployable_capital_usd=1000.0, check_lookahead=False)
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, check_lookahead=False)
     assert result.metrics["judged_on_forward"] == 1.0
     assert result.metrics["selection_days"] == 0.0
     assert result.metrics["forward_days"] == pytest.approx(2.0, abs=0.1)  # 3 Jan .. 5 Jan 00:00
@@ -2142,7 +2125,7 @@ def test_extra_not_evaluable_reasons_write_a_not_evaluable_trial_and_run_nothing
     spec = _make_spec(params={"weight": 0.4})
     result = evaluate_spec(
         spec, session=session, ruleset=_ruleset([CAPITAL_FIT_TIGHT]),
-        deployable_capital_usd=1000.0, not_evaluable_extra=["the market had 3 coins, 5 needed"])
+            not_evaluable_extra=["the market had 3 coins, 5 needed"])
 
     assert result.routing.route == "not-evaluable"
     assert "the market had 3 coins, 5 needed" in result.routing.reason
@@ -2181,8 +2164,7 @@ def test_the_run_is_also_measured_on_the_strategys_own_money(session, tmp_path) 
     _register_discovered(session, tmp_path)
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
 
-    plain = evaluate_spec(_make_spec(params={"weight": 0.4}), session=session, ruleset=ruleset,
-                          deployable_capital_usd=1000.0)
+    plain = evaluate_spec(_make_spec(params={"weight": 0.4}), session=session, ruleset=ruleset)
     m = plain.metrics
     # no base and a reinvesting book: the capital figures ARE the stand's
     assert m["cap_reinvested"] == 1.0
@@ -2194,7 +2176,7 @@ def test_the_run_is_also_measured_on_the_strategys_own_money(session, tmp_path) 
     based = evaluate_spec(
         _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
                    params={"weight": 0.4, "base": 3.0}, sources=_BASED_SOURCES),
-        session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+        session=session, ruleset=ruleset)
     b = based.metrics
     assert b["ann_return_net"] == pytest.approx(m["ann_return_net"]), "the stand is unchanged"
     assert b["cap_reinvested"] == 0.0
@@ -2213,8 +2195,7 @@ def test_a_refused_base_leaves_the_capital_figures_out(session, tmp_path) -> Non
         _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
                    params={"weight": 0.4, "base": 3.0, "refuse": True},
                    sources=_BASED_SOURCES),
-        session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
-        deployable_capital_usd=1000.0)
+        session=session, ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]))
     assert result.error is None
     assert result.metrics["cap_base_refused"] == 1.0
     assert not any(k.startswith("cap_") and k != "cap_base_refused" for k in result.metrics)
@@ -2232,7 +2213,7 @@ def test_a_rule_on_the_strategys_money_reads_the_money_figure(session, tmp_path)
     result = evaluate_spec(
         _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
                    params={"weight": 0.4, "base": 3.0}, sources=_BASED_SOURCES),
-        session=session, ruleset=_ruleset(_money_edge_rules()), deployable_capital_usd=1000.0)
+        session=session, ruleset=_ruleset(_money_edge_rules()))
     row = next(r for r in result.rules_result.rows if r.rule_id == "net_edge_positive")
     assert row.metric == "cap_ann_return"
     assert row.value == pytest.approx(result.metrics["cap_ann_return"])
@@ -2248,7 +2229,7 @@ def test_a_book_with_no_base_of_percent_is_not_judged_on_the_stand_instead(
     result = evaluate_spec(
         _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
                    params={"weight": 0.4, "base": 3.0, "refuse": True}, sources=_BASED_SOURCES),
-        session=session, ruleset=_ruleset(_money_edge_rules()), deployable_capital_usd=1000.0)
+        session=session, ruleset=_ruleset(_money_edge_rules()))
     assert result.error is None and "ann_return_net" in result.metrics
     assert result.routing.route == "needs-more-data"
     assert "cap_ann_return" in result.routing.reason

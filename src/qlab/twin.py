@@ -45,6 +45,7 @@ from pathlib import Path
 import yaml
 
 from qlab.card_fields import param_at
+from qlab.costs import DEVIATION_KEY
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
 from qlab.pipeline.sources import QLAB_ROOT, covering_key
 from qlab.pipeline.spec import SpecData, StrategySpec
@@ -894,7 +895,10 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
         if cost:
             sources[f"costs.{name}"] = cost
     for key, citation in spec.sources.items():
-        if key.startswith(("min_leg_notional", "regime_claim.")):
+        # the strategy's own money and the sentence that says why its costs are not the venue's row
+        # (qlab.costs) travel with the numbers they explain
+        if key.startswith(("min_leg_notional", "regime_claim.")) or key in (
+                "strategy_capital_usd", DEVIATION_KEY):
             sources[key] = citation
     return sources
 
@@ -1116,6 +1120,9 @@ def same_panel_spec(baseline: StrategySpec, twin: StrategySpec, *, idea_id: str,
     for name in ("taker_fee_bps", "slippage_bps"):
         sources[f"costs.{name}"] = f"{cite}: the causal version's costs, the same for both runs"
     sources["min_leg_notional"] = f"{cite}: the causal version's minimum leg"
+    sources.pop(DEVIATION_KEY, None)  # the baseline stands on the twin's costs, so on its sentence
+    if DEVIATION_KEY in twin.sources:
+        sources[DEVIATION_KEY] = twin.sources[DEVIATION_KEY]
     for key in ("data.start", "data.end", "data.instruments", "instruments_chosen_at",
                 "judged_from"):  # the panel and the judged part are the twin's, so are its sources
         if key in twin.sources:

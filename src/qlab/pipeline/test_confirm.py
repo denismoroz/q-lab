@@ -59,8 +59,7 @@ def _metrics(**over: float) -> dict[str, float]:
     return base
 
 
-def _context(metrics: dict[str, float], ruleset: RuleSet | None = None,
-             capital: float = 3000.0) -> RoutingContext:
+def _context(metrics: dict[str, float], ruleset: RuleSet | None = None) -> RoutingContext:
     ruleset = ruleset or _ruleset()
     result = evaluate_rules(metrics, ruleset)
     routing = RoutingDecision(route="needs-forward",
@@ -69,7 +68,7 @@ def _context(metrics: dict[str, float], ruleset: RuleSet | None = None,
                                  data=types.SimpleNamespace(interval="1d"))
     return RoutingContext(
         spec=spec, ruleset=ruleset, routing=routing, metrics=metrics, rules_result=result,
-        selection_result=None, forward_judged=True, deployable_capital_usd=capital,
+        selection_result=None, forward_judged=True,
         range_start=date(2025, 1, 1), range_end=date(2025, 4, 10))
 
 
@@ -226,12 +225,13 @@ def test_another_failed_rule_keeps_todays_route() -> None:
     assert _review(ctx, _stage1()) == (None, None)  # net_edge_positive fails: not a pass
 
 
-def test_a_book_too_dear_for_the_capital_goes_to_the_shelf_not_paper() -> None:
+def test_a_book_that_needs_much_capital_routes_paper_and_carries_the_number() -> None:
+    """No common sum to be short of (rules 2026-10-29.3): step 4 of the ladder compares the
+    capital with the strategy's own money."""
     history = _stage1()
-    ctx = _context(_metrics(total_return_net=_median_total(history, 100), min_capital_usd=9e5),
-                   capital=3000.0)
+    ctx = _context(_metrics(total_return_net=_median_total(history, 100), min_capital_usd=9e5))
     review, found = _review(ctx, history)
-    assert review.routing.route == "shelf" and review.routing.required_capital_usd == 9e5
+    assert review.routing.route == "paper" and review.routing.required_capital_usd == 9e5
 
 
 def test_a_forward_test_that_is_too_short_keeps_waiting() -> None:

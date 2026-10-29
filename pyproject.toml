@@ -48,6 +48,10 @@ testpaths = ["src", "tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py"]
 addopts = "-ra"
+markers = [
+    "cost_table: the test needs the real cost table check (qlab.costs), which fixtures skip",
+    "decided_recheck: the test reads the real schedule of decided ideas (night/waiting.yaml)",
+]
 
 [tool.ruff]
 line-length = 100

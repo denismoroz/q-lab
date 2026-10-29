@@ -108,6 +108,7 @@ sources:
   "max_wait_hours": "docs/FRAB_BINANCE_SPOT.md (a declared parameter: the live engine waits on missing data without a bound, which on a delisted pair holds a slot for ever; a day is declared, nothing sourced)"
   "universe": "docs/FRAB_BINANCE_SPOT.md (every coin with a Binance USDⓈ-M perpetual and a Binance USDT spot pair, delisted included; the owner's variant, 2026-10-25: «вариант всё на binance»)"
   "leverage": "docs/FRAB_BINANCE_SPOT.md (empty: the coin registry's values are Hyperliquid's; every coin is sized at the table's 20x)"
+  "costs.differs_from_table": "7.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (5 + 10) / 2; Binance futures taker 0.05% and spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (5 + 10) / 2; Binance futures taker 0.05% and spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»; measured for Hyperliquid only, the same value is used here (unmeasured, docs/FRAB_BINANCE_SPOT.md)"
   "min_leg_notional": "venues/binance.yaml (min_leg_notional_usd: 50.0, Binance USDT-margined futures)"

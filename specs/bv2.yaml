@@ -88,6 +88,9 @@ costs:
 # B2Params.min_order_usd = 10.0 (HL's own floor, same number
 # venues/hyperliquid.yaml records independently).
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 257
 
 # Spot holding + a conditionally-applied hedge leg on the SAME coin: when
 # the hedge is on, both legs must be open together for the position to be
@@ -126,6 +129,7 @@ required_instruments:
 # Where every number and choice comes from (docs/SOURCES.md); checked
 # before any run starts.
 sources:
+  "strategy_capital_usd": "night/paper_books.yaml, book b2: strategy_capital_usd 257, the capital the production host created the book with"
   "spot_columns": "src/qlab/data/sources/base.py (SPOT_COLUMN_SUFFIX naming)"
   "hedge_columns": "src/qlab/data/sources/base.py (perp columns are bare coin names)"
   "spot_share": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
@@ -134,6 +138,7 @@ sources:
   "ratchet_threshold": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params defaults)"
   "mom_short_days": "funding-rate-arbitrage/src/frab/strategy/b2/book.py: H14, H30 = 14 * 24, 30 * 24 hours"
   "mom_long_days": "funding-rate-arbitrage/src/frab/strategy/b2/book.py: H14, H30 = 14 * 24, 30 * 24 hours"
+  "costs.differs_from_table": "5.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"

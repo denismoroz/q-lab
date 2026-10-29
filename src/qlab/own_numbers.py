@@ -141,10 +141,10 @@ def to_retune(spec: StrategySpec, config: dict, config_path: Path = CONFIG) -> S
     grid = {path: {_label(path, v): {path: int(v) if v == int(v) else v} for v in values}
             for path, values in found.items()}
     cited = ", ".join(sorted(found))
+    spec_level = ("costs.", "min_leg_notional", "regime_claim.", "strategy_capital_usd")
     sources = {f"base_params.{k}": v for k, v in spec.sources.items()
-               if not k.startswith(("costs.", "min_leg_notional", "regime_claim."))}
-    sources.update({k: v for k, v in spec.sources.items()
-                    if k.startswith(("costs.", "min_leg_notional", "regime_claim."))})
+               if not k.startswith(spec_level)}
+    sources.update({k: v for k, v in spec.sources.items() if k.startswith(spec_level)})
     own = (f"{config_path} (version {config['version']}): the declared lists for {cited}; "
            "owner 2026-10-26: own numbers chosen on data before the cut")
     sources.update({
@@ -181,7 +181,7 @@ def to_retune(spec: StrategySpec, config: dict, config_path: Path = CONFIG) -> S
     })
 
 
-def prepare(spec: StrategySpec, session, ruleset, *, deployable_capital_usd: float,
+def prepare(spec: StrategySpec, session, ruleset, *,
             config_path: Path = CONFIG) -> tuple[StrategySpec, dict]:
     """A spec with open numbers made ready for the stand: every candidate written as a trial,
     then the one-choice spec to evaluate. Returns it and what to report (the candidate trials,
@@ -193,7 +193,6 @@ def prepare(spec: StrategySpec, session, ruleset, *, deployable_capital_usd: flo
     if found:
         raise ValueError("; ".join(found))
     trials = record_candidates(spec, session, ruleset,
-                               deployable_capital_usd=deployable_capital_usd,
                                config_path=config_path)
     retune = to_retune(spec, config, config_path)
     return retune, {"candidate_trials": trials, "cut": retune.params_fixed_at.isoformat()}
@@ -223,7 +222,7 @@ def fixed_at_choice(spec: StrategySpec, params: dict, cut: date) -> StrategySpec
                                  f"it ({CONFIG}, owner 2026-10-26)"})
 
 
-def record_candidates(spec: StrategySpec, session, ruleset, *, deployable_capital_usd: float,
+def record_candidates(spec: StrategySpec, session, ruleset, *,
                       config_path: Path = CONFIG) -> list[int]:
     """Every candidate as its own trial under the spec's idea (no noise, the idea's status
     untouched): the ledger then counts every value tried. Returns the trial ids."""
@@ -234,7 +233,6 @@ def record_candidates(spec: StrategySpec, session, ruleset, *, deployable_capita
         candidate = spec.model_copy(update={"params": params, "params_fixed_at": None,
                                             "params_fixed_evidence": None})
         out = evaluate_spec(candidate, session=session, ruleset=ruleset,
-                            deployable_capital_usd=deployable_capital_usd,
                             update_idea_status=False, check_sources=False)
         ids.append(out.trial_id)
     return ids

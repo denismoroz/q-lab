@@ -101,6 +101,9 @@ costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 3000
 simultaneous_legs: 1
 unexpressed_mechanisms: []
 differs_from_source:
@@ -129,6 +132,7 @@ params_fixed_evidence: 'Inherited from stage 1 (trend-binance-cap-gated-causal-o
   it is judged on. What this does not prove: the family itself (which overlays and which settings are
   offered) was written by people who had seen the market.'
 sources:
+  "strategy_capital_usd": "the spec's own parameter base_params.inner_params.base_params.inner_params.capital_usd = 3000: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
   base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
     «раз в неделю/день или месяц»'
   base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'

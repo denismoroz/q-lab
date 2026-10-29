@@ -132,7 +132,7 @@ def test_a_not_defined_rule_does_not_hide_another_rules_failure(year_rules) -> N
     result = evaluate({"ann_return_net": -0.1}, ruleset)
     assert result.failed_rule_ids == ("net_edge_positive",)
     assert not result.overall_passed and result.decisive
-    assert decide_route(result, {}, 1000.0).route == "reject"
+    assert decide_route(result, {}).route == "reject"
 
 
 def test_other_rules_still_read_an_absent_metric_as_unknown() -> None:
@@ -145,9 +145,9 @@ def test_other_rules_still_read_an_absent_metric_as_unknown() -> None:
 
 def test_a_failing_year_rule_rejects_and_a_not_defined_one_is_not_needs_more_data(
         year_rules) -> None:
-    failed = decide_route(evaluate({"best_year_share_of_profit": 0.58}, year_rules), {}, 1000.0)
+    failed = decide_route(evaluate({"best_year_share_of_profit": 0.58}, year_rules), {})
     assert failed.route == "reject" and SHARE in failed.reason and "fatal rule" in failed.reason
-    skipped = decide_route(evaluate({}, year_rules), {"min_capital_usd": 10.0}, 1000.0)
+    skipped = decide_route(evaluate({}, year_rules), {"min_capital_usd": 10.0})
     assert skipped.route == "paper"
 
 
@@ -157,7 +157,7 @@ def test_not_defined_on_the_selection_period_waits_for_forward_not_for_data(year
     selection = evaluate({}, ruleset)
     routing = decide_fit_forward_route(
         ruleset=ruleset, selection=selection, forward=None, metrics={"min_capital_usd": 10.0},
-        deployable_capital_usd=1000.0, params_fixed_at=date(2026, 1, 1))
+            params_fixed_at=date(2026, 1, 1))
     assert routing.route == "needs-forward"
 
 
@@ -272,9 +272,9 @@ def test_a_run_that_failed_g_under_28_1_is_not_rejected_under_28_2() -> None:
     old_only = RuleSet(version=old.version, rules=[
         net_edge, *[r for r in old.rules if r.id in (EX_BEST, SHARE)]])
     new_only = RuleSet(version=new.version, rules=[net_edge])
-    rejected = decide_route(evaluate(metrics, old_only), metrics, 1000.0)
+    rejected = decide_route(evaluate(metrics, old_only), metrics)
     assert rejected.route == "reject" and SHARE in rejected.reason
-    kept = decide_route(evaluate(metrics, new_only), metrics, 1000.0)
+    kept = decide_route(evaluate(metrics, new_only), metrics)
     assert kept.route == "paper"
 
 

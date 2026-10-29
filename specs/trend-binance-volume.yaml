@@ -46,6 +46,7 @@ simultaneous_legs: 1
 unexpressed_mechanisms: []
 sources:
   top_k_by_volume: 'specs/trend-live.yaml: the length of the live list (25 coins); q-lab c6bf6a7, 2026-09-22'
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)»'

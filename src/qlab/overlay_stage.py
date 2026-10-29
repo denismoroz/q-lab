@@ -235,7 +235,7 @@ def ensure_overlay_idea(spec: StrategySpec, base_id: str) -> None:
 
 
 def overlays_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
-                   deployable_capital_usd: float = 3000.0, stop_at: datetime | None = None,
+                   stop_at: datetime | None = None,
                    only: Collection[str] | None = None, chains_only: Collection[str] | None = None,
                    max_variants: int | None = None, config_path: Path = CONFIG,
                    spec_dir: Path = SPEC_DIR, ledger_path: Path = LEDGER,
@@ -263,7 +263,7 @@ def overlays_stage(day: date, end: date, state: dict, *, noise_trials: int = 200
     cap = max_variants if max_variants is not None else (
         None if only else config.max_variants_per_night)
     run = _Run(day=day, end=end, state=state, block=block, config=config,
-               noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+               noise_trials=noise_trials,
                stop_at=stop_at, label=label, ledger=ledger, ledger_path=ledger_path,
                spec_dir=spec_dir, data_end=data_end, kinds=tuple(kinds), dry_run=dry_run,
                store=store, forced=bool(only), cap=cap, chains_only=set(chains_only or ()),
@@ -292,7 +292,6 @@ class _Run:
     block: dict
     config: Config
     noise_trials: int
-    deployable_capital_usd: float
     stop_at: datetime | None
     label: str
     ledger: dict
@@ -441,7 +440,6 @@ class _Run:
                  "chain": [], "route": known.get("route"), "trial": known.get("trial")}
         try:
             twin_stage.second_stage(spec, entry, end=end, noise_trials=self.noise_trials,
-                                    deployable_capital_usd=self.deployable_capital_usd,
                                     config=self.stage2())
         except Exception as exc:  # noqa: BLE001 - tried again tomorrow
             entry.update(action="error", error=f"{type(exc).__name__}: {exc}")
@@ -478,7 +476,6 @@ class _Run:
         ok = twin_stage.stage1_on_stand(
             spec, entry, ensure_idea=lambda: ensure_overlay_idea(spec, base.idea_id),
             end=end, noise_trials=self.noise_trials,
-            deployable_capital_usd=self.deployable_capital_usd,
             slow_minutes=self.config.slow_variant_minutes, kind="overlays")
         if not ok:
             return
@@ -496,7 +493,6 @@ class _Run:
             entry["comparison_error"] = f"{type(exc).__name__}: {exc}"
         if self.second_stage:
             twin_stage.second_stage(spec, entry, end=end, noise_trials=self.noise_trials,
-                                    deployable_capital_usd=self.deployable_capital_usd,
                                     config=self.stage2())
         else:
             # A survivor whose second stage was not asked for (a hand run that must not fetch

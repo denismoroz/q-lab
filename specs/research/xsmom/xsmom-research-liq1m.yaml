@@ -63,6 +63,7 @@ sources:
   "n_positions": "derived: (32 // 3) * 2; the live auto-tercile on the 32-coin DEFAULT_XSMOM_UNIVERSE, docs/XSMOM_T21.md"
   "data.min_daily_volume_usd": "funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39, MIN_VOL_USD = 1_000_000, \">= $1M 24h notional volume on HL\": the floor the live engine selects coins by"
   "data.end": "specs/xsmom-honest-20legs.yaml (the same window end)"
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0"

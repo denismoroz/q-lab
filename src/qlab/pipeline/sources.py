@@ -16,7 +16,11 @@ citations. Before a run starts:
 - **a number must literally appear in the cited file(s)** -- the tripwire
   against an invented value; a `derived:` formula must evaluate to exactly
   the value it covers. Booleans and strings need a citation but are not
-  matched literally (column names and switches rarely appear verbatim).
+  matched literally (column names and switches rarely appear verbatim);
+- **the strategy's own money** (`strategy_capital_usd`, when given) is a number like the rest and
+  is checked the same way;
+- **costs** are the venue's row of `night/costs.yaml`, or the spec says why they are not
+  (`costs.differs_from_table`, a citation that names something checkable), `qlab.costs`.
 
 The literal check is a tripwire, not proof: a small integer like 3 appears in
 almost any file. What it reliably catches is the number that exists nowhere
@@ -67,7 +71,8 @@ def spec_leaves(spec: StrategySpec) -> list[tuple[str, object]]:
     leaves += [(f"regime_claim.{r}", w) for r, w in spec.regime_claim.items()]
     leaves += [("costs.taker_fee_bps", spec.costs.taker_fee_bps),
                ("costs.slippage_bps", spec.costs.slippage_bps),
-               ("min_leg_notional", spec.min_leg_notional)]
+               ("min_leg_notional", spec.min_leg_notional),
+               ("strategy_capital_usd", spec.strategy_capital_usd)]
     return [(path, value) for path, value in leaves if value is not None]
 
 
@@ -137,6 +142,38 @@ def _appears(number: float, text: str) -> bool:
     return False
 
 
+def citation_problems(label: str, citation: str, value: object) -> list[str]:
+    """What is wrong with one citation of one value, by the same checks a spec's sources get:
+    it names something checkable, a cited file exists and holds the number, a `derived:`
+    formula gives exactly the number. Used for the numbers that live outside a spec
+    (`qlab.costs`, night/costs.yaml)."""
+    problems: list[str] = []
+    derived = _DERIVED.match(citation)
+    files, missing = [], []
+    for token in _PATH_TOKEN.findall(citation):
+        resolved = _resolve(token)
+        (files if resolved else missing).append(resolved or token)
+    problems += [f"source for {label!r} cites a file that does not exist: {m}" for m in missing]
+    if not (derived or files or _URL.search(citation) or _OWNER.search(citation)):
+        problems.append(f"source for {label!r} names nothing checkable: {citation!r}")
+    numbers = _numbers(value)
+    if derived and len(numbers) == 1:
+        try:
+            result = _safe_eval(derived.group(1))
+        except (ValueError, SyntaxError, ZeroDivisionError) as exc:
+            problems.append(f"source for {label!r}: {exc}")
+        else:
+            if abs(result - numbers[0]) > 1e-9 * max(1.0, abs(numbers[0])):
+                problems.append(f"source for {label!r} derives {result:g}, not {numbers[0]:g}")
+    elif files:
+        text = "\n".join(_text(f) for f in files)
+        absent = [n for n in numbers if not _appears(n, text)]
+        if absent:
+            problems.append(f"{label} = {value!r}: {', '.join(f'{n:g}' for n in absent)} does "
+                            "not appear in the cited file(s)")
+    return problems
+
+
 def source_problems(spec: StrategySpec) -> list[str]:
     """Everything wrong with `spec`'s sources; empty means the run may start."""
     problems: list[str] = []
@@ -187,6 +224,10 @@ def source_problems(spec: StrategySpec) -> list[str]:
                     f"{path} = {value!r}: {', '.join(f'{n:g}' for n in absent)} does not appear "
                     f"in the cited {names}"
                 )
+
+    from qlab import costs as cost_table
+
+    problems += cost_table.problems(spec)
     return problems
 
 

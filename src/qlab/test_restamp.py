@@ -213,7 +213,7 @@ def world(tmp_path, registry, monkeypatch):
     results: dict[str, str] = {}
     outcome = types.SimpleNamespace(fail=set(), hl_route="paper")
 
-    def fake_idea(plan, end, *, noise_trials, deployable_capital_usd):
+    def fake_idea(plan, end, *, noise_trials):
         calls.append(("idea", plan.idea_id, end, noise_trials))
         if plan.idea_id in outcome.fail:
             return {"idea": plan.idea_id, "step": "idea", "action": "error",
@@ -229,7 +229,7 @@ def world(tmp_path, registry, monkeypatch):
                 "route_before": plan.route, "route_after": route, "trial": trial_id,
                 "reason": "r", "status": "bench", "why": plan.why}
 
-    def fake_stage2(plan, end, *, stage1, noise_trials, deployable_capital_usd, config):
+    def fake_stage2(plan, end, *, stage1, noise_trials, config):
         calls.append(("stage2", plan.idea_id, end, stage1))
         if f"{plan.idea_id}-hl" in outcome.fail:
             return {"idea": plan.idea_id, "step": "stage2", "action": "error",
@@ -779,7 +779,6 @@ def test_the_command_dry_run_lists_what_would_be_done_and_changes_nothing(
 
 def _real_stage(world, day, end, state, **kw):
     kw.pop("noise_trials", None)
-    kw.pop("deployable_capital_usd", None)
     return _ORIGINAL(day, end, state, noise_trials=1, config_path=world.config,
                      spec_dir=world.specs, ledger_path=world.ledger, watch_config=world.watch,
                      **kw)

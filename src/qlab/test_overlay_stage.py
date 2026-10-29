@@ -121,7 +121,7 @@ def world(tmp_path, registry, monkeypatch):
     results: dict[str, str] = {}
     failing: set[str] = set()
 
-    def fake_eval(kind, spec, *, end, noise_trials, deployable_capital_usd):
+    def fake_eval(kind, spec, *, end, noise_trials):
         calls.append(("stand", spec.idea_id, end))
         if spec.idea_id in failing:
             return ItemResult(kind=kind, name=spec.idea_id, route="error", reason="boom",
@@ -146,7 +146,7 @@ def world(tmp_path, registry, monkeypatch):
         calls.append(("describe", spec.idea_id))
         return overlay_diagnostics.build(spec.idea_id, _series(400, 3), _series(400, 4), None)
 
-    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials, deployable_capital_usd,
+    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials,
                     config=None, **kw):
         calls.append(("stage2", spec.idea_id, stage1_route))
         return stage2.Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}-hl",

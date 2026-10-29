@@ -301,7 +301,6 @@ def test_run_noise_series_writes_one_trial_per_call_and_round_robins_generators(
         n_trials=len(GENERATORS) * 2,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1_000_000.0,
         reference=reference,
         seed_offset=1000,
     )
@@ -331,7 +330,6 @@ def test_run_noise_series_seed_offset_avoids_collisions(session):
         n_trials=4,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1_000_000.0,
         reference=reference,
         seed_offset=0,
     )
@@ -340,7 +338,6 @@ def test_run_noise_series_seed_offset_avoids_collisions(session):
         n_trials=4,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1_000_000.0,
         reference=reference,
         seed_offset=4,
     )
@@ -358,8 +355,8 @@ def _failing_books(monkeypatch, *, fail) -> None:
 
     real = run_module._evaluate_noise
 
-    def wrapped(spec, session, ruleset, deployable_capital_usd):
-        evaluation = real(spec, session, ruleset, deployable_capital_usd)
+    def wrapped(spec, session, ruleset):
+        evaluation = real(spec, session, ruleset)
         if fail(int(spec.params["seed"])):
             return dataclasses.replace(evaluation, metrics=None, error="StructuralMismatchError")
         return evaluation
@@ -370,7 +367,7 @@ def _failing_books(monkeypatch, *, fail) -> None:
 def _run(session, *, n_trials=8, seed_offset=0, replace_unusable=True):
     return run_noise_series(
         series="dollar_neutral", n_trials=n_trials, session=session,
-        ruleset=_permissive_ruleset(), deployable_capital_usd=1_000_000.0,
+        ruleset=_permissive_ruleset(),
         reference=_reference_spec(), seed_offset=seed_offset,
         replace_unusable=replace_unusable)
 
@@ -455,7 +452,6 @@ def test_run_noise_series_rejects_non_positive_n_trials(session):
             n_trials=0,
             session=session,
             ruleset=ruleset,
-            deployable_capital_usd=1000.0,
             reference=reference,
         )
 
@@ -471,7 +467,6 @@ def test_run_real_strategies_runs_every_spec_path(session, tmp_path):
     results = run_real_strategies(
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1_000_000.0,
         spec_paths={REFERENCE_IDEA_ID: spec_path},
     )
 
@@ -507,7 +502,6 @@ def test_noise_runs_never_move_a_noise_idea_status(session):
         n_trials=len(GENERATORS),
         session=session,
         ruleset=rejecting,
-        deployable_capital_usd=1_000_000.0,
         reference=_reference_spec(),
     )
 
@@ -568,7 +562,6 @@ def test_noise_books_in_worker_processes_give_the_same_numbers(tmp_path, monkeyp
                     rows=60, fetched_at=datetime.now(UTC))
             return run_noise_series(series="dollar_neutral", n_trials=6, session=s,
                                     ruleset=_permissive_ruleset(),
-                                    deployable_capital_usd=1_000_000.0,
                                     reference=_reference_spec(), seed_offset=offset)
 
     import qlab.calibration.run as run_module
@@ -623,7 +616,7 @@ def test_started_books_run_in_one_pool_that_is_kept_and_give_the_numbers_of_one_
         s = db_module.get_sessionmaker()()
         return s, start_noise_series(
             series="dollar_neutral", n_trials=6, session=s, ruleset=_permissive_ruleset(),
-            deployable_capital_usd=1_000_000.0, reference=_reference_spec(), seed_offset=offset)
+                reference=_reference_spec(), seed_offset=offset)
 
     try:
         s1, pooled = start(2, 700)
@@ -670,7 +663,7 @@ def test_a_broken_pool_is_dropped_so_the_next_call_starts_a_new_one(session, mon
     monkeypatch.setattr(run_module, "_POOL_KEY", (2, "x"))
     handle = run_module.NoiseRun(
         series="dollar_neutral", n_trials=1, seed_offset=0, replace_unusable=False,
-        session=session, ruleset=_permissive_ruleset(), deployable_capital_usd=1.0,
+        session=session, ruleset=_permissive_ruleset(),
         reference=_reference_spec(), first=[failed])
     with pytest.raises(BrokenProcessPool):
         handle.result()
@@ -684,6 +677,6 @@ def test_start_noise_series_in_one_process_is_ready_on_return(session):
 
     handle = start_noise_series(
         series="dollar_neutral", n_trials=4, session=session, ruleset=_permissive_ruleset(),
-        deployable_capital_usd=1_000_000.0, reference=_reference_spec())
+            reference=_reference_spec())
     assert all(isinstance(t, NoiseTrial) for t in handle._first)
     assert len(handle.result()) == 4

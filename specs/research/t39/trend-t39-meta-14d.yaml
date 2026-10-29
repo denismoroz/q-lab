@@ -83,6 +83,7 @@ sources:
   inner_code_ref: src/qlab/strategies/live/trend.py
   trade_in: 'src/qlab/meta_label.py: `trade` is P(trend earns over the next 30 days) > 0.5 -- earning
     more likely than not'
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)»'

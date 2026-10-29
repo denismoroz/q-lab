@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 
 import qlab.agents.generator as gen
 import qlab.pipeline.sources as sources
+from qlab import fixation
 from qlab.budget import ExplicitNoBudget
 from qlab.budget.agent import CLAUDE_BIN_ENV
 from qlab.pipeline import stage2
@@ -80,11 +81,13 @@ CATALOGUE_TEXT = """# Каталог механизмов (фикстура)
 def _spec_text(*, idea_id: str = "gen-xs-reversal", code_ref: str = gen.CODE_REF,
                lookback: int | float = 7, mechanism: str | None = "xs-reversal-1w",
                signal_source: str | None = None, unexpressed: str = "[]",
-               taker_fee: float = 3.5, end: date = DATA_END,
-               params_fixed_at: str | None = "2019-09-08") -> str:
+               taker_fee: float = 5.0, end: date = DATA_END,
+               params_fixed_at: str | None = "named") -> str:
     header = f"# mechanism: {mechanism}\n" if mechanism else "# no header\n"
+    if params_fixed_at == "named":  # the day the code names: the start of the last third
+        params_fixed_at = fixation.named_date(date(2019, 9, 8), end, 1 / 3).isoformat()
     fixed = (f"params_fixed_at: {params_fixed_at}\n"
-             "params_fixed_evidence: the source's publication year-end is before the data starts\n"
+             "params_fixed_evidence: \"named by code: the start of the last third of the window\"\n"
              if params_fixed_at else "")
     signal_source = signal_source or (
         "docs/MECHANISMS.md, mechanism xs-reversal-1w, row signal.lookback_days (Author 2020)")
@@ -126,8 +129,8 @@ unexpressed_mechanisms: {unexpressed}
   sizing: "docs/MECHANISMS.md, mechanism xs-reversal-1w, row sizing.gross (Author 2020)"
   rebalance_days: "docs/MECHANISMS.md, mechanism xs-reversal-1w, row rebalance_days (Author 2020)"
   min_history_days: "derived: 28 + 30; the longest lookback plus the window (docs/MECHANISMS.md)"
-  costs.taker_fee_bps: "owner 2026-10-25: test fixture"
-  costs.slippage_bps: "owner 2026-10-25: test fixture"
+  costs.taker_fee_bps: "night/costs.yaml, venue binance, taker_fee_bps"
+  costs.slippage_bps: "night/costs.yaml, venue binance, slippage_bps"
   min_leg_notional: "owner 2026-10-25: test fixture"
 """
 
@@ -138,6 +141,10 @@ def repo(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "docs").mkdir(parents=True)
     (root / "docs" / "MECHANISMS.md").write_text(CATALOGUE_TEXT, encoding="utf-8")
+    (root / "night").mkdir()  # the cost table, which the specs' costs cite
+    (root / "night" / "costs.yaml").write_text(
+        (Path(__file__).resolve().parents[3] / "night" / "costs.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
@@ -381,21 +388,45 @@ def test_data_window_and_ownership_of_special_fields(repo) -> None:
     assert any("hand-picked" in p for p in problems)
 
 
-def test_unknown_params_fixed_date_may_be_omitted(repo) -> None:
-    item, problems = _check(repo, _spec_text(params_fixed_at=None))
-    assert problems == [] and item.spec.params_fixed_at is None
+def test_an_omitted_params_fixed_date_is_a_problem_and_code_names_it(repo) -> None:
+    """Owner, 2026-10-29 (В9): the day is named by code, an omitted one is not the whole window."""
+    _, problems = _check(repo, _spec_text(params_fixed_at=None))
+    assert any("params_fixed_at is missing" in p for p in problems)
+    path = repo / gen.SPEC_DIR / "gen-xs-reversal.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_spec_text(params_fixed_at=None), encoding="utf-8")
+    note = fixation.normalise_file(path)
+    assert note is not None and "named by code" in note
+    item, problems = _check(repo, path.read_text(encoding="utf-8"))
+    assert problems == []
+    assert item.spec.params_fixed_at == fixation.named_date(date(2019, 9, 8), DATA_END, 1 / 3)
 
 
-def test_costs_must_be_the_reference_specs(repo) -> None:
-    reference = Path("specs/ref.yaml")
-    (repo / "specs").mkdir()
-    (repo / reference).write_text(_spec_text(idea_id="ref"), encoding="utf-8")
-    path = gen.SPEC_DIR / "gen-xs-reversal.yaml"
-    (repo / gen.SPEC_DIR).mkdir(parents=True)
-    (repo / path).write_text(_spec_text(taker_fee=1.0), encoding="utf-8")
-    _, problems = gen.check_generated(path, mechanisms=gen.catalogue(), data_end=DATA_END,
-                                      reference=reference)
-    assert any("copied from specs/ref.yaml" in p for p in problems)
+def test_an_earlier_day_than_the_named_one_is_a_problem(repo) -> None:
+    _, problems = _check(repo, _spec_text(params_fixed_at="2019-09-08"))
+    assert any("earlier than the day the code names" in p for p in problems)
+
+
+def test_a_later_day_needs_a_source(repo) -> None:
+    _, problems = _check(repo, _spec_text(params_fixed_at="2026-06-01"))
+    assert any("needs sources['params_fixed_at']" in p for p in problems)
+    text = _spec_text(params_fixed_at="2026-06-01") + (
+        '  params_fixed_at: "docs/MECHANISMS.md, mechanism xs-reversal-1w: Author 2020 sample '
+        'ends 2026-05-31"\n')
+    _, problems = _check(repo, text)
+    assert not any("params_fixed_at" in p for p in problems), problems
+
+
+@pytest.mark.cost_table
+def test_costs_must_be_the_venues_row_of_the_cost_table(repo) -> None:
+    """Owner, 2026-10-29 (В7): the agent does not choose costs; a spec with other numbers fails
+    the sources check, and the deviation sentence is not the agent's to write."""
+    _, problems = _check(repo, _spec_text(taker_fee=1.0))
+    assert any("not the table's row of binance" in p for p in problems)
+    text = _spec_text(taker_fee=1.0) + (
+        '  costs.differs_from_table: "owner 2026-10-29: the agent says so"\n')
+    _, problems = _check(repo, text)
+    assert any("not the agent's to write" in p for p in problems)
 
 
 def test_a_mechanism_the_blocks_do_not_fully_express_must_say_so(repo) -> None:
@@ -530,8 +561,8 @@ def test_the_stand_runs_every_spec_with_noise_and_records_the_idea(
     class _Out:
         candidate = _Candidate()
 
-    def fake_eval(spec, *, session, ruleset, deployable_capital_usd, n_trials):
-        calls.append((spec.idea_id, n_trials, deployable_capital_usd))
+    def fake_eval(spec, *, session, ruleset, n_trials):
+        calls.append((spec.idea_id, n_trials))
         return _Out()
 
     monkeypatch.setattr(shape_aware, "evaluate_spec_with_shape_aware_bar", fake_eval)
@@ -541,7 +572,7 @@ def test_the_stand_runs_every_spec_with_noise_and_records_the_idea(
                                                stage1_route=kw["stage1_route"], status="skipped",
                                                skipped="stub"))
     results = gen.run_generated([item], noise_trials=5)
-    assert calls == [("gen-xs-reversal", 5, 3000.0)]
+    assert calls == [("gen-xs-reversal", 5)]
     # The second stage runs in the same call, from the stage 1 route and trial.
     assert [(i, kw["stage1_route"], kw["stage1_trial_id"], kw["noise_trials"]) for i, kw in second
             ] == [("gen-xs-reversal", "needs-forward", 77, 5)]
@@ -588,9 +619,9 @@ def test_run_second_stage_stores_the_step_as_a_dict_on_the_result(monkeypatch) -
     item = types.SimpleNamespace(spec=types.SimpleNamespace(idea_id="gen-a"))
     result = gen.GeneratedResult(idea_id="gen-a", mechanism="m", spec_path="p", trial_id=9,
                                  route="paper")
-    gen.run_second_stage(item, result, noise_trials=7, deployable_capital_usd=1234.0)
-    assert (seen["stage1_route"], seen["stage1_trial_id"], seen["noise_trials"],
-            seen["deployable_capital_usd"]) == ("paper", 9, 7, 1234.0)
+    gen.run_second_stage(item, result, noise_trials=7)
+    assert (seen["stage1_route"], seen["stage1_trial_id"], seen["noise_trials"]) == ("paper", 9, 7)
+    assert "deployable_capital_usd" not in seen  # no common sum any more
     assert result.stage2["trial_id"] == 12 and result.stage2["route"] == "reject"
     # The result survives the night's saved state: plain data in, the same result out.
     assert json.loads(json.dumps(dataclasses.asdict(result)))["stage2"]["idea_id"] == "gen-a-hl"

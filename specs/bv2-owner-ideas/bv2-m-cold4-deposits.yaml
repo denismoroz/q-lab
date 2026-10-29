@@ -94,6 +94,7 @@ sources:
   "coins": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
   "deposit_usd": "derived: 257.0 * 0.1; a tenth of the strategy capital a month, an illustration: the owner gave no amount (docs/BV2_MARGIN.md)"
   "deposit_every": "owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «добавляя новые средства в монеты»"
+  "costs.differs_from_table": "5.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export), min_order_usd"

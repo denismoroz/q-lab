@@ -146,7 +146,7 @@ def _write_spec(spec, folder):
 
 def test_a_stored_trial_is_re_run_to_the_numbers_it_recorded(session, tmp_path, monkeypatch):
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
     monkeypatch.setattr("qlab.rules.loader.load", lambda version: RULESET)
     _write_spec(spec, tmp_path / "specs")
 
@@ -162,7 +162,7 @@ def test_a_stored_trial_is_re_run_to_the_numbers_it_recorded(session, tmp_path, 
 
 def test_a_trial_that_cannot_be_re_run_says_why(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     with pytest.raises(RunUnavailable, match="spec file"):
         load_run(session, result.trial_id, spec_root=tmp_path / "no-specs")

@@ -58,6 +58,9 @@ costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 257
 simultaneous_legs: 2
 execution_venue: hyperliquid
 unexpressed_mechanisms: []
@@ -103,6 +106,7 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-binance): funding-rate-arbit
 
   '
 sources:
+  "strategy_capital_usd": "the spec's own parameter capital_usd = 257: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
   min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
     min_order_usd
   coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)

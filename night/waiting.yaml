@@ -1,0 +1,24 @@
+# The night's waiting stage (qlab.waiting, docs/NIGHT.md): ideas that wait for data are re-run
+# on the days their route can change (no setting here); this file is the schedule of the DECIDED
+# ones.
+#
+# Owner, 2026-10-29, on docs/EVALUATION_PATHS.md (question В6, «как часто пересчитывать решённые
+# идеи»; the recommendation was «не реже раза в 7 дней, не больше 4 за ночь (как пересчёт)»):
+# «да, по всем рекомендациям, делай». Before, an idea whose last run was `paper`,
+# `needs-infrastructure` (or the old `shelf`) was re-run only when the stand's version or the
+# rules changed (qlab.restamp) or when somebody put it on the watch list; 21 of 43 last runs
+# ended before 2026-10-27 and the verdict of a decided idea could be weeks old. Each re-run
+# is a trial that deflation counts (200 random books), which is the price; it is the same price
+# the restamp stage pays, and the same cap.
+
+enabled: true
+
+# A decided open idea (status candidate, bench, validated, paper or live, latest route `paper`
+# or `needs-infrastructure`, one spec file, not on the watch list) is re-run on the fresh tail
+# when the data of its last run is at least this many days old.
+decided_recheck_days: 7
+
+# At most this many of them a night, the oldest run first; the others wait for the next night
+# and the report names them. A second stage follows its first stage when this re-run makes it a
+# survivor, and is not counted.
+decided_max_per_night: 4

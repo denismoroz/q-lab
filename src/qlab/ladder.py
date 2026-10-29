@@ -9,7 +9,8 @@ This module is a **reading**: a pure function from the registry (read only) and 
 night keeps (`Ledgers`) to the steps. It writes nothing, computes no metric and decides no verdict;
 the outcome of a step is the stand's own route for that run (`qlab.pipeline.evaluate`), translated:
 
-    paper / shelf / needs-infrastructure   -> passed   (every strategy rule passed)
+    paper / shelf / needs-infrastructure   -> passed   (every strategy rule passed; `shelf` is
+                                              only in runs made before rules 2026-10-29.3)
     needs-forward / needs-more-data / error -> undecided (the fourth outcome, owner answer В3:
                                               «не решён — рано судить»)
     reject                                 -> failed
@@ -26,10 +27,11 @@ The steps (docs/EVALUATION_PATHS.md, section 6):
 6. paper, four to six weeks;
 7. the owner's decision.
 
-Phase A (2026-10-29): step 4 reads only what exists today -- the books of
-`night/paper_books.yaml`, which state `strategy_capital_usd`. An idea without such a line reads
-«деньги стратегии не заданы»; phase B puts the money into the spec itself and only
-`strategy_money` changes."""
+Step 4 (phase B, 2026-10-29): the strategy's money is a field of the spec itself
+(`StrategySpec.strategy_capital_usd`, cited in its `sources`), and the capital a run needed
+(`min_capital_usd`) is compared with THAT, never with a common sum: the route `shelf` is gone
+(rules 2026-10-29.3), a run that passed every rule is `paper`, and whether it fits its money is
+this step's outcome. A spec that states no money reads «деньги стратегии не заданы»."""
 
 from __future__ import annotations
 
@@ -159,8 +161,8 @@ ROUTE_OUTCOME: dict[str, Outcome] = {
 
 ROUTE_NOTE_RU: dict[str, str] = {
     "paper": "прошла все правила стенда",
-    "shelf": "прошла все правила; не хватает капитала на общей сумме стенда "
-             "(деньги стратегии читает ступень 4)",
+    "shelf": "прошла все правила; до правил 2026-10-29.3 стенд сравнивал нужный капитал с общей "
+             "суммой, а не с деньгами стратегии (их читает ступень 4); так записан старый прогон",
     "needs-infrastructure": "прошла все правила; у площадки данных нет нашего адаптера заявок "
                             "(его даёт ступень на своей площадке)",
     "needs-forward": "правила пока не могут решить: мало данных после выбора чисел",
@@ -282,7 +284,8 @@ class Ledgers:
     deferred_twins: frozenset[str] = frozenset()
     """Ideas the last night's twins stage did not reach (its nightly cap)."""
     money: Mapping[str, float] = field(default_factory=dict)
-    """Idea -> `strategy_capital_usd` (the books of `night/paper_books.yaml`)."""
+    """Idea -> `strategy_capital_usd` of its spec files (`specs/**/*.yaml`); an idea whose files
+    state different sums, or none, is absent."""
     paper_books: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     """Idea -> its paper or live book (`night/paper_books.yaml`)."""
     stage1_survives: frozenset[str] = DEFAULT_STAGE1_SURVIVES
@@ -312,6 +315,32 @@ def _yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_IDEA_LINE = re.compile(r"^idea_id\s*:\s*[\"']?([^\s\"'#]+)", re.M)
+_MONEY_LINE = re.compile(r"^strategy_capital_usd\s*:\s*([0-9][0-9._]*)\s*(?:#.*)?$", re.M)
+
+
+def spec_money(spec_dir: Path) -> dict[str, float]:
+    """Idea -> the strategy's own money its spec files state (`strategy_capital_usd`). Read from
+    the files' text, not through `load_spec`: the page of an idea must not load 160 specs. Two
+    files of one idea that state different sums leave the idea without a sum: nobody can say which
+    is meant."""
+    seen: dict[str, set[float]] = {}
+    for path in sorted(spec_dir.rglob("*.yaml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        money = _MONEY_LINE.search(text)
+        idea = _IDEA_LINE.search(text)
+        if money is None or idea is None:
+            continue
+        try:
+            seen.setdefault(idea.group(1), set()).add(float(money.group(1).replace("_", "")))
+        except ValueError:
+            continue
+    return {idea: next(iter(sums)) for idea, sums in seen.items() if len(sums) == 1}
+
+
 def load_ledgers(root: Path = Path(".")) -> Ledgers:
     """The ledgers and configs as the night leaves them. Never raises: a missing or broken file
     reads as empty, and the ladder then names the reason it can name."""
@@ -321,8 +350,7 @@ def load_ledgers(root: Path = Path(".")) -> Ledgers:
     held: dict[str, Mapping[str, Any]] = {}
     for block in ("books", "live_books"):
         held.update({k: v for k, v in (books.get(block) or {}).items() if isinstance(v, dict)})
-    money = {k: float(v["strategy_capital_usd"]) for k, v in held.items()
-             if isinstance(v.get("strategy_capital_usd"), int | float)}
+    money = spec_money(root / "specs")
     stage2 = _yaml(root / "night" / "stage2.yaml")
     anomalies = _yaml(root / "night" / "anomalies.yaml")
     states = sorted((root / "data" / "night").glob("2???-??-??.json"))
@@ -637,32 +665,36 @@ def _steps23(session: Session, idea: Idea, own: _Run | None, spec: Spec | None,
     return _twin_step(session, idea, own, spec, ledgers), _from_run(session, 3, own)
 
 
-def strategy_money(idea_id: str, ledgers: Ledgers) -> float | None:
-    """The money of the idea's strategy: the only place step 4 learns it (phase A: the paper and
-    live books of `night/paper_books.yaml`; phase B: the spec)."""
-    return ledgers.money.get(idea_id)
+def strategy_money(idea: Idea | str, ledgers: Ledgers) -> float | None:
+    """The money of the idea's strategy: the only place step 4 learns it, the spec's
+    `strategy_capital_usd`. A second stage (`<idea>-hl`) is the same strategy on another venue and
+    has its first stage's money when its own file states none."""
+    idea_id = idea if isinstance(idea, str) else idea.id
+    found = ledgers.money.get(idea_id)
+    if found is None and not isinstance(idea, str) and idea.parent_id and is_stage2_child(idea):
+        found = ledgers.money.get(idea.parent_id)
+    return found
 
 
 def _step4(idea: Idea, own: _Run | None, ledgers: Ledgers) -> Step:
-    money = strategy_money(idea.id, ledgers)
+    money = strategy_money(idea, ledgers)
+    need = None if own is None else _number(own.metrics, "min_capital_usd")
     if money is None:
         if idea.status in CLOSED_STATUSES:
             return _not_run(4, Reason.CLOSED_BEFORE, f"статус «{idea.status.value}»")
-        note = ""
-        if own is not None and own.route == "shelf":
-            need = _number(own.metrics, "min_capital_usd")
-            if need is not None:
-                note = (f"стенд на общей сумме $3 000 говорит «не хватает»: нужно "
-                        f"${need:,.0f}; это не деньги стратегии")
+        note = "" if need is None else f"прогону нужно ${need:,.0f}; сравнить не с чем"
         return _not_run(4, Reason.NO_STRATEGY_MONEY, note)
-    need = None if own is None else _number(own.metrics, "min_capital_usd")
+    outcome, detail = capital_fit(need, money)
+    return Step(4, STEP_KEYS[3], STEP_TITLES[3], outcome, detail)
+
+
+def capital_fit(need: float | None, money: float) -> tuple[Outcome, str]:
+    """Whether the capital a run needed fits the strategy's own money: the whole of step 4."""
     if need is None:
-        return Step(4, STEP_KEYS[3], STEP_TITLES[3], Outcome.UNDECIDED,
-                    f"у стратегии ${money:,.0f}; нужный капитал в прогоне не измерен")
-    ok = need <= money
-    return Step(4, STEP_KEYS[3], STEP_TITLES[3], Outcome.PASSED if ok else Outcome.FAILED,
-                f"нужно ${need:,.0f} против денег стратегии ${money:,.0f}"
-                + ("" if ok else ": не помещается"))
+        return Outcome.UNDECIDED, f"у стратегии ${money:,.0f}; нужный капитал в прогоне не измерен"
+    if need <= money:
+        return Outcome.PASSED, f"нужно ${need:,.0f} против денег стратегии ${money:,.0f}"
+    return Outcome.FAILED, f"нужно ${need:,.0f}, своих ${money:,.0f}: не помещается"
 
 
 def _readings(session: Session, idea: Idea, main: _Run | None, ledgers: Ledgers) -> list[Reading]:

@@ -137,6 +137,7 @@ sources:
   "leverage_table": "seed/venue_facts/2026-10-25-hl_max_leverage.csv (Hyperliquid metaAndAssetCtxs, maxLeverage per coin, read 2026-10-25)"
   "universe": "docs/FRAB_BINANCE_SPOT.md (every coin with a Hyperliquid perp and a Binance USDT spot pair; the owner's idea, 2026-10-25: «frab на более чем 4-5 монетах»)"
   "leverage": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only)"
+  "costs.differs_from_table": "7.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (4.5 + 10) / 2; Hyperliquid perp taker 0.045% and Binance spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (4.5 + 10) / 2; Hyperliquid perp taker 0.045% and Binance spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»; measured for Hyperliquid only, the same value is used for the Binance spot leg (unmeasured, docs/FRAB_BINANCE_SPOT.md)"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params.min_order_usd: HL's own minimum order)"

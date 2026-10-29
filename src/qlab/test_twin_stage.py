@@ -120,7 +120,7 @@ def world(tmp_path, registry, monkeypatch):
     calls: list[tuple] = []
     results: dict[str, str] = {}
 
-    def fake_eval(kind, spec, *, end, noise_trials, deployable_capital_usd):
+    def fake_eval(kind, spec, *, end, noise_trials):
         calls.append(("stand", spec.idea_id, end, noise_trials))
         route = results.get(spec.idea_id, "needs-forward")
         with registry.session_scope() as s:
@@ -132,7 +132,7 @@ def world(tmp_path, registry, monkeypatch):
         return ItemResult(kind=kind, name=spec.idea_id, trial_id=trial_id, route=route,
                           reason="r")
 
-    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials, deployable_capital_usd,
+    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials,
                     config=None, **kw):
         calls.append(("stage2", spec.idea_id, stage1_route, stage1_trial_id, kw))
         return stage2.Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}-hl",

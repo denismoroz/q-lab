@@ -91,8 +91,11 @@ short_evidence:
   other: no_weight
 
 # The money for strategies, in USD. Confirmed by the owner, 2026-10-28, asked whether $3000 is
-# the deployable capital the shelf's capital rule compares against: «пока $3000». Until then it
-# was the number the night ran on (qlab.night.run, `deployable_capital_usd`, since 2026-10-03)
+# the deployable capital the shelf's capital rule compares against: «пока $3000». That rule is gone
+# (owner, 2026-10-29: «у каждой стратегии свои настройки»; rules 2026-10-29.3): the stand compares
+# the capital a run needs with the strategy's own money (`strategy_capital_usd` of its spec) and has
+# no common sum. This number is only this proposal's own pool. Until 2026-10-29 it was also the
+# number the night ran on (qlab.night.run, `deployable_capital_usd`, since 2026-10-03)
 # and the capital of the trend paper books, with no owner statement. Earlier figures the owner
 # stated: «уверенности нет на размещение более 1к» (rules/2026-09-20.2.yaml,
 # 2026-09-20), the capital $5-15k (docs/PLAN.md, "Границы"), the horizon «100-120к». The report

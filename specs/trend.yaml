@@ -69,6 +69,9 @@ costs:
 # `min_order_usd: float = 10.0`) -- the same number `venues/hyperliquid.yaml`
 # records independently as the exchange's own floor.
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 3000
 
 # Directional long/short per instrument, one leg per coin -- no partner leg
 # a failure could ever strand (frab.py's own single-leg strategies default
@@ -89,6 +92,8 @@ unexpressed_mechanisms:
 # Where every number and choice comes from (docs/SOURCES.md); checked
 # before any run starts.
 sources:
+  "strategy_capital_usd": "night/paper_books.yaml, the trend book (`trend-live`, production strategy id 5): strategy_capital_usd 3000, the capital the production host created it with; the idea in paper is the trend mechanism that book runs"
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL's own minimum order"

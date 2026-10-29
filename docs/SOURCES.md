@@ -46,3 +46,14 @@
 
 Код: `qlab.pipeline.sources`, вызов в начале `qlab.pipeline.evaluate.evaluate_spec`
 (`check_sources`).
+
+
+## Деньги стратегии и издержки (2026-10-29)
+
+- **Деньги стратегии** (`strategy_capital_usd` в спеке) — число, как любое другое: у него есть
+  запись в `sources["strategy_capital_usd"]`, и число должно стоять в названном файле (проверка та же,
+  что у параметров). Подробности — `docs/CAPITAL_BASE.md`, раздел 8а.
+- **Издержки** — строка площадки из `night/costs.yaml`; спек с другими числами обязан объяснить это в
+  `sources["costs.differs_from_table"]`. Подробности — `docs/COSTS.md`.
+- **День фиксации чисел** (`params_fixed_at`) у идей генератора и опытов исследователя называет код;
+  более поздний день нужно подкрепить записью `sources["params_fixed_at"]`. Подробности — `docs/FIXATION.md`.

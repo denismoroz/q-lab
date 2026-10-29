@@ -32,7 +32,7 @@ RULESET = _split_ruleset([CAPITAL_FIT_GENEROUS, base.HONEST_UNIVERSE_INFO])
 def test_a_run_that_passes_stores_the_forward_series_from_its_own_backtest(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
 
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     assert result.routing.route == "paper"
     stored = forward_series.load(result.trial_id)
@@ -48,8 +48,7 @@ def test_a_run_that_passes_stores_the_forward_series_from_its_own_backtest(sessi
 def test_a_run_that_does_not_keep_its_idea_alive_stores_nothing(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
 
-    result = evaluate_spec(spec, session=session, ruleset=_split_ruleset([CAPITAL_FIT_TIGHT]),
-                           deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=_split_ruleset([CAPITAL_FIT_TIGHT]))
 
     assert result.routing.route == "reject"
     assert forward_series.load(result.trial_id) is None
@@ -58,7 +57,7 @@ def test_a_run_that_does_not_keep_its_idea_alive_stores_nothing(session, tmp_pat
 def test_calibration_noise_stores_nothing(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
 
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0,
+    result = evaluate_spec(spec, session=session, ruleset=RULESET,
                            update_idea_status=False)
 
     assert forward_series.load(result.trial_id) is None
@@ -67,7 +66,7 @@ def test_calibration_noise_stores_nothing(session, tmp_path):
 def test_a_run_judged_on_its_fit_period_stores_nothing(session, tmp_path):
     spec = _explicit_long(session, tmp_path)  # no fixed date: the whole window is the fit period
 
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     assert result.metrics.get("judged_on_forward") in (None, 0.0)
     assert forward_series.load(result.trial_id) is None
@@ -81,7 +80,7 @@ def test_a_failure_to_write_the_series_does_not_fail_the_run(session, tmp_path, 
 
     monkeypatch.setattr(forward_series, "store_from_run", _boom)
 
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     assert result.routing.route == "paper" and result.error is None
     assert session.get(Trial, result.trial_id) is not None
@@ -96,7 +95,7 @@ def _write_spec(spec, folder):
 def test_a_stored_run_is_replayed_from_its_spec_and_snapshot_to_the_same_series(
         session, tmp_path, monkeypatch):
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
     live = forward_series.load(result.trial_id)
     monkeypatch.setattr("qlab.rules.loader.load", lambda version: RULESET)
     _write_spec(spec, tmp_path / "specs")
@@ -111,7 +110,7 @@ def test_a_stored_run_is_replayed_from_its_spec_and_snapshot_to_the_same_series(
 def test_rebuild_writes_the_series_a_run_made_before_this_existed_lacks(
         session, tmp_path, monkeypatch):
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
     forward_series.series_path(result.trial_id).unlink()  # a run from before the series was kept
     monkeypatch.setattr("qlab.rules.loader.load", lambda version: RULESET)
     _write_spec(spec, tmp_path / "specs")
@@ -124,7 +123,7 @@ def test_rebuild_writes_the_series_a_run_made_before_this_existed_lacks(
 
 def test_a_spec_edited_since_the_run_is_not_used_to_replay_it(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
     _write_spec(spec.model_copy(update={"params": {"weight": 0.9}}), tmp_path / "specs")
 
     replayed = forward_series.replay(session, result.trial_id, spec_root=tmp_path / "specs")
@@ -135,7 +134,7 @@ def test_a_spec_edited_since_the_run_is_not_used_to_replay_it(session, tmp_path)
 def test_a_changed_data_window_alone_does_not_hide_the_spec(session, tmp_path):
     """The night moves a spec's window to yesterday in the stored row, not in the file."""
     spec = _causal_spec(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
     older = spec.model_copy(update={"data": spec.data.model_copy(update={"end": date(2026, 1, 3)})})
     _write_spec(older, tmp_path / "specs")
 
@@ -147,7 +146,7 @@ def test_a_changed_data_window_alone_does_not_hide_the_spec(session, tmp_path):
 
 def test_a_run_judged_on_its_fit_period_cannot_be_replayed_into_a_forward_chart(session, tmp_path):
     spec = _explicit_long(session, tmp_path)
-    result = evaluate_spec(spec, session=session, ruleset=RULESET, deployable_capital_usd=1000.0)
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     replayed = forward_series.replay(session, result.trial_id, spec_root=tmp_path / "specs")
 

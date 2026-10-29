@@ -150,8 +150,7 @@ def rerun_spec(spec: StrategySpec) -> StrategySpec:
     return own_numbers.to_retune(spec, config)
 
 
-def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int,
-                  deployable_capital_usd: float) -> ItemResult:
+def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int) -> ItemResult:
     """One evaluation in its own transaction, so one failure cannot roll back
     the night's other results."""
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
@@ -163,8 +162,7 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
         spec = rerun_spec(spec)
         with session_scope() as session:
             out = evaluate_spec_with_shape_aware_bar(
-                with_end(spec, end), session=session, ruleset=load_latest(),
-                deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials,
+                with_end(spec, end), session=session, ruleset=load_latest(), n_trials=noise_trials,
             ).candidate
             result.trial_id = out.trial_id
             result.route = out.routing.route
@@ -675,6 +673,7 @@ def write_report(day: date, state: dict) -> Path:
                          f"{len(gen.get('rejected') or [])}; {gen.get('tokens', 0):,} токенов; "
                          f"ответ агента: {gen.get('reply') or '—'}")
         lines += [f"    - {p}" for p in gen.get("problems") or []]
+        lines += [f"    - день фиксации назвал код: {n}" for n in gen.get("named_fixation") or []]
         for r in gen.get("rejected") or []:
             lines += [f"    - не принято `{r['path']}`: {p}" for p in r["problems"]]
         for r in gen.get("results") or []:
@@ -907,7 +906,6 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         decay: bool | None = None, director: bool | None = None, waiting: bool = True,
         twins: bool | None = None, overlays: bool | None = None,
         anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
-        deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True, ladder: bool | None = None) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
@@ -969,8 +967,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         except Exception as exc:  # noqa: BLE001 - one broken spec file is its own row
             result = ItemResult(kind=kind, name=str(path), error=f"{type(exc).__name__}: {exc}")
         else:
-            result = evaluate_item(kind, spec, end=end, noise_trials=noise_trials,
-                                   deployable_capital_usd=deployable_capital_usd)
+            result = evaluate_item(kind, spec, end=end, noise_trials=noise_trials)
         state["results"] = [r for r in state["results"]
                             if not (r["kind"] == kind and r["name"] == result.name)]
         state["results"].append(asdict(result))
@@ -982,7 +979,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         from qlab.waiting import followed_ideas, waiting_stage
 
         guarded(day, state, "waiting", waiting_stage, day, end, state, watch=watch,
-                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd)
+                noise_trials=noise_trials)
         followed = followed_ideas(state.get("waiting"))
         state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
         save_state(day, state)
@@ -993,13 +990,13 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         from qlab.twin_stage import twins_stage
 
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
-                deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+                stop_at=stop_at)
         save_state(day, state)
     if restamp and not past_stop(stop_at, state, "restamp"):
         # Results measured an older way are measured again (docs/RESTAMP.md). Code only. Before
         # the anomalies stage: it scans the runs this one has just made.
         guarded(day, state, "restamp", restamp_stage, day, end, state, noise_trials=noise_trials,
-                deployable_capital_usd=deployable_capital_usd, stop_at=stop_at)
+                stop_at=stop_at)
         save_state(day, state)
     if anomalies and not past_stop(stop_at, state, "anomalies"):
         # Too-good results (docs/ANOMALIES.md): flags by code on the passed runs, the
@@ -1011,7 +1008,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # Overlays on the strategies that passed (qlab.overlay_stage): when and how much to
         # hold, every variant a counted trial, compared with its base. Code only.
         guarded(day, state, "overlays", overlays_stage, day, end, state,
-                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                noise_trials=noise_trials,
                 stop_at=stop_at)
         save_state(day, state)
     if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
@@ -1047,14 +1044,14 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
             from qlab.twin_stage import twins_stage
 
             guarded(day, state, "twins-research", twins_stage, day, end, state,
-                    noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                    noise_trials=noise_trials,
                     stop_at=stop_at, label="twins-research")
             save_state(day, state)
     if programmer and not past_stop(stop_at, state, "programmer"):
         guarded(day, state, "programmer", programmer_stage, day, state)
     if implement and not past_stop(stop_at, state, "implement"):
         guarded(day, state, "implement", implement_stage, day, state,
-                noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+                noise_trials=noise_trials,
                 stop_at=stop_at)
     if search and not past_stop(stop_at, state, "search"):
         guarded(day, state, "search", search_stage, day, state)
@@ -1072,7 +1069,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # Last: the search for new ideas is what the budget cuts first, and the
         # generator is the most expensive part of it.
         guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
-                deployable_capital_usd=deployable_capital_usd, force=generate)
+                force=generate)
     stop_prefetch(prefetcher, state)
     if ladder is not False:
         # The ladder of every open idea as one table, read after every stage has written its
@@ -1939,8 +1936,7 @@ def _data_end_for_generation(session, day: date) -> date:
     return min(latest, closed) if latest else closed
 
 
-def generate_stage(day: date, state: dict, *, noise_trials: int,
-                   deployable_capital_usd: float = 3000.0, config: Path = GENERATE,
+def generate_stage(day: date, state: dict, *, noise_trials: int, config: Path = GENERATE,
                    force: bool | None = None) -> None:
     """The idea generator (`qlab.agents.generator`), in the search stage -- the
     one CLAUDE.md cuts first: one agent call writes up to `max_specs` specs from
@@ -2002,7 +1998,7 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
                     registry_idea_ids=[i for (i,) in session.query(Idea.id)])
                 gen.update(
                     reply=outcome.reply, problems=outcome.problems, reverted=outcome.reverted,
-                    tokens=budget.spent_tokens,
+                    named_fixation=outcome.notes, tokens=budget.spent_tokens,
                     accepted=[{"idea_id": a.spec.idea_id, "path": str(a.path),
                                "mechanism": a.mechanism} for a in outcome.accepted],
                     rejected=[{"path": r.path, "problems": r.problems} for r in outcome.rejected])
@@ -2027,11 +2023,9 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
             # Stage 1 is on record; only the second stage (code, no tokens) failed:
             # run it again, not the stage-1 trial and its noise a second time.
             result = GeneratedResult(**before)
-            run_second_stage(item, result, noise_trials=noise_trials,
-                             deployable_capital_usd=deployable_capital_usd)
+            run_second_stage(item, result, noise_trials=noise_trials)
         else:
-            result = run_generated_one(item, noise_trials=noise_trials,
-                                       deployable_capital_usd=deployable_capital_usd)
+            result = run_generated_one(item, noise_trials=noise_trials)
         results[:] = [r for r in results if r["idea_id"] != result.idea_id]
         results.append(asdict(result))
         if result.error is None and (result.stage2 or {}).get("status") != "error":
@@ -2040,8 +2034,7 @@ def generate_stage(day: date, state: dict, *, noise_trials: int,
         save_state(day, state)
 
 
-def implement_stage(day: date, state: dict, *, noise_trials: int,
-                    deployable_capital_usd: float, stop_at: datetime | None = None,
+def implement_stage(day: date, state: dict, *, noise_trials: int, stop_at: datetime | None = None,
                     queue: Path | None = None, ledger_path: Path | None = None) -> None:
     """Stage 2 (CLAUDE.md order): cards from `night/implement_queue.yaml` written by the
     implementer agent and run through every guard, inside tonight's token budget; then, by code
@@ -2060,8 +2053,7 @@ def implement_stage(day: date, state: dict, *, noise_trials: int,
     ledger_path = ledger_path or implement_run.LEDGER
     ledger = twin_stage.load_ledger(ledger_path)
     ctx = implement_run.RunContext(
-        day=day, end=last_closed_day(), noise_trials=noise_trials,
-        deployable_capital_usd=deployable_capital_usd, state=state, ledger=ledger,
+        day=day, end=last_closed_day(), noise_trials=noise_trials, state=state, ledger=ledger,
         ledger_path=ledger_path, stop_at=stop_at, stage2_config=implement_run.load_stage2_config())
     out = state.setdefault("implemented", [])
     seen = {e["card"]: e for e in out}
