@@ -9,8 +9,10 @@ from.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -237,9 +239,19 @@ def fetch_universe_resumable(
     cache_dir: Path | str = DEFAULT_RAW_CACHE_DIR,
     accept_cached: Callable[[InstrumentHistory], bool] | None = None,
     fetch_range: Callable[[str, pd.Timestamp, pd.Timestamp], InstrumentHistory] | None = None,
+    funding_end_pad: pd.Timedelta | None = None,
 ) -> dict[str, InstrumentHistory]:
     """Fetch each instrument, reusing anything already cached from an earlier
     attempt and persisting each success as it lands.
+
+    `funding_end_pad`, when given, lets a request be answered from an entry cached from the
+    same start to a LATER end (`_cut_later_cache`): the source fetches candles up to `end` and
+    funding up to `end + funding_end_pad`, so the later entry holds the same bars and the same
+    settlements plus the ones after, and cutting it gives what a fetch would. Only daily bars
+    qualify (a source that serves a capped number of recent candles may have served the old
+    entry more history than it would serve now). Without it, an experiment on a window ending
+    before the nightly one fetched every instrument again -- two hours for 222 instruments of
+    Hyperliquid funding (night of 2026-10-29).
 
     `fetch_range(instrument, start, end)`, when given, lets a request whose
     end moved forward extend an entry cached to an earlier end instead of
@@ -258,29 +270,44 @@ def fetch_universe_resumable(
     if on_missing not in {"raise", "skip"}:
         raise ValueError(f"on_missing must be 'raise' or 'skip', got {on_missing!r}")
     cache_dir = Path(cache_dir)
-    histories: dict[str, InstrumentHistory] = {}
-    for instrument in instruments:
+
+    def one(instrument: str) -> InstrumentHistory | None:
         cached = load_cached_history(cache_dir, source, instrument, interval, start, end)
         if cached is not None and (accept_cached is None or accept_cached(cached)):
-            histories[instrument] = cached
-            continue
+            return cached
+        if funding_end_pad is not None:
+            cut = _cut_later_cache(cache_dir, source, instrument, interval, start, end,
+                                   funding_end_pad, accept_cached)
+            if cut is not None:
+                store_cached_history(cache_dir, source, interval, start, end, cut)
+                return cut
         if fetch_range is not None:
             extended = _extend_earlier_cache(cache_dir, source, instrument, interval, start, end,
                                              fetch_range, accept_cached)
             if extended is not None:
                 store_cached_history(cache_dir, source, interval, start, end, extended)
                 _drop_superseded(cache_dir, source, instrument, interval, start, end)
-                histories[instrument] = extended
-                continue
+                return extended
         try:
             history = fetch_one(instrument)
         except ValueError:
             if on_missing == "raise":
                 raise
-            continue
+            return None
         store_cached_history(cache_dir, source, interval, start, end, history)
-        histories[instrument] = history
-    return histories
+        return history
+
+    names = list(instruments)
+    workers = min(fetch_workers(source), len(names))
+    if workers > 1:
+        # Each instrument is its own pair of requests and its own cache files, so they can
+        # overlap; the answer is the same and keeps the order of `instruments`.
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qlab-fetch") as pool:
+            found = list(pool.map(one, names))
+    else:
+        found = [one(name) for name in names]
+    return {name: history for name, history in zip(names, found, strict=True)
+            if history is not None}
 
 
 def _merge_series(old: pd.Series | None, new: pd.Series | None, cut: pd.Timestamp
@@ -334,6 +361,46 @@ def _drop_superseded(cache_dir, source, instrument, interval, start, end) -> Non
             path.unlink()
 
 
+def _cut_later_cache(cache_dir, source, instrument, interval, start, end, funding_end_pad,
+                     accept_cached) -> InstrumentHistory | None:
+    """The same instrument cached from the same start to a LATER end, cut back to `end`: bars
+    up to `end`, funding up to `end + funding_end_pad`. None when there is no such entry, the
+    bars are not daily, or nothing of the instrument is left by `end` (the fetch then says what
+    a window without data means)."""
+    if interval != "1d":
+        return None
+    folder = Path(cache_dir) / source / interval
+    prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
+    wanted = str(pd.Timestamp(end).date())
+    later = sorted(
+        p.stem[len(prefix):] for p in folder.glob(f"{prefix}*.parquet")
+         if p.stem[len(prefix):] > wanted)
+    end_ts = pd.Timestamp(end)
+    end_ts = end_ts.tz_localize("UTC") if end_ts.tzinfo is None else end_ts.tz_convert("UTC")
+    for later_end in later:  # the nearest end first: the least to cut
+        cached = load_cached_history(cache_dir, source, instrument, interval, start, later_end)
+        if cached is None or (accept_cached is not None and not accept_cached(cached)):
+            continue
+        if not cached.has_funding:
+            continue
+        prices = cached.prices[cached.prices.index <= end_ts]
+        if prices.empty:
+            return None
+        return InstrumentHistory(
+            instrument=instrument,
+            prices=prices,
+            funding=cached.funding[cached.funding.index <= end_ts + funding_end_pad],
+            volume=cached.volume[cached.volume.index <= end_ts],
+            trade_count=cached.trade_count[cached.trade_count.index <= end_ts],
+            first_seen=prices.index.min(),
+            last_seen=prices.index.max(),
+            is_delisted=cached.is_delisted,
+            has_funding=cached.has_funding,
+            high=None if cached.high is None else cached.high[cached.high.index <= end_ts],
+        )
+    return None
+
+
 def _extend_earlier_cache(cache_dir, source, instrument, interval, start, end, fetch_range,
                           accept_cached) -> InstrumentHistory | None:
     """The same instrument cached from the same start to an EARLIER end, with
@@ -361,6 +428,24 @@ def _extend_earlier_cache(cache_dir, source, instrument, interval, start, end, f
             return cached  # nothing new in the gap (e.g. delisted since)
         return merge_histories(cached, fresh, gap_start)
     return None
+
+
+# Instruments of a source fetched at the same time (`QLAB_FETCH_WORKERS`, default 1: one after
+# another, as before). Only for the sources named here: Binance's limits allow a few requests a
+# second, while Hyperliquid is already paced at its own limit by one (a second request in flight
+# would only be answered with a 429 and a minute's wait).
+FETCH_WORKERS_ENV = "QLAB_FETCH_WORKERS"
+THREADED_SOURCES = frozenset({"binance"})
+
+
+def fetch_workers(source: str) -> int:
+    """How many instruments of `source` are fetched at once."""
+    if source not in THREADED_SOURCES:
+        return 1
+    try:
+        return max(1, int(os.environ.get(FETCH_WORKERS_ENV, "1")))
+    except ValueError:
+        return 1
 
 
 def polite_sleep() -> None:

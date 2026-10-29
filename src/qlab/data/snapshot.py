@@ -61,6 +61,7 @@ import functools
 import hashlib
 import io
 import json
+import threading
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -222,6 +223,17 @@ _SOURCES = {
         "describe_universe": aster_source.describe_universe,
     },
 }
+
+
+_VENUE_LOCKS: dict[str, threading.Lock] = {}
+_VENUE_LOCKS_GUARD = threading.Lock()
+
+
+def _venue_lock(source: str) -> threading.Lock:
+    """One fetch at a time from a venue in this process: the night's prefetch thread
+    (`qlab.prefetch`) and the main thread must not double the request rate a venue is paced to."""
+    with _VENUE_LOCKS_GUARD:
+        return _VENUE_LOCKS.setdefault(source, threading.Lock())
 
 
 def _to_utc_timestamp(value: object) -> pd.Timestamp:
@@ -851,20 +863,23 @@ def build_snapshot(
 
     histories: dict[str, InstrumentHistory] = {}
     if perp_instruments:
-        histories.update(
-            source_spec["fetch"](
-                perp_instruments, start_ts, end_ts, interval, on_missing=on_missing
+        with _venue_lock(source):
+            histories.update(
+                source_spec["fetch"](
+                    perp_instruments, start_ts, end_ts, interval, on_missing=on_missing
+                )
             )
-        )
     if spot_coins:
         spot_spec = _SOURCES[spot_source] if spot_source is not None else source_spec
         fetch_spot = spot_spec.get("fetch_spot")
         if fetch_spot is None:
             raise ValueError(f"{source!r} does not support spot markets (requested {spot_coins})")
-        spot_histories = fetch_spot(spot_coins, start_ts, end_ts, interval, on_missing=on_missing)
-        if spot_source is not None:
-            spot_histories = _in_usdc(spot_histories, spot_spec["spot_quote_rate"](
-                start_ts, end_ts, interval))
+        with _venue_lock(spot_source or source):
+            spot_histories = fetch_spot(spot_coins, start_ts, end_ts, interval,
+                                        on_missing=on_missing)
+            if spot_source is not None:
+                spot_histories = _in_usdc(spot_histories, spot_spec["spot_quote_rate"](
+                    start_ts, end_ts, interval))
         histories.update(spot_histories)
 
     if not histories:

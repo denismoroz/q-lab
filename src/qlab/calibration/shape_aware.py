@@ -55,9 +55,10 @@ from qlab.calibration.percentile import (
     noise_percentile,
     noise_power,
 )
-from qlab.calibration.run import NoiseTrial, run_noise_series
+from qlab.calibration.run import NoiseTrial, start_noise_series
 from qlab.pipeline.evaluate import (
     Evaluation,
+    _get_or_create_spec_row,
     evaluate_spec,
     not_evaluable_reasons,
     resolve_panel,
@@ -146,7 +147,12 @@ def evaluate_spec_with_shape_aware_bar(
         )
         return ShapeAwareResult(candidate=candidate, percentiles=None, noise_trials=())
 
-    noise_trials = run_noise_series(
+    # The candidate's registry row and its data are settled and committed before the noise books
+    # start in the worker pool: a write lock this session held while it waits for them would
+    # stall the workers' writes.
+    _get_or_create_spec_row(session, spec)
+    session.commit()
+    noise_run = start_noise_series(
         series=series,
         n_trials=n_trials,
         session=session,
@@ -158,6 +164,7 @@ def evaluate_spec_with_shape_aware_bar(
     )
 
     def _extra_metrics(base_metrics: dict[str, float]) -> dict[str, float]:
+        noise_trials = noise_run.result()  # waits for the books still running in the pool
         percentiles = compute_shape_aware_percentiles(
             base_metrics,
             noise_trials,
@@ -211,6 +218,9 @@ def evaluate_spec_with_shape_aware_bar(
         review_route=review_route,
     )
 
+    # Also when the candidate failed before it asked: the books are recorded either way, and a
+    # failure of theirs is raised here as it was when they ran first.
+    noise_trials = noise_run.result()
     percentiles = (
         compute_shape_aware_percentiles(
             candidate.metrics, noise_trials, reference_idea_id=spec.idea_id, series=series

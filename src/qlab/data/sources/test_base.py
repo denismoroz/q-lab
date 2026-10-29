@@ -444,3 +444,155 @@ def test_a_later_end_extends_the_earlier_cache_instead_of_refetching(tmp_path) -
     assert out.prices.loc["2025-01-08":].eq(2.0).all() and out.prices.index[-1] == new_end
     left = sorted(p.name for p in (tmp_path / "t" / "1d").iterdir())
     assert left == ["X__2025-01-01__2025-01-12.json", "X__2025-01-01__2025-01-12.parquet"]
+
+
+def _daily_history(name, first, last, *, funding_to=None, delisted=False):
+    """A daily history of `name` from `first` to `last`; hourly funding up to `funding_to`."""
+    from qlab.data.sources.base import InstrumentHistory
+
+    index = pd.date_range(first, last, freq="1D")
+    prices = pd.Series(range(1, len(index) + 1), index=index, dtype=float)
+    funding_index = pd.date_range(first, funding_to or last, freq="1h")
+    funding = pd.Series(0.0001, index=funding_index)
+    return InstrumentHistory(
+        instrument=name, prices=prices, funding=funding, volume=prices * 2,
+        trade_count=prices.astype("int64"), first_seen=index[0], last_seen=index[-1],
+        is_delisted=delisted, high=prices + 0.5)
+
+
+def test_a_window_ending_earlier_is_cut_from_the_cache_of_a_later_end(tmp_path) -> None:
+    """A research experiment on a window that ended a month ago needs no fetch when the nightly
+    run has the same start cached to yesterday: the bars up to its end and the funding up to
+    its end plus one funding period are what a fetch would return."""
+    from qlab.data.sources.base import fetch_universe_resumable, load_cached_history
+
+    hour = pd.Timedelta(hours=1)
+    start = pd.Timestamp("2025-01-01", tz="UTC")
+    late, early = pd.Timestamp("2025-02-20", tz="UTC"), pd.Timestamp("2025-02-01", tz="UTC")
+    stored = _daily_history("X", start, late, funding_to=late + hour)
+    fetch_universe_resumable(["X"], start, late, "1d", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda i: stored)
+
+    def fetch_all(instrument):
+        raise AssertionError("must not fetch: the later entry holds it")
+
+    out = fetch_universe_resumable(["X"], start, early, "1d", source="t", cache_dir=tmp_path,
+                                   fetch_one=fetch_all, funding_end_pad=hour)["X"]
+    # What a fetch of the earlier window returns: bars to its end, funding to its end + 1h.
+    want = _daily_history("X", start, early, funding_to=early + hour)
+    pd.testing.assert_series_equal(out.prices, want.prices, check_freq=False, check_names=False)
+    pd.testing.assert_series_equal(out.funding, want.funding, check_freq=False, check_names=False)
+    pd.testing.assert_series_equal(out.volume, want.volume, check_freq=False, check_names=False)
+    pd.testing.assert_series_equal(out.high, want.high, check_freq=False, check_names=False)
+    assert out.last_seen == early and out.first_seen == start and not out.is_delisted
+    assert out.funding.index.max() == early + hour
+    # Stored under its own key: the next run finds it without cutting again.
+    assert load_cached_history(tmp_path, "t", "X", "1d", start, early) is not None
+    # The later entry is untouched.
+    assert load_cached_history(tmp_path, "t", "X", "1d", start, late).prices.index.max() == late
+
+
+def test_a_later_cache_is_cut_only_for_daily_bars_and_only_with_the_source_asking(tmp_path) -> None:
+    """Hourly bars: the source serves only its last N candles, so an old entry may hold history
+    a fetch would not return now. Without `funding_end_pad` the source did not say how its
+    funding window ends, so nothing is cut."""
+    from qlab.data.sources.base import _cut_later_cache, fetch_universe_resumable
+
+    hour = pd.Timedelta(hours=1)
+    start = pd.Timestamp("2025-01-01", tz="UTC")
+    late, early = pd.Timestamp("2025-01-20", tz="UTC"), pd.Timestamp("2025-01-10", tz="UTC")
+    stored = _daily_history("X", start, late, funding_to=late + hour)
+    fetch_universe_resumable(["X"], start, late, "1d", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda i: stored)
+    assert _cut_later_cache(tmp_path, "t", "X", "1h", start, early, hour, None) is None
+    asked = []
+    fetch_universe_resumable(["X"], start, early, "1d", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda i: asked.append(i) or _daily_history(
+                                 "X", start, early, funding_to=early + hour))
+    assert asked == ["X"]
+
+
+def test_a_cut_that_leaves_no_bar_is_a_fetch_and_a_later_end_is_not_cut_earlier(tmp_path) -> None:
+    """An instrument that listed after the window's end has nothing in it: the fetch decides
+    what that means (a typo, or a coin that did not exist yet). A request for a LATER end than
+    the cache holds is the extend path's, not the cut's."""
+    from qlab.data.sources.base import _cut_later_cache, fetch_universe_resumable
+
+    hour = pd.Timedelta(hours=1)
+    start = pd.Timestamp("2025-01-01", tz="UTC")
+    listed = pd.Timestamp("2025-03-01", tz="UTC")
+    late = pd.Timestamp("2025-04-01", tz="UTC")
+    stored = _daily_history("X", listed, late, funding_to=late + hour)
+    fetch_universe_resumable(["X"], start, late, "1d", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda i: stored)
+    early = pd.Timestamp("2025-02-01", tz="UTC")
+    assert _cut_later_cache(tmp_path, "t", "X", "1d", start, early, hour, None) is None
+    assert _cut_later_cache(tmp_path, "t", "X", "1d", start, late + pd.Timedelta(days=5),
+                            hour, None) is None
+
+
+def test_instruments_of_a_threaded_source_are_fetched_at_once_with_the_same_answer(
+        tmp_path, monkeypatch) -> None:
+    """`QLAB_FETCH_WORKERS` lets a venue with room for it fetch several instruments at a time:
+    the same histories, in the order asked, a missing one skipped, a typo still raising."""
+    import threading
+
+    from qlab.data.sources.base import FETCH_WORKERS_ENV, fetch_universe_resumable
+
+    start = pd.Timestamp("2025-01-01", tz="UTC")
+    end = pd.Timestamp("2025-01-05", tz="UTC")
+    names = [f"C{i}" for i in range(8)]
+    inside, peak, lock = 0, 0, threading.Lock()
+    barrier = threading.Barrier(4, timeout=10)
+
+    def fetch_one(name):
+        nonlocal inside, peak
+        with lock:
+            inside += 1
+            peak = max(peak, inside)
+        if name == "C7":
+            with lock:
+                inside -= 1
+            raise ValueError("no data")
+        try:
+            if name in names[:4]:
+                barrier.wait()  # four are in flight together, or the test times out
+        finally:
+            with lock:
+                inside -= 1
+        return _daily_history(name, start, end, funding_to=end)
+
+    monkeypatch.setenv(FETCH_WORKERS_ENV, "4")
+    out = fetch_universe_resumable(names, start, end, "1d", source="binance",
+                                   cache_dir=tmp_path / "t", fetch_one=fetch_one,
+                                   on_missing="skip")
+    assert list(out) == names[:7] and peak >= 4
+    serial_dir = tmp_path / "s"
+    monkeypatch.setenv(FETCH_WORKERS_ENV, "1")
+    serial = fetch_universe_resumable(names[:7], start, end, "1d", source="binance",
+                                      cache_dir=serial_dir,
+                                      fetch_one=lambda n: _daily_history(n, start, end,
+                                                                         funding_to=end))
+    for name in names[:7]:
+        pd.testing.assert_series_equal(out[name].prices, serial[name].prices)
+        pd.testing.assert_series_equal(out[name].funding, serial[name].funding)
+    import pytest
+
+    with pytest.raises(ValueError):
+        monkeypatch.setenv(FETCH_WORKERS_ENV, "4")
+        fetch_universe_resumable(["C7", "C0"], start, end, "1d", source="binance",
+                                 cache_dir=tmp_path / "typo", fetch_one=fetch_one,
+                                 on_missing="raise")
+
+
+def test_other_sources_and_bad_settings_fetch_one_at_a_time(monkeypatch) -> None:
+    from qlab.data.sources.base import FETCH_WORKERS_ENV, fetch_workers
+
+    monkeypatch.setenv(FETCH_WORKERS_ENV, "6")
+    assert fetch_workers("binance") == 6
+    assert fetch_workers("hyperliquid") == 1  # paced at its own limit by one
+    for bad in ("0", "-3", "many", ""):
+        monkeypatch.setenv(FETCH_WORKERS_ENV, bad)
+        assert fetch_workers("binance") == 1
+    monkeypatch.delenv(FETCH_WORKERS_ENV)
+    assert fetch_workers("binance") == 1

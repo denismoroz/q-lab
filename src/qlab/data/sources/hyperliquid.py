@@ -396,6 +396,8 @@ def fetch_universe(
             # Entries written before bar highs were kept are refetched (the
             # candles only -- funding comes back from the cache above).
             accept_cached=lambda history: history.high is not None,
+            # `fetch_instrument_history` fetches funding to `end` + one funding period.
+            funding_end_pad=FUNDING_NATIVE_INTERVAL,
         )
 
 

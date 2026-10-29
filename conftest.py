@@ -42,6 +42,15 @@ def _noise_in_process(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_prefetch(monkeypatch) -> None:
+    """A test never starts the night's background fetch of the watch list's data
+    (qlab.prefetch): it would reach the venues. The test of the thread sets its own."""
+    from qlab.prefetch import PREFETCH_ENV
+
+    monkeypatch.setenv(PREFETCH_ENV, "0")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_agent_ledgers(monkeypatch) -> None:
     """A test that runs the whole night never reaches the programmer's queue, the
     cataloguer's ledger or the carder's stage on disk: the stages read and write the owner's real

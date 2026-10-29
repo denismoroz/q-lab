@@ -368,3 +368,56 @@ def test_a_run_of_the_bv2_family_records_the_protection_measurement(session, mon
     assert m["prot_total_return"] == pytest.approx(m["total_return_net"], abs=1e-9)
     assert m["prot_reinvested"] == 1.0
     assert "prot_long_worst_fall" in m and "prot_worst_fall" in m
+
+
+def test_the_candidates_row_is_committed_before_the_noise_books_start(session, monkeypatch):
+    """The books run in worker processes that write the registry; a write lock this session
+    held from the candidate's own spec row would stall them until it timed out."""
+    import qlab.calibration.shape_aware as module
+    from qlab.registry.models import Spec as SpecRow
+
+    seen: dict = {}
+    real = module.start_noise_series
+
+    def watching(**kw):
+        seen["pending"] = bool(kw["session"].new or kw["session"].dirty)
+        seen["rows"] = kw["session"].query(SpecRow).filter(
+            SpecRow.idea_id == IDEA_ID).count()
+        return real(**kw)
+
+    monkeypatch.setattr(module, "start_noise_series", watching)
+    evaluate_spec_with_shape_aware_bar(
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+        deployable_capital_usd=1_000_000.0, n_trials=4)
+    assert seen == {"pending": False, "rows": 1}
+
+
+def test_a_failure_of_the_noise_books_is_raised_after_the_candidate_is_recorded(
+        session, monkeypatch):
+    """A series that cannot finish (a dead pool) fails the item as it did when the books ran
+    first -- the item is tried again the next night -- and the candidate's own trial is written
+    as the error it became."""
+    import qlab.calibration.shape_aware as module
+    from qlab.calibration.run import NoiseRun
+    from qlab.registry.models import Trial
+
+    class Boom(Exception):
+        pass
+
+    class Failing(NoiseRun):
+        def _finish(self):
+            raise Boom("pool died")
+
+    def start(**kw):
+        return Failing(series=kw["series"], n_trials=kw["n_trials"], seed_offset=0,
+                       replace_unusable=True, session=kw["session"], ruleset=kw["ruleset"],
+                       deployable_capital_usd=kw["deployable_capital_usd"],
+                       reference=kw["reference"], first=[])
+
+    monkeypatch.setattr(module, "start_noise_series", start)
+    with pytest.raises(Boom):
+        evaluate_spec_with_shape_aware_bar(
+            _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+            deployable_capital_usd=1_000_000.0, n_trials=4)
+    trials = session.query(Trial).all()
+    assert len(trials) == 1 and trials[0].route.value == "error"

@@ -13,9 +13,11 @@ this module.
 
 from __future__ import annotations
 
+import atexit
 import math
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, replace
 from multiprocessing import get_context
 from pathlib import Path
@@ -224,7 +226,87 @@ def run_noise_series(
     then the honest smaller count stays. Replacements continue the round-robin of generators.
     The unusable books stay in the registry as the trials they are, and in the returned list
     (replacements marked `replacement=True`).
+
+    Blocks until every book is done; `start_noise_series` lets the caller do other work meanwhile.
     """
+    return start_noise_series(
+        series=series, n_trials=n_trials, session=session, ruleset=ruleset,
+        deployable_capital_usd=deployable_capital_usd, reference=reference,
+        seed_offset=seed_offset, replace_unusable=replace_unusable).result()
+
+
+class NoiseRun:
+    """The noise books of one `run_noise_series` call, possibly still running in the worker
+    pool. `result()` waits for them and returns what `run_noise_series` returns."""
+
+    def __init__(self, *, series: str, n_trials: int, seed_offset: int, replace_unusable: bool,
+                 session: Session, ruleset: RuleSet, deployable_capital_usd: float,
+                 reference: StrategySpec, first: list[NoiseTrial] | list[Future]) -> None:
+        self._series = series
+        self._n_trials = n_trials
+        self._seed_offset = seed_offset
+        self._replace_unusable = replace_unusable
+        self._session = session
+        self._ruleset = ruleset
+        self._capital = deployable_capital_usd
+        self._reference = reference
+        self._first = first
+        self._trials: list[NoiseTrial] | None = None
+        self._failure: BaseException | None = None
+
+    def result(self) -> list[NoiseTrial]:
+        if self._failure is not None:
+            raise self._failure
+        if self._trials is None:
+            try:
+                self._trials = self._finish()
+            except BaseException as exc:
+                self._failure = exc
+                if isinstance(exc, BrokenProcessPool):
+                    shutdown_pool()  # the next call starts a new one
+                raise
+        return self._trials
+
+    def _finish(self) -> list[NoiseTrial]:
+        trials = [f.result() if isinstance(f, Future) else f for f in self._first]
+        if not self._replace_unusable:
+            return trials
+        n_trials = self._n_trials
+        drawn_extra = 0
+        while drawn_extra < n_trials:
+            missing = n_trials - sum(usable_noise_book(t) for t in trials)
+            if missing <= 0:
+                break
+            count = min(missing, n_trials - drawn_extra)
+            extra_jobs = [
+                (self._series, GENERATOR_NAMES[(n_trials + drawn_extra + j) % len(GENERATOR_NAMES)],
+                 REPLACEMENT_SEED_BASE + self._seed_offset + drawn_extra + j)
+                for j in range(count)
+            ]
+            drawn_extra += count
+            trials += [replace(t, replacement=True) for t in _run_jobs(
+                extra_jobs, session=self._session, ruleset=self._ruleset,
+                deployable_capital_usd=self._capital, reference=self._reference)]
+        return trials
+
+
+def start_noise_series(
+    *,
+    series: str,
+    n_trials: int,
+    session: Session,
+    ruleset: RuleSet,
+    deployable_capital_usd: float,
+    reference: StrategySpec,
+    seed_offset: int = 0,
+    replace_unusable: bool = False,
+) -> NoiseRun:
+    """`run_noise_series` split in two: this starts the books and returns at once when they run
+    in the worker pool (`noise_workers() > 1` and a registry file the workers share), so the
+    caller can run the candidate meanwhile; `NoiseRun.result()` waits for them. In one process
+    (tests, one worker) the books run here and the result is ready on return. Starting commits
+    `session`: the workers write the registry from their own connections, and a lock this
+    session held would stall them."""
     if n_trials <= 0:
         raise ValueError(f"n_trials must be positive, got {n_trials}")
 
@@ -235,26 +317,19 @@ def run_noise_series(
         (series, GENERATOR_NAMES[i % len(GENERATOR_NAMES)], seed_offset + i)
         for i in range(n_trials)
     ]
-    trials = _run_jobs(jobs, session=session, ruleset=ruleset,
-                       deployable_capital_usd=deployable_capital_usd, reference=reference)
-    if not replace_unusable:
-        return trials
-    drawn_extra = 0
-    while drawn_extra < n_trials:
-        missing = n_trials - sum(usable_noise_book(t) for t in trials)
-        if missing <= 0:
-            break
-        count = min(missing, n_trials - drawn_extra)
-        extra_jobs = [
-            (series, GENERATOR_NAMES[(n_trials + drawn_extra + j) % len(GENERATOR_NAMES)],
-             REPLACEMENT_SEED_BASE + seed_offset + drawn_extra + j)
-            for j in range(count)
-        ]
-        drawn_extra += count
-        trials += [replace(t, replacement=True) for t in _run_jobs(
-            extra_jobs, session=session, ruleset=ruleset,
-            deployable_capital_usd=deployable_capital_usd, reference=reference)]
-    return trials
+    workers = min(noise_workers(), len(jobs))
+    if workers > 1 and _shared_database(session):
+        session.commit()
+        first: list = _submit_jobs(jobs, workers=workers, ruleset=ruleset,
+                                   deployable_capital_usd=deployable_capital_usd,
+                                   reference=reference)
+    else:
+        first = _run_jobs(jobs, session=session, ruleset=ruleset,
+                          deployable_capital_usd=deployable_capital_usd, reference=reference)
+    return NoiseRun(series=series, n_trials=n_trials, seed_offset=seed_offset,
+                    replace_unusable=replace_unusable, session=session, ruleset=ruleset,
+                    deployable_capital_usd=deployable_capital_usd, reference=reference,
+                    first=first)
 
 
 def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: RuleSet,
@@ -263,8 +338,10 @@ def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: Ru
     registry is shared, else in this process."""
     workers = min(noise_workers(), len(jobs))
     if workers > 1 and _shared_database(session):
-        return _run_parallel(jobs, workers=workers, session=session, ruleset=ruleset,
-                             deployable_capital_usd=deployable_capital_usd, reference=reference)
+        futures = _submit_jobs(jobs, workers=workers, ruleset=ruleset,
+                               deployable_capital_usd=deployable_capital_usd,
+                               reference=reference)
+        return [f.result() for f in futures]
     trials: list[NoiseTrial] = []
     for series_, generator, seed in jobs:
         spec = build_noise_spec(
@@ -293,7 +370,7 @@ def _shared_database(session: Session) -> bool:
 
 
 def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
-                    deployable_capital_usd: float) -> Evaluation:
+                    deployable_capital_usd: float, spec_row_id: int | None = None) -> Evaluation:
     return evaluate_spec(
         spec,
         session=session,
@@ -307,40 +384,101 @@ def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
         check_lookahead=False,
         # Noise params (generator, seed) are the instrument's own.
         check_sources=False,
+        spec_row_id=spec_row_id,
     )
 
 
-def _noise_job(job: tuple[str, str, int, StrategySpec, RuleSet, float]) -> NoiseTrial:
+def _noise_job(job: tuple[str, str, int, StrategySpec, RuleSet, float, int]) -> NoiseTrial:
     """One noise book in a worker process, in its own registry session."""
     from qlab.registry.db import session_scope
 
-    series, generator, seed, reference, ruleset, deployable_capital_usd = job
+    series, generator, seed, reference, ruleset, deployable_capital_usd, spec_row_id = job
     spec = build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
     with session_scope() as session:
-        evaluation = _evaluate_noise(spec, session, ruleset, deployable_capital_usd)
+        evaluation = _evaluate_noise(spec, session, ruleset, deployable_capital_usd, spec_row_id)
     return NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)
 
 
-def _run_parallel(jobs: list[tuple[str, str, int]], *, workers: int, session: Session,
-                  ruleset: RuleSet, deployable_capital_usd: float,
-                  reference: StrategySpec) -> list[NoiseTrial]:
-    """The noise books in `workers` processes. The numbers are the same as in one
-    process: each book is fixed by (series, generator, seed). What is shared is
-    written here first: every book's `spec` row (versions are numbered per idea,
-    so two workers adding one would collide), then a commit, so the workers --
-    each writing only its own trial and verdict rows -- never wait on this
-    session's lock. That commit also commits what the caller wrote before."""
-    from qlab.pipeline.evaluate import ensure_spec_rows
+def _warm_worker(parent_pid: int) -> None:
+    """Runs once in each worker as it starts: the imports a book needs, so the first book does
+    not pay for them, and a watch on the parent -- a pool that lives all night must not outlive
+    a night that was killed (ten workers of an earlier killed run were found idle a day and a
+    half later)."""
+    import threading
+    import time
 
-    ensure_spec_rows(session, [
-        build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
-        for series, generator, seed in jobs])
-    session.commit()
-    with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn")) as pool:
-        return list(pool.map(
-            _noise_job,
-            [(series, generator, seed, reference, ruleset, deployable_capital_usd)
-             for series, generator, seed in jobs]))
+    import qlab.calibration.noise  # noqa: F401
+    import qlab.pipeline.evaluate  # noqa: F401
+    import qlab.registry.db  # noqa: F401
+
+    def watch() -> None:
+        while True:
+            time.sleep(5)
+            if os.getppid() != parent_pid:
+                os._exit(0)
+
+    threading.Thread(target=watch, daemon=True, name="qlab-parent-watch").start()
+
+
+# One pool for the whole process, kept between calls: a pool made per call spawned its workers
+# and had each import the stand again for every spec of the night (about 40 times a night).
+# Workers read the registry file named by `QLAB_DB` when they start, so the pool is tied to it.
+_POOL: ProcessPoolExecutor | None = None
+_POOL_KEY: tuple[int, str] | None = None
+
+
+def shared_pool(workers: int) -> ProcessPoolExecutor:
+    """The process-wide pool of `workers` noise workers, made on first use and again when the
+    count or the registry file changes."""
+    global _POOL, _POOL_KEY
+    from qlab.registry.db import get_database_url
+
+    key = (workers, get_database_url())
+    if _POOL is not None and _POOL_KEY != key:
+        shutdown_pool()
+    if _POOL is None:
+        _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
+                                    initializer=_warm_worker, initargs=(os.getpid(),))
+        _POOL_KEY = key
+    return _POOL
+
+
+def shutdown_pool() -> None:
+    """Stop the shared pool (a new one is made on the next use). Runs at exit too."""
+    global _POOL, _POOL_KEY
+    pool, _POOL, _POOL_KEY = _POOL, None, None
+    if pool is not None:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+atexit.register(shutdown_pool)
+
+
+def _submit_jobs(jobs: list[tuple[str, str, int]], *, workers: int, ruleset: RuleSet,
+                 deployable_capital_usd: float, reference: StrategySpec) -> list[Future]:
+    """Hand the books to the shared pool; returns their futures in the order of `jobs`.
+
+    The numbers are the same as in one process: each book is fixed by (series, generator,
+    seed). What is shared is written here first, in a registry connection of its own: every
+    book's `spec` row (versions are numbered per idea, so two workers adding one would collide),
+    committed so the workers -- each writing only its own trial and verdict rows -- never wait
+    on it. A worker is given the id of its row and does not look for it."""
+    from qlab.pipeline.evaluate import ensure_spec_rows
+    from qlab.registry.db import session_scope
+
+    with session_scope() as own:
+        row_ids = ensure_spec_rows(own, [
+            build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
+            for series, generator, seed in jobs])
+    work = [(series, generator, seed, reference, ruleset, deployable_capital_usd, row_id)
+            for (series, generator, seed), row_id in zip(jobs, row_ids, strict=True)]
+    try:
+        pool = shared_pool(workers)
+        return [pool.submit(_noise_job, w) for w in work]
+    except BrokenProcessPool:
+        shutdown_pool()
+        pool = shared_pool(workers)
+        return [pool.submit(_noise_job, w) for w in work]
 
 
 def run_real_strategies(
@@ -380,5 +518,9 @@ __all__ = [
     "noise_workers",
     "run_noise_series",
     "run_real_strategies",
+    "shared_pool",
+    "shutdown_pool",
+    "start_noise_series",
+    "NoiseRun",
     "usable_noise_book",
 ]

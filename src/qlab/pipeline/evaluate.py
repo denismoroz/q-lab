@@ -22,8 +22,11 @@ import functools
 import hashlib
 import importlib
 import json
+import math
+import re
 import statistics
 import subprocess
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -31,6 +34,7 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from qlab import forward_series
@@ -364,8 +368,28 @@ def _find_matching_snapshot(
     return matches[0]
 
 
+_REQUEST_LOCKS: dict[tuple, threading.Lock] = {}
+_REQUEST_LOCKS_GUARD = threading.Lock()
+
+
+def _request_lock(data_block) -> threading.Lock:
+    """The lock of one data request: the night's prefetch thread (`qlab.prefetch`) and the item
+    that asks for the same data take turns, so the data is fetched once, by whichever came first."""
+    key = (data_block.source, str(data_block.start), str(data_block.end), data_block.interval,
+           None if data_block.instruments is None else tuple(sorted(data_block.instruments)),
+           data_block.include_spot, data_block.min_daily_volume_usd, data_block.spot_prices,
+           data_block.spot_source)
+    with _REQUEST_LOCKS_GUARD:
+        return _REQUEST_LOCKS.setdefault(key, threading.Lock())
+
+
 def resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
     """Load an existing matching snapshot, or build (and fetch) a new one."""
+    with _request_lock(data.data):
+        return _resolve_panel(session, data)
+
+
+def _resolve_panel(session: Session, data: StrategySpec) -> MarketPanel:
     data_block = data.data
     start_ts = _to_utc_timestamp(data_block.start)
     end_ts = _to_utc_timestamp(data_block.end)
@@ -459,23 +483,63 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     records the data interval there (`data.interval`), which is the closest
     available proxy; a strategy with a genuinely different rebalance cadence
     from its data interval should say so in `params` instead.
+
+    Only the rows that can hold the same content are read (`_candidate_rows`):
+    a noise idea has tens of thousands of versions, and loading all of them for
+    every one of 200 noise books cost more than the books themselves.
     """
     data_requirements, costs_model = _spec_row_content(spec)
-    existing = (
-        session.query(SpecRow)
-        .filter(SpecRow.idea_id == spec.idea_id)
-        .order_by(SpecRow.version.desc())
-        .all()
-    )
-    for row in existing:
+    for row in _candidate_rows(session, [spec]):
         if _same_content(row, spec, data_requirements, costs_model):
             return row
+    return _add_spec_row(session, spec, _next_version(session, spec.idea_id),
+                         data_requirements, costs_model)
 
-    next_version = (existing[0].version + 1) if existing else 1
+
+_PLAIN_PARAM_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _plain_params(params: Mapping[str, object]) -> dict[str, object]:
+    """The top-level params whose value is a plain JSON scalar, under a key SQLite's
+    `json_extract` path takes without quoting: what a query can compare in SQL."""
+    plain: dict[str, object] = {}
+    for key, value in params.items():
+        if not _PLAIN_PARAM_KEY.match(key):
+            continue
+        if isinstance(value, bool | str) or (isinstance(value, int) and abs(value) < 2**53) \
+                or (isinstance(value, float) and math.isfinite(value)):
+            plain[key] = value
+    return plain
+
+
+def _candidate_rows(session: Session, specs: Sequence[StrategySpec]) -> list[SpecRow]:
+    """The rows of the specs' idea (one idea for all of them) that can be a row of any of
+    `specs`, newest version first. The filter only ever drops a row that differs from every
+    spec in a plain top-level param or in `code_ref`, so a row `_same_content` would accept is
+    never dropped; the caller still compares the full content."""
+    query = session.query(SpecRow).filter(
+        SpecRow.idea_id == specs[0].idea_id,
+        SpecRow.code_ref.in_({spec.code_ref for spec in specs}))
+    plain = [_plain_params(spec.params) for spec in specs]
+    for key in sorted(set.intersection(*(set(p) for p in plain))):
+        values = {p[key] for p in plain}
+        column = func.json_extract(SpecRow.params, f"$.{key}")
+        query = query.filter(column == next(iter(values)) if len(values) == 1
+                             else column.in_(values))
+    return query.order_by(SpecRow.version.desc()).all()
+
+
+def _next_version(session: Session, idea_id: str) -> int:
+    top = session.query(func.max(SpecRow.version)).filter(SpecRow.idea_id == idea_id).scalar()
+    return (top or 0) + 1
+
+
+def _add_spec_row(session: Session, spec: StrategySpec, version: int,
+                  data_requirements: dict, costs_model: dict) -> SpecRow:
     row = repo.add_spec(
         session,
         idea_id=spec.idea_id,
-        version=next_version,
+        version=version,
         params=spec.params,
         data_requirements=data_requirements,
         rebalance=spec.data.interval,
@@ -511,23 +575,33 @@ def _same_content(row: SpecRow, spec: StrategySpec, data_requirements: dict,
             and row.costs_model == costs_model)
 
 
-def ensure_spec_rows(session: Session, specs: Sequence[StrategySpec]) -> None:
-    """`_get_or_create_spec_row` for many specs, reading each idea's versions
-    once. Used before noise books run in parallel (`qlab.calibration.run`): the
-    rows exist before any worker looks for them, so no two workers number a
-    version at once."""
-    missing: list[StrategySpec] = []
-    by_idea: dict[str, list[SpecRow]] = {}
+def ensure_spec_rows(session: Session, specs: Sequence[StrategySpec]) -> list[int]:
+    """`_get_or_create_spec_row` for many specs, reading each idea's candidate rows once;
+    returns the row id of each spec, in order. Used before noise books run in parallel
+    (`qlab.calibration.run`): the rows exist before any worker looks for them, so no two
+    workers number a version at once, and a worker is handed its row's id instead of looking
+    for it. Versions are numbered as one-by-one creation would number them."""
+    by_idea: dict[str, list[StrategySpec]] = {}
     for spec in specs:
-        if spec.idea_id not in by_idea:
-            by_idea[spec.idea_id] = session.query(SpecRow).filter(
-                SpecRow.idea_id == spec.idea_id).all()
+        by_idea.setdefault(spec.idea_id, []).append(spec)
+    rows_of: dict[str, list[SpecRow]] = {}
+    next_version: dict[str, int] = {}
+    ids: list[int] = []
+    for spec in specs:
+        rows = rows_of.get(spec.idea_id)
+        if rows is None:
+            rows = rows_of[spec.idea_id] = _candidate_rows(session, by_idea[spec.idea_id])
+            next_version[spec.idea_id] = _next_version(session, spec.idea_id)
         data_requirements, costs_model = _spec_row_content(spec)
-        if not any(_same_content(row, spec, data_requirements, costs_model)
-                   for row in by_idea[spec.idea_id]):
-            missing.append(spec)
-    for spec in missing:
-        by_idea[spec.idea_id].append(_get_or_create_spec_row(session, spec))
+        found = next((r for r in rows if _same_content(r, spec, data_requirements, costs_model)),
+                     None)
+        if found is None:
+            found = _add_spec_row(session, spec, next_version[spec.idea_id],
+                                  data_requirements, costs_model)
+            next_version[spec.idea_id] += 1
+            rows.insert(0, found)
+        ids.append(found.id)
+    return ids
 
 
 def _code_sha() -> str:
@@ -1172,6 +1246,7 @@ def evaluate_spec(
     check_sources: bool = True,
     not_evaluable_extra: Sequence[str] = (),
     review_route: Callable[[RoutingContext], RouteReview | None] | None = None,
+    spec_row_id: int | None = None,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
 
@@ -1252,6 +1327,9 @@ def evaluate_spec(
     honest `qlab`-sourced trial row without a data anchor, so that exception
     propagates instead of being written as a schema-violating row.
 
+    `spec_row_id`, when the caller has already found or created the registry row of this exact
+    spec (`ensure_spec_rows`), skips looking for it.
+
     `review_route` (stage 2 of the idea generator, docs/TWO_STAGE.md) is asked once,
     with the route the rules decided, before the trial is written; a `RouteReview`
     answer replaces the route, adds its numbers to the trial's metrics and its
@@ -1269,7 +1347,8 @@ def evaluate_spec(
         # Before anything else: a spec with a number from nowhere does not
         # start (docs/SOURCES.md), so no trial is written for it.
         require_sources(spec)
-    spec_row = _get_or_create_spec_row(session, spec)
+    spec_row = (session.get(SpecRow, spec_row_id) if spec_row_id is not None else None) \
+        or _get_or_create_spec_row(session, spec)
     panel = resolve_panel(session, spec)
 
     range_start = pd.Timestamp(panel.meta["range_start"]).date()

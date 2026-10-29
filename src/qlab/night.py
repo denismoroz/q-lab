@@ -914,6 +914,9 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     from qlab.budget.guard import limits_off
 
     state["limits_off"] = limits_off()  # the report says so when the guard's ceilings were off
+    # The data of the watch list is fetched in the background while the stages in front compute
+    # (qlab.prefetch, docs/NIGHT_SPEED.md); the stages that need it wait for it, never fetch twice.
+    prefetcher = start_prefetch(end, state)
     if detectors and "detectors" not in state:
         # Before the watch list: strategies on it read these files
         # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.
@@ -1044,6 +1047,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # generator is the most expensive part of it.
         guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
                 deployable_capital_usd=deployable_capital_usd, force=generate)
+    stop_prefetch(prefetcher, state)
     save_state(day, state)  # with the stop line, if the stop time cut the night
     try:
         return write_report(day, state)
@@ -1054,6 +1058,37 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                         f"{type(exc).__name__}: {exc}. Состояние ночи цело: "
                         f"`{_state_path(day)}`.\n", encoding="utf-8")
         return path
+
+
+def start_prefetch(end: date, state: dict):
+    """Start fetching the data of the watch list's items that have not run tonight, in their
+    order (`qlab.prefetch`); None when it is off or the list cannot be read. The spec an item
+    runs is `with_end(rerun_spec(spec), end)`, so that is the data it is asked for."""
+    from qlab import prefetch
+
+    if not prefetch.enabled() or not WATCHLIST.is_file():
+        return None
+    specs = []
+    try:
+        for path in yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]:
+            if f"watch:{path}" in state["done"]:
+                continue
+            try:
+                specs.append(with_end(rerun_spec(load_spec(Path(path))), end))
+            except Exception:  # noqa: BLE001 - a broken spec is its own row in the watch list run
+                continue
+    except Exception:  # noqa: BLE001 - no prefetch is no harm
+        return None
+    return prefetch.start(specs)
+
+
+def stop_prefetch(prefetcher, state: dict) -> None:
+    """Stop the prefetch thread (it finishes the fetch in hand, up to two minutes) and keep what
+    it did in the night's state."""
+    if prefetcher is None:
+        return
+    prefetcher.stop(timeout=120)
+    state["prefetch"] = prefetcher.report()
 
 
 def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):

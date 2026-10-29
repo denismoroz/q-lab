@@ -10,6 +10,7 @@ and a toy `Strategy` used as the "real" reference -- these tests exercise
 from __future__ import annotations
 
 import json
+from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from qlab.calibration.run import (
     GENERATOR_NAMES,
     NOISE_CODE_REF,
     REPLACEMENT_SEED_BASE,
+    NoiseTrial,
     build_noise_spec,
     ensure_noise_idea,
     noise_idea_id,
@@ -572,9 +574,9 @@ def test_noise_books_in_worker_processes_give_the_same_numbers(tmp_path, monkeyp
     import qlab.calibration.run as run_module
 
     pools: list[int] = []
-    real_pool = run_module._run_parallel
-    monkeypatch.setattr(run_module, "_run_parallel", lambda jobs, **kw: (
-        pools.append(kw["workers"]) or real_pool(jobs, **kw)))
+    real_submit = run_module._submit_jobs
+    monkeypatch.setattr(run_module, "_submit_jobs", lambda jobs, **kw: (
+        pools.append(kw["workers"]) or real_submit(jobs, **kw)))
     serial = run(1, 500)
     pooled = run(3, 500)
     assert pools == [3]
@@ -582,6 +584,106 @@ def test_noise_books_in_worker_processes_give_the_same_numbers(tmp_path, monkeyp
     assert [t.evaluation.metrics for t in pooled] == [t.evaluation.metrics for t in serial]
     assert all(t.evaluation.error is None for t in pooled)
     assert len({t.evaluation.trial_id for t in serial + pooled}) == 12
+    run_module.shutdown_pool()  # its workers hold the temporary registry file
     db_module.get_engine().dispose()
     db_module._engine = None
     db_module._SessionLocal = None
+
+
+def _shared_registry(tmp_path, monkeypatch):
+    """A registry FILE the worker processes can open, with the toy reference registered."""
+    import qlab.registry.db as db_module
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    Base.metadata.create_all(db_module.get_engine())
+    with db_module.session_scope() as s:
+        repo.upsert_idea(s, id=REFERENCE_IDEA_ID, title="Toy reference idea",
+                         source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
+                         profile=Profile.OTHER)
+        repo.add_data_snapshot(
+            s, id=SNAPSHOT_ID, source=SOURCE, instruments=dict.fromkeys(sorted(INSTRUMENTS), True),
+            range_start=START, range_end=END, path=str(tmp_path / SNAPSHOT_ID), rows=60,
+            fetched_at=datetime.now(UTC))
+    return db_module
+
+
+def test_started_books_run_in_one_pool_that_is_kept_and_give_the_numbers_of_one_process(
+        tmp_path, monkeypatch):
+    """The books are handed to the pool at once (the caller runs the candidate meanwhile), the
+    pool is the same for the next call, and the numbers are those of a run in one process."""
+    import qlab.calibration.run as run_module
+    from qlab.calibration.run import NOISE_WORKERS_ENV, shared_pool, start_noise_series
+
+    db_module = _shared_registry(tmp_path, monkeypatch)
+
+    def start(workers: int, offset: int):
+        monkeypatch.setenv(NOISE_WORKERS_ENV, str(workers))
+        s = db_module.get_sessionmaker()()
+        return s, start_noise_series(
+            series="dollar_neutral", n_trials=6, session=s, ruleset=_permissive_ruleset(),
+            deployable_capital_usd=1_000_000.0, reference=_reference_spec(), seed_offset=offset)
+
+    try:
+        s1, pooled = start(2, 700)
+        first_pool = run_module._POOL
+        assert first_pool is not None and shared_pool(2) is first_pool
+        assert isinstance(pooled._first[0], run_module.Future)  # not waited for yet
+        got = pooled.result()
+        assert pooled.result() is got  # the same answer every time it is asked
+        s2, again = start(2, 800)
+        assert run_module._POOL is first_pool  # not spawned again
+        again.result()
+        serial_session, serial = start(1, 700)
+        serial_trials = serial.result()
+        assert [(t.generator, t.seed) for t in got] == [(t.generator, t.seed)
+                                                        for t in serial_trials]
+        assert [t.evaluation.metrics for t in got] == [t.evaluation.metrics
+                                                       for t in serial_trials]
+        assert all(t.evaluation.error is None for t in got)
+        for s in (s1, s2, serial_session):
+            s.close()
+        # Another registry file is another pool: its workers would write to the old one.
+        monkeypatch.setenv("QLAB_DB", str(tmp_path / "other.db"))
+        assert shared_pool(2) is not first_pool
+    finally:
+        run_module.shutdown_pool()
+        db_module.get_engine().dispose()
+        db_module._engine = None
+        db_module._SessionLocal = None
+    assert run_module._POOL is None
+
+
+def test_a_broken_pool_is_dropped_so_the_next_call_starts_a_new_one(session, monkeypatch):
+    import qlab.calibration.run as run_module
+
+    class Dead:
+        shut = False
+
+        def shutdown(self, **kw):
+            Dead.shut = True
+
+    failed = run_module.Future()
+    failed.set_exception(BrokenProcessPool("a worker died"))
+    monkeypatch.setattr(run_module, "_POOL", Dead())
+    monkeypatch.setattr(run_module, "_POOL_KEY", (2, "x"))
+    handle = run_module.NoiseRun(
+        series="dollar_neutral", n_trials=1, seed_offset=0, replace_unusable=False,
+        session=session, ruleset=_permissive_ruleset(), deployable_capital_usd=1.0,
+        reference=_reference_spec(), first=[failed])
+    with pytest.raises(BrokenProcessPool):
+        handle.result()
+    with pytest.raises(BrokenProcessPool):
+        handle.result()  # asked again: the same failure, the books are not run twice
+    assert Dead.shut and run_module._POOL is None
+
+
+def test_start_noise_series_in_one_process_is_ready_on_return(session):
+    from qlab.calibration.run import start_noise_series
+
+    handle = start_noise_series(
+        series="dollar_neutral", n_trials=4, session=session, ruleset=_permissive_ruleset(),
+        deployable_capital_usd=1_000_000.0, reference=_reference_spec())
+    assert all(isinstance(t, NoiseTrial) for t in handle._first)
+    assert len(handle.result()) == 4
