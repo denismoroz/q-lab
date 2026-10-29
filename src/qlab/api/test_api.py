@@ -906,3 +906,30 @@ def test_a_trial_leads_with_the_strategys_own_money_and_carries_the_stand_beside
     assert listed["metrics"]["ann_return_net"] == 0.0202
     older = client.get("/api/ideas/alpha/trials").json()["items"][-1]
     assert older["headline"] is None or not older["headline"]["on_capital"]
+
+
+def test_idea_detail_carries_the_ladder_of_seven_steps(client, session_factory, monkeypatch):
+    """Owner, 2026-10-29 (docs/LADDER.md): every idea's page answers the same seven steps; the
+    runs of steps 2 and 3 carry their numbers as the stage cards did."""
+    import qlab.ladder as ladder_module
+    from qlab.registry.models import Spec, TrialRoute
+
+    monkeypatch.setattr(ladder_module, "load_ledgers", lambda *a, **k: ladder_module.Ledgers())
+    session = session_factory()
+    spec = session.query(Spec).filter(Spec.idea_id == "alpha").one()
+    spec.data_requirements = {"source": "hyperliquid"}
+    repo.add_trial(session, spec_id=spec.id, config_hash="ladder", snapshot_id="snap-1",
+                   code_sha="x", params={}, status=TrialStatus.OK, route=TrialRoute.NEEDS_FORWARD,
+                   route_reason="waits", metrics={"ann_return_net": 0.1, "forward_days": 10.0})
+    session.commit()
+    session.close()
+    body = client.get("/api/ideas/alpha").json()["ladder"]
+
+    assert body["idea_id"] == "alpha"
+    assert [s["number"] for s in body["steps"]] == [1, 2, 3, 4, 5, 6, 7]
+    for step in body["steps"]:
+        assert step["outcome"] in {"passed", "failed", "undecided", "not_run"}
+        assert (step["outcome"] == "not_run") == (step["reason"] is not None)
+        assert step["outcome_ru"] and step["title"]
+    with_run = [s for s in body["steps"] if s["number"] in (2, 3) and s["run"]]
+    assert with_run and all(s["trial"]["id"] == s["run"]["trial_id"] for s in with_run)

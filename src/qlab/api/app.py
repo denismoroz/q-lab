@@ -211,6 +211,7 @@ def create_app() -> FastAPI:
         detail["two_stage"] = _two_stage(session, idea)
         detail["causal_twin"] = _causal_twin(session, idea)
         detail["anomalies"] = _anomalies(session, idea_id)
+        detail["ladder"] = _ladder(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
@@ -276,6 +277,33 @@ def create_app() -> FastAPI:
             return None
         return {"id": twin.id, "status": twin.status.value,
                 "two_stage": _two_stage(session, twin)}
+
+    def _ladder(session: Session, idea_id: str) -> dict[str, Any] | None:
+        """The idea's ladder: the same seven steps for every idea, each with its outcome, the
+        reason when it was not run and the run behind it (qlab.ladder, docs/LADDER.md). The
+        numbers of the runs of steps 2 and 3 ride along as the stage cards used to carry them.
+        A reading of stored rows: nothing is computed here. Never fails the page."""
+        import logging
+
+        from qlab.ladder import build_ladder, load_ledgers
+
+        try:
+            found = build_ladder(session, idea_id, load_ledgers())
+            if found is None:
+                return None
+            out = found.to_dict()
+            wanted = {s["run"]["trial_id"] for s in out["steps"]
+                      if s["run"] and s["number"] in (2, 3)}
+            trials = {t.id: t for t in session.query(Trial).filter(Trial.id.in_(wanted))} \
+                if wanted else {}
+            for step in out["steps"]:
+                run = step["run"]
+                if run and step["number"] in (2, 3) and run["trial_id"] in trials:
+                    step["trial"] = trial_json(trials[run["trial_id"]], idea_id=run["idea_id"])
+            return out
+        except Exception:  # noqa: BLE001 - a view must not fail over a table an old registry lacks
+            logging.getLogger(__name__).exception("ladder of %s not built", idea_id)
+            return None
 
     def _anomalies(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The anomaly detector's flags for the idea's latest scanned run, and the investigator's

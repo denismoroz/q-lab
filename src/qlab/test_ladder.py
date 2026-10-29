@@ -141,7 +141,7 @@ def test_example_bv2_research_headroom_causal(session) -> None:
     assert step3.run.data_end == "2026-10-28" and step3.run.rules_version == "2026-10-29.2"
     assert step3.run.stand_version == "2026-10-29.2"
     assert (step4.reason, step6.reason) == (Reason.NO_STRATEGY_MONEY, Reason.NOT_IN_PAPER)
-    assert step7.outcome_ru == "не решён — рано судить" and "владельца" in step7.detail
+    assert step7.outcome_ru == "ждёт владельца" and "владельца" in step7.detail
 
 
 def test_example_xsmom_nobull_causal_ov_enter(session) -> None:
@@ -438,3 +438,39 @@ def test_load_ledgers_reads_the_files_and_survives_missing_ones(tmp_path) -> Non
     assert got.twins == {"a": {"reason": "r"}} and got.deferred_twins == {"x"}
     assert got.queue == {"c1"} and got.money == {"b": 257.0, "l": 120.0}
     assert got.spec_stems == {"an-idea"} and got.stage1_survives == {"paper"}
+
+
+# --------------------------------------------------------------------------
+# The morning report
+
+
+def test_the_report_table_has_a_row_per_open_idea_and_counts_the_reasons(session) -> None:
+    idea(session, "live-one", IdeaStatus.LIVE)
+    run(session, "live-one", TrialRoute.NEEDS_FORWARD, "hyperliquid")
+    idea(session, "bench-one")
+    run(session, "bench-one", TrialRoute.PAPER, "binance")
+    idea(session, "card-one", IdeaStatus.CANDIDATE)
+    idea(session, "gone", IdeaStatus.REJECTED)
+    idea(session, "noise-dollar_neutral-1", IdeaStatus.CANDIDATE)
+
+    assert lad.open_idea_ids(session) == ["live-one", "bench-one", "card-one"]
+    text = "\n".join(lad.report_lines(session, Ledgers()))
+
+    assert "| live-one | live | ✓ | · | ~ | · | ✓ | · | ✓ |" in text
+    assert "| card-one | candidate | · | · | · | · | · | · | · |" in text
+    assert "gone" not in text and "noise-" not in text
+    assert "Не проводилось, по причинам" in text and "карточка без реализации" in text
+
+
+def test_the_night_report_carries_the_ladder_section_when_the_stage_made_one(
+        tmp_path, monkeypatch) -> None:
+    import qlab.night as night
+
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path)
+    state = {"results": [], "ladder": ["| идея | статус |", "| a | live |"]}
+
+    text = night.write_report(date(2026, 10, 29), state).read_text(encoding="utf-8")
+
+    assert "## Лестница открытых идей" in text and "| a | live |" in text
+    quiet = night.write_report(date(2026, 10, 30), {"results": []}).read_text(encoding="utf-8")
+    assert "Лестница" not in quiet

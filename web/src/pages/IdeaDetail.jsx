@@ -10,6 +10,7 @@ import Protection from '../components/Protection.jsx'
 import ForwardCharts from '../components/ForwardCharts.jsx'
 import OverlayPanels from '../components/OverlayPanels.jsx'
 import Anomalies from '../components/Anomalies.jsx'
+import Ladder from '../components/Ladder.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -90,10 +91,9 @@ export default function IdeaDetail() {
         {ideaQuery.data && (
           <>
             <Outcome outcome={ideaQuery.data.latest_outcome} />
-            <TwoStages stages={ideaQuery.data.two_stage} />
+            <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
             <OverlayPanels ideaId={ideaQuery.data.id} />
-            <CausalTwin twin={ideaQuery.data.causal_twin} />
             <Assessment
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}
@@ -279,136 +279,6 @@ function Outcome({ outcome }) {
           ? ` · ещё ${outcome.unrouted_trials} прогонов до 2026-10-01 без записанного исхода; их числа ниже — история, а не вывод`
           : ''}
       </p>
-    </section>
-  )
-}
-
-// docs/TWO_STAGE.md (T45): an idea the generator wrote is judged twice -- on
-// Binance's long history, then as the same mechanism on Hyperliquid -- and needs
-// both. The two runs side by side; the sentence below them is a reading of the
-// stored routes, not a new verdict.
-const STAGE_VENUE = { binance: 'Binance', hyperliquid: 'Hyperliquid' }
-const STAGE_PASSED = ['paper', 'shelf', 'needs-infrastructure']
-
-function twoStageSentence(stages) {
-  const r1 = stages.stage1?.trial?.route
-  const r2 = stages.stage2?.trial?.route
-  if (!stages.stage2) {
-    return 'Второй этап ещё не проводился: его запускает ночной конвейер для тех, кто прошёл первый.'
-  }
-  if (r2 === 'reject') {
-    const end = stages.stage2.data_range?.end
-    return `Отвергнута на втором этапе${end ? `: на данных Hyperliquid по ${end}` : ''}. Воскресить можно только на данных, которых тогда не было.`
-  }
-  if (r1 && STAGE_PASSED.includes(r1) && ['paper', 'shelf'].includes(r2)) {
-    return 'Прошла оба этапа. Дальше решает владелец.'
-  }
-  return 'Оба этапа вместе пока не решают: идея ждёт. Пройти надо обоим.'
-}
-
-function StageColumn({ title, hint, stage, ideaId }) {
-  const trial = stage?.trial
-  const m = trial?.metrics ?? {}
-  const h = trial?.headline
-  const lead = h?.sharpe ?? m.sharpe_net
-  const sharpe = typeof lead === 'number' ? lead.toFixed(2) : null
-  const rows = [
-    ['доходность в год после комиссий', pct(h?.ann_return ?? m.ann_return_net)],
-    ['Шарп после комиссий', sharpe],
-    ['худшая просадка', pct(h?.max_dd ?? m.max_dd)],
-    ['обгоняет шум той же формы', pct(h?.noise_percentile ?? m.noise_return_percentile)],
-    ['проверка вперёд, дней', typeof m.forward_days === 'number' ? Math.round(m.forward_days) : null],
-  ].filter(([, v]) => v !== null)
-  return (
-    <div className="rounded border border-slate-200 p-3">
-      <div className="text-xs uppercase tracking-wide text-slate-500">{title}</div>
-      <p className="text-xs text-slate-500">{hint}</p>
-      {!trial ? (
-        <p className="mt-2 text-sm text-slate-500">прогона ещё нет</p>
-      ) : (
-        <>
-          <div className="mt-1 text-base font-semibold text-slate-900">
-            {label(TRIAL_ROUTE, trial.route)}
-          </div>
-          {rows.length > 0 && <NumberList title={null} numbers={rows} />}
-          {h && (
-            <p className="mt-1 text-xs text-slate-500" data-testid="stage-basis">
-              {basisText(h)}.
-              {standLine(h) && <span data-testid="stage-stand"> {standLine(h)}.</span>}
-            </p>
-          )}
-          <YearView view={trial.year_view} compact />
-          <Protection view={trial.protection} compact />
-          <p className="mt-2 break-words font-mono text-xs text-slate-500">{trial.route_reason}</p>
-          <p className="mt-2 text-xs text-slate-500">
-            данные: {STAGE_VENUE[stage.venue] ?? stage.venue}
-            {stage.data_range ? `, ${stage.data_range.start} — ${stage.data_range.end}` : ''} · прогон #
-            {trial.id} ·{' '}
-            <Link className="text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${ideaId}`}>
-              {ideaId}
-            </Link>
-          </p>
-        </>
-      )}
-    </div>
-  )
-}
-
-function TwoStages({ stages }) {
-  if (!stages) return null
-  return (
-    <Panel
-      title="Два этапа проверки"
-      subtitle="Идею проверяют дважды: на длинной истории Binance и тем же механизмом, с теми же числами, на Hyperliquid, где идёт бумажная и боевая торговля. Нужно пройти оба."
-    >
-      <div className="grid gap-3 md:grid-cols-2">
-        <StageColumn
-          title="Этап 1 — длинная история Binance"
-          hint="спека как записана; контракты Binance с 2019 года, в том числе снятые с торгов"
-          stage={stages.stage1}
-          ideaId={stages.parent_id}
-        />
-        <StageColumn
-          title="Этап 2 — Hyperliquid"
-          hint="те же блоки и числа, монеты и комиссии Hyperliquid; проверка вперёд на данных после даты фиксации параметров; код без агента"
-          stage={stages.stage2}
-          ideaId={stages.child_id}
-        />
-      </div>
-      <p className="mt-3 text-sm font-medium text-slate-800">{twoStageSentence(stages)}</p>
-    </Panel>
-  )
-}
-
-// 2026-10-28, owner: «почему не пересчинаны по принципу HL/binance?». The Binance-then-
-// Hyperliquid answer of an idea lives under its causal twin (qlab.twin_stage); the original's
-// page shows it here instead of only on the twin's own page.
-function CausalTwin({ twin }) {
-  if (!twin) return null
-  return (
-    <section className="space-y-3 rounded border border-sky-200 bg-sky-50/40 p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-500">
-        Та же идея, проверенная на Binance и Hyperliquid
-      </div>
-      <p className="text-sm text-slate-700">
-        Выше — прогон самой идеи, как она записана: числа выбраны один раз, и проверка вперёд у
-        неё — только время после этого выбора. Ответ по схеме «сначала длинная
-        история Binance, потом Hyperliquid» записан у её двойника: те же правила, но числа код
-        выбирает каждый месяц только по прошлому, поэтому всё время после первого выбора — это
-        проверка вперёд за годы.{' '}
-        <Link className="text-sky-700 underline-offset-2 hover:underline" to={`/ideas/${twin.id}`}>
-          {twin.id}
-        </Link>{' '}
-        · <StatusBadge status={twin.status} />
-      </p>
-      {twin.two_stage ? (
-        <TwoStages stages={twin.two_stage} />
-      ) : (
-        <p className="text-sm text-slate-500">
-          Второго этапа у двойника пока нет: его запускает ночной конвейер для тех, кто прошёл первый.
-        </p>
-      )}
-      <ForwardCharts ideaId={twin.id} />
     </section>
   )
 }

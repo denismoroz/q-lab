@@ -139,8 +139,13 @@ STEP_TITLES = (
     "Бумага 4–6 недель",
     "Решение владельца",
 )
-STEP5_PASSED_RU = "записаны"
-"""Step 5 decides nothing, so «пройден» would mislead: its good state reads «записаны»."""
+STEP_OUTCOME_RU: dict[int, dict[Outcome, str]] = {
+    5: {Outcome.PASSED: "записаны"},
+    7: {Outcome.PASSED: "принято владельцем", Outcome.UNDECIDED: "ждёт владельца",
+        Outcome.FAILED: "закрыта"},
+}
+"""Words that fit a step better than the general four. Step 5 decides nothing, so «пройден» would
+mislead there: its good state reads «записаны». Step 7 is the owner's, not the stand's."""
 
 ROUTE_OUTCOME: dict[str, Outcome] = {
     "paper": Outcome.PASSED,
@@ -224,9 +229,7 @@ class Step:
 
     @property
     def outcome_ru(self) -> str:
-        if self.number == 5 and self.outcome == Outcome.PASSED:
-            return STEP5_PASSED_RU
-        return OUTCOME_RU[self.outcome]
+        return STEP_OUTCOME_RU.get(self.number, {}).get(self.outcome, OUTCOME_RU[self.outcome])
 
     @property
     def reason_ru(self) -> str | None:
@@ -813,7 +816,49 @@ def build_ladders(session: Session, idea_ids: list[str], ledgers: Ledgers | None
     return out
 
 
+# --------------------------------------------------------------------------
+# The morning report
+
+SECTION_TITLE = "Лестница открытых идей"
+SYMBOL = {Outcome.PASSED: "✓", Outcome.FAILED: "✗", Outcome.UNDECIDED: "~", Outcome.NOT_RUN: "·"}
+STATUS_ORDER = {"live": 0, "paper": 1, "validated": 2, "bench": 3, "candidate": 4}
+
+
+def open_idea_ids(session: Session) -> list[str]:
+    """The ideas the owner follows: open, calibration noise left out, in the order of their
+    standing (live, paper, validated, bench, candidate), then by name."""
+    rows = [(i.status.value, i.id) for i in session.query(Idea)
+            if i.status not in CLOSED_STATUSES and not i.id.startswith("noise-")]
+    return [name for _, name in sorted(rows, key=lambda r: (STATUS_ORDER.get(r[0], 9), r[1]))]
+
+
+def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
+    """One table of every open idea's ladder for the morning report: a symbol per step, then
+    the count of reasons steps were not run. A reading; nothing here decides."""
+    ladders = build_ladders(session, open_idea_ids(session), ledgers)
+    if not ladders:
+        return []
+    lines = [
+        "Одни и те же семь ступеней для каждой идеи (`docs/LADDER.md`): 1 описание и проверки, "
+        "2 длинная история Binance, 3 своя площадка, 4 деньги стратегии, 5 показания, 6 бумага, "
+        "7 владелец. ✓ пройден, ✗ не пройден, ~ не решён (рано судить), · не проводился, "
+        "причина названа на странице идеи; у пятой ступени ✓ значит «показания записаны».", "",
+        "| идея | статус | 1 | 2 | 3 | 4 | 5 | 6 | 7 |", "|---|---|---|---|---|---|---|---|---|"]
+    reasons: dict[Reason, int] = {}
+    for found in ladders:
+        cells = [SYMBOL[s.outcome] for s in found.steps]
+        lines.append(f"| {found.idea_id} | {found.status} | " + " | ".join(cells) + " |")
+        for step in found.steps:
+            if step.reason is not None:
+                reasons[step.reason] = reasons.get(step.reason, 0) + 1
+    lines.append("")
+    lines.append("Не проводилось, по причинам (ступеней): " + "; ".join(
+        f"{REASON_RU[r]} — {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])) + ".")
+    return lines
+
+
 __all__ = [
+    "SECTION_TITLE", "report_lines", "open_idea_ids",
     "BINANCE_SUFFIX", "DEFAULT_ANOMALY_ROUTES", "DEFAULT_STAGE1_SURVIVES", "GATE_STATUSES",
     "Ladder", "Ledgers", "OUTCOME_RU", "Outcome", "REASON_RU", "ROUTE_OUTCOME", "Reading",
     "Reason", "STEP_KEYS", "STEP_TITLES", "Step", "StepRun", "TWIN_SUFFIX", "build_ladder",
