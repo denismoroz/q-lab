@@ -364,7 +364,8 @@ def test_evaluate_prints_the_four_signs_beside_the_verdicts(cli_db, monkeypatch)
     monkeypatch.setattr(cli, "load_spec", lambda path: SimpleNamespace(idea_id="x", title="X"))
     monkeypatch.setattr(cli, "evaluate_spec", lambda spec, **kw: result)
 
-    out = CliRunner().invoke(app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2"]).output
+    out = CliRunner().invoke(
+        app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2", "--noise-trials", "0"]).output
 
     assert "year signs (recorded, they decide nothing):" in out
     assert "  А: без лучшего года не меньше 4% в год — не определено " \
@@ -375,4 +376,36 @@ def test_evaluate_prints_the_four_signs_beside_the_verdicts(cli_db, monkeypatch)
 
     result.metrics = {"ann_return_net": 0.2}  # a run without a year view prints no signs
     assert "year signs" not in CliRunner().invoke(
-        app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2"]).output
+        app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2", "--noise-trials", "0"]).output
+
+
+def test_evaluate_runs_200_noise_books_by_default_and_calls_zero_a_sketch(cli_db, monkeypatch):
+    """Owner, 2026-10-29 (docs/EVALUATION_PATHS.md Р19): a hand run is the night's measurement
+    unless it says it is a sketch."""
+    from types import SimpleNamespace
+
+    import qlab.cli as cli
+    from qlab.rules.engine import VerdictRow
+    from qlab.rules.schema import Stage
+
+    row = VerdictRow(stage=Stage.EDGE, rule_id="net_edge_positive", rules_version="2026-10-28.2",
+                     metric="ann_return_net", value=0.2, comparator=">", threshold=0.0,
+                     passed=True)
+    result = SimpleNamespace(
+        error=None, trial_id=9, status_decision=None, metrics={"ann_return_net": 0.2},
+        rules_result=SimpleNamespace(rows=[row]),
+        routing=SimpleNamespace(route="paper", reason="passed", required_capital_usd=None))
+    asked = []
+    monkeypatch.setattr(cli, "load_spec", lambda path: SimpleNamespace(idea_id="x", title="X"))
+    monkeypatch.setattr(cli, "evaluate_spec", lambda spec, **kw: asked.append("sketch") or result)
+    monkeypatch.setattr(cli, "evaluate_spec_with_shape_aware_bar",
+                        lambda spec, **kw: asked.append(kw["n_trials"])
+                        or SimpleNamespace(candidate=result))
+
+    full = CliRunner().invoke(app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2"]).output
+    sketch = CliRunner().invoke(
+        app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2", "--noise-trials", "0"]).output
+
+    assert asked == [200, "sketch"]
+    assert "SKETCH" not in full
+    assert "SKETCH, NOT A VERDICT" in sketch and "not a verdict" in sketch.splitlines()[-1]
