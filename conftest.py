@@ -129,3 +129,29 @@ def _overlay_files_in_tmp(monkeypatch, tmp_path_factory) -> None:
     """The overlays' stored comparisons and diagnostics (data/overlays, docs/OVERLAYS.md) go to a
     temporary folder in tests. A test of the stage sets its own over this."""
     monkeypatch.setenv("QLAB_OVERLAYS", str(tmp_path_factory.mktemp("overlays")))
+
+
+@pytest.fixture(autouse=True)
+def _cost_table_is_not_asked_of_fixtures(request, monkeypatch) -> None:
+    """A spec built by a test has made-up costs (1 + 1 bp on "hyperliquid"); the cost table
+    (`qlab.costs`, night/costs.yaml) is the lab's real numbers and does not apply to it. A test
+    of the table itself, or of a real spec against it, carries the `cost_table` marker and gets
+    the real check."""
+    if request.node.get_closest_marker("cost_table"):
+        return
+    import qlab.costs as costs
+
+    monkeypatch.setattr(costs, "ENFORCE", False)
+
+
+@pytest.fixture(autouse=True)
+def _decided_ideas_are_not_rechecked_by_default(request, monkeypatch) -> None:
+    """The waiting stage re-runs decided ideas on a schedule (night/waiting.yaml, 2026-10-29).
+    The tests of the older behaviour are about ideas that wait for data; a test of the schedule
+    carries the `decided_recheck` marker and reads the real file."""
+    if request.node.get_closest_marker("decided_recheck"):
+        return
+    import qlab.waiting as waiting
+
+    monkeypatch.setattr(waiting, "load_recheck", lambda path=waiting.CONFIG: waiting.Recheck(
+        enabled=False, decided_recheck_days=7, decided_max_per_night=4))

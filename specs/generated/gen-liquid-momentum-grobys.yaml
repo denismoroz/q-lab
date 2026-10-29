@@ -50,6 +50,7 @@ sources:
   sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
   rebalance_days: 'docs/MECHANISMS.md, mechanism crypto-liquid-coins-momentum, row rebalance_days: 7 (Grobys et al. 2025)'
   min_history_days: 'docs/MECHANISMS.md, mechanism crypto-liquid-coins-momentum, row min_history_days: 182 (26 weeks; Begusic and Kostanjcar 2019)'
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
   min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'

@@ -19,7 +19,7 @@ from qlab.pipeline.sources import QLAB_ROOT
 
 STATE_DIR = QLAB_ROOT / "data" / "night"
 
-ROUTE_RU = {"paper": "на бумагу", "shelf": "на полку: не хватает денег",
+ROUTE_RU = {"paper": "на бумагу", "shelf": "на полку: не хватало общей суммы (старый исход)",
             "needs-infrastructure": "нужна инфраструктура", "needs-forward": "ждёт проверки вперёд",
             "needs-more-data": "не хватает данных", "reject": "отказ",
             "not-evaluable": "не оценить", "error": "сбой"}

@@ -120,6 +120,9 @@ costs:
   slippage_bps: 0.9
 
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 3000
 simultaneous_legs: 1
 
 unexpressed_mechanisms: []
@@ -132,6 +135,7 @@ regime_claim:
   bear: earns
 
 sources:
+  "strategy_capital_usd": "the spec's own parameter base_params.inner_params.base_params.capital_usd = 3000: specs/trend-retune-weekly.yaml params, unchanged; their own sources are listed there"
   "code_ref": "src/qlab/strategies/retune.py (existing wrapper)"
   "inner_code_ref": "src/qlab/strategies/regime_gate.py (existing wrapper; default detector direction_terciles)"
   "base_params": "specs/trend-retune-weekly.yaml params, unchanged; their own sources are listed there"
@@ -143,6 +147,7 @@ sources:
   "score_costs": "specs/trend-retune-weekly.yaml costs: the spec's own costs (docs/RETUNE.md: scores use the spec's costs)"
   "data.start": "specs/trend-retune-weekly.yaml (the same window start)"
   "data.end": "data/research/trend-2026-10-26.md: the trend-live panel extended to 2026-10-25 (Hyperliquid daily data to that day)"
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults), min_order_usd: HL's own minimum order"

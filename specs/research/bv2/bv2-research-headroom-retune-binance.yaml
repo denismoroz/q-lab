@@ -80,6 +80,9 @@ costs:
   slippage_bps: 0.9
 
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 257
 simultaneous_legs: 2
 # Binance is the DATA proxy; orders would go to Hyperliquid, whose costs and minimum leg this spec
 # already uses, so the venue facts (adapter, uncovered-leg recovery) are Hyperliquid's
@@ -99,8 +102,10 @@ regime_claim:
   bear: beats_market
 
 sources:
+  "strategy_capital_usd": "the spec's own parameter base_params.capital_usd = 257: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), as in specs/research/bv2/bv2-research-headroom-retune.yaml"
   "instruments_chosen_at": "specs/bv2-binance.yaml: params_fixed_at = 2025-06-01, the end of the window the coin list was fitted on (params_fit_from 2023-06-01)"
   "judged_from": "docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at = 2025-06-01); the days before are warm-up"
+  "costs.differs_from_table": "5.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"

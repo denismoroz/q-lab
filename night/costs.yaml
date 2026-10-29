@@ -1,0 +1,61 @@
+# One cost table per venue (qlab.costs, docs/COSTS.md).
+#
+# Owner, 2026-10-29, on docs/EVALUATION_PATHS.md (question В7: «одна таблица на площадку, спек
+# отступает только с источником»): «да, по всем рекомендациям, делай». Before this file the same
+# venue was priced in four ways by different specs: Hyperliquid's perpetual taker was 3.5 bp in
+# most specs (frab's PERP_TAKER, funding-rate-arbitrage/src/frab/constants.py; docs/TWO_STAGE.md
+# says why is not recorded in that repository), 4.5 bp in the second stage (the published base
+# tier), and the two-leg books of Bv2 and FRAB used blends (5.25, 7.25, 7.5) of the two legs.
+#
+# The row of a venue is the cost of ONE leg's taker order on its perpetual contract plus the
+# slippage of that order, both in basis points. A spec's `costs` must be the row of the venue
+# where its orders go (`execution_venue`, else `data.source`). A spec that has other numbers says
+# so in `sources["costs.differs_from_table"]`, with a citation that names something checkable like
+# any other source (qlab.pipeline.sources); without it the spec does not start. A blend of two legs
+# (spot against a perpetual) is such a deviation: its formula is the citation.
+#
+# Specs and second stages made from now on take the row (qlab.pipeline.stage2 reads it, the idea
+# generator checks a spec against it); specs written before keep their numbers, each with the
+# sentence that says why, until the owner decides to change them: changing a number of an open
+# idea is a change of the stand that is measured again (qlab.restamp).
+
+venues:
+  hyperliquid:
+    taker_fee_bps: 4.5
+    slippage_bps: 0.9
+    sources:
+      taker_fee_bps: >-
+        docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0,
+        0.045% (4.5 bps), the Fees table of
+        https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+        a book of a few thousand dollars trades at the base tier
+      slippage_bps: >-
+        derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+        «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid's own cost
+        estimate, whose slippage part is 0.9
+  binance:
+    taker_fee_bps: 5.0
+    slippage_bps: 0.9
+    sources:
+      taker_fee_bps: >-
+        docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular user,
+        0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
+        (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not
+        be read, the article gives the rate as its example)
+      slippage_bps: >-
+        derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+        of its own, the value measured for Hyperliquid
+        (funding-rate-arbitrage/research/SCREENING.md line 32) is used and marked unmeasured
+  hyperliquid-xyz:
+    taker_fee_bps: 7.0
+    slippage_bps: 0.9
+    sources:
+      taker_fee_bps: >-
+        derived: 3.5 * 2; Hyperliquid HIP-3 markets (xyz) charge twice the usual fee,
+        https://docs.trade.xyz/perpetuals/mechanics/fees; the usual taker is frab's
+        PERP_TAKER = 0.00035 (funding-rate-arbitrage/src/frab/constants.py), the figure the
+        xyz specs were written with. With Hyperliquid's published 4.5 bps the same rule
+        would give 9.0; the owner has not been asked
+      slippage_bps: >-
+        derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+        «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»

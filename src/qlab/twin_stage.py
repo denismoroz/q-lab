@@ -343,8 +343,7 @@ def _binance_listing() -> list[str]:
     return sorted({*names, *(f"{n}-SPOT" for n in names)})
 
 
-def second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: int,
-                 deployable_capital_usd: float, config) -> None:
+def second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: int, config) -> None:
     """The twin's second stage when its stage 1 survived: the same call the generator makes.
     `entry` holds the stage 1 run (`route`, `trial`); the second stage's result is put in it
     (`stage2`, `stage2_seconds`)."""
@@ -356,13 +355,13 @@ def second_stage(twin: StrategySpec, entry: dict, *, end: date, noise_trials: in
     started = time.monotonic()
     outcome = stage2.run_stage2(night.with_end(twin, end), stage1_route=entry["route"],
                                 stage1_trial_id=entry.get("trial"), noise_trials=noise_trials,
-                                deployable_capital_usd=deployable_capital_usd, config=config)
+                                    config=config)
     entry["stage2"] = asdict(outcome)
     entry["stage2_seconds"] = round(time.monotonic() - started, 1)
 
 
 def stage1_on_stand(spec: StrategySpec, entry: dict, *, ensure_idea, end: date,
-                    noise_trials: int, deployable_capital_usd: float, slow_minutes: float,
+                    noise_trials: int, slow_minutes: float,
                     kind: str = "twins") -> bool:
     """One spec on the stand, its numbers written into `entry` (`trial`, `route`,
     `route_reason`, `metrics`, `seconds`, `slow`). False when the run did not happen or failed
@@ -380,8 +379,7 @@ def stage1_on_stand(spec: StrategySpec, entry: dict, *, ensure_idea, end: date,
         return False
     ensure_idea()
     started = time.monotonic()
-    result = night.evaluate_item(kind, spec, end=end, noise_trials=noise_trials,
-                                 deployable_capital_usd=deployable_capital_usd)
+    result = night.evaluate_item(kind, spec, end=end, noise_trials=noise_trials)
     elapsed = time.monotonic() - started
     entry["seconds"] = round(elapsed, 1)
     entry["slow"] = elapsed > slow_minutes * 60
@@ -395,18 +393,16 @@ def stage1_on_stand(spec: StrategySpec, entry: dict, *, ensure_idea, end: date,
 
 
 def _run_twin(twin: StrategySpec, origin: str, entry: dict, *, end: date, noise_trials: int,
-              deployable_capital_usd: float, slow_minutes: float, stage2_config) -> None:
+              slow_minutes: float, stage2_config) -> None:
     """Stage 1 of the twin on the stand, then its second stage if it survived."""
     if stage1_on_stand(twin, entry, ensure_idea=lambda: _ensure_twin_idea(twin, origin),
                        end=end, noise_trials=noise_trials,
-                       deployable_capital_usd=deployable_capital_usd,
                        slow_minutes=slow_minutes):
-        second_stage(twin, entry, end=end, noise_trials=noise_trials,
-                     deployable_capital_usd=deployable_capital_usd, config=stage2_config)
+        second_stage(twin, entry, end=end, noise_trials=noise_trials, config=stage2_config)
 
 
 def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
-                deployable_capital_usd: float = 3000.0, stop_at: datetime | None = None,
+                stop_at: datetime | None = None,
                 only: Collection[str] | None = None, max_new: int | None = None,
                 config_path: Path = CONFIG, research_config: Path = RESEARCH,
                 spec_dir: Path = SPEC_DIR, ledger_path: Path = LEDGER,
@@ -435,8 +431,7 @@ def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
         stage2_config = None
         block.setdefault("notes", []).append(f"night/stage2.yaml не прочитан: {exc}")
     run = _Run(day=day, end=end, state=state, block=block, config=config,
-               stage2_config=stage2_config, noise_trials=noise_trials,
-               deployable_capital_usd=deployable_capital_usd, stop_at=stop_at, label=label,
+               stage2_config=stage2_config, noise_trials=noise_trials, stop_at=stop_at, label=label,
                plan=night.load_research_plan(research_config), ledger_path=ledger_path,
                ledger=load_ledger(ledger_path), forced=bool(only), dry_run=dry_run,
                allow_heavy=allow_heavy,
@@ -479,7 +474,6 @@ class _Run:
     config: Config
     stage2_config: object
     noise_trials: int
-    deployable_capital_usd: float
     stop_at: datetime | None
     label: str
     plan: dict
@@ -509,7 +503,6 @@ class _Run:
 
     def run_twin(self, cand: Candidate, twin: StrategySpec, entry: dict) -> None:
         _run_twin(twin, cand.idea_id, entry, end=self.end, noise_trials=self.noise_trials,
-                  deployable_capital_usd=self.deployable_capital_usd,
                   slow_minutes=self.config.slow_twin_minutes, stage2_config=self.stage2_config)
 
     def handle(self, cand: Candidate) -> str | None:

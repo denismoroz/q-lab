@@ -63,6 +63,7 @@ sources:
   "trade_in": "data/research/xsmom-2026-10-26.md, drawdown evidence before the cut: bull -2.3% over 92 days (xsmom-honest-20legs, BTC +90.0%), -5.6% over 68 days (xsmom), -8.7% over 92 days (xsmom-frozen-universe); flat +32.0% and bear +12.7% for xsmom-honest-20legs"
   "inner_code_ref": "specs/xsmom-honest-20legs.yaml (unchanged)"
   "inner_params": "specs/xsmom-honest-20legs.yaml params, unchanged; their own sources are listed there"
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.taker_fee_bps": "funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0"

@@ -96,7 +96,6 @@ class RunContext:
     day: date
     end: date
     noise_trials: int
-    deployable_capital_usd: float
     state: dict
     ledger: dict
     ledger_path: Path = LEDGER
@@ -168,7 +167,7 @@ def _step_spec(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
         return entry
     twin_stage.stage1_on_stand(
         spec, entry, ensure_idea=lambda: night._ensure_idea(spec, card), end=ctx.end,
-        noise_trials=ctx.noise_trials, deployable_capital_usd=ctx.deployable_capital_usd,
+        noise_trials=ctx.noise_trials,
         slow_minutes=ctx.twins.slow_twin_minutes, kind="implemented")
     return entry
 
@@ -230,7 +229,6 @@ def _step_causal(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
 
     twin_stage.stage1_on_stand(
         made, entry, ensure_idea=ensure, end=ctx.end, noise_trials=ctx.noise_trials,
-        deployable_capital_usd=ctx.deployable_capital_usd,
         slow_minutes=ctx.twins.slow_twin_minutes, kind="implemented")
     return entry
 
@@ -266,7 +264,6 @@ def _step_baseline(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
 
     twin_stage.stage1_on_stand(
         base, entry, ensure_idea=ensure, end=ctx.end, noise_trials=ctx.noise_trials,
-        deployable_capital_usd=ctx.deployable_capital_usd,
         slow_minutes=ctx.twins.slow_twin_minutes, kind="implemented")
     return entry
 
@@ -288,8 +285,7 @@ def _step_stage2(which: str) -> Callable[..., dict]:
                     "он выключен (`night/stage2.yaml`)"}
         holder = {"route": source.get("route"), "trial": source.get("trial")}
         twin_stage.second_stage(
-            target, holder, end=ctx.end, noise_trials=ctx.noise_trials,
-            deployable_capital_usd=ctx.deployable_capital_usd, config=ctx.stage2_config)
+            target, holder, end=ctx.end, noise_trials=ctx.noise_trials, config=ctx.stage2_config)
         if "stage2" not in holder:
             return {"action": "skipped", "route": source.get("route"),
                     "reason": f"на первом этапе исход «{twin_stage.route_ru(source.get('route'))}»"

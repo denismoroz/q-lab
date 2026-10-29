@@ -13,9 +13,13 @@ is run again unchanged on data extended to the last closed day. For a generated
 idea (`gen-*`, or any idea with a second stage) whose stage 1 survived, the second
 stage is re-run too, through `qlab.pipeline.stage2.run_stage2` -- which already
 combines the two stages, moves the parent's status and sends a stage 2 reject to
-the graveyard with its Hyperliquid data range. Decided ideas (`shelf`, `paper`,
-`needs-infrastructure`: they wait for capital, the owner or an adapter, not for
-data) are not re-run here; the watch list is where those go.
+the graveyard with its Hyperliquid data range. Decided ideas (`paper`,
+`needs-infrastructure`, and `shelf` in runs recorded before rules 2026-10-29.3: they wait for
+the owner or an adapter, not for data) are not waiting for data, but their numbers go stale
+all the same: since 2026-10-29 (owner: «да, по всем рекомендациям, делай», question В6 of
+docs/EVALUATION_PATHS.md) each is re-run on the fresh tail at least every `decided_recheck_days`
+days (night/waiting.yaml, 7), at most `decided_max_per_night` a night (4), the oldest run
+first. A decided idea whose spec is on the watch list is re-run there every night.
 
 **What is not re-run twice.** An idea whose spec is on the watch list runs there.
 A second stage is run with its parent, never as an idea of its own. A name is
@@ -60,10 +64,41 @@ from pathlib import Path
 SECTION_TITLE = "Идеи, ждущие данных: проверка вперёд по мере их прихода"
 SPEC_DIR = Path("specs")
 WAITING_ROUTES = ("needs-forward", "needs-more-data", "error")
-"""Latest routes of an idea that wait for data. `shelf` (capital), `paper` (the owner)
-and `needs-infrastructure` (an adapter) are decided; they are not waiting for data. A
-crashed run (`error`) decided nothing: it is tried again (2026-10-27: two experiments whose
-run crashed dropped out of the plan and nothing would have run them again)."""
+"""Latest routes of an idea that wait for data. `paper` (the owner) and `needs-infrastructure`
+(an adapter) are decided; they are not waiting for data. A crashed run (`error`) decided
+nothing: it is tried again (2026-10-27: two experiments whose run crashed dropped out of the
+plan and nothing would have run them again)."""
+DECIDED_ROUTES = ("paper", "needs-infrastructure", "shelf")
+"""Latest routes of a decided idea; `shelf` is only in runs made before rules 2026-10-29.3."""
+RECHECK_STATUSES = ("candidate", "bench", "implemented", "speccing", "validated", "paper", "live")
+"""Statuses of a decided idea that is re-run on the fresh tail (the open ones)."""
+CONFIG = Path("night/waiting.yaml")
+
+
+@dataclass(frozen=True)
+class Recheck:
+    """`night/waiting.yaml`: how often decided ideas are measured again."""
+
+    enabled: bool
+    decided_recheck_days: int
+    decided_max_per_night: int
+
+
+def load_recheck(path: Path = CONFIG) -> Recheck:
+    """The re-run policy of decided ideas. A missing key is an error: nothing here has a
+    default, so a typo cannot silently switch the policy off."""
+    import yaml
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        config = Recheck(bool(raw["enabled"]), int(raw["decided_recheck_days"]),
+                         int(raw["decided_max_per_night"]))
+    except KeyError as missing:
+        raise ValueError(f"{path}: missing key {missing}") from None
+    if config.decided_recheck_days < 1 or config.decided_max_per_night < 0:
+        raise ValueError(f"{path}: decided_recheck_days must be >= 1, "
+                         "decided_max_per_night >= 0")
+    return config
 STAGE2_WAITING = ("needs-forward", "not-evaluable", "needs-more-data", "error")
 """Routes of a second stage that decided nothing yet (`qlab.pipeline.stage2.UNDECIDED`
 and `needs-forward`)."""
@@ -147,6 +182,24 @@ def decide_due(basis: Basis, end: date, *, coverage_days: int | None = None,
                    "измениться" if wait else "пришёл новый закрытый день")
     return Due(False, due_end, f"до дня, когда исход может измениться, ещё "
                f"{(due_end - end).days} дн.")
+
+
+def decide_recheck_due(basis: Basis, end: date, days: int) -> Due:
+    """Whether a DECIDED idea is re-run on a night whose data ends at `end`: when its last run's
+    data is `days` days old or more (a route that waits for nothing has no day on which it can
+    change, so the age of the run is the only reason), or when there is no run or the last one
+    gave no outcome."""
+    if basis.data_end is None:
+        return Due(True, None, "в реестре нет прогона с данными")
+    if basis.failed:
+        return Due(True, None, "прошлый прогон не дал исхода")
+    due_end = basis.data_end + timedelta(days=days)
+    age = (end - basis.data_end).days
+    if end >= due_end:
+        return Due(True, due_end, f"решённая идея: данные прогона по {basis.data_end}, "
+                   f"прошло {age} дн. (пересчёт не реже раза в {days})")
+    return Due(False, due_end, f"решённая идея: данные прогона по {basis.data_end}, "
+               f"пересчёт через {(due_end - end).days} дн.")
 
 
 # --------------------------------------------------------------------------
@@ -247,6 +300,9 @@ class Plan:
     forward_days_needed: float | None = None
     skip: str | None = None
     """Why nothing can be run (no spec file, several of them)."""
+    kind: str = "waiting"
+    """"waiting": the idea waits for data; "recheck": it is decided and measured again on a
+    schedule (`decide_recheck_due`)."""
 
 
 def _pick_spec(specs: dict[str, list[Path]], idea_id: str) -> tuple[Path | None, str | None]:
@@ -260,19 +316,38 @@ def _pick_spec(specs: dict[str, list[Path]], idea_id: str) -> tuple[Path | None,
 
 
 def _plan_for(idea_id: str, step: str, path: Path | None, skip: str | None, basis: Basis,
-              end: date, coverage_days: int | None, current_rules: str | None) -> Plan:
-    due = decide_due(basis, end, coverage_days=coverage_days, current_rules=current_rules)
+              end: date, coverage_days: int | None, current_rules: str | None,
+              recheck_days: int | None = None) -> Plan:
+    if recheck_days is not None:
+        due, kind = decide_recheck_due(basis, end, recheck_days), "recheck"
+    else:
+        due = decide_due(basis, end, coverage_days=coverage_days, current_rules=current_rules)
+        kind = "waiting"
     return Plan(idea_id=idea_id, step=step, spec_path=path.as_posix() if path else None,
                 route=basis.route, due=due.due and skip is None, why=skip or due.why,
                 last_end=basis.data_end, due_end=due.due_end,
                 forward_days=basis.metrics.get("forward_days"),
-                forward_days_needed=basis.metrics.get("forward_days_needed"), skip=skip)
+                forward_days_needed=basis.metrics.get("forward_days_needed"), skip=skip,
+                kind=kind)
+
+
+def cap_rechecks(plans: list[Plan], limit: int) -> list[Plan]:
+    """At most `limit` decided ideas are re-run on one night, the oldest run first; the others
+    wait for the next night and the plan says so. Waiting plans are not touched."""
+    due = sorted((p for p in plans if p.kind == "recheck" and p.due),
+                 key=lambda p: (p.last_end or date.min, p.idea_id))
+    for plan in due[max(0, limit):]:
+        plan.due = False
+        plan.why = (f"очередь: за ночь пересчитывается не больше {limit} решённых идей "
+                    f"(night/waiting.yaml); {plan.why}")
+    return plans
 
 
 def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list[Path]],
                  stage2_config=None, coverage_days: int | None = None,
-                 current_rules: str | None = None) -> list[Plan]:
-    """Every idea waiting for data and whether tonight re-runs it. Reads only."""
+                 current_rules: str | None = None, recheck: Recheck | None = None) -> list[Plan]:
+    """Every idea waiting for data and whether tonight re-runs it; with `recheck`, every decided
+    open idea too, on its schedule. Reads only."""
     from qlab.night import is_generator_idea
     from qlab.pipeline.stage2 import survives
     from qlab.registry.models import Idea, IdeaStatus
@@ -285,13 +360,26 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
 
     plans: list[Plan] = []
     statuses = [IdeaStatus(s) for s in (*IN_WORK, "validated")]
+    recheck_days = recheck.decided_recheck_days if recheck is not None and recheck.enabled \
+        else None
+    if recheck_days is not None:
+        statuses += [IdeaStatus.PAPER, IdeaStatus.LIVE]
     for idea in session.query(Idea).filter(Idea.status.in_(statuses)).order_by(Idea.id):
         if idea.id in watched or is_stage2_child(idea):
             continue  # the watch list runs it / it runs with its parent
         routed = latest_routed(session, idea.id)
         route = None if routed is None else getattr(routed[0].route, "value", routed[0].route)
         path, skip = _pick_spec(specs, idea.id)
+        if idea.status in (IdeaStatus.PAPER, IdeaStatus.LIVE):  # production: only the schedule
+            if route in DECIDED_ROUTES:
+                plans.append(_plan_for(idea.id, "idea", path, skip, read_basis(session, idea.id),
+                                       end, coverage_days, current_rules, recheck_days))
+            continue
         in_work = idea.status.value in IN_WORK
+        if recheck_days is not None and route in DECIDED_ROUTES \
+                and not (skip == "нет файла спека" and idea.status != IdeaStatus.BENCH):
+            plans.append(_plan_for(idea.id, "idea", path, skip, read_basis(session, idea.id),
+                                   end, coverage_days, current_rules, recheck_days))
         if in_work and route in WAITING_ROUTES:
             if skip == "нет файла спека" and idea.status != IdeaStatus.BENCH:
                 continue  # a noise book or a bare card: not an idea anybody can re-run
@@ -316,7 +404,8 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
                                  child_routed[0].route) in STAGE2_WAITING:
             plans.append(_plan_for(idea.id, "stage2", path, skip, read_basis(session, child.id),
                                    end, coverage_days, current_rules))
-    return plans
+    return cap_rechecks(plans, recheck.decided_max_per_night) if recheck_days is not None \
+        else plans
 
 
 # --------------------------------------------------------------------------
@@ -335,7 +424,8 @@ def _status(idea_id: str) -> str | None:
 def _entry(plan: Plan, end: date) -> dict:
     """The report row of a plan that is not run tonight (or cannot be)."""
     entry = {"idea": plan.idea_id, "step": plan.step, "action": "skip" if plan.skip else "wait",
-             "route_before": plan.route, "route_after": plan.route, "why": plan.why,
+             "kind": plan.kind, "route_before": plan.route, "route_after": plan.route,
+             "why": plan.why,
              "forward_days_needed": plan.forward_days_needed,
              "due_end": plan.due_end.isoformat() if plan.due_end else None}
     if plan.forward_days and plan.last_end is not None:
@@ -344,17 +434,17 @@ def _entry(plan: Plan, end: date) -> dict:
     return entry
 
 
-def _rerun_idea(plan: Plan, end: date, *, noise_trials: int, deployable_capital_usd: float) -> dict:
+def _rerun_idea(plan: Plan, end: date, *, noise_trials: int) -> dict:
     from qlab import night
     from qlab.pipeline.spec import load_spec
 
     result = night.evaluate_item("waiting", load_spec(Path(plan.spec_path)), end=end,
-                                 noise_trials=noise_trials,
-                                 deployable_capital_usd=deployable_capital_usd)
+                                 noise_trials=noise_trials)
     # The stand catches a strategy's exception and routes the trial "error": still a failure,
     # tried again on the next run (2026-10-27 counted two as re-run and done).
     failed = bool(result.error) or result.route == "error"
     return {"idea": plan.idea_id, "step": "idea", "action": "error" if failed else "rerun",
+            "kind": plan.kind,
             "route_before": result.previous_route or plan.route, "route_after": result.route,
             "reason": result.reason, "trial": result.trial_id,
             "error": result.error or (result.reason if failed else None),
@@ -363,8 +453,7 @@ def _rerun_idea(plan: Plan, end: date, *, noise_trials: int, deployable_capital_
             "status": _status(plan.idea_id), "why": plan.why}
 
 
-def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: int,
-                  deployable_capital_usd: float, config) -> dict:
+def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: int, config) -> dict:
     """The second stage on the fresh tail. `stage1` is tonight's re-run of the first
     stage when there was one; otherwise stage 1's latest outcome in the registry."""
     from qlab import night, own_numbers
@@ -391,7 +480,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
         spec = own_numbers.fixed_at_choice(spec, chosen, retune.params_fixed_at)
     outcome = stage2.run_stage2(night.with_end(spec, end),
                          stage1_route=route, stage1_trial_id=trial_id, noise_trials=noise_trials,
-                         deployable_capital_usd=deployable_capital_usd, config=config)
+                             config=config)
     m = outcome.metrics or {}
     if outcome.skipped:  # stage 1 no longer lets the idea through, or stage 2 is switched off
         return {**_entry(plan, end), "action": "wait", "why": outcome.skipped, "due_end": None}
@@ -408,7 +497,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
 
 
 def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_trials: int = 200,
-                  deployable_capital_usd: float = 3000.0, spec_dir: Path = SPEC_DIR,
+                  spec_dir: Path = SPEC_DIR,
                   only: Collection[str] | None = None, force: bool = False) -> None:
     """Re-run the ideas that wait for data and are due tonight; write what happened (and
     what waits until when) to `state["waiting"]` for the morning report. Resumable: a
@@ -427,12 +516,18 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         stage2_config = None
         state.setdefault("waiting_notes", []).append(f"night/stage2.yaml не прочитан: {exc}")
     try:
+        recheck = load_recheck()
+    except (OSError, ValueError) as exc:  # a broken config switches the schedule off, loudly
+        recheck = None
+        state.setdefault("waiting_notes", []).append(
+            f"night/waiting.yaml не прочитан, решённые идеи не пересчитываются: {exc}")
+    try:
         ruleset = load_latest()
         with session_scope() as session:
             plans = plan_waiting(session, end=end, watched=watched_idea_ids(watch),
                                  specs=spec_files(spec_dir), stage2_config=stage2_config,
                                  coverage_days=ruleset.regime_coverage_days,
-                                 current_rules=ruleset.version)
+                                 current_rules=ruleset.version, recheck=recheck)
     except Exception as exc:  # noqa: BLE001 - a report line, not a failed night
         state.setdefault("waiting_notes", []).append(
             f"список ждущих идей не составлен: {type(exc).__name__}: {exc}")
@@ -459,13 +554,11 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         stage1 = ran.get(plan.idea_id)
         try:
             if plan.step == "idea":
-                entry = _rerun_idea(plan, end, noise_trials=noise_trials,
-                                    deployable_capital_usd=deployable_capital_usd)
+                entry = _rerun_idea(plan, end, noise_trials=noise_trials)
             elif stage1 is not None and stage1["action"] == "error":
                 entry = {**_entry(plan, end), "why": "первый этап не дал исхода: второй ждёт"}
             else:
                 entry = _rerun_stage2(plan, end, stage1=stage1, noise_trials=noise_trials,
-                                      deployable_capital_usd=deployable_capital_usd,
                                       config=stage2_config)
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             entry = {"idea": plan.idea_id, "step": plan.step, "action": "error",
@@ -555,11 +648,13 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
     lines += ["| идея | что | вперёд, дней: есть из нужных | исход: было → стало | статус | "
               "следующий прогон / причина |", "|---|---|---:|---|---|---|"]
     step = {"idea": "описание на свежем хвосте", "stage2": "второй этап (Hyperliquid)"}
+    kind = {"recheck": " — решённая, по расписанию"}
     for e in sorted(entries, key=lambda e: (e["action"] == "wait", e["idea"], e["step"])):
         if e["action"] == "error":
             lines.append(f"| {e['idea']} | {step[e['step']]} | | **ошибка** | | "
                          f"{str(e.get('error'))[:140]} |")
             continue
+        what = step[e["step"]] + kind.get(e.get("kind"), "")
         before, after = e.get("route_before") or "—", e.get("route_after") or "—"
         changed = (e["action"] == "rerun"
                    and e.get("route_before") not in (None, e.get("route_after")))
@@ -569,7 +664,7 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
         when = {"rerun": "прогнано сегодня",
                 "wait": f"{e.get('due_end') or '—'}: {e['why']}",
                 "skip": e["why"]}[e["action"]]
-        lines.append(f"| {e['idea']} | {step[e['step']]} | {_days(e)} | {route} | "
+        lines.append(f"| {e['idea']} | {what} | {_days(e)} | {route} | "
                      f"{e.get('status') or '—'} | {when} |")
     for e in sorted(entries, key=lambda e: e["idea"]):
         if e["step"] == "stage2" and e["action"] == "rerun" and e.get("lines"):
@@ -581,7 +676,8 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
     return lines
 
 
-__all__ = ["Basis", "Due", "Plan", "SECTION_TITLE", "WAITING_ROUTES", "days_before_decision",
-           "decide_due", "followed_ideas", "new_survivor", "plan_waiting", "read_basis",
+__all__ = ["Basis", "DECIDED_ROUTES", "Due", "Plan", "Recheck", "SECTION_TITLE", "WAITING_ROUTES",
+           "cap_rechecks", "days_before_decision", "decide_due", "decide_recheck_due",
+           "followed_ideas", "load_recheck", "new_survivor", "plan_waiting", "read_basis",
            "report_lines", "rerun_idea", "rerun_stage2", "spec_files", "waiting_stage",
            "watched_idea_ids"]

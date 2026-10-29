@@ -48,13 +48,21 @@ History:
   разбираться»). The weights' number stays beside it as `min_capital_weights_usd`; new metrics
   `min_capital_from_orders`, `orders_opening`, `orders_skipped`. It can move a verdict: the shelf
   ("passed, not enough capital") is decided by it.
+* `2026-10-29.3` -- no shelf (rules 2026-10-29.3, owner 2026-10-29, «да, по всем рекомендациям,
+  делай»): a run that passes every rule is routed `paper`, not `shelf`; the capital it needed is
+  compared with the strategy's own money by step 4 of the ladder, and the common sum
+  (`deployable_capital_usd`, $3,000) is gone. The route of a run that needed more than the sum
+  moves, and so does the status of its idea (`validated` instead of `bench`). Also in this
+  version, without moving a number: the cost table (`night/costs.yaml`) is the default of
+  second stages and generated specs (their costs equal the old defaults for Hyperliquid, 4.5 + 0.9
+  bp), and the day the numbers of a generated or researched spec were fixed is named by code.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-10-29.2"
+STAND_VERSION = "2026-10-29.3"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 

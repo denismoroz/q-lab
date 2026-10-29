@@ -109,7 +109,6 @@ def evaluate_spec_with_shape_aware_bar(
     *,
     session: Session,
     ruleset: RuleSet,
-    deployable_capital_usd: float,
     n_trials: int,
     seed_offset: int = 0,
     series: str = CANONICAL_SERIES,
@@ -156,7 +155,6 @@ def evaluate_spec_with_shape_aware_bar(
             spec,
             session=session,
             ruleset=ruleset,
-            deployable_capital_usd=deployable_capital_usd,
         )
         return ShapeAwareResult(candidate=candidate, percentiles=None, noise_trials=())
 
@@ -170,7 +168,6 @@ def evaluate_spec_with_shape_aware_bar(
         n_trials=n_trials,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=deployable_capital_usd,
         reference=spec,
         seed_offset=seed_offset,
         replace_unusable=True,
@@ -230,7 +227,6 @@ def evaluate_spec_with_shape_aware_bar(
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=deployable_capital_usd,
         extra_metrics=_extra_metrics,
         review_route=review_route,
     )

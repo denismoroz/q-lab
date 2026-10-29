@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from qlab import costs, fixation
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
@@ -404,8 +405,12 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
 
     if reference is not None and _abs(reference).is_file():
         ref = load_spec(_abs(reference))
-        if (spec.costs != ref.costs or spec.min_leg_notional != ref.min_leg_notional):
-            problems.append(f"costs and min_leg_notional must be copied from {reference}")
+        if spec.min_leg_notional != ref.min_leg_notional:
+            problems.append(f"min_leg_notional must be copied from {reference}")
+    if costs.DEVIATION_KEY in spec.sources:
+        problems.append("costs are the venue's row of night/costs.yaml; "
+                        f"{costs.DEVIATION_KEY} is not the agent's to write")
+    problems += [f"fixation: {p}" for p in fixation.problems(spec)]
     if mechanism is not None and not mechanism.fully_expressed and not spec.differs_from_source:
         problems.append("the catalogue says the blocks do not express the whole mechanism "
                         f"({mechanism.unexpressed[:120]!r}) but differs_from_source is empty")
@@ -452,8 +457,13 @@ Read these first, they define what you write:
   from; a number cited to a file must appear in that file LITERALLY.
 - docs/FIT_VS_FORWARD.md and src/qlab/pipeline/spec.py -- every spec field and what
   params_fixed_at means.
-- {reference} -- a Binance spec whose costs, min_leg_notional and the `sources` entries for
-  them you copy unchanged.
+- {reference} -- a Binance spec whose min_leg_notional and its `sources` entry you copy
+  unchanged.
+- night/costs.yaml -- the cost table: the costs of a spec are the row of its venue (binance:
+  taker_fee_bps {binance_taker:g}, slippage_bps {binance_slippage:g}), cited as
+  "night/costs.yaml, venue binance, taker_fee_bps" (and slippage_bps) under the `sources` keys
+  costs.taker_fee_bps and costs.slippage_bps. You do not choose them, and a spec with other
+  numbers or a `costs.differs_from_table` entry is rejected.
 - {context_path} -- written by code: the idea ids already in the registry, the specs
   already generated, and the data end you must use.
 
@@ -477,7 +487,8 @@ Shape of each spec (comments allowed; the first line is mandatory):
     interval: {data_interval}
     start: <{data_start} or later>
     end: {data_end}
-  costs, min_leg_notional, simultaneous_legs   (copied from {reference})
+  costs                                    (the row of night/costs.yaml for {data_source})
+  min_leg_notional, simultaneous_legs      (copied from {reference})
   noise_universe: panel
   unexpressed_mechanisms: []      always empty: your idea IS the composed strategy
   differs_from_source: [...]      REQUIRED, non-empty, whenever the mechanism's «Чего блоки не
@@ -527,7 +538,8 @@ Rules:
   to exactly the number. Every other parameter is a value from its own row, never a formula.
   If the catalogue gives no sizing, use the `equal` block. Strings and block names need a
   citation too (an ancestor entry such as `signal` covers them).
-- Costs, min_leg_notional and their sources: copy from {reference}. Do not change data.source,
+- Costs: the row of night/costs.yaml for {data_source}, cited as above. min_leg_notional and
+  its source: copy from {reference}. Do not change data.source,
   interval, or add an instrument list, a liquidity floor or a regime_claim.
 - data.end must be exactly {data_end} (the latest Binance snapshot end).
 - If the catalogue says the blocks cannot express part of the mechanism, either pick another
@@ -539,16 +551,13 @@ Rules:
   which is not allowed here.
 - params_fixed_at is the day after the last data the numbers could have been fitted to
   (docs/FIT_VS_FORWARD.md): data BEFORE it is a selection period where a pass proves nothing,
-  data FROM it is a forward test. Decide it from the catalogue's dates. If the catalogue gives
-  the sample period of the sources whose numbers you use, it is the day after the LATEST sample
-  end among them; if it gives only the publication date, it is the publication date (the end
-  of the year when only a year is known) of the LATEST of those sources. If that day is before
-  the spec's data.start, use data.start (the sources could not have seen our history). If no
-  date can be established from the catalogue, OMIT params_fixed_at and
-  params_fixed_evidence entirely: the whole window is then the selection period, which is the
-  honest reading of an unknown date. Never set it to {today}: today's date would turn the
-  whole history into selection data. params_fixed_evidence says which sources and which dates
-  gave the day.
+  data FROM it is a forward test. Code names it (owner, 2026-10-29, docs/FIXATION.md): the
+  start of the LAST THIRD of the spec's window -- {fixation_rule} for data.start..data.end as
+  you write them. Write that day, with params_fixed_evidence "named by code: the start of the
+  last third of the window". You may write a LATER day only with a source: a catalogue source
+  whose numbers were fitted on a sample that ended after the named day, cited under
+  sources.params_fixed_at (the paper, its sample end). Never an earlier day, never omit it, and
+  never {today}: code corrects an earlier or missing day to the named one and says so.
 
 Two ways past a paper that gives no number (owner, 2026-10-26):
 - OPEN NUMBERS. Where the chosen mechanism's row for a parameter is ABSENT or EMPTY ("—"), you
@@ -571,7 +580,7 @@ Two ways past a paper that gives no number (owner, 2026-10-26):
   run. differs_from_source stays empty.
 
 {directions}Reply with one line per spec: idea_id, the mechanism id, and the params_fixed_at you
-chose with the reason in a few words (or "no spec: <reason>")."""
+wrote (or "no spec: <reason>")."""
 
 
 @dataclass
@@ -581,6 +590,9 @@ class GenerateOutcome:
     reply: str | None = None
     problems: list[str] = field(default_factory=list)
     reverted: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    """What code corrected in an accepted or rejected spec before checking it (the day the
+    numbers were fixed is named by code, `qlab.fixation`)."""
 
 
 def latest_binance_end(session) -> date | None:
@@ -640,12 +652,19 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
     paused = directions.paused() if directions is not None else {}
     originals = {p: p.read_bytes() for p in sorted(_abs(spec_dir).glob("*.yaml"))}
     before = set(_changed_paths())
-    prompt = INSTRUCTIONS.format(directions=generator_text(directions), 
+    venue_row = costs.venue_costs(DATA_SOURCE)
+    if venue_row is None:
+        outcome.problems.append(f"night/costs.yaml has no row for {DATA_SOURCE}: the agent was "
+                                "not called")
+        return outcome
+    prompt = INSTRUCTIONS.format(directions=generator_text(directions),
         code_ref=CODE_REF, catalogue=catalogue_path, reference=REFERENCE_SPEC,
         context_path=context_path, max_specs=max_specs, spec_dir=spec_dir,
         data_source=DATA_SOURCE, data_interval=DATA_INTERVAL, data_start=DATA_START,
         data_end=data_end, today=today, own_numbers="night/own_numbers.yaml", own=OWN,
-        max_own=max_own)
+        max_own=max_own, binance_taker=venue_row.taker_fee_bps,
+        binance_slippage=venue_row.slippage_bps,
+        fixation_rule="data.start + round(2/3 of the days to data.end)")
     result = run_agent(budget, prompt, session=session, agent="generator", model=model,
                        max_turns=max_turns, cwd=QLAB_ROOT,
                        extra_args=("--allowedTools", TOOLS, "--disallowedTools", "Bash,Edit"))
@@ -695,6 +714,8 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
                 1 for a in outcome.accepted if a.mechanism == OWN) >= max_own:
             outcome.rejected.append(Rejected(str(path), [f"more than {max_own} own mechanism"]))
             continue
+        if (named := fixation.normalise_file(_abs(path))) is not None:
+            outcome.notes.append(named)
         generated, problems = check_generated(
             path, mechanisms=mechanisms, catalogue_path=catalogue_path, data_end=data_end,
             registry_idea_ids=registry, other_params=seen, paused=paused)
@@ -735,8 +756,7 @@ class GeneratedResult:
     ran, or for a result recorded before stage 2 existed."""
 
 
-def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_trials: int,
-                     deployable_capital_usd: float) -> None:
+def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_trials: int) -> None:
     """The idea's second stage, from its stage-1 `result` (docs/TWO_STAGE.md): code
     only, no agent call, no tokens -- so it needs no budget. Sets `result.stage2`;
     a failure is in it as `status == "error"`, never raised."""
@@ -752,11 +772,10 @@ def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_tria
         spec = own_numbers.fixed_at_choice(spec, result.chosen, date.fromisoformat(result.cut))
     result.stage2 = asdict(run_stage2(
         spec, stage1_route=result.route, stage1_trial_id=result.trial_id,
-        noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd))
+        noise_trials=noise_trials))
 
 
-def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
-                      deployable_capital_usd: float = 3000.0) -> GeneratedResult:
+def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200) -> GeneratedResult:
     """One generated spec on the stand in its own transaction (matched noise,
     every rule, the trial written like every stand run's)."""
     from qlab import own_numbers
@@ -783,13 +802,12 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
                 # spec that chooses one at the cut and is judged after it.
                 config = own_numbers.load_config()
                 result.candidate_trials = own_numbers.record_candidates(
-                    spec, session, load_latest(), deployable_capital_usd=deployable_capital_usd)
+                    spec, session, load_latest())
                 spec = own_numbers.to_retune(spec, config)
                 result.cut = spec.params_fixed_at.isoformat()
                 result.chosen = own_numbers.chosen_params(spec, session)
             out = evaluate_spec_with_shape_aware_bar(
-                spec, session=session, ruleset=load_latest(),
-                deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials).candidate
+                spec, session=session, ruleset=load_latest(), n_trials=noise_trials).candidate
             result.trial_id = out.trial_id
             result.route = str(out.routing.route)
             result.reason = out.routing.reason
@@ -801,17 +819,14 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200,
     if result.error is None:
         # Survivors only (night/stage2.yaml); the same call, so an idea is never
         # left at "passed" with its second stage forgotten.
-        run_second_stage(item, result, noise_trials=noise_trials,
-                         deployable_capital_usd=deployable_capital_usd)
+        run_second_stage(item, result, noise_trials=noise_trials)
     return result
 
 
-def run_generated(items: list[GeneratedSpec], *, noise_trials: int = 200,
-                  deployable_capital_usd: float = 3000.0) -> list[GeneratedResult]:
+def run_generated(items: list[GeneratedSpec], *, noise_trials: int = 200) -> list[GeneratedResult]:
     """Evaluate each valid generated spec on the stand; one failure does not
     stop the others."""
-    return [run_generated_one(item, noise_trials=noise_trials,
-                              deployable_capital_usd=deployable_capital_usd) for item in items]
+    return [run_generated_one(item, noise_trials=noise_trials) for item in items]
 
 
 def second_stage_lines(r: GeneratedResult) -> list[str]:

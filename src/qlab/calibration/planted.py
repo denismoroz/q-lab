@@ -144,7 +144,6 @@ def planted_outcomes(
     alphas: Sequence[float],
     window_starts: Mapping[str, pd.Timestamp],
     min_leg_notional: float,
-    deployable_capital_usd: float,
 ) -> dict[str, list[PlantedOutcome]]:
     """{window label: one outcome per alpha}. Each window runs from its start
     to the panel's end."""
@@ -188,10 +187,10 @@ def planted_outcomes(
                         metrics["forward_days_needed"] = years * 365.0
                     routing = decide_fit_forward_route(
                         ruleset=ruleset, selection=None, forward=result, metrics=metrics,
-                        deployable_capital_usd=deployable_capital_usd, params_fixed_at=None,
+                            params_fixed_at=None,
                     )
                 else:
-                    routing = decide_route(result, metrics, deployable_capital_usd)
+                    routing = decide_route(result, metrics)
                 routes[routing.route] += 1
                 if routing.route == "reject":
                     reject_rules.update(result.failed_rule_ids)

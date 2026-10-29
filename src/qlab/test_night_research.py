@@ -356,9 +356,9 @@ def test_the_instructions_frame_the_work_on_the_owners_terms() -> None:
         name="n", context_path="c", docs="d", specs="s", memo_path="m", spec_dir="sd",
         max_experiments=2, today="2026-10-26", focus="")
     assert "ignore that" in text and "NOT a reason to stop" in text
-    assert "DROP: <idea_id>" in text and "CUT DATE" in text and "preliminary" in text
+    assert "DROP: <idea_id>" in text and "LAST THIRD" in text and "preliminary" in text
     assert "data.source: binance" in text
-    assert "Never set params_fixed_at to 2026-10-26" in text
+    assert "Never set params_fixed_at to 2026-10-26" in " ".join(text.split())
 
 
 def test_the_owners_ideas_reach_the_researcher_verbatim() -> None:

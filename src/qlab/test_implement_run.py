@@ -174,7 +174,7 @@ def world(tmp_path, registry, monkeypatch):
     def fake_review(**kw):
         return ReviewOutcome(accepted=list(w.review_findings), rejected=[], raw_text=None)
 
-    def fake_eval(kind, spec, *, end, noise_trials, deployable_capital_usd):
+    def fake_eval(kind, spec, *, end, noise_trials):
         w.calls.append(("stand", spec.idea_id, kind, spec.data.source))
         w.evaluated[spec.idea_id] = spec
         if spec.idea_id in w.fail:
@@ -186,7 +186,7 @@ def world(tmp_path, registry, monkeypatch):
         return ItemResult(kind=kind, name=spec.idea_id, trial_id=trial_id, route=route,
                           reason="r")
 
-    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials, deployable_capital_usd,
+    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials,
                     config=None, **kw):
         w.calls.append(("stage2", spec.idea_id, stage1_route, kw))
         return stage2.Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}-hl",
@@ -243,7 +243,7 @@ def world(tmp_path, registry, monkeypatch):
 
 def _stage(w, state=None, **kw) -> dict:
     state = state if state is not None else {"done": {}}
-    night.implement_stage(DAY, state, noise_trials=1, deployable_capital_usd=3000.0,
+    night.implement_stage(DAY, state, noise_trials=1,
                           queue=w.queue, **kw)
     return state
 

@@ -209,7 +209,6 @@ def test_writes_n_trials_plus_one_and_folds_percentile_into_candidate_metrics(se
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=1_000_000.0,
         n_trials=8,
         seed_offset=0,
     )
@@ -256,7 +255,7 @@ def test_rules_that_read_the_strategys_money_get_the_rank_and_the_power_on_it(se
     assert power_targets(old) == [("ann_return_net", "noise_power")]
 
     result = evaluate_spec_with_shape_aware_bar(
-        _spec(), session=session, ruleset=ruleset, deployable_capital_usd=1_000_000.0,
+        _spec(), session=session, ruleset=ruleset,
         n_trials=8, seed_offset=0)
 
     m = result.candidate.metrics
@@ -277,7 +276,7 @@ def test_candidate_below_threshold_is_rejected_by_the_percentile_rule(session):
     ruleset = _shape_aware_ruleset(threshold=1.01)
 
     result = evaluate_spec_with_shape_aware_bar(
-        spec, session=session, ruleset=ruleset, deployable_capital_usd=1_000_000.0, n_trials=8
+        spec, session=session, ruleset=ruleset, n_trials=8
     )
 
     assert result.candidate.error is None
@@ -291,7 +290,7 @@ def test_candidate_at_or_above_threshold_is_admitted(session):
     ruleset = _shape_aware_ruleset(threshold=-1.0)  # trivially satisfied
 
     result = evaluate_spec_with_shape_aware_bar(
-        spec, session=session, ruleset=ruleset, deployable_capital_usd=1_000_000.0, n_trials=8
+        spec, session=session, ruleset=ruleset, n_trials=8
     )
 
     assert result.candidate.error is None
@@ -310,7 +309,7 @@ def test_percentile_metric_absent_without_shape_aware_evaluation(session):
     ruleset = _shape_aware_ruleset(threshold=0.0)
 
     evaluation = evaluate_spec(
-        spec, session=session, ruleset=ruleset, deployable_capital_usd=1_000_000.0
+        spec, session=session, ruleset=ruleset
     )
 
     assert evaluation.error is None
@@ -331,7 +330,6 @@ def test_not_evaluable_spec_writes_one_trial_and_runs_no_noise(session):
         spec,
         session=session,
         ruleset=_shape_aware_ruleset(),
-        deployable_capital_usd=1_000_000.0,
         n_trials=8,
     )
 
@@ -352,8 +350,8 @@ def test_a_book_without_a_number_is_replaced_and_the_counts_are_recorded(session
 
     real = run_module._evaluate_noise
 
-    def wrapped(spec, session, ruleset, deployable_capital_usd):
-        evaluation = real(spec, session, ruleset, deployable_capital_usd)
+    def wrapped(spec, session, ruleset):
+        evaluation = real(spec, session, ruleset)
         if int(spec.params["seed"]) == 2:
             return dataclasses.replace(evaluation, metrics=None, error="StructuralMismatchError")
         return evaluation
@@ -361,8 +359,7 @@ def test_a_book_without_a_number_is_replaced_and_the_counts_are_recorded(session
     monkeypatch.setattr(run_module, "_evaluate_noise", wrapped)
 
     result = evaluate_spec_with_shape_aware_bar(
-        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-        deployable_capital_usd=1_000_000.0, n_trials=8)
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0), n_trials=8)
 
     m = result.candidate.metrics
     assert (m["noise_n_requested"], m["noise_n_usable"], m["noise_n_unusable"],
@@ -377,8 +374,7 @@ def test_a_book_without_a_number_is_replaced_and_the_counts_are_recorded(session
 
 def test_a_clean_run_records_the_counts_with_nothing_replaced(session):
     result = evaluate_spec_with_shape_aware_bar(
-        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-        deployable_capital_usd=1_000_000.0, n_trials=8)
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0), n_trials=8)
     m = result.candidate.metrics
     assert (m["noise_n_requested"], m["noise_n_usable"], m["noise_n_unusable"],
             m["noise_n_replaced"]) == (8, 8, 0, 0)
@@ -389,14 +385,12 @@ def test_a_run_of_the_bv2_family_records_the_protection_measurement(session, mon
     read by no rule; any other strategy's run carries none."""
     from qlab.pipeline.evaluate import evaluate_spec
 
-    plain = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-                          deployable_capital_usd=1_000_000.0)
+    plain = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0))
     assert not any(k.startswith("prot_") for k in plain.metrics)
 
     monkeypatch.setattr("qlab.protection.BV2_CODE_REFS", frozenset(
         {"qlab.calibration.test_shape_aware:ToyMomentumStrategy"}))
-    family = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-                           deployable_capital_usd=1_000_000.0)
+    family = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0))
     m = family.metrics
     assert m["prot_weeks"] >= 8 and m["prot_days"] > 56
     # the strategy's own return over the judged part is the run's own total (no base, compounded)
@@ -422,8 +416,7 @@ def test_the_candidates_row_is_committed_before_the_noise_books_start(session, m
 
     monkeypatch.setattr(module, "start_noise_series", watching)
     evaluate_spec_with_shape_aware_bar(
-        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-        deployable_capital_usd=1_000_000.0, n_trials=4)
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0), n_trials=4)
     assert seen == {"pending": False, "rows": 1}
 
 
@@ -446,13 +439,11 @@ def test_a_failure_of_the_noise_books_is_raised_after_the_candidate_is_recorded(
     def start(**kw):
         return Failing(series=kw["series"], n_trials=kw["n_trials"], seed_offset=0,
                        replace_unusable=True, session=kw["session"], ruleset=kw["ruleset"],
-                       deployable_capital_usd=kw["deployable_capital_usd"],
                        reference=kw["reference"], first=[])
 
     monkeypatch.setattr(module, "start_noise_series", start)
     with pytest.raises(Boom):
         evaluate_spec_with_shape_aware_bar(
-            _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
-            deployable_capital_usd=1_000_000.0, n_trials=4)
+            _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0), n_trials=4)
     trials = session.query(Trial).all()
     assert len(trials) == 1 and trials[0].route.value == "error"

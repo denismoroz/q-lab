@@ -60,6 +60,9 @@ costs:
   taker_fee_bps: 3.5
   slippage_bps: 0.9
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 3000
 simultaneous_legs: 1
 unexpressed_mechanisms: []
 differs_from_source:
@@ -84,6 +87,7 @@ params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retu
   for the grid and the twin adds only the days before 2019-09-08 (the spec''s own date for its numbers:
   2026-10-02).'
 sources:
+  "strategy_capital_usd": "the spec's own parameter base_params.inner_params.capital_usd = 3000: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
     месяц»'
@@ -134,6 +138,7 @@ sources:
     в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва» -- the regimes the source says
     trend earns in; nothing is claimed for flat'
   score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  "costs.differs_from_table": "3.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
   costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
   score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
     «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'

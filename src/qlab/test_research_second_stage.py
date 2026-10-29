@@ -17,7 +17,7 @@ import qlab.agents.researcher as researcher
 import qlab.registry.db as db_module
 from qlab import night, own_numbers
 from qlab.pipeline import stage2
-from qlab.pipeline.spec import StrategySpec
+from qlab.pipeline.spec import StrategySpec, load_spec
 from qlab.registry.models import Base
 
 CONFIG = stage2.Stage2Config(
@@ -45,7 +45,7 @@ def second(monkeypatch):
     """The second stage replaced by a recorder."""
     calls: list[dict] = []
 
-    def fake(spec, *, stage1_route, stage1_trial_id, noise_trials, deployable_capital_usd,
+    def fake(spec, *, stage1_route, stage1_trial_id, noise_trials,
              config=None, **kw):
         calls.append({"spec": spec, "route": stage1_route, "trial": stage1_trial_id,
                       "noise": noise_trials, "kw": kw})
@@ -62,7 +62,7 @@ def second(monkeypatch):
 
 def _lines(spec, result, opened=None, judged=None):
     return researcher.second_stage_lines(spec, judged or spec, opened or {}, result,
-                                         noise_trials=1, deployable_capital_usd=3000.0)
+                                         noise_trials=1)
 
 
 def test_a_survivor_on_binance_goes_to_stage_2_as_the_generator_does(second) -> None:
@@ -187,3 +187,20 @@ def test_the_morning_report_and_the_agents_page_show_the_second_stage(
     assert run["result"] == "исходы экспериментов: ждёт проверки вперёд — 1"  # nested: not counted
     assert "xsmom: второй этап, Hyperliquid, прогон 77: прошла" in run["details"]
     assert any(d.startswith("xsmom: exp (прогон 41)") for d in run["details"])
+
+
+def test_an_experiments_fixation_day_is_named_by_code_before_it_runs(
+        tmp_path, stand, second) -> None:
+    """Owner 2026-10-29 (В9): the researcher's day is corrected to the start of the last third of
+    the window, and the memo says so."""
+    from qlab import fixation
+
+    spec = _spec("exp-b")
+    path = _write(tmp_path, spec.model_copy(update={
+        "params_fixed_at": date(2019, 1, 1), "params_fixed_evidence": "the agent's own day"}))
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    lines = researcher.run_experiments(memo, [path], name="s", noise_trials=1)
+    named = fixation.named_date(spec.data.start, spec.data.end, fixation.holdout_share())
+    assert any("день фиксации назвал код" in line and str(named) in line for line in lines)
+    assert load_spec(path).params_fixed_at == named

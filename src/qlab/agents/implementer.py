@@ -88,9 +88,12 @@ no options, no outcome markets, no external stock prices.
 
 Rules:
 - Never invent a number. Parameters come from the card; cite "{card_path}" for them (the
-  number must appear in that file literally) or a derived formula. Costs: copy the costs,
-  min_leg_notional and their `sources` entries from specs/trend-live-top25-cap.yaml for
-  Hyperliquid perps.
+  number must appear in that file literally) or a derived formula. Costs: the venue's row of
+  night/costs.yaml (Hyperliquid perps: its `hyperliquid` row), cited as "night/costs.yaml, venue
+  hyperliquid, taker_fee_bps" under costs.taker_fee_bps (and the same for slippage_bps); other
+  numbers need a `costs.differs_from_table` entry with a checkable source, which you do not
+  write. min_leg_notional and its `sources` entry: copy from
+  specs/trend-live-top25-cap.yaml for Hyperliquid perps.
 - If the card needs something the data cannot give, do NOT fake it with a proxy the card
   does not name: list it in `unexpressed_mechanisms` (one sentence each). An honest "not
   evaluable" is a valid outcome; a strategy that quietly does something else is not.

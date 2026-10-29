@@ -246,7 +246,7 @@ def stand(monkeypatch):
     calls: list[tuple] = []
     results: dict[str, ItemResult] = {}
 
-    def fake_eval(kind, spec, *, end, noise_trials, deployable_capital_usd):
+    def fake_eval(kind, spec, *, end, noise_trials):
         calls.append(("idea", spec.idea_id, end, spec.params))
         return results.get(spec.idea_id) or ItemResult(
             kind=kind, name=spec.idea_id, trial_id=900, route="needs-forward",
@@ -255,7 +255,7 @@ def stand(monkeypatch):
 
     s2: dict[str, stage2.Stage2Result] = {}
 
-    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials, deployable_capital_usd,
+    def fake_stage2(spec, *, stage1_route, stage1_trial_id, noise_trials,
                     config=None, **kw):
         calls.append(("stage2", spec.idea_id, spec.data.end, stage1_route, stage1_trial_id))
         return s2.get(spec.idea_id) or stage2.Stage2Result(
@@ -342,7 +342,7 @@ def test_a_route_change_is_applied_by_code_and_the_report_names_it(
         tmp_path, registry, stand, monkeypatch) -> None:
     _world(tmp_path, registry)
 
-    def reject(kind, spec, *, end, noise_trials, deployable_capital_usd):
+    def reject(kind, spec, *, end, noise_trials):
         # What the stand does on a run: the trial, then the lifecycle moves the status.
         with registry.session_scope() as s:
             trial = _trial(s, spec.idea_id, "reject", ago=0)
@@ -630,3 +630,113 @@ def test_a_hand_run_limits_the_plan_to_the_named_ideas_and_forces_them(
     waiting.waiting_stage(DAY, END, other, noise_trials=1, spec_dir=tmp_path / "specs", watch=[],
                           only={"fresh"})
     assert stand.calls == [] and other["waiting"][0]["action"] == "wait"
+
+
+# ---- decided ideas are measured again on a schedule (owner 2026-10-29, В6) -----------------
+
+
+RECHECK = waiting.Recheck(enabled=True, decided_recheck_days=7, decided_max_per_night=4)
+
+
+def test_a_decided_idea_is_due_once_its_run_is_a_week_old() -> None:
+    from qlab.waiting import decide_recheck_due
+
+    paper = Basis(data_end=END - timedelta(days=7), route="paper", metrics={})
+    assert decide_recheck_due(paper, END, 7).due is True
+    young = Basis(data_end=END - timedelta(days=6), route="paper", metrics={})
+    got = decide_recheck_due(young, END, 7)
+    assert got.due is False and got.due_end == END + timedelta(days=1)
+    assert decide_recheck_due(Basis(None, None), END, 7).due is True  # no run on record
+    assert decide_recheck_due(Basis(END, "paper", failed=True), END, 7).due is True
+
+
+def _decided_world(registry, *, ages: dict[str, int], status=IdeaStatus.VALIDATED,
+                   route="paper") -> None:
+    with registry.session_scope() as s:
+        for name, age in ages.items():
+            _idea(s, name, status)
+            _trial(s, name, route, ago=age)
+
+
+def test_decided_ideas_are_planned_only_with_the_schedule_and_the_oldest_four_run(
+        tmp_path, registry) -> None:
+    ages = {f"d{i}": 30 - i for i in range(6)}  # d0 oldest .. d5 youngest, all older than a week
+    _decided_world(registry, ages=ages)
+    with registry.session_scope() as s:
+        _idea(s, "recent", IdeaStatus.VALIDATED)
+        _trial(s, "recent", "paper", ago=2)
+    for name in (*ages, "recent"):
+        _spec(name, tmp_path)
+    assert _plans(tmp_path, registry) == {}  # no schedule given: decided ideas are nobody's job
+    plans = _plans(tmp_path, registry, recheck=RECHECK)
+    assert sorted(i for i, _ in plans) == sorted([*ages, "recent"])
+    assert all(p.kind == "recheck" for p in plans.values())
+    due = sorted(i for (i, _), p in plans.items() if p.due)
+    assert due == ["d0", "d1", "d2", "d3"]  # the four oldest runs
+    assert "не больше 4" in plans[("d4", "idea")].why and not plans[("d4", "idea")].due
+    assert not plans[("recent", "idea")].due and "через 5 дн." in plans[("recent", "idea")].why
+
+
+def test_production_ideas_and_the_old_shelf_are_on_the_schedule_too(tmp_path, registry) -> None:
+    with registry.session_scope() as s:
+        _idea(s, "in-paper", IdeaStatus.PAPER)
+        _trial(s, "in-paper", "paper", ago=20)
+        _idea(s, "old-shelf", IdeaStatus.BENCH)
+        _trial(s, "old-shelf", "shelf", ago=20)
+        _idea(s, "needs-adapter", IdeaStatus.BENCH)
+        _trial(s, "needs-adapter", "needs-infrastructure", ago=20)
+        _idea(s, "live-two-specs", IdeaStatus.LIVE)
+        _trial(s, "live-two-specs", "paper", ago=20)
+    for name in ("in-paper", "old-shelf", "needs-adapter", "live-two-specs"):
+        _spec(name, tmp_path)
+    (tmp_path / "specs" / "other.yaml").write_text(
+        (tmp_path / "specs" / "live-two-specs.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+    plans = _plans(tmp_path, registry, recheck=RECHECK)
+    assert sorted(i for i, _ in plans) == ["in-paper", "live-two-specs", "needs-adapter",
+                                          "old-shelf"]
+    assert plans[("in-paper", "idea")].due and plans[("old-shelf", "idea")].due
+    # two spec files: the code does not know which to run, and says so
+    assert plans[("live-two-specs", "idea")].skip and not plans[("live-two-specs", "idea")].due
+
+
+def test_a_switched_off_schedule_plans_nothing(tmp_path, registry) -> None:
+    _decided_world(registry, ages={"old": 30})
+    _spec("old", tmp_path)
+    off = waiting.Recheck(enabled=False, decided_recheck_days=7, decided_max_per_night=4)
+    assert _plans(tmp_path, registry, recheck=off) == {}
+
+
+@pytest.mark.decided_recheck
+def test_the_shipped_schedule_is_a_week_and_four_a_night() -> None:
+    root = Path(__file__).resolve().parents[2]
+    config = waiting.load_recheck(root / "night" / "waiting.yaml")
+    assert (config.enabled, config.decided_recheck_days, config.decided_max_per_night) \
+        == (True, 7, 4)
+
+
+@pytest.mark.decided_recheck
+def test_a_schedule_without_a_key_is_refused(tmp_path) -> None:
+    broken = tmp_path / "waiting.yaml"
+    broken.write_text("enabled: true\ndecided_recheck_days: 7\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing key"):
+        waiting.load_recheck(broken)
+    broken.write_text("enabled: true\ndecided_recheck_days: 0\ndecided_max_per_night: 4\n",
+                      encoding="utf-8")
+    with pytest.raises(ValueError, match="decided_recheck_days"):
+        waiting.load_recheck(broken)
+
+
+@pytest.mark.decided_recheck
+def test_the_stage_runs_the_due_decided_ideas_and_the_report_says_they_were_scheduled(
+        tmp_path, registry, stand, monkeypatch) -> None:
+    _decided_world(registry, ages={"old": 30, "recent": 1})
+    for name in ("old", "recent"):
+        _spec(name, tmp_path)
+    monkeypatch.setattr(waiting, "load_recheck", lambda path=waiting.CONFIG: RECHECK)
+    state = _stage(tmp_path)
+    assert [c[1] for c in stand.calls if c[0] == "idea"] == ["old"]
+    rows = {e["idea"]: e for e in state["waiting"]}
+    assert rows["old"]["action"] == "rerun" and rows["old"]["kind"] == "recheck"
+    assert rows["recent"]["action"] == "wait"
+    text = "\n".join(waiting.report_lines(state["waiting"]))
+    assert "решённая, по расписанию" in text

@@ -123,13 +123,13 @@ def test_a_book_with_no_base_of_percent_is_not_judged_on_the_stand_instead() -> 
                "cap_base_refused": 1.0}
     result = evaluate(metrics, new)
     assert not result.decisive and "cap_ann_return" in result.unknown_metrics
-    routing = decide_route(result, metrics, 3000.0)
+    routing = decide_route(result, metrics)
     assert routing.route == "needs-more-data"
     assert "cap_ann_return" in routing.reason and BASE_REFUSED_NOTE in routing.reason
     # The older rules read the stand and decide as they did; the note is for the new ones.
     old = evaluate(metrics, load(OLD, DEFAULT_RULES_DIR))
-    assert decide_route(old, metrics, 3000.0) == RoutingDecision(
-        route="paper", reason="passed and affordable")
+    assert decide_route(old, metrics) == RoutingDecision(
+        route="paper", reason="passed every rule", required_capital_usd=150.0)
 
 
 def test_the_restamp_treats_the_switch_as_a_change_of_what_decides() -> None:

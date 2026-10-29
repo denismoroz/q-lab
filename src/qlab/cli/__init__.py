@@ -504,9 +504,6 @@ def evaluate_cmd(
     spec_path: Path = typer.Argument(  # noqa: B008 - idiomatic typer default, not a mutable-default bug
         ..., metavar="SPEC", help="Path to a spec YAML file"
     ),
-    capital: float = typer.Option(
-        1000.0, "--capital", help="Capital currently deployable now (USD)"
-    ),
     rules_version: str | None = typer.Option(
         None, "--rules", help="Rules version to evaluate against (default: latest)"
     ),
@@ -542,14 +539,13 @@ def evaluate_cmd(
         try:
             if noise_trials <= 0:
                 result = evaluate_spec(
-                    spec, session=session, ruleset=ruleset, deployable_capital_usd=capital
+                    spec, session=session, ruleset=ruleset
                 )
             else:
                 result = evaluate_spec_with_shape_aware_bar(
                     spec,
                     session=session,
                     ruleset=ruleset,
-                    deployable_capital_usd=capital,
                     n_trials=noise_trials,
                 ).candidate
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator, not swallowed
@@ -643,8 +639,9 @@ def evaluate_cmd(
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
     if noise_trials <= 0:
         typer.echo("(a sketch: no noise books were run, so this route is not a verdict)")
-    if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
-        typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
+    if result.routing.required_capital_usd is not None:
+        typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f} "
+                   "(against the strategy's own money: step 4 of the ladder)")
     _echo_status()
 
 
@@ -862,7 +859,6 @@ def twins_run_cmd(
         False, "--allow-heavy", help="Run twins whose data takes hours to fetch (hourly candles "
         "of every Binance perpetual)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
-    capital: float = typer.Option(3000.0, "--capital"),
 ) -> None:
     """The night's twins stage by hand (src/qlab/twin_stage.py): the causal twin of each idea
     that waits for forward data, run on the stand, then its second stage. Trials are written to
@@ -882,13 +878,12 @@ def twins_run_cmd(
     ideas = set(only) or None
     if waiting and ideas and not dry_run:
         waiting_module.waiting_stage(day, end, state, watch=[], noise_trials=noise_trials,
-                                     deployable_capital_usd=capital, only=ideas,
+                                     only=ideas,
                                      force=True)
         for line in waiting_module.report_lines(state.get("waiting") or [],
                                                 state.get("waiting_notes")):
             typer.echo(line)
-    twin_stage.twins_stage(day, end, state, noise_trials=noise_trials,
-                           deployable_capital_usd=capital, only=ideas, max_new=max_new,
+    twin_stage.twins_stage(day, end, state, noise_trials=noise_trials, only=ideas, max_new=max_new,
                            dry_run=dry_run, allow_heavy=allow_heavy)
     for line in twin_stage.report_lines(state.get("twins")):
         typer.echo(line)
@@ -913,7 +908,6 @@ def restamp_run_cmd(
         None, "--max-ideas", help="At most this many ideas (default: the night's cap, none with "
         "--all or --idea)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
-    capital: float = typer.Option(3000.0, "--capital"),
 ) -> None:
     """The night's restamp stage by hand (src/qlab/restamp.py): every idea whose latest run was
     made under an older stand version or judged under older rules is run again on the stand (and
@@ -934,8 +928,7 @@ def restamp_run_cmd(
     day, end = _date.today(), night.last_closed_day()
     state = night.load_state(day)
     state.pop("restamp", None)  # this call reports itself; the day's done-markers stay
-    restamp.restamp_stage(day, end, state, noise_trials=noise_trials,
-                          deployable_capital_usd=capital, only=set(idea) or None,
+    restamp.restamp_stage(day, end, state, noise_trials=noise_trials, only=set(idea) or None,
                           no_cap=all_ideas, dry_run=dry_run, max_ideas=max_ideas)
     for line in restamp.report_lines(state.get("restamp"), even_if_quiet=True) \
             or ["nothing is out of date"]:
@@ -1779,7 +1772,6 @@ def stage2_cmd(
         None, "--stage1-route",
         help="Stage 1's route (default: the idea's latest in the registry)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
-    capital: float = typer.Option(3000.0, "--capital"),
 ) -> None:
     """The second stage of a generated idea's evaluation (docs/TWO_STAGE.md, T45): the same
     mechanism with the same parameter values built on Hyperliquid and judged there, forward
@@ -1807,7 +1799,7 @@ def stage2_cmd(
                    err=True)
         raise typer.Exit(code=1)
     result = run_stage2(spec, stage1_route=stage1_route, stage1_trial_id=trial_id,
-                        noise_trials=noise_trials, deployable_capital_usd=capital,
+                        noise_trials=noise_trials,
                         measure=measure)
     for line in report_lines({"route": stage1_route}, asdict(result)):
         typer.echo(line)
@@ -2034,7 +2026,7 @@ def implement_cmd(
                                  asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
                                  notes=f"Implemented by the implementer agent from {card}.")
             result = evaluate_spec_with_shape_aware_bar(
-                spec, session=session, ruleset=load_latest(), deployable_capital_usd=3000.0,
+                spec, session=session, ruleset=load_latest(),
                 n_trials=noise_trials).candidate
         typer.echo(f"stand: trial {result.trial_id}: {result.routing.route} "
                    f"({result.routing.reason})")
@@ -2225,7 +2217,6 @@ def calibrate_planted_cmd(
         [180, 365], "--window", help="Also judge on the last N days (repeat); the full "
         "active span is always included",
     ),
-    capital: float = typer.Option(3000.0, "--capital", help="Capital deployable now (USD)"),
     rules_version: str | None = typer.Option(None, "--rules"),
 ) -> None:
     """How many strategies with a KNOWN edge does the ruleset admit, call too
@@ -2281,7 +2272,6 @@ def calibrate_planted_cmd(
     results = planted_outcomes(
         panel=panel, reference=weights, books=built, ruleset=ruleset, shared_facts=shared,
         alphas=alpha, window_starts=starts, min_leg_notional=spec.min_leg_notional,
-        deployable_capital_usd=capital,
     )
     for label, rows in results.items():
         typer.echo("")
@@ -2305,9 +2295,6 @@ def calibrate_cmd(
         200,
         "--n-trials",
         help="Noise trials per series (docs/TASKS.md T16 requires at least 200)",
-    ),
-    capital: float = typer.Option(
-        1000.0, "--capital", help="Capital currently deployable now (USD)"
     ),
     reference: str | None = typer.Option(
         None,
@@ -2366,14 +2353,13 @@ def calibrate_cmd(
                 n_trials=n_trials,
                 session=session,
                 ruleset=ruleset,
-                deployable_capital_usd=capital,
                 reference=reference_spec,
             )
             series_summaries[series] = summarize_series(trials)
             generator_breakdowns[series] = summarize_by_generator(trials)
 
         real_evaluations = run_real_strategies(
-            session=session, ruleset=ruleset, deployable_capital_usd=capital
+            session=session, ruleset=ruleset
         )
 
     titles = {idea_id: load_spec(path).title for idea_id, path in REAL_SPEC_PATHS.items()}
@@ -2539,7 +2525,6 @@ def overlays_run_cmd(
         "second stage on Hyperliquid (fetches that venue's candles unless a snapshot exists)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be done, do nothing"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
-    capital: float = typer.Option(3000.0, "--capital"),
 ) -> None:
     """The night's overlays stage by hand (src/qlab/overlay_stage.py): every overlay and pair on
     the named bases, run on the stand, compared with the base. Trials are written to the registry
@@ -2555,7 +2540,7 @@ def overlays_run_cmd(
     state = night.load_state(day)
     state.pop("overlays", None)  # this call reports itself; the day's done-markers stay
     overlay_stage.overlays_stage(
-        day, end, state, noise_trials=noise_trials, deployable_capital_usd=capital,
+        day, end, state, noise_trials=noise_trials,
         only=set(only) or None, chains_only=set(chain) or None, max_variants=max_variants,
         data_end=data_end, second_stage=stage2, dry_run=dry_run,
         kinds=("fixed",) if fixed else ("causal",))

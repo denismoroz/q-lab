@@ -1,0 +1,286 @@
+"""Tests for the year rules (docs/YEARS.md).
+
+Rules 2026-10-28.1 made two year rules decisive: ex_best_year_floor (without its best
+calendar year the strategy still earns at least 4% a year) and best_year_share_cap (the best
+calendar year gives at most half of the profit); a year summary that is not defined (fewer
+than two counted years) means the rule does not apply. Those tests name 2026-10-28.1 by
+version. Rules 2026-10-28.2 (owner, 2026-10-28) retired both and kept the four year signs as
+readings only; the last section tests that version, which is the latest.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pandas as pd
+import pytest
+
+from qlab.harness.metrics import year_breakdown
+from qlab.pipeline.evaluate import decide_fit_forward_route, decide_route
+from qlab.rules.engine import NOT_DEFINED_NOTE, evaluate
+from qlab.rules.loader import DEFAULT_RULES_DIR, load, load_latest
+from qlab.rules.schema import Comparator, HoldoutShare, Rule, RuleSet, Stage
+
+EX_BEST = "ex_best_year_floor"
+SHARE = "best_year_share_cap"
+
+
+@pytest.fixture(scope="module")
+def year_rules() -> RuleSet:
+    """Only the two new rules, so each test sees exactly their effect."""
+    full = load("2026-10-28.1", DEFAULT_RULES_DIR)
+    return RuleSet(version=full.version, rules=[r for r in full.rules if r.id in (EX_BEST, SHARE)])
+
+
+def _row(result, rule_id):
+    return next(r for r in result.rows if r.rule_id == rule_id)
+
+
+def _daily(start: str, end: str, value: float) -> pd.Series:
+    return pd.Series(value, index=pd.date_range(start, end, freq="1D", tz="UTC"), dtype=float)
+
+
+# ---- the version ----------------------------------------------------------------------------
+
+
+def test_the_version_adds_two_fatal_edge_rules_and_changes_nothing_else() -> None:
+    before = load("2026-10-27.2", DEFAULT_RULES_DIR)
+    after = load("2026-10-28.1", DEFAULT_RULES_DIR)
+    assert after.based_on == "2026-10-27.2"
+    assert [r for r in after.rules if r.id not in (EX_BEST, SHARE)] == before.rules
+    new = {r.id: r for r in after.rules if r.id in (EX_BEST, SHARE)}
+    assert set(new) == {EX_BEST, SHARE}
+    for rule in new.values():
+        assert rule.stage is Stage.EDGE and rule.fatal and rule.skip_when_undefined
+        assert rule.rationale and "«ок по предложению»" in rule.rationale
+    assert (new[EX_BEST].metric, new[EX_BEST].comparator, new[EX_BEST].threshold) == (
+        "ann_return_net_ex_best_year", Comparator.GE, 0.04)
+    assert (new[SHARE].metric, new[SHARE].comparator, new[SHARE].threshold) == (
+        "best_year_share_of_profit", Comparator.LE, 0.5)
+    # Nothing but the rules changes: the earlier settings and readings are inherited whole.
+    assert after.retired == before.retired
+    assert after.holdout_share == before.holdout_share
+    assert after.noise_power == before.noise_power
+    assert after.stage2_confirmation == before.stage2_confirmation
+    assert after.informational == before.informational
+
+
+def test_28_1_is_no_longer_the_latest_but_still_loads_as_it_was() -> None:
+    assert load_latest().version != "2026-10-28.1"
+    assert {r.id for r in load("2026-10-28.1", DEFAULT_RULES_DIR).rules} >= {EX_BEST, SHARE}
+
+
+def test_earlier_versions_do_not_judge_the_years() -> None:
+    for version in ("2026-10-27.1", "2026-10-27.2"):
+        assert not {r.id for r in load(version, DEFAULT_RULES_DIR).rules} & {EX_BEST, SHARE}
+
+
+# ---- the lines -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value, passes", [(0.0399, False), (0.04, True), (0.0401, True),
+                                           (-0.5, False), (-1.0, False), (0.13, True)])
+def test_without_its_best_year_the_strategy_must_earn_four_percent(year_rules, value, passes):
+    result = evaluate({"ann_return_net_ex_best_year": value}, year_rules)
+    row = _row(result, EX_BEST)
+    assert row.passed is passes and not row.not_defined
+    assert (result.failed_fatal_rule_id == EX_BEST) is (not passes)
+
+
+@pytest.mark.parametrize("value, passes", [(0.5001, False), (0.5, True), (0.4999, True),
+                                           (0.61, False), (1.4, False), (0.14, True)])
+def test_the_best_year_gives_at_most_half_of_the_profit(year_rules, value, passes):
+    result = evaluate({"best_year_share_of_profit": value}, year_rules)
+    row = _row(result, SHARE)
+    assert row.passed is passes and not row.not_defined
+    assert (result.failed_fatal_rule_id == SHARE) is (not passes)
+
+
+def test_the_four_runs_of_the_proposal_table_are_decided_as_the_owner_was_told(year_rules):
+    # docs/YEARS.md, "Предложение": A with the line at 4%, G at 50%.
+    table = {"xsmom": (0.13, 0.58, False), "bv2-binance": (0.10, 0.61, False),
+             "trend": (0.044, 0.38, True), "trend-twin": (0.031, 0.40, False)}
+    for name, (ex_best, share, passes) in table.items():
+        result = evaluate({"ann_return_net_ex_best_year": ex_best,
+                           "best_year_share_of_profit": share}, year_rules)
+        assert result.overall_passed is passes, name
+
+
+# ---- not defined -----------------------------------------------------------------------------
+
+
+def test_a_year_summary_that_is_not_defined_neither_passes_nor_fails(year_rules) -> None:
+    result = evaluate({"ann_return_net": 0.2}, year_rules)
+    for rule_id in (EX_BEST, SHARE):
+        row = _row(result, rule_id)
+        assert row.passed is None and row.value is None and row.not_defined
+        assert row.note == NOT_DEFINED_NOTE
+    assert result.decisive and result.overall_passed
+    assert result.failed_rule_ids == () and result.failed_fatal_rule_id is None
+    assert result.unknown_metrics == ()
+
+
+def test_not_defined_is_also_what_a_nan_summary_reads_as(year_rules) -> None:
+    result = evaluate({"ann_return_net_ex_best_year": float("nan")}, year_rules)
+    assert _row(result, EX_BEST).not_defined and result.decisive
+
+
+def test_a_not_defined_rule_does_not_hide_another_rules_failure(year_rules) -> None:
+    edge = Rule(id="net_edge_positive", stage=Stage.EDGE, metric="ann_return_net",
+                comparator=Comparator.GT, threshold=0.0, fatal=True)
+    ruleset = RuleSet(version="2026-10-28.1", rules=[edge, *year_rules.rules])
+    result = evaluate({"ann_return_net": -0.1}, ruleset)
+    assert result.failed_rule_ids == ("net_edge_positive",)
+    assert not result.overall_passed and result.decisive
+    assert decide_route(result, {}, 1000.0).route == "reject"
+
+
+def test_other_rules_still_read_an_absent_metric_as_unknown() -> None:
+    plain = Rule(id="r", stage=Stage.EDGE, metric="m", comparator=Comparator.GT, threshold=0.0)
+    result = evaluate({}, RuleSet(version="2026-10-28.1", rules=[plain]))
+    row = result.rows[0]
+    assert row.passed is None and not row.not_defined
+    assert not result.decisive and result.unknown_metrics == ("m",)
+
+
+def test_a_failing_year_rule_rejects_and_a_not_defined_one_is_not_needs_more_data(
+        year_rules) -> None:
+    failed = decide_route(evaluate({"best_year_share_of_profit": 0.58}, year_rules), {}, 1000.0)
+    assert failed.route == "reject" and SHARE in failed.reason and "fatal rule" in failed.reason
+    skipped = decide_route(evaluate({}, year_rules), {"min_capital_usd": 10.0}, 1000.0)
+    assert skipped.route == "paper"
+
+
+def test_not_defined_on_the_selection_period_waits_for_forward_not_for_data(year_rules) -> None:
+    ruleset = year_rules.model_copy(update={
+        "holdout_share": HoldoutShare(share=1 / 3, rationale="test")})
+    selection = evaluate({}, ruleset)
+    routing = decide_fit_forward_route(
+        ruleset=ruleset, selection=selection, forward=None, metrics={"min_capital_usd": 10.0},
+            params_fixed_at=date(2026, 1, 1))
+    assert routing.route == "needs-forward"
+
+
+# ---- from the stand's own numbers ---------------------------------------------------------------
+
+
+def test_a_book_whose_profit_is_one_year_is_rejected_by_both_rules(year_rules) -> None:
+    # 2020 and 2021 flat, 2022 earns everything: the best year is all of the profit and
+    # without it the book earns nothing.
+    r = pd.concat([_daily("2020-01-01", "2020-12-31", 0.0),
+                   _daily("2021-01-01", "2021-12-31", 0.0),
+                   _daily("2022-01-01", "2022-12-31", 0.002)])
+    result = evaluate(year_breakdown(r), year_rules)
+    assert _row(result, EX_BEST).passed is False and _row(result, SHARE).passed is False
+
+
+def test_an_even_book_passes_both_rules(year_rules) -> None:
+    r = pd.concat([_daily(f"{y}-01-01", f"{y}-12-31", 0.0003) for y in (2020, 2021, 2022, 2023)])
+    metrics = year_breakdown(r)
+    assert metrics["ann_return_net_ex_best_year"] >= 0.04
+    result = evaluate(metrics, year_rules)
+    assert _row(result, EX_BEST).passed is True and _row(result, SHARE).passed is True
+
+
+def test_a_single_year_is_not_defined_and_a_partial_year_counts_by_its_days(year_rules) -> None:
+    one_year = year_breakdown(_daily("2025-01-01", "2025-12-31", 0.002))
+    result = evaluate(one_year, year_rules)
+    assert all(row.not_defined for row in result.rows) and result.decisive
+    # 119 days of a second year are listed but not counted: still one counted year.
+    short = pd.concat([_daily("2025-01-01", "2025-12-31", 0.002),
+                       _daily("2026-01-01", "2026-04-29", 0.001)])
+    assert year_breakdown(short)["years_counted"] == 1
+    assert all(row.not_defined for row in evaluate(year_breakdown(short), year_rules).rows)
+    # 120 days count (as before): then the rules apply.
+    counted = pd.concat([_daily("2025-01-01", "2025-12-31", 0.002),
+                         _daily("2026-01-01", "2026-04-30", 0.001)])
+    assert year_breakdown(counted)["years_counted"] == 2
+    assert not any(row.not_defined for row in evaluate(year_breakdown(counted), year_rules).rows)
+
+
+def test_a_loss_has_no_share_so_that_rule_does_not_apply(year_rules) -> None:
+    r = pd.concat([_daily("2020-01-01", "2020-12-31", -0.0005),
+                   _daily("2021-01-01", "2021-12-31", -0.0002)])
+    metrics = year_breakdown(r)
+    assert "best_year_share_of_profit" not in metrics
+    result = evaluate(metrics, year_rules)
+    assert _row(result, SHARE).not_defined
+    assert _row(result, EX_BEST).passed is False  # the loss is still caught by the other rule
+
+
+# ---- rules 2026-10-28.2: the same lines, recorded and decided by nobody ------------------------
+
+OWNER_QUOTE = "когда наберем статистику - решим - какое правило"
+
+
+def test_28_2_retires_both_year_rules() -> None:
+    latest = load("2026-10-28.2", DEFAULT_RULES_DIR)
+    assert latest.version == "2026-10-28.2" and latest.based_on == "2026-10-28.1"
+    assert not {r.id for r in latest.rules} & {EX_BEST, SHARE}
+    retired = {r.id: r for r in latest.retired}
+    for rule_id in (EX_BEST, SHARE):
+        assert retired[rule_id].retired_in == "2026-10-28.2"
+        assert OWNER_QUOTE in " ".join(retired[rule_id].reason.split())
+
+
+def test_28_2_changes_no_other_rule_and_no_setting() -> None:
+    before = load("2026-10-28.1", DEFAULT_RULES_DIR)
+    after = load("2026-10-28.2", DEFAULT_RULES_DIR)
+    assert after.rules == [r for r in before.rules if r.id not in (EX_BEST, SHARE)]
+    assert after.holdout_share == before.holdout_share
+    assert after.noise_power == before.noise_power
+    assert after.stage2_confirmation == before.stage2_confirmation
+    assert after.regime_coverage_days == before.regime_coverage_days
+
+
+def test_28_2_records_the_four_signs_as_readings_with_lines() -> None:
+    readings = {r.id: r for r in load("2026-10-28.2", DEFAULT_RULES_DIR).informational}
+    lines = {i: (readings[i].metric, readings[i].comparator, readings[i].threshold)
+             for i in ("ex_best_year_4pct", "years_positive_share", "ex_best_1pct_positive",
+                       "best_year_share_of_profit")}
+    assert lines == {
+        "ex_best_year_4pct": ("ann_return_net_ex_best_year", Comparator.GE, 0.04),
+        "years_positive_share": ("years_positive_share", Comparator.GE, 0.667),
+        "ex_best_1pct_positive": ("ann_return_net_ex_best_1pct", Comparator.GT, 0.0),
+        "best_year_share_of_profit": ("best_year_share_of_profit", Comparator.LE, 0.5),
+    }
+    for reading in readings.values():
+        assert reading.rationale.strip()
+    for sign in lines:
+        assert "просто соберем по признакам" in " ".join(readings[sign].rationale.split())
+    # The zero-line reading of 2026-10-27.2 is inherited as it was.
+    assert readings["ex_best_year_positive"].threshold == 0.0
+
+
+def test_a_year_rule_failure_writes_no_verdict_row_under_the_latest_rules() -> None:
+    both_fail = {"ann_return_net_ex_best_year": -0.3, "best_year_share_of_profit": 0.9}
+    result = evaluate(both_fail, load_latest())
+    assert not {r.rule_id for r in result.rows} & {EX_BEST, SHARE}
+    assert EX_BEST not in result.failed_rule_ids and SHARE not in result.failed_rule_ids
+    assert result.failed_fatal_rule_id not in (EX_BEST, SHARE)
+
+
+def test_a_run_that_failed_g_under_28_1_is_not_rejected_under_28_2() -> None:
+    # The XSMOM twin's numbers: A holds (+12.5%), G fails (58%). Everything else is judged
+    # by one ordinary rule that passes, so only the year rules differ between the versions.
+    net_edge = next(r for r in load("2026-10-28.1", DEFAULT_RULES_DIR).rules
+                    if r.id == "net_edge_positive")
+    metrics = {"ann_return_net": 0.36, "ann_return_net_ex_best_year": 0.125,
+               "best_year_share_of_profit": 0.58, "min_capital_usd": 10.0}
+    old = load("2026-10-28.1", DEFAULT_RULES_DIR)
+    new = load_latest()
+    old_only = RuleSet(version=old.version, rules=[
+        net_edge, *[r for r in old.rules if r.id in (EX_BEST, SHARE)]])
+    new_only = RuleSet(version=new.version, rules=[net_edge])
+    rejected = decide_route(evaluate(metrics, old_only), metrics, 1000.0)
+    assert rejected.route == "reject" and SHARE in rejected.reason
+    kept = decide_route(evaluate(metrics, new_only), metrics, 1000.0)
+    assert kept.route == "paper"
+
+
+def test_28_2_still_supports_skip_when_undefined_for_a_future_year_rule() -> None:
+    # The engine keeps the flag: a future version may make a year sign decisive again.
+    rule = Rule(id="future", stage=Stage.EDGE, metric="best_year_share_of_profit",
+                comparator=Comparator.LE, threshold=0.5, fatal=True, skip_when_undefined=True)
+    result = evaluate({}, RuleSet(version="2026-10-28.3", rules=[rule]))
+    assert result.rows[0].not_defined and result.decisive and result.overall_passed

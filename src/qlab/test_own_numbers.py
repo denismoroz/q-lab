@@ -93,7 +93,7 @@ def _check(tmp_path: Path, mechanisms, text: str, name: str) -> list[str]:
     _, problems = gen.check_generated(path, mechanisms=mechanisms, data_end=DATA_END,
                                       reference=None)
     return [p for p in problems if "costs" not in p and "min_leg_notional" not in p
-            and "differs_from_source" not in p]
+            and "differs_from_source" not in p and not p.startswith("fixation:")]
 
 
 def test_an_empty_row_may_be_left_open_with_the_whole_declared_list(mechanisms, tmp_path):

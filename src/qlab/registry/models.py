@@ -170,6 +170,8 @@ class TrialRoute(enum.StrEnum):
     """
 
     REJECT = "reject"
+    # No run since rules 2026-10-29.3 is routed here (a run that passes every rule is PAPER; whether
+    # it fits the strategy's own money is step 4 of the ladder). Runs recorded before keep it.
     SHELF = "shelf"
     PAPER = "paper"
     # Every strategy rule passed; what failed is our ability to run it here

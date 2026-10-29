@@ -363,7 +363,7 @@ def test_generator_stage_runs_once_resumes_and_reports(tmp_path, monkeypatch) ->
             rejected=[generator.Rejected("specs/generated/gen-b.yaml", ["code_ref is wrong"])],
             problems=["wrote outside its places (reverted): ['X']"])
 
-    def fake_stand(item, *, noise_trials, deployable_capital_usd):
+    def fake_stand(item, *, noise_trials):
         calls["stand"].append((item.spec.idea_id, noise_trials))
         if len(calls["stand"]) == 1:
             return generator.GeneratedResult(
@@ -428,7 +428,7 @@ def test_generator_stage_retries_only_the_second_stage_and_reports_both(
             spec=night.load_spec(Path("specs/generated/gen-a.yaml")), mechanism="m1")
         return generator.GenerateOutcome(accepted=[item], reply="ok")
 
-    def fake_stand(item, *, noise_trials, deployable_capital_usd):
+    def fake_stand(item, *, noise_trials):
         calls["stand"] += 1
         return generator.GeneratedResult(
             idea_id="gen-a", mechanism="m1", spec_path=str(item.path), trial_id=9, route="paper",
@@ -437,7 +437,7 @@ def test_generator_stage_retries_only_the_second_stage_and_reports_both(
             stage2={"status": "error", "error": "ConnectionError: hyperliquid is unreachable",
                     "stage1_route": "paper"})
 
-    def fake_second(item, result, *, noise_trials, deployable_capital_usd):
+    def fake_second(item, result, *, noise_trials):
         calls["second"] += 1
         result.stage2 = {
             "status": "evaluated", "stage1_route": "paper", "route": "reject", "trial_id": 10,

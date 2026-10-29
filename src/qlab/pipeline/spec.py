@@ -364,6 +364,20 @@ class StrategySpec(BaseModel):
     (`qlab.pipeline.sources`, docs/SOURCES.md). A citation at a path covers
     everything under it. Checked before any run starts."""
 
+    strategy_capital_usd: float | None = None
+    """The strategy's own money in dollars: what it starts with and the only base of a percent
+    (docs/CAPITAL_BASE.md; owner, 2026-10-25: «стратегия работает на 90 и должна считать все на 90»;
+    owner, 2026-10-29: «у каждой стратегии свои настройки»). The capital a run needs
+    (`min_capital_usd`) is compared with THIS number and with no common sum: step 4 of the ladder
+    (`qlab.ladder`, docs/LADDER.md). It is not the money on the exchange account and not the stand's
+    deployable sum, which no longer exists.
+
+    `None` means nobody has said what money the strategy works on: step 4 then reads «деньги
+    стратегии не заданы» and nothing is guessed. A number needs a citation in
+    `sources["strategy_capital_usd"]` like every other number of a spec, and it must agree with the
+    book that runs the spec (`night/paper_books.yaml` `strategy_capital_usd`; a test compares the
+    two) and with the spec's own `capital_usd` parameter where the strategy has one."""
+
     regime_claim: dict[str, str] = Field(default_factory=dict)
     """How the source says the strategy behaves in each market regime
     (`qlab.regimes`: bull / flat / bear), declared before the run and cited in
@@ -425,6 +439,17 @@ class StrategySpec(BaseModel):
         if not (self.sources.get("instruments_chosen_at") or "").strip():
             raise ValueError("instruments_chosen_at needs sources['instruments_chosen_at']: "
                              "say where the date comes from")
+        return self
+
+    @model_validator(mode="after")
+    def _own_money_is_positive_and_cited(self) -> StrategySpec:
+        if self.strategy_capital_usd is None:
+            return self
+        if self.strategy_capital_usd <= 0:
+            raise ValueError(f"strategy_capital_usd must be > 0, got {self.strategy_capital_usd}")
+        if not (self.sources.get("strategy_capital_usd") or "").strip():
+            raise ValueError("strategy_capital_usd needs sources['strategy_capital_usd']: "
+                             "say where the strategy's money comes from")
         return self
 
     @model_validator(mode="after")

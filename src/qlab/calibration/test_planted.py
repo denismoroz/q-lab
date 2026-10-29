@@ -41,7 +41,7 @@ def test_zero_edge_is_rarely_admitted_and_a_large_one_almost_always() -> None:
     out = planted_outcomes(
         panel=panel, reference=reference, books=books, ruleset=RULES, shared_facts={},
         alphas=[0.0, 3.0], window_starts={"full": panel.prices.index[0]},
-        min_leg_notional=10.0, deployable_capital_usd=1e9,
+        min_leg_notional=10.0,
     )["full"]
     zero, large = out
     assert zero.admitted / zero.n <= 0.05

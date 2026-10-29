@@ -96,7 +96,6 @@ Route = Literal[
     "needs-forward",
     "not-evaluable",
     "needs-infrastructure",
-    "shelf",
     "paper",
     "error",
 ]
@@ -164,7 +163,6 @@ class RoutingContext:
     selection_result: EvaluationResult | None
     forward_judged: bool
     """The judged window is a forward test (not the selection period)."""
-    deployable_capital_usd: float
     range_start: date
     range_end: date
 
@@ -784,7 +782,7 @@ def _refused_note(metrics: Mapping[str, float], unknown: Sequence[str]) -> str:
 
 
 def decide_route(
-    result: EvaluationResult, metrics: dict[str, float], deployable_capital_usd: float
+    result: EvaluationResult, metrics: dict[str, float]
 ) -> RoutingDecision:
     """Turn a rules `EvaluationResult` into a routing decision.
 
@@ -809,13 +807,14 @@ def decide_route(
          reported the same route here, distinguished by
          `result.failed_rule_ids` / `result.failed_fatal_rule_id` in the
          reason string for anyone inspecting the verdict.
-      3. Otherwise every rule passed. If `min_capital_usd` (present in
-         `metrics` on every successful run — see `evaluate_spec`) exceeds
-         `deployable_capital_usd`, `"shelf"`: affordable in principle
-         (it already cleared `capital_fit`'s whole-horizon ceiling), just
-         not with money on hand right now. `required_capital_usd` carries
-         the number so the caller can queue it.
-      4. Otherwise `"paper"`: passed, and affordable now.
+      3. Otherwise every rule passed: `"paper"`. Whether the capital the run
+         needed (`min_capital_usd`, which `required_capital_usd` carries) fits
+         the strategy's OWN money is not a route: it is the fourth step of the
+         ladder (`qlab.ladder`, docs/LADDER.md). Until rules 2026-10-29.3 a
+         run that passed but needed more than a common sum ($3,000, the same
+         for every idea) was routed `"shelf"`; there is no common sum any more
+         (owner, 2026-10-29: «у каждой стратегии свои настройки»). Runs
+         recorded earlier keep the `shelf` they were given.
 
     `"live"` is never returned — promotion to real money is a human
     decision informed by forward (paper) evidence, never a direct output of
@@ -858,18 +857,10 @@ def decide_route(
             required_capital_usd=metrics.get("min_capital_usd"),
         )
 
-    required = metrics.get("min_capital_usd")
-    if required is not None and required > deployable_capital_usd:
-        return RoutingDecision(
-            route="shelf",
-            reason=(
-                f"passed but needs ${required:,.0f} minimum capital; "
-                f"only ${deployable_capital_usd:,.0f} is deployable now"
-            ),
-            required_capital_usd=required,
-        )
-
-    return RoutingDecision(route="paper", reason="passed and affordable")
+    return RoutingDecision(
+        route="paper", reason="passed every rule",
+        required_capital_usd=metrics.get("min_capital_usd"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -950,7 +941,6 @@ def decide_fit_forward_route(
     selection: EvaluationResult | None,
     forward: EvaluationResult | None,
     metrics: dict[str, float],
-    deployable_capital_usd: float,
     params_fixed_at: date | None,
 ) -> RoutingDecision:
     """`_decide_fit_forward`, then -- when the ruleset asks for it
@@ -960,7 +950,7 @@ def decide_fit_forward_route(
     not rest on the forward test."""
     routing = _decide_fit_forward(
         ruleset=ruleset, selection=selection, forward=forward, metrics=metrics,
-        deployable_capital_usd=deployable_capital_usd, params_fixed_at=params_fixed_at,
+            params_fixed_at=params_fixed_at,
     )
     need = ruleset.regime_coverage_days
     if (need is None or forward is None or routing.route == "needs-forward"
@@ -1035,7 +1025,6 @@ def _decide_fit_forward(
     selection: EvaluationResult | None,
     forward: EvaluationResult | None,
     metrics: dict[str, float],
-    deployable_capital_usd: float,
     params_fixed_at: date | None,
 ) -> RoutingDecision:
     """The route of a run judged under a ruleset with `forward_resolution`.
@@ -1122,7 +1111,7 @@ def _decide_fit_forward(
             required_capital_usd=metrics.get("min_capital_usd"),
         )
 
-    routing = decide_route(forward, metrics, deployable_capital_usd)
+    routing = decide_route(forward, metrics)
     if selection is None:
         # No selection period: the forward test is judged on its own. A
         # failure only of rules that ask "separable from luck?" on a window
@@ -1291,7 +1280,6 @@ def evaluate_spec(
     *,
     session: Session,
     ruleset: RuleSet,
-    deployable_capital_usd: float,
     extra_metrics: (
         Mapping[str, float] | Callable[[dict[str, float]], Mapping[str, float]] | None
     ) = None,
@@ -1782,7 +1770,6 @@ def evaluate_spec(
             selection=selection_result,
             forward=rules_result if split.forward is not None else None,
             metrics=metrics,
-            deployable_capital_usd=deployable_capital_usd,
             params_fixed_at=spec.params_fixed_at,
         )
         # Facts for whoever reads the run, read by no rule: whether a forward
@@ -1793,14 +1780,13 @@ def evaluate_spec(
             metrics["selection_rules_failed"] = float(
                 sum(1 for row in selection_result.rows if row.passed is False))
     else:
-        routing = decide_route(rules_result, metrics, deployable_capital_usd)
+        routing = decide_route(rules_result, metrics)
     review: RouteReview | None = None
     if review_route is not None and not exploratory:
         review = review_route(RoutingContext(
             spec=spec, ruleset=ruleset, routing=routing, metrics=metrics,
             rules_result=rules_result, selection_result=selection_result,
             forward_judged=split_mode and split.forward is not None,
-            deployable_capital_usd=deployable_capital_usd,
             range_start=range_start, range_end=range_end))
         if review is not None:
             routing = review.routing

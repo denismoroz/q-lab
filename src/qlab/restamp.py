@@ -346,7 +346,7 @@ def find_items(session, *, specs: Mapping[str, list[Path]], watch: Collection[st
 
 
 def restamp_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
-                  deployable_capital_usd: float = 3000.0, stop_at: datetime | None = None,
+                  stop_at: datetime | None = None,
                   only: Collection[str] | None = None, no_cap: bool = False,
                   config_path: Path = CONFIG, spec_dir: Path = SPEC_DIR,
                   ledger_path: Path = LEDGER, watch_config: Path = WATCHLIST,
@@ -390,7 +390,7 @@ def restamp_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
     cap = max_ideas if max_ideas is not None else (
         None if (only or no_cap) else cfg.max_ideas_per_night)
     run = _Run(day=day, state=state, block=block, cfg=cfg, stage2_config=stage2_config,
-               noise_trials=noise_trials, deployable_capital_usd=deployable_capital_usd,
+               noise_trials=noise_trials,
                ledger=ledger, ledger_path=ledger_path, specs=specs,
                dry_run=dry_run, stand=STAND_VERSION, rules=rules)
     handled = 0
@@ -434,7 +434,6 @@ class _Run:
     cfg: Config
     stage2_config: object
     noise_trials: int
-    deployable_capital_usd: float
     ledger: dict
     ledger_path: Path
     specs: Mapping[str, list[Path]]
@@ -482,8 +481,7 @@ class _Run:
         plan = waiting.Plan(item.idea_id, "idea", path, item.route, True,
                             "пересчёт: " + _reasons_ru(item.reasons))
         if "idea" in item.steps:
-            stage1 = waiting.rerun_idea(plan, end, noise_trials=self.noise_trials,
-                                        deployable_capital_usd=self.deployable_capital_usd)
+            stage1 = waiting.rerun_idea(plan, end, noise_trials=self.noise_trials)
             entry["stage1"] = _brief(stage1)
             if stage1["action"] == "error":
                 entry.update(action="error", error=f"первый этап: {stage1.get('error')}")
@@ -503,8 +501,7 @@ class _Run:
                                  "пересчёт: " + _reasons_ru(item.reasons))
         entry["steps"] = [*item.steps, *(["stage2"] if "stage2" not in item.steps else [])]
         second = waiting.rerun_stage2(
-            plan2, end, stage1=stage1, noise_trials=self.noise_trials,
-            deployable_capital_usd=self.deployable_capital_usd, config=self.stage2_config)
+            plan2, end, stage1=stage1, noise_trials=self.noise_trials, config=self.stage2_config)
         entry["stage2"] = _brief(second)
         if second["action"] == "error":
             entry.update(action="error", error=f"второй этап: {second.get('error')}")

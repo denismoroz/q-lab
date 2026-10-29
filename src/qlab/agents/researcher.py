@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from qlab import fixation
 from qlab.agents.implementer import _changed_paths, _revert
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.capital_text import basis_ru, headline, min_capital_ru, numbers_ru
@@ -197,11 +198,15 @@ Write two kinds of files and nothing else:
    trial.
    Where long history exists, prefer a variant on it: Binance (`data.source: binance`, history
    since 2019; see specs/bv2-binance.yaml, specs/trend-binance-cap.yaml). Set
-   params_fixed_at to the CUT DATE stated in the evidence file, with params_fixed_evidence
-   "declared by the researcher on {today}: fix designed on the data before <cut date>;
-   <hypothesis>". The data after the cut is then the fix's forward test, and the stand judges
-   it at once. Never set params_fixed_at to {today} for a fixed-parameter fix on history: it
-   has no forward test until data after today accumulates.
+   params_fixed_at to the day the code names (owner, 2026-10-29, docs/FIXATION.md): the start
+   of the LAST THIRD of the spec's own window, data.start + round(2/3 of the days to data.end),
+   with params_fixed_evidence "declared by the researcher on {today}: fix designed on the data
+   before <that day>; <hypothesis>". The data after it is then the fix's forward test, and the
+   stand judges it at once. You may write a LATER day only with a source (the paper whose
+   numbers were fitted up to it, cited under sources.params_fixed_at); an earlier or a missing
+   day is corrected by code to the named one and the memo says so. Never set params_fixed_at
+   to {today} for a fixed-parameter fix on history: it has no forward test until data after
+   today accumulates.
    Where only a short history exists (Hyperliquid only, as for FRAB), the same applies with
    the cut of the evidence, but its held-out part is short: say in the memo that the result is
    preliminary. A preliminary result does not block anything; you keep working.
@@ -317,8 +322,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     return outcome
 
 
-def second_stage_lines(experiment, judged, opened: dict, result, *, noise_trials: int,
-                       deployable_capital_usd: float) -> list[str]:
+def second_stage_lines(experiment, judged, opened: dict, result, *, noise_trials: int) -> list[str]:
     """The second stage of an experiment that survived stage 1 on Binance's history, as nested
     report lines (docs/TWO_STAGE.md). The same call the generator makes after a stage 1
     survivor (`qlab.pipeline.stage2.run_stage2`, not a measurement): the same mechanism and
@@ -351,14 +355,14 @@ def second_stage_lines(experiment, judged, opened: dict, result, *, noise_trials
                                                date.fromisoformat(opened["cut"]))
         outcome = stage2.run_stage2(
             spec, stage1_route=route, stage1_trial_id=result.trial_id, noise_trials=noise_trials,
-            deployable_capital_usd=deployable_capital_usd, config=config)
+            config=config)
         return [f"  - {line}" for line in stage2.report_lines({"route": route}, asdict(outcome))]
     except Exception as exc:  # noqa: BLE001 - one line in the memo, the other experiments run
         return [f"  - второй этап: сбой {type(exc).__name__}: {exc}"]
 
 
-def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_trials: int = 200,
-                    deployable_capital_usd: float = 3000.0) -> list[str]:
+def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
+                    noise_trials: int = 200) -> list[str]:
     """Run declared experiments on the stand (matched noise, every rule) and
     append their results to the memo -- numbers written by code, not by the
     researcher. An experiment that survives stage 1 on Binance's history goes on to the
@@ -376,6 +380,10 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
     lines = ["", "## Эксперименты на стенде (записано кодом, не исследователем)", ""]
     for spec_path in spec_paths:
         try:
+            # The day the numbers were fixed is named by code (owner, 2026-10-29, docs/FIXATION.md):
+            # an earlier or missing day is corrected before anything runs, and the memo says so.
+            if (named := fixation.normalise_file(spec_path)) is not None:
+                lines.append(f"- день фиксации назвал код: {named}")
             experiment = load_spec(spec_path)
         except Exception as exc:  # noqa: BLE001
             lines.append(f"- `{spec_path}`: спек не загружается: {exc}")
@@ -393,11 +401,9 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
                 # Open numbers (qlab.own_numbers, owner 2026-10-26): every value a trial,
                 # then the spec that chooses one at the cut and is judged after it.
                 judged, opened = own_numbers.prepare(
-                    experiment, session, load_latest(),
-                    deployable_capital_usd=deployable_capital_usd)
+                    experiment, session, load_latest())
                 result = evaluate_spec_with_shape_aware_bar(
-                    judged, session=session, ruleset=load_latest(),
-                    deployable_capital_usd=deployable_capital_usd, n_trials=noise_trials).candidate
+                    judged, session=session, ruleset=load_latest(), n_trials=noise_trials).candidate
             m = result.metrics or {}
             own = (f" [свои числа: {len(opened['candidate_trials'])} вариантов записаны "
                    f"испытаниями, выбор на данных до {opened['cut']}, вердикт — по дням с него]"
@@ -413,8 +419,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
             if years := years_line(m):
                 lines.append(f"  - {years}")
             lines += second_stage_lines(experiment, judged, opened, result,
-                                        noise_trials=noise_trials,
-                                        deployable_capital_usd=deployable_capital_usd)
+                                        noise_trials=noise_trials)
         except Exception as exc:  # noqa: BLE001
             lines.append(f"- `{experiment.idea_id}`: прогон упал: {type(exc).__name__}: {exc}")
     with memo.open("a", encoding="utf-8") as fh:

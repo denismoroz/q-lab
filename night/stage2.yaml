@@ -23,21 +23,13 @@ venue: hyperliquid
 # decision, not the code's.
 data_start: 2025-01-01
 
-# Hyperliquid's costs, replacing Binance's (the numbers are not strategy parameters,
-# nothing is refitted). Each number is cited where `source_problems` can find it.
+# Hyperliquid's costs, replacing Binance's, are the `hyperliquid` row of the cost table
+# (night/costs.yaml, qlab.costs, docs/COSTS.md): one table per venue, each number with its
+# source, so a second stage and a spec written for Hyperliquid are priced the same way. The
+# numbers are not strategy parameters, nothing is refitted. Only the liquidity floor below is
+# stage 2's own.
 costs:
-  taker_fee_bps: 4.5
-  slippage_bps: 0.9
   sources:
-    costs.taker_fee_bps: >-
-      docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0,
-      0.045% (4.5 bps), the Fees table of
-      https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
-      a book of a few thousand dollars trades at the base tier
-    costs.slippage_bps: >-
-      derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
-      «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid's own cost
-      estimate, whose slippage part is 0.9
     min_daily_volume_usd: >-
       funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
       MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live

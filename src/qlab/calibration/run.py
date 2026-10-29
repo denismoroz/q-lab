@@ -202,7 +202,6 @@ def run_noise_series(
     n_trials: int,
     session: Session,
     ruleset: RuleSet,
-    deployable_capital_usd: float,
     reference: StrategySpec,
     seed_offset: int = 0,
     replace_unusable: bool = False,
@@ -230,8 +229,7 @@ def run_noise_series(
     Blocks until every book is done; `start_noise_series` lets the caller do other work meanwhile.
     """
     return start_noise_series(
-        series=series, n_trials=n_trials, session=session, ruleset=ruleset,
-        deployable_capital_usd=deployable_capital_usd, reference=reference,
+        series=series, n_trials=n_trials, session=session, ruleset=ruleset, reference=reference,
         seed_offset=seed_offset, replace_unusable=replace_unusable).result()
 
 
@@ -240,7 +238,7 @@ class NoiseRun:
     pool. `result()` waits for them and returns what `run_noise_series` returns."""
 
     def __init__(self, *, series: str, n_trials: int, seed_offset: int, replace_unusable: bool,
-                 session: Session, ruleset: RuleSet, deployable_capital_usd: float,
+                 session: Session, ruleset: RuleSet,
                  reference: StrategySpec, first: list[NoiseTrial] | list[Future]) -> None:
         self._series = series
         self._n_trials = n_trials
@@ -248,7 +246,6 @@ class NoiseRun:
         self._replace_unusable = replace_unusable
         self._session = session
         self._ruleset = ruleset
-        self._capital = deployable_capital_usd
         self._reference = reference
         self._first = first
         self._trials: list[NoiseTrial] | None = None
@@ -286,7 +283,7 @@ class NoiseRun:
             drawn_extra += count
             trials += [replace(t, replacement=True) for t in _run_jobs(
                 extra_jobs, session=self._session, ruleset=self._ruleset,
-                deployable_capital_usd=self._capital, reference=self._reference)]
+                    reference=self._reference)]
         return trials
 
 
@@ -296,7 +293,6 @@ def start_noise_series(
     n_trials: int,
     session: Session,
     ruleset: RuleSet,
-    deployable_capital_usd: float,
     reference: StrategySpec,
     seed_offset: int = 0,
     replace_unusable: bool = False,
@@ -321,25 +317,22 @@ def start_noise_series(
     if workers > 1 and _shared_database(session):
         session.commit()
         first: list = _submit_jobs(jobs, workers=workers, ruleset=ruleset,
-                                   deployable_capital_usd=deployable_capital_usd,
                                    reference=reference)
     else:
-        first = _run_jobs(jobs, session=session, ruleset=ruleset,
-                          deployable_capital_usd=deployable_capital_usd, reference=reference)
+        first = _run_jobs(jobs, session=session, ruleset=ruleset, reference=reference)
     return NoiseRun(series=series, n_trials=n_trials, seed_offset=seed_offset,
                     replace_unusable=replace_unusable, session=session, ruleset=ruleset,
-                    deployable_capital_usd=deployable_capital_usd, reference=reference,
+                        reference=reference,
                     first=first)
 
 
 def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: RuleSet,
-              deployable_capital_usd: float, reference: StrategySpec) -> list[NoiseTrial]:
+              reference: StrategySpec) -> list[NoiseTrial]:
     """The books `jobs` name -- (series, generator, seed) -- in worker processes when the
     registry is shared, else in this process."""
     workers = min(noise_workers(), len(jobs))
     if workers > 1 and _shared_database(session):
         futures = _submit_jobs(jobs, workers=workers, ruleset=ruleset,
-                               deployable_capital_usd=deployable_capital_usd,
                                reference=reference)
         return [f.result() for f in futures]
     trials: list[NoiseTrial] = []
@@ -349,7 +342,7 @@ def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: Ru
         )
         trials.append(NoiseTrial(
             series=series_, generator=generator, seed=seed,
-            evaluation=_evaluate_noise(spec, session, ruleset, deployable_capital_usd)))
+            evaluation=_evaluate_noise(spec, session, ruleset)))
     return trials
 
 
@@ -370,12 +363,11 @@ def _shared_database(session: Session) -> bool:
 
 
 def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
-                    deployable_capital_usd: float, spec_row_id: int | None = None) -> Evaluation:
+                    spec_row_id: int | None = None) -> Evaluation:
     return evaluate_spec(
         spec,
         session=session,
         ruleset=ruleset,
-        deployable_capital_usd=deployable_capital_usd,
         # A noise idea is a measuring instrument, not a candidate: its
         # status must never move (docs/TASKS.md T31).
         update_idea_status=False,
@@ -392,10 +384,10 @@ def _noise_job(job: tuple[str, str, int, StrategySpec, RuleSet, float, int]) -> 
     """One noise book in a worker process, in its own registry session."""
     from qlab.registry.db import session_scope
 
-    series, generator, seed, reference, ruleset, deployable_capital_usd, spec_row_id = job
+    series, generator, seed, reference, ruleset, spec_row_id = job
     spec = build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
     with session_scope() as session:
-        evaluation = _evaluate_noise(spec, session, ruleset, deployable_capital_usd, spec_row_id)
+        evaluation = _evaluate_noise(spec, session, ruleset, spec_row_id)
     return NoiseTrial(series=series, generator=generator, seed=seed, evaluation=evaluation)
 
 
@@ -455,7 +447,7 @@ atexit.register(shutdown_pool)
 
 
 def _submit_jobs(jobs: list[tuple[str, str, int]], *, workers: int, ruleset: RuleSet,
-                 deployable_capital_usd: float, reference: StrategySpec) -> list[Future]:
+                 reference: StrategySpec) -> list[Future]:
     """Hand the books to the shared pool; returns their futures in the order of `jobs`.
 
     The numbers are the same as in one process: each book is fixed by (series, generator,
@@ -470,7 +462,7 @@ def _submit_jobs(jobs: list[tuple[str, str, int]], *, workers: int, ruleset: Rul
         row_ids = ensure_spec_rows(own, [
             build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
             for series, generator, seed in jobs])
-    work = [(series, generator, seed, reference, ruleset, deployable_capital_usd, row_id)
+    work = [(series, generator, seed, reference, ruleset, row_id)
             for (series, generator, seed), row_id in zip(jobs, row_ids, strict=True)]
     try:
         pool = shared_pool(workers)
@@ -485,7 +477,6 @@ def run_real_strategies(
     *,
     session: Session,
     ruleset: RuleSet,
-    deployable_capital_usd: float,
     spec_paths: dict[str, Path] | None = None,
 ) -> dict[str, Evaluation]:
     """Run the real strategies (default: trend, Bv2, FRAB) through the same
@@ -498,7 +489,7 @@ def run_real_strategies(
     for idea_id, path in paths.items():
         spec = load_spec(path)
         results[idea_id] = evaluate_spec(
-            spec, session=session, ruleset=ruleset, deployable_capital_usd=deployable_capital_usd
+            spec, session=session, ruleset=ruleset
         )
     return results
 

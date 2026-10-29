@@ -146,9 +146,9 @@ def _stand(monkeypatch, panel: MarketPanel, ruleset: RuleSet) -> None:
     monkeypatch.setattr("qlab.pipeline.evaluate.resolve_panel", lambda session, spec: panel)
     monkeypatch.setattr("qlab.rules.loader.load_latest", lambda: ruleset)
 
-    def bar(spec, *, session, ruleset, deployable_capital_usd, n_trials):
+    def bar(spec, *, session, ruleset, n_trials):
         return types.SimpleNamespace(candidate=evaluate_spec(
-            spec, session=session, ruleset=ruleset, deployable_capital_usd=deployable_capital_usd,
+            spec, session=session, ruleset=ruleset,
             check_lookahead=False))
 
     monkeypatch.setattr("qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar", bar)
@@ -167,7 +167,7 @@ def _set_status(idea_id: str, status: IdeaStatus) -> None:
 def _run(tmp_path: Path, route: str | None = "paper", **kw) -> stage2.Stage2Result:
     kw.setdefault("config", CONFIG)
     return stage2.run_stage2(_spec(), stage1_route=route, stage1_trial_id=None, noise_trials=1,
-                             deployable_capital_usd=3000.0, spec_dir=tmp_path / "stage2", **kw)
+                             spec_dir=tmp_path / "stage2", **kw)
 
 
 # ---- the translation ------------------------------------------------------------------
@@ -370,7 +370,7 @@ def test_a_book_missing_a_required_spot_leg_on_the_venue_is_not_evaluable_with_a
 
     result = stage2.run_stage2(
         spec, stage1_route="paper", stage1_trial_id=None, noise_trials=1,
-        deployable_capital_usd=3000.0, spec_dir=tmp_path / "stage2", config=config,
+            spec_dir=tmp_path / "stage2", config=config,
         venue_names=listing)
 
     assert result.status == "not-evaluable" and result.route == "not-evaluable"
@@ -669,7 +669,7 @@ def test_a_missing_config_is_the_results_error_and_never_breaks_stage_1(
         registry, tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)  # no night/stage2.yaml here
     result = stage2.run_stage2(_spec(), stage1_route="paper", stage1_trial_id=3, noise_trials=1,
-                               deployable_capital_usd=3000.0, spec_dir=tmp_path / "s")
+                               spec_dir=tmp_path / "s")
     assert result.status == "error" and "night/stage2.yaml" in result.error
     assert result.stage1_route == "paper" and _status(PARENT) == IdeaStatus.CANDIDATE
 
@@ -799,9 +799,9 @@ def _stand_without_power(monkeypatch, history: confirm.Stage1History | Exception
     _stand(monkeypatch, _trending_market(), CONFIRMING)
     calls: list = []
 
-    def bar(spec, *, session, ruleset, deployable_capital_usd, n_trials, review_route=None):
+    def bar(spec, *, session, ruleset, n_trials, review_route=None):
         return types.SimpleNamespace(candidate=evaluate_spec(
-            spec, session=session, ruleset=ruleset, deployable_capital_usd=deployable_capital_usd,
+            spec, session=session, ruleset=ruleset,
             check_lookahead=False, review_route=review_route,
             extra_metrics={"noise_return_percentile": 0.935, "noise_power": noise_power}))
 
@@ -827,7 +827,7 @@ def _history(drift: float = 0.002, noise: float = 0.03, days: int = 900,
 def _confirm_run(tmp_path, route: str | None = "paper") -> stage2.Stage2Result:
     _set_status(PARENT, IdeaStatus.VALIDATED)
     return stage2.run_stage2(_spec(), stage1_route=route, stage1_trial_id=41, noise_trials=1,
-                             deployable_capital_usd=3000.0, spec_dir=tmp_path / "stage2",
+                             spec_dir=tmp_path / "stage2",
                              config=CONFIG)
 
 
@@ -931,7 +931,7 @@ def test_a_hand_run_measurement_is_never_confirmed(registry, tmp_path, monkeypat
     _set_status(PARENT, IdeaStatus.REJECTED)
 
     result = stage2.run_stage2(_spec(), stage1_route="reject", stage1_trial_id=41,
-                               noise_trials=1, deployable_capital_usd=3000.0,
+                               noise_trials=1,
                                spec_dir=tmp_path / "stage2", config=CONFIG, measure=True)
 
     assert calls == [] and result.confirmation is None and result.route == "needs-forward"

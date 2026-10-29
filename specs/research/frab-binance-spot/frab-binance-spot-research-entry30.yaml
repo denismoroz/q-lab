@@ -76,6 +76,9 @@ costs:
   slippage_bps: 0.9
 
 min_leg_notional: 10.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder
+# compares the capital a run needed with (docs/LADDER.md; cited in sources).
+strategy_capital_usd: 300
 simultaneous_legs: 2
 
 unexpressed_mechanisms: []
@@ -83,6 +86,7 @@ unexpressed_mechanisms: []
 noise_universe: held
 
 sources:
+  "strategy_capital_usd": "the spec's own parameter budget_cap_usdc = 300: владелец 2026-10-25: «блин 90$ это вот очем а? на текущем Frab - так получилось. если нужно 300-400-1000 - давай считать на них.» Total budget; the slot count stays the live 4, so a slot is budget / 4."
   "entry_threshold_apr": "funding-rate-arbitrage/research/portfolio_margin_sweep_expanded.py (line 3, «Config A — research baseline : entry=0.30, exit=-0.15, min_hold=120h»; the same 0.30 is the default of research/multi_exchange.py and the «prod COMBO» of research/wait_time_stats.py)"
   "phase2_exit_threshold": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
   "base_min_hold_hours": "seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)"
@@ -114,6 +118,7 @@ sources:
   "leverage_table": "seed/venue_facts/2026-10-25-hl_max_leverage.csv (Hyperliquid metaAndAssetCtxs, maxLeverage per coin, read 2026-10-25)"
   "universe": "docs/FRAB_BINANCE_SPOT.md (every coin with a Hyperliquid perp and a Binance USDT spot pair; the owner's idea, 2026-10-25: «frab на более чем 4-5 монетах»)"
   "leverage": "seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active and validated, read-only)"
+  "costs.differs_from_table": "7.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (4.5 + 10) / 2; Hyperliquid perp taker 0.045% and Binance spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.taker_fee_bps": "derived: (4.5 + 10) / 2; Hyperliquid perp taker 0.045% and Binance spot taker 0.100% (docs/FRAB_BINANCE_SPOT.md), both legs move by the same amount"
   "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»; measured for Hyperliquid only, the same value is used for the Binance spot leg (unmeasured, docs/FRAB_BINANCE_SPOT.md)"
   "min_leg_notional": "funding-rate-arbitrage/src/frab/strategy/b2/params.py (B2Params.min_order_usd: HL's own minimum order)"

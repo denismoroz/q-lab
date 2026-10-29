@@ -267,7 +267,7 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     others = evaluate_rules(ctx.metrics, without_noise)
     without = decide_fit_forward_route(
         ruleset=without_noise, selection=ctx.selection_result, forward=others,
-        metrics=dict(ctx.metrics), deployable_capital_usd=ctx.deployable_capital_usd,
+        metrics=dict(ctx.metrics),
         params_fixed_at=ctx.spec.params_fixed_at)
     if without.route not in PASSING:
         return None, None  # something other than the noise comparison keeps it waiting

@@ -250,9 +250,10 @@ def test_reason_no_strategy_money_and_the_money_that_exists(session) -> None:
     unmeasured = ladder(session, "rich", money={"rich": 100.0}).steps[3]
 
     assert shelf.reason == Reason.NO_STRATEGY_MONEY and "$8,122" in shelf.detail
-    assert "не деньги стратегии" in shelf.detail
+    assert "сравнить не с чем" in shelf.detail  # no money in the spec: nothing to compare with
     assert fits.outcome == Outcome.PASSED and "$83" in fits.detail and "$257" in fits.detail
-    assert short.outcome == Outcome.FAILED and "не помещается" in short.detail
+    assert short.outcome == Outcome.FAILED
+    assert "нужно $8,122, своих $3,000" in short.detail
     assert unmeasured.outcome == Outcome.PASSED  # $83 <= $100
 
 
@@ -429,15 +430,22 @@ def test_load_ledgers_reads_the_files_and_survives_missing_ones(tmp_path) -> Non
     (tmp_path / "specs" / "deep").mkdir(parents=True)
     (tmp_path / "specs" / "deep" / "an-idea.yaml").write_text("x: 1")
     (tmp_path / "night" / "implement_queue.yaml").write_text("cards:\n  - cards/c1.yaml\n")
-    (tmp_path / "night" / "paper_books.yaml").write_text(
-        "books:\n  b: {strategy_capital_usd: 257}\nlive_books:\n  l: {strategy_capital_usd: 120}\n")
+    (tmp_path / "specs" / "a.yaml").write_text(
+        "idea_id: b\ntitle: x\nmin_leg_notional: 10.0\nstrategy_capital_usd: 257\n")
+    (tmp_path / "specs" / "deep" / "l.yaml").write_text(
+        "idea_id: 'l'\nstrategy_capital_usd: 120.0  # the budget\n")
+    (tmp_path / "specs" / "deep" / "two-a.yaml").write_text(
+        "idea_id: two\nstrategy_capital_usd: 100\n")
+    (tmp_path / "specs" / "deep" / "two-b.yaml").write_text(
+        "idea_id: two\nstrategy_capital_usd: 200\n")  # files that disagree: no sum
     (tmp_path / "night" / "stage2.yaml").write_text("stage1_survives: [paper]\n")
 
     got = lad.load_ledgers(tmp_path)
 
     assert got.twins == {"a": {"reason": "r"}} and got.deferred_twins == {"x"}
     assert got.queue == {"c1"} and got.money == {"b": 257.0, "l": 120.0}
-    assert got.spec_stems == {"an-idea"} and got.stage1_survives == {"paper"}
+    assert got.spec_stems == {"an-idea", "a", "l", "two-a", "two-b"}
+    assert got.stage1_survives == {"paper"}
 
 
 # --------------------------------------------------------------------------
