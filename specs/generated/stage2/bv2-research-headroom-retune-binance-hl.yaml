@@ -71,9 +71,6 @@ costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
 min_leg_notional: 10.0
-# The strategy's own money, the base of every percent and the sum step 4 of the ladder
-# compares the capital a run needed with (docs/LADDER.md; cited in sources).
-strategy_capital_usd: 257
 simultaneous_legs: 2
 execution_venue: hyperliquid
 unexpressed_mechanisms: []
@@ -123,7 +120,8 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-research-headroom-retune-bin
   '
 judged_from: '2025-06-01'
 sources:
-  "strategy_capital_usd": "the spec's own parameter base_params.capital_usd = 257: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), as in specs/research/bv2/bv2-research-headroom-retune.yaml"
+  strategy_capital_usd: 'the spec''s own parameter base_params.capital_usd = 257: seed/prod_params/2026-10-02-b2.json
+    (frab.db strategies.params_json, read-only export), as in specs/research/bv2/bv2-research-headroom-retune.yaml'
   instruments_chosen_at: 'specs/bv2-binance.yaml: params_fixed_at = 2025-06-01, the end of the window
     the coin list was fitted on (params_fit_from 2023-06-01)'
   judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
@@ -155,15 +153,15 @@ sources:
   regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'
-  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0, 0.045%
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
     (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
     a book of a few thousand dollars trades at the base tier'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
     is 0.9'
-  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
-    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
-    by'
   data.spot_legs.AVAX: 'docs/TASKS.md line 638 (spotMeta read 2026-09-22): AVAX is UAVAX (@306), bridge_safe
     in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
     lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its
@@ -176,6 +174,7 @@ sources:
     production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
   data.spot_legs.SOL: 'docs/TASKS.md line 637 (spotMeta read 2026-09-22): SOL is USOL (@156), the token
     production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+strategy_capital_usd: 257.0
 regime_claim:
   bull: earns
   bear: beats_market
