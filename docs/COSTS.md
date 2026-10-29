@@ -69,6 +69,8 @@
 | 7,5 + 0,9 | binance | 3 | 0 | `(5 + 10) / 2`: обе ноги на Binance |
 | 3,5 + 5,0 | hyperliquid | 1 | 0 | опыт про проскальзывание (`trend-research-slippage`): 5,0 — модель бумажной книги тренда |
 
+Полный список файлов: `grep -rl costs.differs_from_table specs`.
+
 **Открытые идеи, чьи издержки отличаются.** Все с источником, поэтому числа не менял; решает владелец.
 
 - 3,5 + 0,9 на Hyperliquid: `trend-research-flat-choice-hl`, `trend-research-gate-hl-causal`,
