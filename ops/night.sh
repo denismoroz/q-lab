@@ -11,6 +11,10 @@
 # on Binance hourly data, ~46 min, before the snapshot-matching fix and the noise
 # worker pool of 2026-10-26 made it ~30 s), the rest goes to the next night.
 STOP_AT="07:10"
+# Binance instruments fetched two at a time (docs/NIGHT_SPEED.md; owner 2026-10-29: «да, включай 2
+# потока»): its funding limit is 500 requests per 5 min and one thread makes about 30 a minute.
+# Hyperliquid stays one at a time whatever this says. Back to 1 if the log shows 429 refusals.
+export QLAB_FETCH_WORKERS=2
 set -u
 cd "$(dirname "$0")/.." || exit 1
 LOG="data/night/logs/$(date -u +%Y-%m-%d).log"
