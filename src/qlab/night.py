@@ -209,15 +209,25 @@ def unwatched_bench(watch: list[str], spec_dir: Path = Path("specs")) -> list[st
 
 
 def graveyard_specs(spec_dir: Path = Path("specs")) -> list[Path]:
-    """Spec files of ideas whose status is rejected -- what the weekly
-    regime sweep re-runs."""
+    """Spec files of ideas whose status is rejected -- what the weekly regime sweep re-runs.
+
+    The whole `specs/` tree is walked (owner, 2026-10-29, docs/EVALUATION_PATHS.md П2: the sweep
+    saw 3 of 35 rejected ideas because only the folder's own files were looked at; the rest sat
+    in `specs/research/`, `specs/generated/`). Two kinds of file are left out on purpose: a second
+    stage (`<id>-hl`) follows its first stage and has no sweep of its own, and an overlay variant
+    (`<id>-ov-...`) is judged against its base on one fixed history (`qlab.overlay_stage`).
+    Measured on 2026-10-29: 15 ideas, about half an hour at 110-190 seconds an hourly item with
+    its 200 random books -- under the hour the owner's night can spare on a Sunday."""
+    from qlab.overlay_variants import is_variant_id
     from qlab.registry.db import session_scope
     from qlab.registry.models import Idea, IdeaStatus
+    from qlab.registry.stages import is_stage2_child
 
     with session_scope() as session:
-        rejected = {i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.REJECTED)}
+        rejected = {i.id for i in session.query(Idea).filter(Idea.status == IdeaStatus.REJECTED)
+                    if not is_stage2_child(i) and not is_variant_id(i.id)}
     out = []
-    for path in sorted(spec_dir.glob("*.yaml")):
+    for path in sorted(spec_dir.rglob("*.yaml")):
         try:
             if load_spec(path).idea_id in rejected:
                 out.append(path)

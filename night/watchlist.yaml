@@ -1,24 +1,21 @@
 # Strategies re-evaluated every night on data extended to the last closed day
 # (qlab.night, docs/NIGHT.md): their forward tests grow by a day each night.
 # Edited by hand; a strategy leaves the list when the owner decides.
+#
+# 2026-10-29 (owner, on docs/EVALUATION_PATHS.md: «да, по всем рекомендациям, делай»): the
+# seven lines of ideas the owner had already retired were taken off -- each cost a night's 200
+# random books and a trial for a verdict nobody reads, and the trials counted in deflation. The
+# eighth retired idea, bv2-research-headroom, stays: it is the configuration the paper book
+# b2_cold runs (night/paper_books.yaml), and the paper-against-stand check reads its forward test.
 specs:
   # Hyperliquid, what production trades or could
-  - specs/trend-live-top25-cap.yaml
   - specs/trend-retune-weekly.yaml
-  - specs/trend-retune-daily.yaml
   - specs/bv2-live.yaml
   - specs/frab-live.yaml                               # live money, through frab's own decisions (docs/FRAB_LIVE.md)
   # Binance, the long-history checks
-  - specs/trend-binance-cap.yaml
-  - specs/trend-binance-cap-gated.yaml
   - specs/bv2-binance.yaml
-  # T39: trend's two levels, the best so far (docs/REGIME_DETECT.md); its
-  # level-2 decisions are rebuilt first (night/detectors.yaml)
-  - specs/research/t39/trend-t39-meta.yaml
   # Added 2026-10-10: on the bench but not followed, so their forward tests
   # never grew (owner: «пройди по всем стратегиям на скамейке ...»).
-  - specs/trend-retune-monthly.yaml                   # passed every rule; waits for capital
-  - specs/research/trend/trend-research-gate-hl.yaml  # the simple gate on the venue production trades
-  - specs/research/bv2/bv2-research-headroom.yaml     # the configuration production's b2_cold runs
+  - specs/research/bv2/bv2-research-headroom.yaml     # the configuration production's b2_cold runs (paper book)
   # Added 2026-10-26 (owner: «Добавить b2_retune в список наблюдения ... - хорошо»).
   - specs/research/bv2/bv2-research-headroom-retune.yaml  # production's b2_retune

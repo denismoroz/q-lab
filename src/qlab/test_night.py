@@ -923,3 +923,39 @@ def test_a_failing_stage_is_a_report_line_and_the_rest_of_the_night_runs(
     assert "## Сбои стадий" in text and "**исследователь** (`research`)" in text
     broken = state["results"][0]  # a broken spec file on the watch list is its own row
     assert broken["name"] == "missing/broken.yaml" and "FileNotFoundError" in broken["error"]
+
+
+def test_the_graveyard_sweep_walks_the_whole_spec_tree_but_not_stages_or_variants(
+        tmp_path, monkeypatch) -> None:
+    """Owner, 2026-10-29 (docs/EVALUATION_PATHS.md П2): the sweep saw only the folder's own files;
+    a second stage and an overlay variant are left out on purpose."""
+    import qlab.registry.db as db_module
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import AssetClass, Base, Idea, IdeaStatus, Profile, SourceType
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "g.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    Base.metadata.create_all(db_module.get_engine())
+    ids = {"flat": IdeaStatus.REJECTED, "deep": IdeaStatus.REJECTED, "kept": IdeaStatus.BENCH,
+           "deep-hl": IdeaStatus.REJECTED, "deep-ov-gate": IdeaStatus.REJECTED}
+    with session_scope() as session:
+        for idea_id, status in ids.items():
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                             status=status,
+                             notes="Second stage of deep" if idea_id == "deep-hl" else None)
+        session.get(Idea, "deep-hl").parent_id = "deep"
+    specs = tmp_path / "specs"
+    for rel, idea_id in (("flat.yaml", "flat"), ("research/x/deep.yaml", "deep"),
+                         ("kept.yaml", "kept"), ("generated/stage2/deep-hl.yaml", "deep-hl"),
+                         ("overlays/deep/deep-ov-gate.yaml", "deep-ov-gate")):
+        (specs / rel).parent.mkdir(parents=True, exist_ok=True)
+        (specs / rel).write_text(idea_id, encoding="utf-8")
+    monkeypatch.setattr(night, "load_spec",
+                        lambda p: _spec().model_copy(update={"idea_id": p.read_text()}))
+
+    found = night.graveyard_specs(specs)
+
+    assert [p.relative_to(specs).as_posix() for p in found] == ["flat.yaml", "research/x/deep.yaml"]
