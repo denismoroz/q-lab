@@ -228,6 +228,30 @@ def test_passed_ideas_are_investigated_first_and_only_up_to_the_nightly_limit(
     assert all(v["status"] == "done" for v in ledger.values())
 
 
+def test_a_run_waiting_for_forward_days_is_scanned_but_never_investigated(
+        world, monkeypatch, fake_claude) -> None:  # noqa: F811
+    """Owner, 2026-10-29 (docs/EVALUATION_PATHS.md Р11): the code scans `needs-forward` runs as
+    well; the agent (tokens) reads only the routes named for it."""
+    with db.session_scope() as session:
+        _idea(session, "waiting", status=IdeaStatus.BENCH)
+        world.ids["waiting"] = _trial(session, "waiting", route=TrialRoute.NEEDS_FORWARD,
+                                      metrics={"ann_return_net": 0.1})
+    raw = yaml.safe_load(world.config.read_text(encoding="utf-8"))
+    raw["scan"]["routes"] = ["paper", "shelf", "needs-forward"]
+    raw["investigator"]["investigate_routes"] = ["paper", "shelf"]
+    world.config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    fire(monkeypatch, world, {"waiting": ["implausible_day", "venue_divergence"]})
+    fake_claude(stream(GOOD, tokens=60_000), calls=[CALL_ONE, CALL_TWO])
+
+    state = run_stage(world)
+
+    assert "waiting" in {e["idea"] for e in state["anomalies"]["scans"]}
+    assert "waiting" not in {e["idea"] for e in state["anomalies"].get("investigations", [])}
+    with db.session_scope() as session:
+        assert session.query(AnomalyScan).filter_by(idea_id="waiting").count() == 1
+        assert session.query(AnomalyInvestigation).count() == 0
+
+
 def test_a_trial_is_not_investigated_again_under_the_same_flags(
         world, monkeypatch, fake_claude) -> None:  # noqa: F811
     fire(monkeypatch, world, {"alpha": ["implausible_day"]})

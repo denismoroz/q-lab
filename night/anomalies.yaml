@@ -24,7 +24,13 @@ scan:
   # the runs that passed every rule they can be judged by (paper: passed and runnable now;
   # shelf: passed, short of capital; needs-infrastructure: passed, not runnable here). These
   # are the runs that reach the owner, where a false pass costs something.
-  routes: [paper, shelf, needs-infrastructure]
+  # 2026-10-29 (owner, on docs/EVALUATION_PATHS.md, Р11: «да, по всем рекомендациям, делай»):
+  # needs-forward is scanned too. Its flags had fired on four XSMOM twins while their route was
+  # `paper`, and a result waiting for forward days is a result that will be read later; the
+  # flags decide nothing, so scanning more routes changes no status and no verdict. The version
+  # below is NOT bumped: it names the flag lines, which are unchanged, and a new version would
+  # make every stored scan stale and the agent investigate the runs it has already read again.
+  routes: [paper, shelf, needs-infrastructure, needs-forward]
   latest_only: true
   # A scan re-runs a trial (seconds for a daily book, more for an hourly one); at most this
   # many a night, the rest wait.
@@ -182,3 +188,6 @@ investigator:
   calls_dir: data/anomalies/calls
   # Routes that mean "passed and on its way to the owner": investigated first.
   passed_routes: [paper]
+  # Routes whose flagged runs the agent investigates (tokens): the ones the detector scanned
+  # before 2026-10-29. The scan of needs-forward runs is code only and stops there.
+  investigate_routes: [paper, shelf, needs-infrastructure]

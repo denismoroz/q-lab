@@ -67,13 +67,18 @@ def scan_candidates(session, cfg: Config, *, only: Collection[str] | None = None
     """(trial id, idea id) of the runs to scan: for each idea (calibration noise excluded) its
     latest routed run when the route is one of `scan.routes` and the run has no scan under the
     current version (`rescan`: also those that have one). Passed (`paper`) runs first, newest
-    first."""
+    first. An idea that is closed (rejected, retired, decayed) is not picked when `only` is not
+    given: the scan reads results somebody still looks at (2026-10-29, when it began to read the
+    runs that wait for forward days as well and the closed ones became most of the list)."""
+    from qlab.registry.lifecycle import CLOSED_STATUSES
     from qlab.registry.models import Idea
     from qlab.registry.stages import latest_routed
 
     found: list[tuple[int, str, str]] = []
     for idea in session.query(Idea).order_by(Idea.id):
         if idea.id.startswith("noise-") or (only is not None and idea.id not in only):
+            continue
+        if only is None and idea.status in CLOSED_STATUSES:
             continue
         routed = latest_routed(session, idea.id)
         if routed is None:
@@ -120,6 +125,9 @@ def investigation_candidates(session, cfg: Config, ledger: dict, *,
     for row in store.latest_scans(session, all_scans=False):
         if row.config_version != cfg.version or not row.fired:
             continue
+        if (cfg.investigator.investigate_routes is not None
+                and row.route not in cfg.investigator.investigate_routes):
+            continue  # scanned for the record; the agent reads only the routes named for it
         if only is not None and row.idea_id not in only:
             continue
         stamp = store.fingerprint(row.fired, row.config_version)

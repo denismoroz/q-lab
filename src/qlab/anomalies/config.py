@@ -74,6 +74,10 @@ class Investigator:
     calls_dir: Path
     """Where each investigation's log of toolkit calls is kept (data/anomalies/calls)."""
     passed_routes: tuple[str, ...] = ("paper",)
+    investigate_routes: tuple[str, ...] | None = None
+    """Routes whose flagged runs the agent investigates; None: every scanned route. Since
+    2026-10-29 the code scans more routes than the agent reads (night/anomalies.yaml): a scan is
+    seconds of code, an investigation is tokens."""
 
 
 @dataclass(frozen=True)
@@ -132,7 +136,9 @@ def parse_config(raw: Mapping[str, Any], *, source: str = "night/anomalies.yaml"
             max_per_night=int(inv["max_per_night"]), max_attempts=int(inv["max_attempts"]),
             max_programmer_requests=int(inv["max_programmer_requests"]),
             calls_dir=Path(str(inv["calls_dir"])),
-            passed_routes=tuple(str(r) for r in inv.get("passed_routes", ("paper",)))))
+            passed_routes=tuple(str(r) for r in inv.get("passed_routes", ("paper",))),
+            investigate_routes=(None if inv.get("investigate_routes") is None else
+                                tuple(str(r) for r in inv["investigate_routes"]))))
 
 
 __all__ = ["CONFIG", "FLAGS", "REQUIRED", "Config", "FlagLine", "Investigator", "Scan",
