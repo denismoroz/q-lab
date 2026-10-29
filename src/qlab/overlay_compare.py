@@ -12,6 +12,14 @@ variant from its first choice). The comparison is made on the days BOTH are judg
 later of the two starts to the end. Each side is back-tested on exactly that slice, the way the
 stand tests a judged part (`run_backtest` on the slice), so the two are like with like.
 
+**The money.** Both sides are read on the strategy's own money (docs/CAPITAL_BASE.md, owner,
+2026-10-29: «было бы здорово пофиксить это везде»): each day's return is a share of the capital
+the strategy started with, summed over days for a strategy that does not reinvest (Bv2), compounded
+for one that does. A variant takes its base and its choice from the strategy it wraps, so the two
+sides share one base. A strategy whose base is undefined (Bv2 with deposits), or a pair that
+disagrees about reinvesting, is compared on the stand's shares as before and the record says so
+(`on_capital` false).
+
 **The test.** The daily net returns of the two are paired by day. The statistic is the
 difference of their annualised Sharpe ratios (variant minus base), the stand's own risk-adjusted
 measure. Its uncertainty comes from a **paired moving-block bootstrap**: days are resampled in
@@ -82,13 +90,15 @@ class Prepared:
     extra_cost: pd.Series | None
     judged_from_row: int
     """The first row of the part the spec is judged on (`judged_rows`)."""
+    capital: object = None
+    """The strategy's `CapitalSetup` (its own money's base and declared reinvest choice)."""
 
 
 def prepare(spec: StrategySpec, session, ruleset=None) -> Prepared:
     """Run `spec`'s strategy on the snapshot already on disk (never fetches) and find the first
     row it is judged on."""
     from qlab.harness.costs import CostModel
-    from qlab.harness.strategy import own_costs
+    from qlab.harness.strategy import capital_setup, own_costs
     from qlab.pipeline.evaluate import (
         complete_book_window,
         cut_truncated_history,
@@ -113,12 +123,19 @@ def prepare(spec: StrategySpec, session, ruleset=None) -> Prepared:
                       slippage_bps=spec.costs.slippage_bps)
     return Prepared(spec=spec, panel=panel, weights=weights, costs=costs,
                     extra_cost=own_costs(strategy, panel, spec.params),
-                    judged_from_row=rows.judged[0])
+                    judged_from_row=rows.judged[0],
+                    capital=capital_setup(strategy, panel, spec.params))
 
 
-def daily_from(run: Prepared, first_row: int) -> tuple[pd.Series, pd.Series | None]:
+def daily_from(run: Prepared, first_row: int, *, on_capital: bool = False
+               ) -> tuple[pd.Series, pd.Series | None]:
     """The strategy's net return per UTC day from `first_row` to the end of the panel, and the
-    same days' return of simply holding the coins it holds (None when it holds nothing)."""
+    same days' return of simply holding the coins it holds (None when it holds nothing).
+
+    With `on_capital` the first series is the strategy's own money's (docs/CAPITAL_BASE.md): each
+    day's share of the capital it started with, the days of a strategy that does not reinvest
+    summed within a day instead of compounded. The held-coins series is the same either way
+    (a basket fully in the coins, a description of its own)."""
     from qlab.harness.metrics import hold_returns
     from qlab.harness.run import run_backtest
     from qlab.pipeline.evaluate import _slice_rows
@@ -126,15 +143,19 @@ def daily_from(run: Prepared, first_row: int) -> tuple[pd.Series, pd.Series | No
     last = len(run.panel.prices.index) - 1
     part_panel = _slice_rows(run.panel, first_row, last)
     part_weights = run.weights.iloc[first_row:last + 1]
+    kwargs = run.capital.kwargs if on_capital else {}
     result = run_backtest(part_panel, part_weights, run.costs, part_panel.funding,
-                          extra_cost=run.extra_cost)
-    net = _per_day(result.net_return)
+                          extra_cost=run.extra_cost, **kwargs)
+    net = _per_day(result.capital_return if on_capital else result.net_return,
+                   additive=on_capital and not result.capital_reinvested)
     held = hold_returns(part_panel.prices, part_weights, result.net_return.index)
     return net, None if held is None else _per_day(held).reindex(net.index).fillna(0.0)
 
 
-def _per_day(returns: pd.Series) -> pd.Series:
+def _per_day(returns: pd.Series, additive: bool = False) -> pd.Series:
     days = pd.DatetimeIndex(returns.index).tz_convert("UTC").normalize()
+    if additive:
+        return returns.astype(float).groupby(days).sum()
     return (1.0 + returns.astype(float)).groupby(days).prod() - 1.0
 
 
@@ -147,9 +168,21 @@ def sharpe(daily: np.ndarray) -> float:
     return float(daily.mean() / std * math.sqrt(DAYS_PER_YEAR)) if std > 1e-15 else 0.0
 
 
-def window_metrics(daily: pd.Series) -> dict[str, float]:
-    """Total, annual return, worst fall from a peak and Sharpe of a daily return series."""
+def window_metrics(daily: pd.Series, additive: bool = False) -> dict[str, float]:
+    """Total, annual return, worst fall from a peak and Sharpe of a daily return series.
+    `additive`: the days are shares of a constant capital and add up (a strategy that does not
+    reinvest); the worst fall is then in points of that capital."""
     values = daily.to_numpy(dtype=float)
+    if additive:
+        total = float(values.sum())
+        curve = np.cumsum(values)
+        return {
+            "days": len(values),
+            "total_return": total,
+            "ann_return": total * DAYS_PER_YEAR / len(values),
+            "max_dd": float((curve - np.maximum.accumulate(np.maximum(curve, 0.0))).min()),
+            "sharpe": sharpe(values),
+        }
     growth = np.cumprod(1.0 + values)
     total = float(growth[-1] - 1.0)
     days = len(values)
@@ -178,7 +211,9 @@ def _sharpe_rows(values: np.ndarray) -> np.ndarray:
                     ) * math.sqrt(DAYS_PER_YEAR)
 
 
-def _annual_rows(values: np.ndarray) -> np.ndarray:
+def _annual_rows(values: np.ndarray, additive: bool = False) -> np.ndarray:
+    if additive:
+        return values.sum(axis=1) * DAYS_PER_YEAR / values.shape[1]
     growth = np.prod(1.0 + values, axis=1)
     return np.where(growth > 0, np.abs(growth) ** (DAYS_PER_YEAR / values.shape[1]) - 1.0, -1.0)
 
@@ -191,7 +226,7 @@ def _two_sided(draws: np.ndarray) -> float:
 
 
 def bootstrap_difference(base: pd.Series, variant: pd.Series, *, n_boot: int = N_BOOT,
-                         seed: int = SEED) -> dict[str, object]:
+                         seed: int = SEED, additive: bool = False) -> dict[str, object]:
     """The paired moving-block bootstrap of variant minus base (module docstring)."""
     if not base.index.equals(variant.index):
         raise ValueError("the two series must be on the same days")
@@ -201,7 +236,7 @@ def bootstrap_difference(base: pd.Series, variant: pd.Series, *, n_boot: int = N
     block = max(2, round(n ** (1 / 3)))
     idx = _block_indices(n, block, n_boot, np.random.default_rng(seed))
     sharpe_d = _sharpe_rows(b[idx]) - _sharpe_rows(a[idx])
-    annual_d = _annual_rows(b[idx]) - _annual_rows(a[idx])
+    annual_d = _annual_rows(b[idx], additive) - _annual_rows(a[idx], additive)
     mean_d = (b[idx] - a[idx]).mean(axis=1) * DAYS_PER_YEAR
 
     def interval(draws: np.ndarray) -> list[float]:
@@ -216,13 +251,14 @@ def bootstrap_difference(base: pd.Series, variant: pd.Series, *, n_boot: int = N
 
 
 def compare_series(base: pd.Series, variant: pd.Series, *, n_boot: int = N_BOOT,
-                   seed: int = SEED) -> dict[str, object]:
-    """Both series on their common days: each one's numbers, the differences and the bootstrap."""
+                   seed: int = SEED, additive: bool = False) -> dict[str, object]:
+    """Both series on their common days: each one's numbers, the differences and the bootstrap.
+    `additive`: both are shares of a constant capital whose days add up."""
     days = base.index.intersection(variant.index)
     base, variant = base.reindex(days), variant.reindex(days)
     if len(days) < 30:
         raise ValueError(f"only {len(days)} common days: nothing to compare")
-    mb, mv = window_metrics(base), window_metrics(variant)
+    mb, mv = window_metrics(base, additive), window_metrics(variant, additive)
     out: dict[str, object] = {
         "start": days[0].date().isoformat(), "end": days[-1].date().isoformat(),
         "days": len(days), "base": mb, "variant": mv,
@@ -230,7 +266,7 @@ def compare_series(base: pd.Series, variant: pd.Series, *, n_boot: int = N_BOOT,
         "delta_ann_return": mv["ann_return"] - mb["ann_return"],
         "delta_max_dd": mv["max_dd"] - mb["max_dd"],
     }
-    out.update(bootstrap_difference(base, variant, n_boot=n_boot, seed=seed))
+    out.update(bootstrap_difference(base, variant, n_boot=n_boot, seed=seed, additive=additive))
     return out
 
 
@@ -262,10 +298,16 @@ def compare_specs(base: StrategySpec, variant: StrategySpec, session, *, n_boot:
     if not run_base.panel.prices.index.equals(run_variant.panel.prices.index):
         raise ValueError("the base and the variant are not on the same bars")
     first = max(run_base.judged_from_row, run_variant.judged_from_row)
-    net_base, _ = daily_from(run_base, first)
-    net_variant, _ = daily_from(run_variant, first)
-    record = compare_series(net_base, net_variant, n_boot=n_boot)
-    record.update(base_id=base.idea_id, variant_id=variant.idea_id,
+    # On the strategy's own money when both sides have a base and agree on whether the profit is
+    # reinvested; otherwise on the stand's shares, and the record says so.
+    on_capital = (run_base.capital.refused is None and run_variant.capital.refused is None
+                  and run_base.capital.reinvested == run_variant.capital.reinvested)
+    additive = on_capital and not run_base.capital.reinvested
+    net_base, _ = daily_from(run_base, first, on_capital=on_capital)
+    net_variant, _ = daily_from(run_variant, first, on_capital=on_capital)
+    record = compare_series(net_base, net_variant, n_boot=n_boot, additive=additive)
+    record.update(on_capital=on_capital, additive=additive, base_id=base.idea_id,
+                  variant_id=variant.idea_id,
                   base_judged_from=run_base.panel.prices.index[run_base.judged_from_row]
                   .date().isoformat(),
                   variant_judged_from=run_variant.panel.prices.index[run_variant.judged_from_row]
@@ -348,6 +390,9 @@ def table(session, base_id: str, store: Path | None = None) -> dict:
                 **{k: record[k] for k in ("start", "end", "days", "base", "variant",
                                           "delta_sharpe", "delta_ann_return", "delta_max_dd",
                                           "delta_sharpe_ci", "delta_sharpe_p")},
+                # A record made before 2026-10-29 is on the stand's shares.
+                "on_capital": bool(record.get("on_capital", False)),
+                "additive": bool(record.get("additive", False)),
                 "corrected_p": corrected_p(record, size),
                 "verdict": verdict(record, size),
                 "verdict_ru": VERDICT_RU[verdict(record, size)],

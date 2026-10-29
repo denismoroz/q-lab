@@ -56,7 +56,7 @@ from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
-from qlab.capital_text import CAP_NUMBERS, capital_suffix
+from qlab.capital_text import CAP_NUMBERS, numbers_ru
 from qlab.directions import active_directions, generator_text
 from qlab.pipeline.sources import QLAB_ROOT
 from qlab.year_view import year_keys, years_line
@@ -828,23 +828,13 @@ def result_line(r: GeneratedResult) -> str:
     if r.error:
         return f"`{r.idea_id}`: прогон упал — {r.error}"
     m = r.metrics
-
-    def pct(key: str) -> str:
-        v = m.get(key)
-        return f"{v:+.1%}" if isinstance(v, int | float) and v == v else "—"
-
-    sharpe = m.get("sharpe_net")
     own = ""
     if r.candidate_trials:
         own = (f" [свои числа: {len(r.candidate_trials)} вариантов записаны отдельными "
                f"испытаниями, выбор на данных до {r.cut}, вердикт — по дням с него]")
+    # The numbers are on the strategy's own money (docs/CAPITAL_BASE.md), the stand's small beside.
     return (f"`{r.idea_id}` (механизм {'свой' if r.mechanism == OWN else r.mechanism}, "
-            f"прогон {r.trial_id}){own}: {r.route} — "
-            f"в год {pct('ann_return_net')}, "
-            f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}, "
-            f"просадка {pct('max_dd')}, "
-            f"обгоняет шум {pct('noise_return_percentile').lstrip('+')}"
-            f"{capital_suffix(m)}")
+            f"прогон {r.trial_id}){own}: {r.route} — {numbers_ru(m)}")
 
 
 __all__ = ["GenerateOutcome", "GeneratedResult", "GeneratedSpec", "MODEL", "Mechanism",

@@ -39,6 +39,7 @@ from pathlib import Path
 import yaml
 
 from qlab import twin, twin_stage
+from qlab.capital_text import headline
 from qlab.card_fields import CardFieldError, CardFields, read_card_fields
 from qlab.pipeline.spec import StrategySpec, load_spec
 
@@ -388,15 +389,18 @@ def table_lines(runs: Mapping[str, Mapping]) -> list[str]:
         if not r or r.get("action") == "skipped":
             continue  # a version that was never due (no baseline on the card) has no row
         m = r.get("metrics") or {} if r.get("action") == "ran" else {}
+        h = headline(m)  # on the strategy's own money when the run has it (CAPITAL_BASE.md)
         rows.append(
             f"| {_label(step, r)} | {r.get('data') or '—'} | "
-            f"{_cell(m, 'ann_return_net', twin_stage.pct)} | "
-            f"{_cell(m, 'sharpe_net', _sharpe)} | {_cell(m, 'max_dd', twin_stage.pct)} | "
-            f"{_cell(m, 'ann_return_net_ex_best_1pct', twin_stage.pct)} | "
+            f"{_cell({'v': h.ann}, 'v', twin_stage.pct)} | "
+            f"{_cell({'v': h.sharpe}, 'v', _sharpe)} | "
+            f"{_cell({'v': h.max_dd}, 'v', twin_stage.pct)} | "
+            f"{_cell({'v': h.ex_best_1pct}, 'v', twin_stage.pct)} | "
             f"{twin_stage.route_ru(r.get('route')) if m else '—'} |")
     if not rows:
         return []
-    return ["", "    | версия | данные | в год | Шарп | просадка | без 1% лучших дней | исход |",
+    return ["", "    Числа — в процентах от денег стратегии (docs/CAPITAL_BASE.md).",
+            "    | версия | данные | в год | Шарп | просадка | без 1% лучших дней | исход |",
             "    |---|---|---|---|---|---|---|", *(f"    {row}" for row in rows), ""]
 
 

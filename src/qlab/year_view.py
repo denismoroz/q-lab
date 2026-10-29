@@ -102,23 +102,13 @@ def _pct(value: float) -> str:
     return f"{'+' if value >= 0 else MINUS}{text}"
 
 
-def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False,
-               capital: bool = True) -> str | None:
-    """One compact line, e.g. «по годам: 2020 +41%, 2021 +88%, 2026 (282 дн.) +1%; без
-    лучшего года (2021): +4% в год; прибыльных лет 5 из 7». None when the run stored no
-    year view, or only a stretch too short to be called a year.
-
-    With `signs`, the line ends with the four signs of the newest ruleset (А Б В Г, each
-    «держится / не держится / не определено» with the reason): the form the reports use.
-    The agents' briefs stay without them.
-
-    With `capital` (the default) and a run that has the year view on the strategy's own money
-    (docs/CAPITAL_BASE.md), the same line on that money follows when it differs from the
-    stand's: «На деньгах стратегии (…): 2025 +15%, …»."""
-    rows = year_rows(metrics)
+def _plain_line(m: Mapping[str, object] | None, *, signs: bool) -> str | None:
+    """The one-line summary of ONE set of year keys (the stand's, or the capital twin under the
+    stand's names)."""
+    rows = year_rows(m)
     if not rows or not (len(rows) >= 2 or rows[0].counted):
         return None
-    m = metrics or {}
+    m = m or {}
     parts = [f"{r.year} ({r.days} дн.) {_pct(r.ret)}" if r.partial else f"{r.year} {_pct(r.ret)}"
              for r in rows]
     line = "по годам: " + ", ".join(parts)
@@ -134,12 +124,39 @@ def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False,
         ruleset = latest_ruleset()
         if ruleset is not None and (tail := signs_sentence(m, ruleset)):
             line += "; " + tail
-    if capital and (cap := capital_view(m)):
-        cap_line = years_line(cap, signs=signs, capital=False)
-        if cap_line and cap_line != line:
-            how = ("прибыль не вкладывается обратно, годы складываются" if reinvests(m) is False
-                   else "прибыль вкладывается, годы склеиваются")
-            line += f". На деньгах стратегии ({how}): " + cap_line.removeprefix("по годам: ")
+    return line
+
+
+def years_line(metrics: Mapping[str, object] | None, *, signs: bool = False,
+               capital: bool = True) -> str | None:
+    """One compact line, e.g. «по годам (от денег стратегии, прибыль не вкладывается обратно,
+    годы складываются): 2020 +41%, 2021 +88%, 2026 (282 дн.) +1%; без лучшего года (2021): +4% в
+    год; прибыльных лет 5 из 7». None when the run stored no year view, or only a stretch too
+    short to be called a year.
+
+    The years are on the strategy's own money (docs/CAPITAL_BASE.md) when the run has them
+    (owner, 2026-10-29: «было бы здорово пофиксить это везде»); when the stand's years differ the
+    stand's follow in small print, «Как считает стенд (от баланса книги): …». A run with only
+    the stand's years (one from before 2026-10-28) shows them as they always were.
+
+    With `signs`, the line ends with the four signs of the newest ruleset (А Б В Г, each
+    «держится / не держится / не определено» with the reason): the form the reports use.
+    The agents' briefs stay without them. With `capital` False only the stand's years are read
+    (the form a caller that wants one base uses)."""
+    m = metrics or {}
+    if not capital:
+        return _plain_line(m, signs=signs)
+    cap = capital_view(m)
+    cap_line = _plain_line(cap, signs=signs) if cap else None
+    if cap_line is None:
+        # A run with no years on the strategy's own money: the stand's, as ever.
+        return _plain_line(m, signs=signs)
+    how = ("прибыль не вкладывается обратно, годы складываются" if reinvests(m) is False
+           else "прибыль вкладывается, годы склеиваются")
+    line = cap_line.replace("по годам:", f"по годам (от денег стратегии, {how}):", 1)
+    plain_stand = _plain_line(m, signs=False)
+    if plain_stand and plain_stand != _plain_line(cap, signs=False):
+        line += ". Как считает стенд (от баланса книги): " + plain_stand.removeprefix("по годам: ")
     return line
 
 
@@ -167,7 +184,7 @@ def _view_of(m: Mapping[str, object], ruleset) -> dict | None:
         "summary": summary,
         "readings": readings,
         "signs": signs,
-        "line": years_line(m),
+        "line": _plain_line(m, signs=False),
     }
 
 
@@ -179,6 +196,10 @@ def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None
     `reinvested` saying whether its years compound or sum; None for a run from before the
     capital summaries."""
     m = metrics or {}
+    if ruleset is not None:
+        from qlab.year_signs import stand_keyed
+
+        ruleset = stand_keyed(ruleset)  # both views carry the stand's key names
     view = _view_of(m, ruleset)
     if view is None:
         return None
@@ -186,6 +207,8 @@ def year_view(metrics: Mapping[str, object] | None, ruleset=None) -> dict | None
     if capital is not None:
         capital["reinvested"] = reinvests(m)
     view["capital"] = capital
+    # The line the reports use: the strategy's own money's years, the stand's small beside them.
+    view["line"] = years_line(m)
     return view
 
 

@@ -37,8 +37,12 @@ strategy that does not reinvest (Bv2). A share of a book whose balance has grown
 cash is a smaller share of the money the strategy was given, and stage 1's years of history
 have grown that balance while stage 2's fresh book has not: the old comparison set stage 2's
 result against segments about four times too small (Bv2: «74 из 100» became 42). The
-positivity rule keeps reading the stand's `total_return_net`, which only has to be above zero;
-a run without `cap_total_return`, or a history without a capital series, is compared the old way.
+positivity rule reads the total its ruleset names (`Stage2Confirmation.total_metric`): the stand's
+`total_return_net` up to rules 2026-10-29.1, `cap_total_return` from 2026-10-29.2 (owner,
+2026-10-29, «Да, и правила»), so the rule and the segments read one figure. Under the older rules
+a run without `cap_total_return`, or a history without a capital series, is compared the old
+way; under the newer ones a run without `cap_total_return` (a base of percent that is undefined)
+confirms nothing, and the reason says so.
 """
 
 from __future__ import annotations
@@ -64,8 +68,11 @@ from qlab.rules.engine import evaluate as evaluate_rules
 from qlab.rules.schema import Comparator, Rule, RuleSet, Stage
 
 NOISE_METRIC = "noise_return_percentile"
-"""The metric of the noise comparison (`shape_aware_edge`)."""
+"""The metric of the noise comparison (`shape_aware_edge`) up to rules 2026-10-29.1; from
+2026-10-29.2 the ruleset names it (`NoisePower.percentile_metric`)."""
 TOTAL_METRIC = "total_return_net"
+"""The stage 2 total the positivity rule reads up to rules 2026-10-29.1; from 2026-10-29.2 the
+ruleset names it (`Stage2Confirmation.total_metric`)."""
 CONSISTENCY_METRIC = "stage1_segment_percentile"
 POSITIVE_RULE = "stage2_total_return_positive"
 CONSISTENCY_RULE = "stage1_consistency"
@@ -95,7 +102,9 @@ class Stage1History:
 
 def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
     """Stage 1's forward net returns: its strategy run again on the data snapshot its
-    trial was decided on. Writes nothing and downloads nothing."""
+    trial was decided on. Writes nothing and downloads nothing. The noise bar's power is the one
+    on the strategy's own money (`noise_cap_power`, rules from 2026-10-29.2) when the trial
+    has it, else the stand's `noise_power`."""
     from qlab.data.snapshot import load_snapshot
     from qlab.registry.models import Trial
 
@@ -121,7 +130,8 @@ def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
     since = pd.Timestamp(spec.params_fixed_at, tz="UTC")
     forward = run.net_return[run.net_return.index >= since]
     capital = run.capital_return[run.capital_return.index >= since]
-    power = (trial.metrics or {}).get("noise_power")
+    stored = trial.metrics or {}
+    power = stored.get("noise_cap_power", stored.get("noise_power"))
     return Stage1History(trial_id, forward, None if power is None else float(power),
                          capital_return=capital, reinvested=run.reinvested)
 
@@ -210,9 +220,9 @@ def read_alert_percentile(path: str) -> float | None:
     return None if value is None else float(value)
 
 
-def _rules(version: str, alert: float) -> RuleSet:
+def _rules(version: str, alert: float, total_metric: str = TOTAL_METRIC) -> RuleSet:
     return RuleSet(version=version, rules=[
-        Rule(id=POSITIVE_RULE, stage=Stage.EDGE, metric=TOTAL_METRIC, comparator=Comparator.GT,
+        Rule(id=POSITIVE_RULE, stage=Stage.EDGE, metric=total_metric, comparator=Comparator.GT,
              threshold=0.0, fatal=True,
              rationale="The stage 2 window must have earned something after costs "
                        "(owner, 2026-10-27, «делай все»)."),
@@ -243,16 +253,17 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     if (setting is None or power_rule is None or not ruleset.splits_fit_forward
             or not ctx.forward_judged):
         return None, None
-    noise_rows = [r for r in ctx.rules_result.rows if r.metric == NOISE_METRIC]
+    noise_metric, total_metric = power_rule.percentile_metric, setting.total_metric
+    noise_rows = [r for r in ctx.rules_result.rows if r.metric == noise_metric]
     if not noise_rows or any(r.passed is not False for r in noise_rows):
         return None, None  # the comparison passed, or could not be computed: not replaced
-    power = ctx.metrics.get("noise_power")
+    power = ctx.metrics.get(power_rule.power_metric)
     if power is None or power != power or power >= power_rule.min_power:
         return None, None  # not measured, or it has power: it decides as before
 
     # Every OTHER rule, the length of the forward test and regime coverage, as before.
     without_noise = ruleset.model_copy(update={
-        "rules": [r for r in ruleset.rules if r.metric != NOISE_METRIC]})
+        "rules": [r for r in ruleset.rules if r.metric != noise_metric]})
     others = evaluate_rules(ctx.metrics, without_noise)
     without = decide_fit_forward_route(
         ruleset=without_noise, selection=ctx.selection_result, forward=others,
@@ -288,16 +299,20 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     # power only lets good strategies fail -- it does not let empty ones pass a 99% bar.
 
     days = window_days_of(ctx.metrics, ctx.spec.data.interval)
-    stand_total = ctx.metrics.get(TOTAL_METRIC)
-    if days is None or stand_total is None or stand_total != stand_total:
-        return not_applied("the stage 2 window has no total return to compare", **known)
+    rule_total = ctx.metrics.get(total_metric)
+    if days is None or rule_total is None or rule_total != rule_total:
+        why = ("the stage 2 window has no total return to compare"
+               if not ctx.metrics.get("cap_base_refused") else
+               "the stage 2 book's base of percent is undefined (it takes deposits), so it has "
+               "no total return on the strategy's own money to compare")
+        return not_applied(why, **known)
     # Both sides on the strategy's own money when both have it and agree on how it grows.
     cap_total = ctx.metrics.get("cap_total_return")
     cap_flag = ctx.metrics.get("cap_reinvested")
     on_capital = (history.capital_return is not None
                   and isinstance(cap_total, int | float) and cap_total == cap_total
                   and isinstance(cap_flag, int | float) and bool(cap_flag) == history.reinvested)
-    total = float(cap_total) if on_capital else float(stand_total)
+    total = float(cap_total) if on_capital else float(rule_total)
     seg = segments_of(history.capital_return if on_capital else history.net_return, days,
                       additive=on_capital and not history.reinvested)
     if len(seg.totals) < decay.MIN_WINDOWS:
@@ -309,8 +324,8 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     percentile = decay.percentile_of(float(total), list(seg.totals))
     assert percentile is not None  # the sample is not empty
 
-    result = evaluate_rules({TOTAL_METRIC: float(stand_total), CONSISTENCY_METRIC: percentile},
-                            _rules(ruleset.version, alert))
+    result = evaluate_rules({total_metric: float(rule_total), CONSISTENCY_METRIC: percentile},
+                            _rules(ruleset.version, alert, total_metric))
     failed = set(result.failed_rule_ids)
     money = " (both on the strategy's own money)" if on_capital else ""
     where = (f"{percentile:.0f} of 100 same-length segments of stage 1's forward history "
@@ -337,7 +352,7 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
         what = []
         if POSITIVE_RULE in failed:
             what.append(
-                f"its total return after costs, {_pct(float(stand_total)):s}, is not above zero")
+                f"its total return after costs, {_pct(float(rule_total)):s}, is not above zero")
         if CONSISTENCY_RULE in failed:
             what.append("it is inconsistent with stage 1: " + where)
         reason = "; ".join(what)

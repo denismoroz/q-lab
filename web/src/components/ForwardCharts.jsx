@@ -56,7 +56,8 @@ function Caption({ stage, title, series }) {
       <p>
         <span className="font-medium">{title}</span> · {series.start} — {series.end} ·{' '}
         {daysText(series.days)} · итог{' '}
-        <span className="font-semibold">{signed(series.total_return)}</span> от денег стратегии
+        <span className="font-semibold">{signed(series.total_return)}</span>{' '}
+        {series.base === 'strategy_capital' ? 'от денег стратегии' : 'по счёту стенда (от баланса книги)'}
         {short ? (
           <span className="text-slate-500">
             {' '}

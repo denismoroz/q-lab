@@ -396,8 +396,15 @@ def capped_leg_result(run: StoredRun, limit: float) -> RunResult:
     earned = (dec.price + dec.funding).clip(-limit, limit)
     book = (earned - dec.cost).sum(axis=1) - dec.extra_cost
     base = run.backtest()
+    capital_base = None if run.capital is None else run.capital.base
+    if capital_base is None:
+        capital = book.rename("capital_return")
+    else:  # the clipped book on the strategy's own money, as `run_backtest` makes it
+        capital = (book * capital_base.reindex(book.index).ffill().bfill().fillna(1.0)
+                   ).rename("capital_return")
     return dataclasses.replace(base, net_return=book.rename("net_return"),
-                      gross_return=earned.sum(axis=1).rename("gross_return"))
+                               gross_return=earned.sum(axis=1).rename("gross_return"),
+                               capital_return=capital)
 
 
 __all__ = ["RECONCILE_TOLERANCE", "Decomposition", "Rule", "RuleEffect", "RunUnavailable",

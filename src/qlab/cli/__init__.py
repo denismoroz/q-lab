@@ -584,7 +584,16 @@ def evaluate_cmd(
         _echo_status()
         return
 
-    typer.echo("metrics:")
+    from qlab import capital_text
+
+    head = capital_text.headline(result.metrics)
+    typer.echo(f"result ({capital_text.basis_ru(result.metrics)}):")
+    typer.echo("  " + capital_text.numbers_ru(result.metrics, noise="present", ex_best=True))
+    typer.echo("")
+
+    typer.echo("metrics (every figure the run stored; `cap_*` and `noise_cap_*` are on the "
+               "strategy's own money, the rest as the stand counts them, a share of the book's "
+               "balance):")
     for name, value in sorted(result.metrics.items()):
         typer.echo(f"  {name:<24}{value}")
     typer.echo("")
@@ -608,18 +617,14 @@ def evaluate_cmd(
             typer.echo(f"  {sign_line(reading)}")
         typer.echo("")
 
-    if "cap_ann_return" in result.metrics:
-        # The same run on the strategy's own money (docs/CAPITAL_BASE.md). No rule reads it yet.
+    if head.on_capital and not any(r.metric.startswith("cap_") for r in ruleset.rules):
+        # Rules before 2026-10-29.2 read the stand's share of the balance, so the signs above are
+        # the stand's; the same signs on the strategy's own money (docs/CAPITAL_BASE.md).
         from qlab.year_view import capital_view
 
-        m = result.metrics
-        how = "profit not reinvested, bars summed" if m.get("cap_reinvested") == 0.0 \
-            else "profit reinvested, bars compounded"
-        typer.echo(f"on the strategy's own money ({how}; no rule reads this yet):")
-        typer.echo(f"  per year {m['cap_ann_return']:+.1%} (stand {m['ann_return_net']:+.1%}), "
-                   f"worst fall {m['cap_max_dd']:+.1%} (stand {m['max_dd']:+.1%}), "
-                   f"Sharpe {m['cap_sharpe']:.2f} (stand {m['sharpe_net']:.2f})")
-        capital_metrics_view = capital_view(m)
+        typer.echo("the same year signs on the strategy's own money (these rules read the "
+                   "stand's figures; the ones above are theirs):")
+        capital_metrics_view = capital_view(result.metrics)
         if has_year_view(capital_metrics_view):
             for reading in read_signs(capital_metrics_view, ruleset):
                 typer.echo(f"  {sign_line(reading)}")
@@ -701,18 +706,23 @@ def spec_split_cmd(
 @app.command("family")
 def family_cmd(idea_id: str = typer.Argument(..., metavar="IDEA")) -> None:
     """All variants of one idea side by side, with the whole-set summary."""
+    from qlab import capital_text
+
     with session_scope() as session:
         members = family_report(session, idea_id)
     if not members:
         typer.echo(f"{idea_id}: no routed runs")
         return
+    typer.echo("return, Sharpe and noise rank are on the strategy's own money "
+               "(a run that has none is shown as the stand counts it)")
     typer.echo(f"{'v':>3} {'bars':>4} {'entry/exit':>11} {'return':>8} {'sharpe':>7} "
                f"{'noise%':>7}  route")
     positive = beats_noise = with_numbers = 0
     for m in members:
         metrics = m.metrics or {}
-        ret, sharpe = metrics.get("ann_return_net"), metrics.get("sharpe_net")
-        pct = metrics.get("noise_return_percentile")
+        # On the strategy's own money when the run has it (docs/CAPITAL_BASE.md).
+        h = capital_text.headline(metrics)
+        ret, sharpe, pct = h.ann, h.sharpe, h.noise
         cadence = f"{m.entry_every}/{m.exit_every}" if m.entry_every else "-"
         if ret is not None:
             with_numbers += 1
@@ -1613,6 +1623,9 @@ def allocation_cmd(
     periods = {"whole": (days[0], days[-1])}
     periods.update({k: (pd.Timestamp(a, tz="UTC"), pd.Timestamp(b, tz="UTC"))
                     for k, (a, b) in (config.get("periods") or {}).items()})
+    typer.echo("(a model in which the whole capital sits in one leg at a time: each leg's figures "
+               "are the stand's share of its own book, not the base of the strategy's own money "
+               "of docs/CAPITAL_BASE.md; see its section 8)")
     header = f"{'':<26}" + "".join(f"{p:>34}" for p in periods)
     typer.echo(header)
     from qlab.allocation import learned_plan
@@ -2596,10 +2609,11 @@ def year_signs_cmd(
     as_json: bool = typer.Option(False, "--json", help="Print JSON instead of tables"),
     rules_version: str | None = typer.Option(
         None, "--rules", help="Rules version whose lines the signs use (default: latest)"),
-    capital: bool = typer.Option(
-        False, "--capital",
-        help="Read the signs off the year summaries on the strategy's own money "
-             "(docs/CAPITAL_BASE.md); runs from before them are left out"),
+    stand: bool = typer.Option(
+        False, "--stand",
+        help="Read the signs off the stand's year summaries (a share of the book's balance) "
+             "instead of the default, the strategy's own money (docs/CAPITAL_BASE.md; the rules "
+             "read it since 2026-10-29.2; runs from before those summaries are left out)"),
 ) -> None:
     """The four year signs (docs/YEARS.md) over the registry: for each idea's latest judged
     run, whether each of А Б В Г holds, fails or is not defined, then the totals and a split
@@ -2610,6 +2624,7 @@ def year_signs_cmd(
     from qlab import year_signs
 
     ruleset = load(rules_version) if rules_version is not None else load_latest()
+    capital = not stand
     with session_scope() as session:
         rows = year_signs.collect(session, ruleset, all_trials=all_trials, on_capital=capital)
     summary = year_signs.summarize(rows)
@@ -2623,7 +2638,8 @@ def year_signs_cmd(
         return
     typer.echo(f"rules: {ruleset.version}; "
                + ("every judged trial" if all_trials else "latest judged trial of each idea")
-               + ("; on the strategy's own money" if capital else ""))
+               + ("; on the strategy's own money" if capital else "; as the stand counts it "
+                                                              "(a share of the book's balance)"))
     if not rows:
         typer.echo("no judged trial with a year view in the registry")
         return

@@ -15,6 +15,7 @@ from datetime import date, datetime
 from functools import lru_cache
 from typing import Any
 
+from qlab.capital_text import basis_ru, differs, headline
 from qlab.protection import view_of_trial as protection_view
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
 from qlab.year_view import year_view
@@ -153,6 +154,36 @@ def _latest_ruleset():
         return None
 
 
+def _numbers(h: Any) -> dict[str, Any]:
+    return {"ann_return": h.ann, "sharpe": h.sharpe, "max_dd": h.max_dd, "total_return": h.total,
+            "ann_return_ex_best_1pct": h.ex_best_1pct, "noise_percentile": h.noise}
+
+
+def headline_json(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The numbers the console leads with: the run on the strategy's own money
+    (docs/CAPITAL_BASE.md, owner 2026-10-29) when it has them, else the stand's, and which one
+    this is (`on_capital`).
+    `stand` holds the stand's share of the book's balance for the small line beside them, and
+    `differs` says whether it says something other than the leading figures. `fit` is the
+    selection period's yearly figures on the same base. Copied from the stored metrics."""
+    if not metrics:
+        return None
+    h = headline(metrics)
+    fit = headline(metrics, "fit_")
+    stand = headline({k: v for k, v in metrics.items() if not k.startswith(("cap_", "noise_cap_"))})
+    return {
+        **_numbers(h),
+        "on_capital": h.on_capital,
+        "reinvested": h.reinvested,
+        "basis": basis_ru(metrics),
+        "base_refused": bool(metrics.get("cap_base_refused")),
+        "fit": None if fit.ann is None else {
+            "ann_return": fit.ann, "sharpe": fit.sharpe, "max_dd": fit.max_dd},
+        "stand": _numbers(stand) if h.on_capital else None,
+        "differs": differs(metrics),
+    }
+
+
 def trial_json(
     trial: Trial,
     *,
@@ -180,6 +211,9 @@ def trial_json(
         "started_at": _iso(trial.started_at),
         "finished_at": _iso(trial.finished_at),
         "metrics": trial.metrics,
+        # The numbers to lead with, on the strategy's own money (docs/CAPITAL_BASE.md), the stand's
+        # beside them; copied from the stored metrics.
+        "headline": headline_json(trial.metrics),
         # The metrics' per-year keys regrouped for the console (docs/YEARS.md); null for a
         # run from before the view existed. Copied from the stored metrics, nothing computed.
         "year_view": year_view(trial.metrics, _latest_ruleset()),
@@ -202,6 +236,7 @@ __all__ = [
     "VERDICT_MEASUREMENT",
     "VERDICT_UNKNOWN",
     "driver_json",
+    "headline_json",
     "idea_detail_json",
     "idea_row_json",
     "spec_json",

@@ -260,8 +260,12 @@ def test_the_year_view_shows_the_capital_twin_beside_the_stand_s() -> None:
     assert view["capital"]["reinvested"] is False
     assert view["capital"]["years"][0]["return"] == pytest.approx(capital[2022])
     line = years_line(m)
-    assert "На деньгах стратегии (прибыль не вкладывается обратно, годы складываются)" in line
-    assert years_line(m, capital=False).count("На деньгах") == 0
+    # The strategy's own money's years lead; the stand's follow in small print (2026-10-29).
+    assert line.startswith(
+        "по годам (от денег стратегии, прибыль не вкладывается обратно, годы складываются):")
+    assert ". Как считает стенд (от баланса книги): 2022 +12%" in line
+    assert years_line(m, capital=False).count("Как считает стенд") == 0
+    assert years_line(m, capital=False).startswith("по годам: ")
     assert year_view({k: v for k, v in m.items() if not k.startswith("cap_")})["capital"] is None
 
 
@@ -273,7 +277,8 @@ def test_the_capital_line_is_left_out_when_it_says_nothing_new() -> None:
 
     out = dict(year_breakdown(net))
     out.update(capital_metrics(RunResult("s", net, net, zero, zero, zero)))
-    assert "На деньгах" not in years_line(out)
+    assert "Как считает стенд" not in years_line(out)
+    assert years_line(out).startswith("по годам (от денег стратегии")
 
 
 # ---- the words -----------------------------------------------------------------------------

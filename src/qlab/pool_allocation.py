@@ -771,17 +771,27 @@ def stand_forward_evidence(session, idea_id: str, *, end: date) -> Evidence | No
     panel = resolve_cached_panel(session, spec)
     if panel is None:
         return None
-    weights = resolve_strategy(spec.code_ref).target_weights(panel, spec.params)
+    from qlab.harness.strategy import capital_setup
+
+    strategy = resolve_strategy(spec.code_ref)
+    weights = strategy.target_weights(panel, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,
                       slippage_bps=spec.costs.slippage_bps)
-    net = run_backtest(panel, weights, costs, panel.funding).net_return
+    # The strategy's own money, like a book's (docs/CAPITAL_BASE.md, owner 2026-10-29): the
+    # weights of the pool are made of daily returns on each strategy's own money, so a strategy
+    # that sets cash aside must not look calmer than it is by being divided by a grown balance.
+    capital = capital_setup(strategy, panel, spec.params)
+    result = run_backtest(panel, weights, costs, panel.funding, **capital.kwargs)
+    additive = capital.refused is None and not result.capital_reinvested
+    net = result.net_return if capital.refused is not None else result.capital_return
     forward = net[net.index >= pd.Timestamp(spec.params_fixed_at, tz="UTC")]
     if forward.empty:
         return Evidence("stand_forward", pd.Series(dtype=float), str(path))
     index = panel.prices.index
     bar = index[1] - index[0]
     day = (forward.index + bar - pd.Timedelta(microseconds=1)).normalize()
-    daily = (1.0 + forward).groupby(day).prod() - 1.0
+    daily = (forward.groupby(day).sum() if additive
+             else (1.0 + forward).groupby(day).prod() - 1.0)
     daily = daily[daily.index + pd.Timedelta(days=1) <= index[-1] + bar]
     return Evidence("stand_forward", daily, str(path))
 

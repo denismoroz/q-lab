@@ -764,6 +764,22 @@ def _slice_rows(panel: MarketPanel, first: int, last: int) -> MarketPanel:
     )
 
 
+BASE_REFUSED_NOTE = (
+    "; the base of percent is undefined for this book (it takes deposits, so what a hundred "
+    "percent is has not been decided: `cap_base_refused`, docs/CAPITAL_BASE.md), and the rules "
+    "since 2026-10-29.2 read the strategy's own money, never the stand's share of the balance "
+    "instead")
+
+
+def _refused_note(metrics: Mapping[str, float], unknown: Sequence[str]) -> str:
+    """Why the strategy's-own-money metrics a rule reads are missing, when the run refused
+    the base of percent (`CapitalBaseRefused`): said in the reason instead of a bare list."""
+    if metrics.get("cap_base_refused") and any(
+            m.startswith(("cap_", "noise_cap_")) for m in unknown):
+        return BASE_REFUSED_NOTE
+    return ""
+
+
 def decide_route(
     result: EvaluationResult, metrics: dict[str, float], deployable_capital_usd: float
 ) -> RoutingDecision:
@@ -806,7 +822,8 @@ def decide_route(
     if not result.decisive:
         return RoutingDecision(
             route="needs-more-data",
-            reason=f"metric(s) could not be computed: {', '.join(result.unknown_metrics)}",
+            reason=(f"metric(s) could not be computed: {', '.join(result.unknown_metrics)}"
+                    + _refused_note(metrics, result.unknown_metrics)),
         )
 
     if result.failed_strategy_rule_ids:
@@ -859,7 +876,8 @@ def decide_route(
 NOISE_UNMATCHED_REASON = "noise book does not match its reference's shape: "
 SELECTION_NOTE = "selection period"
 PRE_FIT_KEYS = ("ann_return_net", "sharpe_net", "max_dd", "ann_return_net_ex_best_1pct",
-                "fragility_days")
+                "fragility_days", "cap_ann_return", "cap_sharpe", "cap_max_dd",
+                "cap_ann_return_ex_best_1pct")
 FORWARD_NOTE = "forward test"
 
 
@@ -971,7 +989,7 @@ def _powerless(ruleset: RuleSet, metrics: dict[str, float]) -> bool:
     setting = ruleset.noise_power
     if setting is None:
         return False
-    power = metrics.get("noise_power")
+    power = metrics.get(setting.power_metric)
     return power is None or power != power or power < setting.min_power
 
 
@@ -980,7 +998,7 @@ def _power_note(ruleset: RuleSet, metrics: dict[str, float]) -> str:
     if not _powerless(ruleset, metrics):
         return ""
     setting = ruleset.noise_power
-    power = metrics.get("noise_power")
+    power = metrics.get(setting.power_metric)
     if power is None or power != power:
         return "; the noise bar's power on this window was not measured"
     return (f"; and on this window the noise bar would pass a strategy of this shape truly "
@@ -1069,7 +1087,8 @@ def _decide_fit_forward(
         if unknown and forward is None:
             return RoutingDecision(
                 route="needs-more-data",
-                reason=f"metric(s) could not be computed: {', '.join(unknown)}",
+                reason=(f"metric(s) could not be computed: {', '.join(unknown)}"
+                        + _refused_note(metrics, unknown)),
             )
 
     if forward is None:
@@ -1492,9 +1511,13 @@ def evaluate_spec(
             # (docs/REGIMES.md): a description, read by no rule.
             regime_series = _regimes()
             if regime_series is not None and len(result.net_return) >= 2:
-                measured.update(regime_breakdown(
-                    result.net_return, regime_series, periods_per_year(part_panel.prices.index)
-                ))
+                regime_ppy = periods_per_year(part_panel.prices.index)
+                measured.update(regime_breakdown(result.net_return, regime_series, regime_ppy))
+                if capital.refused is None:
+                    # The same split on the strategy's own money (docs/CAPITAL_BASE.md).
+                    measured.update(regime_breakdown(
+                        result.capital_return, regime_series, regime_ppy,
+                        additive=not result.capital_reinvested, prefix="cap_regime_"))
                 measured.update(regime_claim_checks(spec.regime_claim, measured))
             # The capital a strategy needs is the strategy's, not one part's:
             # a part in which it held nothing (trend's two levels sat in cash
@@ -1590,8 +1613,9 @@ def evaluate_spec(
             # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.
             from qlab.hedge_timing import hedge_timing_test
 
-            timing = hedge_timing_test(panel, weights, costs, index[judged[0]])
-            metrics.update({"hedge_timing_percentile": timing.percentile,
+            timing = hedge_timing_test(panel, weights, costs, index[judged[0]], capital=capital)
+            metrics.update({"hedge_timing_on_capital": 1.0 if capital.refused is None else 0.0,
+                            "hedge_timing_percentile": timing.percentile,
                             "hedge_timing_shifted_median": float(statistics.median(timing.shifted)),
                             "spot_only_ann_return": timing.spot_only,
                             "always_hedged_ann_return": timing.always_hedged,
@@ -1614,7 +1638,8 @@ def evaluate_spec(
                 # survived (`StrategySpec.params_fit_from`).
                 before_metrics = _measure(*split.before)
                 metrics.update({f"pre_{k}": v for k, v in before_metrics.items()
-                                if k in PRE_FIT_KEYS or k.startswith("regime_")})
+                                if k in PRE_FIT_KEYS
+                                or k.startswith(("regime_", "cap_regime_"))})
                 metrics["pre_days"] = _days(split.before)
             if warmup is not None:
                 metrics["warmup_days"] = _days(warmup)

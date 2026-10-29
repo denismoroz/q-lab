@@ -9,7 +9,7 @@ def test_a_nan_metric_is_unknown_not_a_failure() -> None:
     from qlab.rules.engine import evaluate
     from qlab.rules.loader import load_latest
 
-    result = evaluate({"ann_return_net": float("nan")}, load_latest())
-    row = next(r for r in result.rows if r.metric == "ann_return_net")
+    result = evaluate({"cap_ann_return": float("nan")}, load_latest())
+    row = next(r for r in result.rows if r.metric == "cap_ann_return")
     assert row.passed is None and row.value is None
-    assert "ann_return_net" in result.unknown_metrics
+    assert "cap_ann_return" in result.unknown_metrics

@@ -67,6 +67,19 @@ from qlab.pipeline.spec import StrategySpec
 from qlab.rules.schema import RuleSet
 
 
+def power_targets(ruleset: RuleSet) -> list[tuple[str, str]]:
+    """(noise books' return metric, key the power is stored under) for the ruleset's power
+    setting: the one it reads and, beside it, the stand's `noise_power` when the ruleset reads
+    the strategy's own money (the older base stays visible for comparison; no rule reads it)."""
+    setting = ruleset.noise_power
+    if setting is None:
+        return []
+    targets = [(setting.return_metric, setting.power_metric)]
+    if setting.power_metric != "noise_power":
+        targets.append(("ann_return_net", "noise_power"))
+    return targets
+
+
 @dataclass(frozen=True, slots=True)
 class ShapeAwareResult:
     """Everything one `evaluate_spec_with_shape_aware_bar` call produced:
@@ -180,26 +193,30 @@ def evaluate_spec_with_shape_aware_bar(
             extra["noise_sharpe_percentile"] = percentiles.sharpe_percentile
         # The same rank on the strategy's own money (docs/CAPITAL_BASE.md): the noise books are
         # read on the base and the reinvest choice of the strategy they imitate, so both sides
-        # of the comparison are on one base. Read by no rule yet; the owner decides which
-        # return metric decides.
+        # of the comparison are on one base. Rules from 2026-10-29.2 read this one
+        # (`noise_cap_return_percentile`); the stand's stays beside it for the older rules.
         cap_noise = _usable_metric_values(noise_trials, series=series, metric="cap_ann_return")
         cap_candidate = base_metrics.get("cap_ann_return")
         if cap_noise and isinstance(cap_candidate, int | float) and cap_candidate == cap_candidate:
             extra["noise_cap_return_percentile"] = noise_percentile(cap_candidate, cap_noise)
         # Can the bar tell a good strategy from luck on this window at all
-        # (rules 2026-10-24.2)? Asked of the same noise books it ranks against.
-        bar = next((r.threshold for r in ruleset.rules
-                    if r.metric == "noise_return_percentile"), None)
-        if ruleset.noise_power is not None and bar is not None:
-            power = noise_power(
-                _usable_metric_values(noise_trials, series=series, metric="ann_return_net"),
-                ruleset.noise_power.good_return, bar)
-            if power is not None:
-                extra["noise_power"] = power
+        # (rules 2026-10-24.2)? Asked of the same noise books it ranks against, in the metric
+        # and on the bar the ruleset reads (`NoisePower`): the stand's yearly return up to
+        # 2026-10-29.1, the strategy's own money from 2026-10-29.2.
+        if ruleset.noise_power is not None:
+            bar = next((r.threshold for r in ruleset.rules
+                        if r.metric == ruleset.noise_power.percentile_metric), None)
+            for returns_metric, power_key in power_targets(ruleset) if bar is not None else ():
+                power = noise_power(
+                    _usable_metric_values(noise_trials, series=series, metric=returns_metric),
+                    ruleset.noise_power.good_return, bar)
+                if power is not None:
+                    extra[power_key] = power
         # Inside each market regime too (docs/REGIMES.md): the candidate's
         # return on those days against the same noise books' on the same days.
+        # (Also on the strategy's own money: `cap_regime_<r>_ann_return`.)
         for key, value in base_metrics.items():
-            if not (key.startswith("regime_") and key.endswith("_ann_return")):
+            if not (key.startswith(("regime_", "cap_regime_")) and key.endswith("_ann_return")):
                 continue
             noise = [t.evaluation.metrics[key] for t in noise_trials
                      if t.series == series and t.evaluation.metrics

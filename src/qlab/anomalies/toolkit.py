@@ -48,7 +48,7 @@ from qlab.anomalies.rerun import (
     load_run,
     reselect,
 )
-from qlab.harness.metrics import compute_metrics, year_breakdown
+from qlab.harness.metrics import capital_metrics, compute_metrics, year_breakdown
 from qlab.harness.run import RunResult
 from qlab.harness.strategy import ZERO_WEIGHT_TOL
 
@@ -301,16 +301,26 @@ def _slice_result(result: RunResult, start: pd.Timestamp | None) -> RunResult:
 
 
 def summarize_result(result: RunResult) -> dict[str, Any]:
-    """Yearly return, total, worst fall, Sharpe, and the year table of one run."""
-    metrics = compute_metrics(result)
-    years = year_breakdown(result.net_return)
+    """Yearly return, total, worst fall, Sharpe, and the year table of one run, on the strategy's
+    own money (docs/CAPITAL_BASE.md; summed, not compounded, for a strategy that does not
+    reinvest). `stand` holds the same figures as the stand counts them, a share of the book's
+    balance."""
+    stand = compute_metrics(result)
+    cap = capital_metrics(result)
+    additive = not result.capital_reinvested
+    years = year_breakdown(result.capital_return, additive=additive)
     table = {int(k.split("_")[1]): {"return": v, "days": years.get(f"year_{k.split('_')[1]}_days")}
              for k, v in years.items() if k.startswith("year_") and k.endswith("_return")}
-    return {"ann_return_net": metrics["ann_return_net"], "total_return_net":
-            metrics["total_return_net"], "max_dd": metrics["max_dd"],
-            "sharpe_net": metrics["sharpe_net"], "n_periods": metrics["n_periods"],
-            "ann_return_net_ex_best_1pct": metrics["ann_return_net_ex_best_1pct"],
-            "years": dict(sorted(table.items()))}
+    return {"ann_return_net": cap["cap_ann_return"], "total_return_net": cap["cap_total_return"],
+            "max_dd": cap["cap_max_dd"], "sharpe_net": cap["cap_sharpe"],
+            "n_periods": stand["n_periods"],
+            "ann_return_net_ex_best_1pct": cap["cap_ann_return_ex_best_1pct"],
+            "years": dict(sorted(table.items())),
+            "on_capital": True, "reinvested": result.capital_reinvested,
+            "stand": {"ann_return_net": stand["ann_return_net"],
+                      "total_return_net": stand["total_return_net"], "max_dd": stand["max_dd"],
+                      "sharpe_net": stand["sharpe_net"],
+                      "ann_return_net_ex_best_1pct": stand["ann_return_net_ex_best_1pct"]}}
 
 
 def counterfactual(session: Session, trial_id: int, rule: Rule, *, label: str | None = None,
@@ -348,6 +358,9 @@ def counterfactual(session: Session, trial_id: int, rule: Rule, *, label: str | 
              f"{effect.removed_bars} instrument-bars with a position"
              + (f"; {effect.unknown_bars} held instrument-bars have no volume figure and were "
                 "kept" if effect.unknown_bars else ""), ""]
+    lines += ["all figures are shares of the strategy's own money (docs/CAPITAL_BASE.md), "
+              + ("summed over the days (the strategy does not reinvest its profit)"
+                 if not a["reinvested"] else "compounded (the strategy reinvests its profit)")]
     lines += _table(["", "original", "with the rule"], [
         ["yearly return", _pct(a["ann_return_net"]), _pct(b["ann_return_net"])],
         ["total return", _pct(a["total_return_net"]), _pct(b["total_return_net"])],
@@ -355,7 +368,8 @@ def counterfactual(session: Session, trial_id: int, rule: Rule, *, label: str | 
         ["Sharpe", f"{a['sharpe_net']:.2f}", f"{b['sharpe_net']:.2f}"],
         ["yearly return without the best 1% of days", _pct(a["ann_return_net_ex_best_1pct"]),
          _pct(b["ann_return_net_ex_best_1pct"])]])
-    lines += ["", "by calendar year (compounded net return of the year):"]
+    lines += ["", "by calendar year (share of the strategy's own money; summed over the year for a "
+                  "strategy that does not reinvest, compounded for one that does):"]
     years = sorted(set(a["years"]) | set(b["years"]))
     lines += _table(["year", "original", "with the rule", "days"], [
         [str(y), _pct(a["years"].get(y, {}).get("return")),

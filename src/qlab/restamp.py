@@ -152,6 +152,10 @@ def run_view(session, idea_id: str | None) -> dict | None:
         "ann": _number(m.get("cap_ann_return" if capital else "ann_return_net")),
         "dd": _number(m.get("cap_max_dd" if capital else "max_dd")),
         "on_capital": capital,
+        # The place among the noise books the rules read: on the strategy's own money when the
+        # run has it (rules 2026-10-29.2), else the stand's.
+        "noise": _number(m.get("noise_cap_return_percentile" if capital
+                               else "noise_return_percentile")),
         "noise_short": noise_books_short(m), "noise_percentile": _number(
             m.get("noise_return_percentile")),
         "stand": trial.stand_version, "rules": _rules_version(session, trial.id),
@@ -628,9 +632,14 @@ def stage_line(title: str, before: Mapping | None, after: Mapping | None) -> str
     old = "" if before["on_capital"] == after["on_capital"] else (
         " (раньше считалось по счёту стенда, не по деньгам стратегии)" if after["on_capital"]
         else "")
+    noise = ""
+    if isinstance(before.get("noise"), float) and isinstance(after.get("noise"), float) \
+            and abs(before["noise"] - after["noise"]) >= 0.005:
+        noise = (f"; место среди случайных книг {before['noise']:.1%} → {after['noise']:.1%} "
+                 "(планка 99%)")
     return (f"{title}, прогон {after['trial']}: {route}; в год {base} "
             f"{pct(before['ann'])} → {pct(after['ann'])}, худшее падение "
-            f"{pct(before['dd'])} → {pct(after['dd'])}{old}")
+            f"{pct(before['dd'])} → {pct(after['dd'])}{noise}{old}")
 
 
 def entry_lines(e: Mapping) -> list[str]:

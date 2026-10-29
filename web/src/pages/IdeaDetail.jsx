@@ -21,6 +21,7 @@ import {
   label,
 } from '../labels.js'
 import { daysText, shortForwardReturn } from '../forwardReturn.js'
+import { basisText, powerOf, regimePrefix, standLine } from '../headline.js'
 
 const PAGE_SIZE = 50
 
@@ -208,6 +209,7 @@ function Outcome({ outcome }) {
     )
   }
   const m = trial.metrics ?? {}
+  const h = trial.headline
   const sharpe = (v) => (typeof v === 'number' ? v.toFixed(2) : null)
   const days = (v) => (typeof v === 'number' ? `${Math.round(v)} дн.` : null)
   // docs/FIT_VS_FORWARD.md: the plain metrics are the JUDGED part -- the
@@ -221,17 +223,17 @@ function Outcome({ outcome }) {
   const numbers = [
     short
       ? [`доходность за ${daysText(short.days)} после комиссий`, pct(short.total)]
-      : ['доходность в год после комиссий', pct(m.ann_return_net)],
-    ['Шарп после комиссий', sharpe(m.sharpe_net)],
-    ['худшая просадка', pct(m.max_dd)],
-    ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
-    ['хорошая стратегия (+7% в год) обогнала бы шум', pct(m.noise_power)],
+      : ['доходность в год после комиссий', pct(h?.ann_return ?? m.ann_return_net)],
+    ['Шарп после комиссий', sharpe(h?.sharpe ?? m.sharpe_net)],
+    ['худшая просадка', pct(h?.max_dd ?? m.max_dd)],
+    ['обгоняет шум той же формы', pct(h?.noise_percentile ?? m.noise_return_percentile)],
+    ['хорошая стратегия (+7% в год) обогнала бы шум', pct(powerOf(m, h))],
     ['книга была полной', pct(m.book_coverage)],
   ].filter(([, v]) => v !== null)
   const fitNumbers = [
-    ['доходность в год после комиссий', pct(m.fit_ann_return_net)],
-    ['Шарп после комиссий', sharpe(m.fit_sharpe_net)],
-    ['худшая просадка', pct(m.fit_max_dd)],
+    ['доходность в год после комиссий', pct(h?.fit ? h.fit.ann_return : m.fit_ann_return_net)],
+    ['Шарп после комиссий', sharpe(h?.fit ? h.fit.sharpe : m.fit_sharpe_net)],
+    ['худшая просадка', pct(h?.fit ? h.fit.max_dd : m.fit_max_dd)],
   ].filter(([, v]) => v !== null)
   const periods = split
     ? [
@@ -253,6 +255,12 @@ function Outcome({ outcome }) {
       {periods.length > 0 && <NumberList title="Данные" numbers={periods} />}
       {numbers.length > 0 && (
         <NumberList title={split ? `${judged} — по ней решение` : null} numbers={numbers} />
+      )}
+      {h && (
+        <p className="mt-1 text-xs text-slate-500" data-testid="headline-basis">
+          Числа выше — {basisText(h)}.
+          {standLine(h) && <span data-testid="headline-stand"> {standLine(h)}.</span>}
+        </p>
       )}
       {short && (
         <p className="mt-1 text-xs text-slate-400">
@@ -301,12 +309,14 @@ function twoStageSentence(stages) {
 function StageColumn({ title, hint, stage, ideaId }) {
   const trial = stage?.trial
   const m = trial?.metrics ?? {}
-  const sharpe = typeof m.sharpe_net === 'number' ? m.sharpe_net.toFixed(2) : null
+  const h = trial?.headline
+  const lead = h?.sharpe ?? m.sharpe_net
+  const sharpe = typeof lead === 'number' ? lead.toFixed(2) : null
   const rows = [
-    ['доходность в год после комиссий', pct(m.ann_return_net)],
+    ['доходность в год после комиссий', pct(h?.ann_return ?? m.ann_return_net)],
     ['Шарп после комиссий', sharpe],
-    ['худшая просадка', pct(m.max_dd)],
-    ['обгоняет шум той же формы', pct(m.noise_return_percentile)],
+    ['худшая просадка', pct(h?.max_dd ?? m.max_dd)],
+    ['обгоняет шум той же формы', pct(h?.noise_percentile ?? m.noise_return_percentile)],
     ['проверка вперёд, дней', typeof m.forward_days === 'number' ? Math.round(m.forward_days) : null],
   ].filter(([, v]) => v !== null)
   return (
@@ -321,6 +331,12 @@ function StageColumn({ title, hint, stage, ideaId }) {
             {label(TRIAL_ROUTE, trial.route)}
           </div>
           {rows.length > 0 && <NumberList title={null} numbers={rows} />}
+          {h && (
+            <p className="mt-1 text-xs text-slate-500" data-testid="stage-basis">
+              {basisText(h)}.
+              {standLine(h) && <span data-testid="stage-stand"> {standLine(h)}.</span>}
+            </p>
+          )}
           <YearView view={trial.year_view} compact />
           <Protection view={trial.protection} compact />
           <p className="mt-2 break-words font-mono text-xs text-slate-500">{trial.route_reason}</p>
@@ -783,13 +799,15 @@ const REGIME_ROWS = [
 
 function RegimeTable({ m }) {
   if (typeof m.regime_bull_share !== 'number') return null
+  // The split on the strategy's own money when the run has it (docs/CAPITAL_BASE.md).
+  const pre = regimePrefix(m)
   const cell = (v, f) => (typeof v === 'number' ? f(v) : '—')
   const p = (v) => `${(v * 100).toFixed(1)}%`
   return (
     <div className="mt-3">
       <div className="text-xs uppercase tracking-wide text-slate-500">
         по режимам рынка (BTC за 30 дней: падение ниже {cell(m.regime_bear_below, p)}, рост выше{' '}
-        {cell(m.regime_bull_above, p)}) — для сведения
+        {cell(m.regime_bull_above, p)}) — {pre === 'cap_regime_' ? 'на деньгах стратегии, ' : 'по счёту стенда, '}для сведения
       </div>
       <table className="mt-1 w-full text-sm tabular-nums">
         <thead className="text-xs text-slate-500">
@@ -809,13 +827,13 @@ function RegimeTable({ m }) {
           {REGIME_ROWS.map(([key, name]) => (
             <tr key={key}>
               <td>{name}</td>
-              <td className="text-right">{cell(m[`regime_${key}_share`], p)}</td>
-              <td className="text-right">{cell(m[`regime_${key}_return`], p)}</td>
-              <td className="text-right">{cell(m[`regime_${key}_ann_return`], p)}</td>
-              <td className="text-right">{cell(m[`regime_${key}_sharpe`], (v) => v.toFixed(2))}</td>
-              <td className="text-right">{cell(m[`regime_${key}_max_dd`], p)}</td>
-              <td className="text-right">{cell(m[`regime_${key}_btc_return`], p)}</td>
-              <td className="text-right">{cell(m[`regime_${key}_noise_percentile`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_share`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_return`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_ann_return`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_sharpe`], (v) => v.toFixed(2))}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_max_dd`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_btc_return`], p)}</td>
+              <td className="text-right">{cell(m[`${pre}${key}_noise_percentile`], p)}</td>
               <td className="text-right">
                 {cell(m[`regime_${key}_claim_met`], (v) => (v === 1 ? 'да' : 'нет'))}
               </td>

@@ -36,13 +36,19 @@ History:
   2026-10-28.2), the percent of the strategy's own money (`cap_*` metrics), stage 2's $1M-a-day
   liquidity floor for strategies that pick from the whole listing, the retune cache key with the
   tradeable mask.
+* `2026-10-29.1` -- the figures the rules read are the strategy's own money's (rules 2026-10-29.2,
+  owner 2026-10-29: «Да, и правила»). New metrics: `noise_cap_power` (the power of the noise bar on
+  the strategy's own money), the regime split on it (`cap_regime_*`), `cap_worst_week`,
+  `hedge_timing_on_capital`; the hedge timing's figures (`hedge_timing_*`, `spot_only_ann_return`,
+  `always_hedged_ann_return`) are on the strategy's own money when the run has a base. The noise
+  bar of the rules is `noise_cap_return_percentile`; its stand twin stays recorded.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-10-28.1"
+STAND_VERSION = "2026-10-29.1"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 

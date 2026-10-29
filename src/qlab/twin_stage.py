@@ -46,7 +46,8 @@ from pathlib import Path
 
 import yaml
 
-from qlab.capital_text import CAP_NUMBERS, capital_suffix
+from qlab import capital_text
+from qlab.capital_text import CAP_NUMBERS
 from qlab.pipeline.spec import StrategySpec
 from qlab.twin import COIN_LIST_PARAMS, SECONDS_PER_INSTRUMENT, fetch_estimate, needs_listing
 
@@ -621,18 +622,14 @@ def pct(value: object) -> str:
 
 
 def numbers_ru(m: Mapping[str, object]) -> str:
-    sharpe, beat = m.get("sharpe_net"), m.get("noise_return_percentile")
-    parts = [f"в год {pct(m.get('ann_return_net'))}",
-             f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}",
-             f"просадка {pct(m.get('max_dd'))}"]
-    if "ann_return_net_ex_best_1pct" in m:
-        parts.append(f"без лучшего 1% дней {pct(m['ann_return_net_ex_best_1pct'])}")
-    if isinstance(beat, int | float):
-        parts.append(f"обгоняет шум {beat:.0%}")
+    """The run's numbers on the strategy's own money (docs/CAPITAL_BASE.md), the stand's small
+    beside them where they differ, and the forward days."""
     days = m.get("forward_days")
+    line = capital_text.numbers_ru(m, noise="present", ex_best=True)
+    stand = capital_text.stand_suffix(m)
     if isinstance(days, int | float) and days:
-        parts.append(f"проверка вперёд {days:,.0f} дн.")
-    return ", ".join(parts) + capital_suffix(m)
+        line = line[:len(line) - len(stand)] + f", проверка вперёд {days:,.0f} дн." + stand
+    return line
 
 
 def route_ru(route: str | None) -> str:

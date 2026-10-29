@@ -34,7 +34,7 @@ from pathlib import Path
 
 import yaml
 
-from qlab.capital_text import CAP_NUMBERS, capital_suffix
+from qlab.capital_text import CAP_NUMBERS, numbers_ru
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
@@ -702,13 +702,9 @@ def _route_ru(route: str | None) -> str:
 
 
 def _numbers_ru(m: Mapping[str, object]) -> str:
-    sharpe = m.get("sharpe_net")
-    beat = m.get("noise_return_percentile")
-    return (f"в год {_pct(m.get('ann_return_net'))}, "
-            f"Шарп {f'{sharpe:.2f}' if isinstance(sharpe, int | float) else '—'}, "
-            f"просадка {_pct(m.get('max_dd'))}, "
-            f"обгоняет шум {_pct(beat).lstrip('+') if beat is not None else '—'}"
-            f"{capital_suffix(m)}")
+    """The stage's numbers on the strategy's own money (docs/CAPITAL_BASE.md); the stand's, a
+    share of the book's balance, small beside them where they differ."""
+    return numbers_ru(m, noise="always")
 
 
 def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | None) -> list[str]:

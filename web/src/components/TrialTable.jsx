@@ -6,16 +6,21 @@ import { ROW_SOURCE, TRIAL_ROUTE, TRIAL_STATUS, label } from '../labels.js'
 // The metrics shown as columns. Anything else a trial recorded is still
 // there — the row expands to the stored JSON — but these four are what the
 // ledger is read for. A metric a trial did not record shows as absent; the
-// UI never computes or substitutes one.
+// UI never computes or substitutes one. The money columns lead with the run on the strategy's own
+// money (docs/CAPITAL_BASE.md; the API's `headline`), and the stand's share of the book's balance
+// stays under it in small print where it differs. The third item is the `headline` field.
 const METRIC_COLUMNS = [
-  ['sharpe_net', 'Sharpe net'],
-  ['ann_return_net', 'Доходность net'],
-  ['max_dd', 'Max DD'],
-  ['turnover', 'Оборот'],
+  ['sharpe_net', 'Sharpe', 'sharpe'],
+  ['ann_return_net', 'Доходность в год', 'ann_return'],
+  ['max_dd', 'Max DD', 'max_dd'],
+  ['turnover', 'Оборот', null],
 ]
 
-function MetricCell({ metrics, key_ }) {
-  if (!metrics || metrics[key_] == null) return <Absent>нет</Absent>
+function MetricCell({ metrics, headline, key_, field }) {
+  const lead = field && headline ? headline[field] : null
+  const value = typeof lead === 'number' ? lead : metrics?.[key_]
+  if (!metrics || value == null) return <Absent>нет</Absent>
+  const stand = field && headline?.on_capital && headline.differs ? headline.stand?.[field] : null
   // A forward test under 90 days: its total over the period, the yearly figure
   // only as a small unreliable note.
   const short = key_ === 'ann_return_net' ? shortForwardReturn(metrics) : null
@@ -30,7 +35,16 @@ function MetricCell({ metrics, key_ }) {
       </div>
     )
   }
-  return <Num value={metrics[key_]} digits={key_ === 'turnover' ? 2 : 4} />
+  return (
+    <div>
+      <Num value={value} digits={key_ === 'turnover' ? 2 : 4} />
+      {typeof stand === 'number' && (
+        <div className="text-xs text-slate-400" data-testid="stand-figure">
+          стенд: {Number(stand).toFixed(4)}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function TrialTable({ trials, showIdea = true }) {
@@ -40,6 +54,10 @@ export default function TrialTable({ trials, showIdea = true }) {
 
   return (
     <div className="overflow-x-auto">
+      <p className="mb-2 text-xs text-slate-500">
+        Доходность, Sharpe и просадка — от денег стратегии (то, с чем она началась), если прогон их
+        посчитал; мелкой строкой «стенд» — как считает стенд, от баланса книги.
+      </p>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -90,9 +108,14 @@ export default function TrialTable({ trials, showIdea = true }) {
                     )}
                   </div>
                 </td>
-                {METRIC_COLUMNS.map(([key_]) => (
+                {METRIC_COLUMNS.map(([key_, , field]) => (
                   <td key={key_} className="py-2 pr-3 text-right">
-                    <MetricCell metrics={trial.metrics} key_={key_} />
+                    <MetricCell
+                      metrics={trial.metrics}
+                      headline={trial.headline}
+                      key_={key_}
+                      field={field}
+                    />
                   </td>
                 ))}
                 <td className="py-2 pr-3 text-xs">

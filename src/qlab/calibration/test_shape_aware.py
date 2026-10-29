@@ -233,6 +233,41 @@ def test_writes_n_trials_plus_one_and_folds_percentile_into_candidate_metrics(se
     assert session.query(Trial).count() == 9
 
 
+def test_rules_that_read_the_strategys_money_get_the_rank_and_the_power_on_it(session):
+    """Rules 2026-10-29.2: the noise rank and the power of the bar are those of the yearly return
+    on the strategy's own money, stored as `noise_cap_return_percentile` and `noise_cap_power`
+    (the stand's `noise_power` is kept beside them for the older rules)."""
+    from qlab.calibration.shape_aware import power_targets
+    from qlab.rules.schema import NoisePower
+
+    ruleset = _shape_aware_ruleset(threshold=0.0)
+    cap_rules = [r.model_copy(update={"metric": {"ann_return_net": "cap_ann_return",
+                                                 "noise_return_percentile":
+                                                 "noise_cap_return_percentile"}[r.metric]})
+                 for r in ruleset.rules]
+    setting = NoisePower(good_return=0.07, min_power=0.8, return_metric="cap_ann_return",
+                         percentile_metric="noise_cap_return_percentile",
+                         power_metric="noise_cap_power", rationale="t")
+    ruleset = ruleset.model_copy(update={"rules": cap_rules, "noise_power": setting})
+    assert power_targets(ruleset) == [("cap_ann_return", "noise_cap_power"),
+                                      ("ann_return_net", "noise_power")]
+    old = ruleset.model_copy(update={"noise_power": NoisePower(
+        good_return=0.07, min_power=0.8, rationale="t")})
+    assert power_targets(old) == [("ann_return_net", "noise_power")]
+
+    result = evaluate_spec_with_shape_aware_bar(
+        _spec(), session=session, ruleset=ruleset, deployable_capital_usd=1_000_000.0,
+        n_trials=8, seed_offset=0)
+
+    m = result.candidate.metrics
+    assert result.candidate.error is None
+    assert "noise_cap_power" in m and "noise_power" in m
+    assert 0.0 <= m["noise_cap_power"] <= 1.0
+    rows = {r.rule_id: r for r in result.candidate.rules_result.rows}
+    assert rows["shape_aware_edge"].metric == "noise_cap_return_percentile"
+    assert rows["shape_aware_edge"].value == pytest.approx(m["noise_cap_return_percentile"])
+
+
 def test_candidate_below_threshold_is_rejected_by_the_percentile_rule(session):
     spec = _spec()
     # A threshold of 1.01 cannot be met by any candidate (percentile is

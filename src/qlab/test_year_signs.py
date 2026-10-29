@@ -277,7 +277,7 @@ def cli_db(tmp_path, monkeypatch):
 
 
 def test_the_command_prints_a_row_per_idea_and_the_totals(cli_db):
-    result = CliRunner().invoke(app, ["year-signs", "--rules", "2026-10-28.2"])
+    result = CliRunner().invoke(app, ["year-signs", "--stand", "--rules", "2026-10-28.2"])
     assert result.exit_code == 0, result.output
     out = result.output
     assert "rules: 2026-10-28.2; latest judged trial of each idea" in out
@@ -291,7 +291,7 @@ def test_the_command_prints_a_row_per_idea_and_the_totals(cli_db):
 
 
 def test_the_command_with_all_trials_counts_every_trial(cli_db):
-    result = CliRunner().invoke(app, ["year-signs", "--all-trials", "--json",
+    result = CliRunner().invoke(app, ["year-signs", "--stand", "--all-trials", "--json",
                                       "--rules", "2026-10-28.2"])
     assert result.exit_code == 0, result.output
     body = json.loads(result.output)
@@ -301,7 +301,7 @@ def test_the_command_with_all_trials_counts_every_trial(cli_db):
     assert body["rows"][1]["outcome"] == "rejected"
     assert body["summary"]["trials"] == 3 and body["summary"]["ideas"] == 2
     latest = json.loads(CliRunner().invoke(
-        app, ["year-signs", "--json", "--rules", "2026-10-28.2"]).output)
+        app, ["year-signs", "--stand", "--json", "--rules", "2026-10-28.2"]).output)
     assert [r["trial_id"] for r in latest["rows"]] == [2, 3]
 
 
@@ -364,7 +364,7 @@ def test_evaluate_prints_the_four_signs_beside_the_verdicts(cli_db, monkeypatch)
     monkeypatch.setattr(cli, "load_spec", lambda path: SimpleNamespace(idea_id="x", title="X"))
     monkeypatch.setattr(cli, "evaluate_spec", lambda spec, **kw: result)
 
-    out = CliRunner().invoke(app, ["evaluate", "spec.yaml"]).output
+    out = CliRunner().invoke(app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2"]).output
 
     assert "year signs (recorded, they decide nothing):" in out
     assert "  А: без лучшего года не меньше 4% в год — не определено " \
@@ -374,4 +374,5 @@ def test_evaluate_prints_the_four_signs_beside_the_verdicts(cli_db, monkeypatch)
     assert out.index("year signs") < out.index("routing: paper")
 
     result.metrics = {"ann_return_net": 0.2}  # a run without a year view prints no signs
-    assert "year signs" not in CliRunner().invoke(app, ["evaluate", "spec.yaml"]).output
+    assert "year signs" not in CliRunner().invoke(
+        app, ["evaluate", "spec.yaml", "--rules", "2026-10-28.2"]).output

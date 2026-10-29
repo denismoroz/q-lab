@@ -171,13 +171,20 @@ def build_prompt(session: Session, scan: Any, cfg: Config) -> str:
     trial = session.get(Trial, scan.trial_id)
     idea = session.get(Idea, scan.idea_id)
     metrics = (trial.metrics or {}) if trial is not None else {}
-    # The `cap_` numbers are the same run on the strategy's own money (docs/CAPITAL_BASE.md): a
-    # percent of the capital it started with, not of a balance grown with set-aside cash.
-    nums = [(k, metrics.get(k)) for k in ("ann_return_net", "total_return_net", "max_dd",
-                                           "forward_days", "sharpe_net", "cap_ann_return",
-                                           "cap_total_return", "cap_max_dd")]
-    headline = "Stand numbers: " + ", ".join(
-        f"{k} {v:.4g}" for k, v in nums if isinstance(v, int | float)) + "."
+    # The leading numbers are the run on the strategy's own money (docs/CAPITAL_BASE.md): a
+    # percent of the capital it started with, not of a balance grown with set-aside cash. The
+    # stand's own are named as such beside them, so the investigator reasons on one base.
+    cap_keys = ("cap_ann_return", "cap_total_return", "cap_max_dd", "cap_sharpe", "forward_days")
+    stand_keys = ("ann_return_net", "total_return_net", "max_dd", "sharpe_net")
+    capital_part = ", ".join(f"{k} {metrics[k]:.4g}" for k in cap_keys
+                             if isinstance(metrics.get(k), int | float))
+    stand_part = ", ".join(f"{k} {metrics[k]:.4g}" for k in stand_keys
+                           if isinstance(metrics.get(k), int | float))
+    headline = (f"Numbers on the strategy's own money (the ones to reason on): {capital_part}."
+                if capital_part else "This run has no numbers on the strategy's own money.")
+    if stand_part:
+        headline += (f" As the stand counts them, a share of the book's balance (secondary, "
+                     f"not comparable across books): {stand_part}.")
     flags = [fl.FlagResult.from_json(f) for f in scan.flags]
     fired = [f for f in flags if f.fired]
     quiet = [f for f in flags if not f.fired]

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from qlab.anomalies import flags as fl
 from qlab.anomalies.config import FLAGS, Config
 from qlab.anomalies.rerun import Decomposition, StoredRun, daily, decompose, load_run
+from qlab.capital_text import ann_of
 from qlab.harness.strategy import ZERO_WEIGHT_TOL
 
 BOOK_FLAGS = FLAGS[:7]
@@ -366,14 +367,14 @@ def family_returns(session: Session, idea_id: str) -> list[float]:
             select(Trial).join(Spec, Trial.spec_id == Spec.id)
             .where(Spec.idea_id == other, Trial.metrics.is_not(None), Trial.route.is_not(None))
             .order_by(Trial.id.desc()).limit(1)).scalars().first()
-        value = None if last is None else (last.metrics or {}).get("ann_return_net")
+        value = None if last is None else ann_of(last.metrics)
         if isinstance(value, int | float) and value == value:
             out.append(float(value))
     return out
 
 
 def family_flag(session: Session, idea_id: str, metrics: dict, cfg: Config) -> fl.FlagResult:
-    value = (metrics or {}).get("ann_return_net")
+    value = ann_of(metrics)
     return fl.too_good_for_family(
         float(value) if isinstance(value, int | float) else None,
         family_returns(session, idea_id), cfg.flag("too_good_for_family"))

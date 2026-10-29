@@ -43,67 +43,50 @@ function YearTooltip({ active, payload }) {
 // are recorded to collect statistics and decide nothing.
 const SIGN_STATE = { holds: 'держится', fails: 'не держится', 'not defined': 'не определено' }
 
-// docs/CAPITAL_BASE.md: the same years read on the strategy's own money. The stand's column is a
-// share of a book whose balance has grown with money set aside (Bv2), compounded; this one is a
-// share of the capital the strategy started with, summed when it does not reinvest its profit.
-function CapitalYears({ view }) {
+// docs/CAPITAL_BASE.md: the years are read on the strategy's own money (owner, 2026-10-29: the
+// leading figure everywhere is the strategy's own money's), a share of the capital it started with,
+// summed when it does not reinvest its profit. The stand's column is a share of a book whose
+// balance has grown with money set aside (Bv2), compounded; it stays as a small table beside them.
+function StandYears({ view }) {
   const capital = view.capital
   if (!capital?.years?.length) return null
   const stand = new Map(view.years.map((y) => [y.year, y]))
-  const summed = capital.reinvested === false
   const differs = capital.years.some((y) => {
     const s = stand.get(y.year)
     return !s || Math.abs(s.return - y.return) > 0.0005
   })
   if (!differs) return null
   return (
-    <div className="mt-2" data-testid="year-view-capital">
-      <div className="text-xs uppercase tracking-wide text-slate-500">
-        на деньгах стратегии
-        {summed ? ' — прибыль не вкладывается обратно, годы складываются' : ' — со сложным процентом'}
-      </div>
-      <table className="mt-1 text-sm tabular-nums">
-        <thead>
-          <tr className="text-left text-xs text-slate-500">
-            <th className="pr-4 font-normal">год</th>
-            <th className="pr-4 font-normal">как считает стенд</th>
-            <th className="font-normal">на деньгах стратегии</th>
-          </tr>
-        </thead>
+    <div className="mt-2" data-testid="year-view-stand">
+      <div className="text-xs text-slate-500">как считает стенд (от баланса книги):</div>
+      <table className="mt-1 text-xs tabular-nums text-slate-500">
         <tbody>
           {capital.years.map((y) => (
             <tr key={y.year}>
               <td className="pr-4">{yearLabel(y)}</td>
-              <td className="pr-4">{percent(stand.get(y.year)?.return)}</td>
-              <td className="font-medium">{percent(y.return)}</td>
+              <td className="pr-4">на деньгах стратегии {percent(y.return)}</td>
+              <td>у стенда {percent(stand.get(y.year)?.return)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {(capital.signs ?? []).length > 0 && (
-        <ul className="mt-1 text-xs text-slate-500" data-testid="year-signs-capital">
-          {capital.signs.map((s) => (
-            <li key={s.id}>
-              {s.letter}: {s.title} — {SIGN_STATE[s.state] ?? s.state}
-              {s.holds == null ? (s.reason ? ` (${s.reason})` : '') : ` (${percent(s.value)})`}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   )
 }
 
 export default function YearView({ view, compact = false }) {
   if (!view?.years?.length) return null
-  const summary = view.summary ?? {}
+  // The strategy's own money's years lead; a run that has none shows the stand's, and says so.
+  const onCapital = Boolean(view.capital?.years?.length)
+  const main = onCapital ? view.capital : view
+  const summary = main.summary ?? {}
   const rows = [
     summary.years_counted != null
       ? ['прибыльных лет', `${summary.years_positive} из ${summary.years_counted}`]
       : null,
     typeof summary.ann_return_net_ex_best_year === 'number'
       ? [
-          `доходность в год без лучшего года${view.best_year ? ` (${view.best_year})` : ''}`,
+          `доходность в год без лучшего года${main.best_year ? ` (${main.best_year})` : ''}`,
           percent(summary.ann_return_net_ex_best_year),
         ]
       : null,
@@ -111,13 +94,18 @@ export default function YearView({ view, compact = false }) {
       ? ['доля лучшего года во всей прибыли', percent(summary.best_year_share_of_profit, 0)]
       : null,
   ].filter(Boolean)
-  const signs = view.signs ?? []
-  const data = view.years.map((y) => ({ ...y, label: yearLabel(y), pct: y.return * 100 }))
+  const signs = main.signs ?? []
+  const data = main.years.map((y) => ({ ...y, label: yearLabel(y), pct: y.return * 100 }))
+  const basis = onCapital
+    ? view.capital.reinvested === false
+      ? 'на деньгах стратегии, прибыль не вкладывается обратно, годы складываются'
+      : 'на деньгах стратегии, со сложным процентом'
+    : 'по счёту стенда: у прогона нет лет на деньгах стратегии'
 
   return (
     <div className="mt-3" data-testid="year-view">
       <div className="text-xs uppercase tracking-wide text-slate-500">
-        по календарным годам — для сведения, на вердикт не влияет
+        по календарным годам — {basis}; для сведения, на вердикт не влияет
       </div>
       <div style={{ width: '100%', height: compact ? 130 : 170 }}>
         <ResponsiveContainer>
@@ -159,7 +147,7 @@ export default function YearView({ view, compact = false }) {
           ))}
         </ul>
       )}
-      <CapitalYears view={view} />
+      <StandYears view={view} />
       <p className="mt-1 text-xs text-slate-400">
         Столбец — доходность за календарный год после комиссий (неполный год — за его дни, бледный:
         меньше 120 дней, в сводках не участвует). «Без лучшего года» — доходность в год, если

@@ -514,8 +514,8 @@ def test_the_report_gives_the_plain_numbers_the_stage_2_lines_and_the_deferred(w
     state = _stage(world)
     state["twins"]["deferred"] = ["later"]
     body = "\n".join(twin_stage.report_lines(state["twins"]))
-    assert "в год +36.2%" in body and "Шарп 0.90" in body and "просадка -53.6%" in body
-    assert "без лучшего 1% дней -4.8%" in body
+    assert "в год +36.2%" in body and "Шарп 0.90" in body and "просадка −53.6%" in body
+    assert "без лучшего 1% дней −4.8%" in body
     assert "второй этап, Hyperliquid" in body and "ждут следующей ночи: later" in body
     assert f"{TWIN}.yaml" in body  # the twin's file is named
 

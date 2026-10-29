@@ -124,13 +124,16 @@ def load(store: Path = DEFAULT_DIR) -> RegimeSeries | None:
     )
 
 
-def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: float
-              ) -> dict[str, float]:
+def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: float,
+              *, additive: bool = False, prefix: str = "regime_") -> dict[str, float]:
     """Per-regime metrics of a strategy's net returns (indexed by decision
     time t; each return is realised over (t, t+1]). A return takes the label
-    of the last day closed by the end of its period. Keys:
-    regime_<r>_share, _days (distinct calendar days), _return (compounded
-    over the regime's periods),
+    of the last day closed by the end of its period. Keys (`prefix` is
+    `regime_` for the stand's series and `cap_regime_` for the same read on the strategy's
+    own money, docs/CAPITAL_BASE.md):
+    <prefix><r>_share, _days (distinct calendar days), _return (compounded
+    over the regime's periods, or summed with `additive`: a strategy that does not
+    reinvest its profit),
     _ann_return, _sharpe, _max_dd, _btc_return (BTC over the same days)."""
     if len(net_return) < 2:
         return {}
@@ -138,30 +141,37 @@ def breakdown(net_return: pd.Series, regimes: RegimeSeries, periods_per_year: fl
         net_return.index[-1] - net_return.index[-2])]))
     labels = regimes.labels.dropna()
     label = pd.Series(labels.reindex(ends, method="ffill").to_numpy(), index=net_return.index)
-    out: dict[str, float] = {
-        "regime_bear_below": regimes.bear_below, "regime_bull_above": regimes.bull_above,
-    }
+    out: dict[str, float] = {}
+    if prefix == "regime_":  # the two lines are the same for any read, kept once
+        out = {"regime_bear_below": regimes.bear_below, "regime_bull_above": regimes.bull_above}
     days = pd.Series(ends.normalize(), index=net_return.index)
     for r in REGIMES:
         mask = (label == r).to_numpy()
         part = net_return[mask]
-        out[f"regime_{r}_share"] = float(mask.mean())
-        out[f"regime_{r}_days"] = float(pd.DatetimeIndex(days[mask]).unique().size)
+        out[f"{prefix}{r}_share"] = float(mask.mean())
+        out[f"{prefix}{r}_days"] = float(pd.DatetimeIndex(days[mask]).unique().size)
         if len(part) < 2:
             continue
         growth = float((1.0 + part).prod())
         std = part.std(ddof=1)
-        equity = (1.0 + part).cumprod()
-        out[f"regime_{r}_return"] = growth - 1.0
-        out[f"regime_{r}_ann_return"] = (
-            growth ** (periods_per_year / len(part)) - 1.0 if growth > 0 else -1.0
-        )
-        out[f"regime_{r}_sharpe"] = (float(part.mean() / std * np.sqrt(periods_per_year))
-                                     if std and not np.isnan(std) else float("nan"))
-        out[f"regime_{r}_max_dd"] = float((equity / equity.cummax() - 1.0).min())
+        if additive:
+            total = float(part.sum())
+            curve = part.cumsum()
+            out[f"{prefix}{r}_return"] = total
+            out[f"{prefix}{r}_ann_return"] = total * periods_per_year / len(part)
+            out[f"{prefix}{r}_max_dd"] = float((curve - curve.cummax().clip(lower=0.0)).min())
+        else:
+            equity = (1.0 + part).cumprod()
+            out[f"{prefix}{r}_return"] = growth - 1.0
+            out[f"{prefix}{r}_ann_return"] = (
+                growth ** (periods_per_year / len(part)) - 1.0 if growth > 0 else -1.0
+            )
+            out[f"{prefix}{r}_max_dd"] = float((equity / equity.cummax() - 1.0).min())
+        out[f"{prefix}{r}_sharpe"] = (float(part.mean() / std * np.sqrt(periods_per_year))
+                                      if std and not np.isnan(std) else float("nan"))
         regime_days = pd.DatetimeIndex(days[mask].unique())
         market = regimes.market_return.reindex(regime_days).dropna()
-        out[f"regime_{r}_btc_return"] = float((1.0 + market).prod() - 1.0)
+        out[f"{prefix}{r}_btc_return"] = float((1.0 + market).prod() - 1.0)
     return out
 
 

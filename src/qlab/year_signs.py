@@ -151,6 +151,21 @@ def read_signs(metrics: Mapping[str, object] | None, ruleset: RuleSet) -> list[S
     return out
 
 
+def stand_keyed(ruleset: RuleSet) -> RuleSet:
+    """The ruleset with every informational reading's metric under the stand's own key names:
+    `cap_ann_return_ex_best_year` becomes `ann_return_net_ex_best_year`, `cap_years_positive_share`
+    `years_positive_share`. Rules from 2026-10-29.2 read the strategy's own money (`cap_` keys);
+    a view that wants the signs on either base reads the year keys it has, under the stand's
+    names (`qlab.year_view.capital_view` renames the `cap_` ones), with the lines of the newest
+    ruleset: this makes one set of lines serve both. A ruleset that already reads the stand's
+    keys is returned as it is."""
+    from qlab.harness.metrics import stand_key_of
+
+    changed = [r.model_copy(update={"metric": stand_key_of(r.metric) or r.metric})
+               for r in ruleset.informational]
+    return ruleset.model_copy(update={"informational": changed})
+
+
 def sign_line(reading: SignReading) -> str:
     """One sign in words: «А: без лучшего года не меньше 4% в год — держится (13.0%)»."""
     text = f"{reading.letter}: {reading.title} — {reading.state_ru}"
@@ -172,13 +187,14 @@ def signs_sentence(metrics: Mapping[str, object] | None, ruleset: RuleSet) -> st
 
 
 def latest_ruleset() -> RuleSet | None:
-    """The newest ruleset, or None when it cannot be read (a report line then goes without
-    the signs rather than failing). Read afresh each time: a few reports call it, and a failed
-    read must not stick."""
+    """The newest ruleset with its readings under the stand's key names (`stand_keyed`), so the
+    signs can be read off either base's year keys; or None when it cannot be read (a report line
+    then goes without the signs rather than failing). Read afresh each time: a few reports call
+    it, and a failed read must not stick."""
     from qlab.rules.loader import load_latest
 
     try:
-        return load_latest()
+        return stand_keyed(load_latest())
     except Exception:  # noqa: BLE001 - a view must not fail over a missing rules file
         return None
 
@@ -243,6 +259,7 @@ def collect(session: Session, ruleset: RuleSet, *, all_trials: bool = False,
     from qlab.registry.models import Idea, Spec, Trial
     from qlab.year_view import capital_view, year_rows
 
+    ruleset = stand_keyed(ruleset)  # the views below carry the stand's key names
     query = (session.query(Trial, Spec, Idea).join(Spec, Trial.spec_id == Spec.id)
              .join(Idea, Spec.idea_id == Idea.id)
              .filter(Trial.route.isnot(None), Trial.metrics.isnot(None),
@@ -342,33 +359,38 @@ SECTION_TITLE = "Четыре признака по годам: статисти
 
 
 def report_lines(session: Session, ruleset: RuleSet) -> list[str]:
-    """The morning report's few lines: the totals over each idea's latest judged run, and
-    what they rest on. The table and the cross-tables are `qlab year-signs`; with
-    `--capital` they are read on the strategy's own money (docs/CAPITAL_BASE.md)."""
-    latest = collect(session, ruleset)
+    """The morning report's few lines: the totals over each idea's latest judged run on the
+    strategy's own money (docs/CAPITAL_BASE.md; the rules read it since 2026-10-29.2), and what
+    they rest on, then the same totals as the stand counts them. The table and the cross-tables
+    are `qlab year-signs` (`--stand` reads the stand's share of the balance instead)."""
+    capital_latest = collect(session, ruleset, on_capital=True)
+    stand_latest = collect(session, ruleset)
     every = collect(session, ruleset, all_trials=True)
-    if not latest:
+    if not stand_latest and not capital_latest:
         return []
-    summary = summarize(latest)
+    lead, lead_name = (capital_latest, "на деньгах стратегии") if capital_latest \
+        else (stand_latest, "по счёту стенда: у прогонов ещё нет разбивки на деньгах стратегии")
+    summary = summarize(lead)
     lines = [
         "Признаки только записываются, ничего не решают (владелец, 2026-10-28: «когда наберем "
         "статистику - решим - какое правило - лучше»). Основа: последний прогон каждой идеи "
         f"с разбивкой по годам — {summary['ideas']} идей (второй этап идеи считается отдельно); "
-        f"всех таких прогонов в реестре {len(every)}.", ""]
+        f"всех таких прогонов в реестре {len(every)}. Годы посчитаны {lead_name} "
+        "(docs/CAPITAL_BASE.md).", ""]
     for spec in SIGNS:
         t = summary["totals"][spec.letter]
         lines.append(f"- {spec.letter} ({spec.title}): держится {t[HOLDS]}, не держится "
                      f"{t[FAILS]}, не определено {t[UNDEFINED]}")
-    capital = summarize(collect(session, ruleset, on_capital=True))
-    if capital["trials"]:
-        lines += ["", "То же на деньгах стратегии (docs/CAPITAL_BASE.md), для "
-                  f"{capital['ideas']} идей, у которых прогон уже посчитан так:"]
+    if capital_latest and stand_latest:
+        stand = summarize(stand_latest)
+        lines += ["", "Для сравнения, как считает стенд (от баланса книги), для "
+                  f"{stand['ideas']} идей:"]
         for spec in SIGNS:
-            t = capital["totals"][spec.letter]
+            t = stand["totals"][spec.letter]
             lines.append(f"- {spec.letter}: держится {t[HOLDS]}, не держится {t[FAILS]}, "
                          f"не определено {t[UNDEFINED]}")
     lines += ["", "Таблица по идеям и разрезы по исходу и этапу: `uv run qlab year-signs` "
-              "(`--capital` — на деньгах стратегии)."]
+              "(`--stand` — как считает стенд)."]
     return lines
 
 
@@ -376,4 +398,4 @@ __all__ = [
     "FAILS", "HOLDS", "LETTERS", "OUTCOMES", "SECTION_TITLE", "SIGNS", "STAGES", "SignReading",
     "SignRow", "SignSpec", "UNDEFINED", "collect", "has_year_view", "latest_ruleset",
     "not_defined_reason", "read_signs", "render_summary", "render_table", "report_lines",
-    "sign_line", "signs_sentence", "stage_of", "summarize"]
+    "sign_line", "signs_sentence", "stage_of", "stand_keyed", "summarize"]

@@ -564,6 +564,14 @@ def table_lines(table: dict) -> list[str]:
             f"| {num(b['sharpe'])} → {num(v['sharpe'])} "
             f"| {c['delta_sharpe']:+.2f} ({lo:+.2f} … {hi:+.2f}) "
             f"| {num(c['corrected_p'], 3)} | **{c['verdict_ru']}** |")
+    capital = [bool(r["comparison"].get("on_capital")) for r in rows]
+    out.append("")
+    out.append("Числа — в процентах от денег стратегии (docs/CAPITAL_BASE.md)." if all(capital)
+               else "Числа — в процентах от денег стратегии, где сравнение посчитано так; "
+               "более ранние сравнения посчитаны по счёту стенда (будут пересчитаны)."
+               if any(capital) else
+               "Числа сравнения посчитаны по счёту стенда (от баланса книги); пересчёт на деньги "
+               "стратегии — при следующем сравнении.")
     return out
 
 

@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from qlab.capital_text import CAP_NUMBERS
+from qlab.capital_text import CAP_NUMBERS, headline
 from qlab.pipeline.spec import StrategySpec, load_spec
 from qlab.year_view import year_keys, years_line
 
@@ -173,7 +173,8 @@ def evaluate_item(kind: str, spec: StrategySpec, *, end: date, noise_trials: int
             metrics = out.metrics or {}
             result.metrics = {k: metrics[k] for k in KEY_METRICS if k in metrics}
             result.metrics.update({k: v for k, v in metrics.items()
-                                   if k.startswith(("regime_", "fit_regime_"))
+                                   if k.startswith(("regime_", "fit_regime_", "cap_regime_",
+                                                    "fit_cap_regime_"))
                                    and k.endswith(("_return", "_noise_percentile"))})
             result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the night goes on
@@ -405,27 +406,34 @@ def _pct(v) -> str:
 def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
     """Selection period and forward test kept apart (docs/FIT_VS_FORWARD.md).
 
-    With a forward test, the run's own `ann_return_net` is the forward
+    With a forward test, the run's own yearly figure is the forward
     test's, and nineteen days annualized read as +400% a year: the forward
     test is shown as its total over its days instead, and the yearly
     figures and the regime split are the selection period's. Without one,
-    the whole window is the selection period."""
+    the whole window is the selection period.
+
+    All figures are percents of the strategy's own money when the run has them
+    (docs/CAPITAL_BASE.md; the stand's share of the book's balance only for a run that has
+    none)."""
     split = "fit_ann_return_net" in m
     prefix = "fit_" if split else ""
     days = m.get("forward_days") or 0
+    now, part = headline(m), headline(m, prefix)
+    regime = "cap_regime_" if now.on_capital else "regime_"
     forward_total = "—"
-    if days > 0 and isinstance(m.get("ann_return_net"), int | float):
+    if days > 0 and now.on_capital and now.total is not None:
+        forward_total = _pct(now.total)
+    elif days > 0 and isinstance(m.get("ann_return_net"), int | float):
         forward_total = _pct((1 + m["ann_return_net"]) ** (days / 365.25) - 1)
     if days > 0 and not split:
         # The whole judged window is the forward test (a causal selection, or
         # parameters fixed before the data began): no selection period to show.
         return ("—", "—", f"{days:.0f}", forward_total,
-                *(_pct(m.get(f"regime_{r}_return")) for r in ("bull", "flat", "bear")))
-    sharpe = m.get(f"{prefix}sharpe_net")
-    return (_pct(m.get(f"{prefix}ann_return_net")),
-            f"{sharpe:.2f}" if isinstance(sharpe, int | float) else "—",
+                *(_pct(m.get(f"{regime}{r}_return")) for r in ("bull", "flat", "bear")))
+    return (_pct(part.ann),
+            f"{part.sharpe:.2f}" if part.sharpe is not None else "—",
             f"{days:.0f}", forward_total,
-            *(_pct(m.get(f"{prefix}regime_{r}_return")) for r in ("bull", "flat", "bear")))
+            *(_pct(m.get(f"{prefix}{regime}{r}_return")) for r in ("bull", "flat", "bear")))
 
 
 def write_report(day: date, state: dict) -> Path:
@@ -461,7 +469,9 @@ def write_report(day: date, state: dict) -> Path:
             continue
         lines += [f"## {title}", "",
                   "Годовые числа и режимы — по периоду подбора; проверка вперёд — итогом за её "
-                  "дни, без пересчёта в год.", "",
+                  "дни, без пересчёта в год. Все числа — в процентах от денег стратегии (то, с чем "
+                  "она началась; у стратегии, которая прибыль не вкладывает обратно, доходность "
+                  "складывается, а не склеивается), не от баланса книги.", "",
                   "| стратегия | исход | было | подбор: в год | Шарп | вперёд, дней | "
                   "вперёд, итого | рост | боковик | падение |",
                   "|---|---|---|---:|---:|---:|---:|---:|---:|---:|"]

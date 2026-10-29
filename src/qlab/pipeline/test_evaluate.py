@@ -2165,3 +2165,39 @@ def test_a_refused_base_leaves_the_capital_figures_out(session, tmp_path) -> Non
     assert result.error is None
     assert result.metrics["cap_base_refused"] == 1.0
     assert not any(k.startswith("cap_") and k != "cap_base_refused" for k in result.metrics)
+
+
+def _money_edge_rules():
+    return [CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE,
+            Rule(id="net_edge_positive", stage=Stage.EDGE, metric="cap_ann_return",
+                 comparator=Comparator.GT, threshold=0.0, fatal=True)]
+
+
+def test_a_rule_on_the_strategys_money_reads_the_money_figure(session, tmp_path) -> None:
+    """Rules 2026-10-29.2: `net_edge_positive` reads `cap_ann_return`, not `ann_return_net`."""
+    _register_discovered(session, tmp_path)
+    result = evaluate_spec(
+        _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
+                   params={"weight": 0.4, "base": 3.0}, sources=_BASED_SOURCES),
+        session=session, ruleset=_ruleset(_money_edge_rules()), deployable_capital_usd=1000.0)
+    row = next(r for r in result.rules_result.rows if r.rule_id == "net_edge_positive")
+    assert row.metric == "cap_ann_return"
+    assert row.value == pytest.approx(result.metrics["cap_ann_return"])
+    assert row.value != pytest.approx(result.metrics["ann_return_net"])  # not the stand's figure
+
+
+def test_a_book_with_no_base_of_percent_is_not_judged_on_the_stand_instead(
+        session, tmp_path) -> None:
+    """The honest answer for a book with deposits (rules 2026-10-29.2): the money figure is
+    missing, the rule is unknown and the run routes needs-more-data with the reason named --
+    the stand's figure, which exists, is not put in its place."""
+    _register_discovered(session, tmp_path)
+    result = evaluate_spec(
+        _make_spec(code_ref="qlab.pipeline.test_evaluate:BasedToy",
+                   params={"weight": 0.4, "base": 3.0, "refuse": True}, sources=_BASED_SOURCES),
+        session=session, ruleset=_ruleset(_money_edge_rules()), deployable_capital_usd=1000.0)
+    assert result.error is None and "ann_return_net" in result.metrics
+    assert result.routing.route == "needs-more-data"
+    assert "cap_ann_return" in result.routing.reason
+    assert "base of percent is undefined" in result.routing.reason
+    assert result.rules_result.unknown_metrics == ("cap_ann_return",)

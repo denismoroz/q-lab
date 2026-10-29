@@ -30,7 +30,7 @@ from qlab.registry.models import (
     TrialStatus,
 )
 from qlab.registry.stages import NOTES_PREFIX
-from qlab.rules.loader import DEFAULT_RULES_DIR, load
+from qlab.rules.loader import DEFAULT_RULES_DIR, load, load_latest
 
 RULES = load("2026-10-29.1", DEFAULT_RULES_DIR)
 START = pd.Timestamp("2026-01-05", tz="UTC")  # a Monday
@@ -446,7 +446,7 @@ def test_the_command_prints_a_row_per_idea_and_says_which_have_no_measurement(cl
     result = CliRunner().invoke(app, ["protection"])
     assert result.exit_code == 0, result.output
     out = result.output
-    assert out.splitlines()[0].startswith("rules: 2026-10-29.1")
+    assert out.splitlines()[0].startswith(f"rules: {load_latest().version}")
     row = next(line for line in out.splitlines() if line.startswith("bv2-a "))
     assert "да 0.31" in row and "да 0.12" in row and "0.50" in row
     old = next(line for line in out.splitlines() if line.startswith("bv2-old"))
@@ -456,7 +456,7 @@ def test_the_command_prints_a_row_per_idea_and_says_which_have_no_measurement(cl
 
 def test_the_command_json_and_an_empty_registry(cli_db, tmp_path, monkeypatch):
     body = json.loads(CliRunner().invoke(app, ["protection", "--json"]).output)
-    assert body["rules_version"] == "2026-10-29.1"
+    assert body["rules_version"] == load_latest().version
     assert [r["idea_id"] for r in body["rows"]] == ["bv2-a", "bv2-old"]
     assert body["rows"][0]["readings"][0]["state"] == "holds"
     assert body["summary"]["П1"]["holds"] == 1 and body["summary"]["П1"]["not defined"] == 1

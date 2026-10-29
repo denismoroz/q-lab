@@ -49,7 +49,12 @@ from qlab.calibration.noise import (
 )
 from qlab.calibration.percentile import noise_percentile
 from qlab.harness.costs import CostModel
-from qlab.harness.metrics import compute_metrics, min_capital_usd, periods_per_year
+from qlab.harness.metrics import (
+    capital_metrics,
+    compute_metrics,
+    min_capital_usd,
+    periods_per_year,
+)
 from qlab.harness.panel import MarketPanel
 from qlab.harness.run import RunResult, run_backtest
 from qlab.pipeline.evaluate import decide_fit_forward_route, decide_route, forward_years_needed
@@ -159,11 +164,18 @@ def planted_outcomes(
             for k, (book, w) in enumerate(zip(books, windowed, strict=True)):
                 active = book.weights.loc[w.net_return.index].abs().sum(axis=1) > 0
                 planted = w.net_return + np.where(active, alpha / ppy, 0.0)
-                metrics = compute_metrics(dataclasses.replace(w, net_return=planted))
+                book = dataclasses.replace(w, net_return=planted, capital_return=planted,
+                                           capital_reinvested=True)
+                metrics = compute_metrics(book)
+                # These books are generic (a base of 1, profit reinvested), so their figures on
+                # the strategy's own money are the stand's: the rules of 2026-10-29.2 and later,
+                # which read the `cap_` figures, judge them too (docs/CAPITAL_BASE.md).
+                metrics.update(capital_metrics(book))
                 others = noise_ann[:k] + noise_ann[k + 1 :]
                 metrics["noise_return_percentile"] = noise_percentile(
                     metrics["ann_return_net"], others
                 )
+                metrics["noise_cap_return_percentile"] = metrics["noise_return_percentile"]
                 metrics["min_capital_usd"] = capital[k]
                 metrics.update({key: shared_facts[key] for key in SHARED_FACTS
                                 if key in shared_facts})

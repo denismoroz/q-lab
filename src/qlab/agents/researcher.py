@@ -32,7 +32,7 @@ from pathlib import Path
 
 from qlab.agents.implementer import _changed_paths, _revert
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
-from qlab.capital_text import capital_suffix
+from qlab.capital_text import basis_ru, headline, numbers_ru
 from qlab.pipeline.sources import QLAB_ROOT
 from qlab.year_view import YEAR_KEY, years_line
 
@@ -107,12 +107,20 @@ def build_context(name: str, idea_ids: list[str], session, specs: list[Path] | N
         route = getattr(trial.route, "value", trial.route)
         lines += [f"## {idea_id} -- trial {trial.id} ({trial.started_at:%Y-%m-%d})",
                   f"route: {route} -- {trial.route_reason}"]
-        keys = [k for k in sorted(m) if not k.startswith("fit_regime") and not YEAR_KEY.match(k)]
+        # The leading numbers are on the strategy's own money (docs/CAPITAL_BASE.md): reason on
+        # these; the keys without `cap_` below are the stand's share of the book's balance.
+        lines += [f"numbers on the strategy's own money ({basis_ru(m)}): {numbers_ru(m)}",
+                  "(keys cap_* and noise_cap_* are on the strategy's own money -- the rules "
+                  "decide on them; the other money keys, ann_return_net, sharpe_net, max_dd, "
+                  "total_return_net, noise_return_percentile, regime_*, are the stand's share "
+                  "of the book's balance and are not comparable across books)"]
+        keys = [k for k in sorted(m) if not k.startswith(("fit_regime", "fit_cap_regime"))
+                and not YEAR_KEY.match(k)]
         lines += [f"- {k}: {m[k]:.4g}" if isinstance(m[k], int | float) else f"- {k}: {m[k]}"
                   for k in keys]
         if years := years_line(m):  # the per-year keys, as one line (docs/YEARS.md)
             lines.append(f"by calendar year (judged part): {years}")
-        fit = {k: v for k, v in m.items() if k.startswith("fit_regime")}
+        fit = {k: v for k, v in m.items() if k.startswith(("fit_regime", "fit_cap_regime"))}
         if fit:
             lines.append("selection-period regime breakdown: " + ", ".join(
                 f"{k[4:]}={v:.4g}" for k, v in sorted(fit.items())))
@@ -394,17 +402,14 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str, noise_tria
             own = (f" [свои числа: {len(opened['candidate_trials'])} вариантов записаны "
                    f"испытаниями, выбор на данных до {opened['cut']}, вердикт — по дням с него]"
                    if opened else "")
-            regimes = ", ".join(f"{r}: {m[f'regime_{r}_return']:+.1%}" for r in
-                                ("bull", "flat", "bear") if f"regime_{r}_return" in m)
+            reg = "cap_regime_" if headline(m).on_capital else "regime_"
+            regimes = ", ".join(f"{r}: {m[f'{reg}{r}_return']:+.1%}" for r in
+                                ("bull", "flat", "bear") if f"{reg}{r}_return" in m)
             lines.append(
                 f"- `{experiment.idea_id}` (прогон {result.trial_id}){own}: "
                 f"{result.routing.route} — "
-                f"в год {m.get('ann_return_net', float('nan')):+.1%}, "
-                f"Шарп {m.get('sharpe_net', float('nan')):.2f}, "
-                f"просадка {m.get('max_dd', float('nan')):.1%}, "
-                f"обгоняет шум {m.get('noise_return_percentile', float('nan')):.0%}, "
-                f"нужно капитала ${m.get('min_capital_usd', float('nan')):,.0f}; {regimes}"
-                f"{capital_suffix(m)}")
+                f"{numbers_ru(m)}, "
+                f"нужно капитала ${m.get('min_capital_usd', float('nan')):,.0f}; {regimes}")
             if years := years_line(m):
                 lines.append(f"  - {years}")
             lines += second_stage_lines(experiment, judged, opened, result,

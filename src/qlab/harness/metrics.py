@@ -544,7 +544,8 @@ def capital_metrics(result: RunResult) -> dict[str, float]:
         remains.
 
     Keys: `cap_ann_return`, `cap_total_return`, `cap_sharpe`, `cap_max_dd`,
-    `cap_ann_return_ex_best_1pct`, `cap_reinvested`, and the year view under `cap_year_*`,
+    `cap_ann_return_ex_best_1pct`, `cap_worst_week`, `cap_reinvested`, and the year view under
+    `cap_year_*`,
     `cap_years_*`, `cap_ann_return_ex_best_year`, `cap_best_year_share_of_profit` (keys with
     an undefined value are left out, as in `year_breakdown`).
 
@@ -581,6 +582,9 @@ def capital_metrics(result: RunResult) -> dict[str, float]:
         out[cap_key("max_dd")] = float((equity / equity.cummax() - 1.0).min())
     out[cap_key("ann_return_net_ex_best_1pct")] = ann_return_net_ex_best_1pct(
         r, additive=additive)
+    weekly = r.groupby(pd.Grouper(freq="W")).sum() if additive else \
+        (1.0 + r).groupby(pd.Grouper(freq="W")).prod() - 1.0
+    out[cap_key("worst_week")] = float(weekly.min()) if len(weekly) else float("nan")
     out.update({cap_key(k): v for k, v in year_breakdown(r, additive=additive).items()})
     return out
 

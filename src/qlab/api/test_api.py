@@ -857,3 +857,52 @@ def test_a_trial_carries_its_protection_readings_or_null(client, session_factory
     assert readings["П3"]["state"] == "number" and readings["П3"]["threshold"] is None
     assert readings["П4"]["state"] == "holds"
     assert view["numbers"]["prot_weeks"] == 24.0 and view["min_weeks"] == 8
+
+
+def test_a_trial_leads_with_the_strategys_own_money_and_carries_the_stand_beside_it(
+        client, session_factory):
+    """docs/CAPITAL_BASE.md, owner 2026-10-29: the figures the console leads with (`headline`) are
+    the run on the strategy's own money; the stand's share of the book's balance is beside them;
+    the year view leads with the money's years and the year signs are read off them."""
+    from qlab.registry.models import Spec, TrialRoute
+
+    session = session_factory()
+    spec = session.query(Spec).filter(Spec.idea_id == "alpha").one()
+    metrics = {
+        "ann_return_net": 0.0202, "sharpe_net": 0.55, "max_dd": -0.0448,
+        "noise_return_percentile": 0.99,
+        "cap_ann_return": 0.0841, "cap_sharpe": 0.53, "cap_max_dd": -0.1934,
+        "cap_total_return": 0.118, "cap_reinvested": 0.0, "noise_cap_return_percentile": 0.98,
+        "year_2024_return": 0.02, "year_2024_days": 366, "year_2025_return": 0.02,
+        "year_2025_days": 365, "years_counted": 2, "years_positive": 2,
+        "years_positive_share": 1.0, "ann_return_net_ex_best_year": 0.02,
+        "best_year_share_of_profit": 0.5,
+        "cap_year_2024_return": 0.09, "cap_year_2024_days": 366, "cap_year_2025_return": 0.08,
+        "cap_year_2025_days": 365, "cap_years_counted": 2, "cap_years_positive": 2,
+        "cap_years_positive_share": 1.0, "cap_ann_return_ex_best_year": 0.08,
+        "cap_best_year_share_of_profit": 0.53}
+    repo.add_trial(
+        session, spec_id=spec.id, config_hash="money", snapshot_id="snap-1", code_sha="x",
+        params={}, status=TrialStatus.OK, route=TrialRoute.REJECT, route_reason="r",
+        started_at=datetime(2026, 10, 29, 12, tzinfo=UTC), metrics=metrics)
+    session.commit()
+    session.close()
+
+    trial = client.get("/api/ideas/alpha").json()["latest_outcome"]["trial"]
+    h = trial["headline"]
+    assert h["on_capital"] and h["reinvested"] is False and h["differs"] and not h["base_refused"]
+    assert (h["ann_return"], h["sharpe"], h["max_dd"], h["noise_percentile"]) == (
+        0.0841, 0.53, -0.1934, 0.98)
+    assert h["stand"]["ann_return"] == 0.0202 and h["stand"]["noise_percentile"] == 0.99
+    assert "от денег стратегии" in h["basis"]
+    view = trial["year_view"]
+    assert view["line"].startswith("по годам (от денег стратегии")
+    assert "Как считает стенд (от баланса книги)" in view["line"]
+    assert view["capital"]["years"][0]["return"] == 0.09 and view["years"][0]["return"] == 0.02
+    # the signs the console shows first are the money's (А: without the best year 8% >= 4%)
+    assert {s["letter"]: s["state"] for s in view["capital"]["signs"]}["А"] == "holds"
+    listed = client.get("/api/ideas/alpha/trials").json()["items"][0]
+    assert listed["headline"]["ann_return"] == 0.0841
+    assert listed["metrics"]["ann_return_net"] == 0.0202
+    older = client.get("/api/ideas/alpha/trials").json()["items"][-1]
+    assert older["headline"] is None or not older["headline"]["on_capital"]

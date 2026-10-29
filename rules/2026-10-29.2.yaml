@@ -1,0 +1,158 @@
+# The rules read the strategy's own money, not the stand's share of the book's balance.
+#
+# Owner, 2026-10-28 (docs/CAPITAL_BASE.md): «нужно сравнивать яблоки с яблоками а не с
+# апельсинами». Every run has stored two series since then: the stand's old one
+# (`ann_return_net`, `sharpe_net`, `max_dd`, `noise_return_percentile`, ... a share of the
+# book's balance, compounded) and the one on the strategy's own money (`cap_ann_return`,
+# `cap_sharpe`, `cap_max_dd`, `noise_cap_return_percentile`, ... a percent of what the strategy
+# started with, summed for a book that does not reinvest, compounded for one that does). The
+# rules of 2026-10-29.1 and before still read the first one. On 2026-10-29 the owner looked at
+# the idea page of bv2-research-headroom-causal: stage 1 (Binance) read +2.02% a year and
+# stage 2 (Hyperliquid) +18.41% — the Binance figure is divided by a book balance about four
+# times the strategy's money (set-aside cash after the ratchet), on the strategy's money it is
+# +8.4% against +17.3%: «мы вроде как решили отделять апельсины от яблок но тут все еще разная
+# доходность показана ... было бы здорово пофиксить это везде». Asked whether the rules switch
+# too: «Да, и правила».
+#
+# What changes (the metric each rule reads; no threshold of any rule changes):
+#
+#   net_edge_positive          ann_return_net              -> cap_ann_return
+#   shape_aware_edge           noise_return_percentile     -> noise_cap_return_percentile
+#   ex_best_year_positive      ann_return_net_ex_best_year -> cap_ann_return_ex_best_year
+#   ex_best_year_4pct          ann_return_net_ex_best_year -> cap_ann_return_ex_best_year
+#   ex_best_1pct_positive      ann_return_net_ex_best_1pct -> cap_ann_return_ex_best_1pct
+#   years_positive_share       years_positive_share        -> cap_years_positive_share
+#   best_year_share_of_profit  best_year_share_of_profit   -> cap_best_year_share_of_profit
+#   noise power (the "too early to tell" test of 2026-10-24.2)
+#                              noise_power on ann_return_net -> noise_cap_power on cap_ann_return
+#   stage 2 positivity (rule stage2_total_return_positive, built by qlab.pipeline.confirm)
+#                              total_return_net            -> cap_total_return
+#
+# The noise books stand on the base and on the reinvest choice of the strategy they imitate
+# (docs/CAPITAL_BASE.md), so a strategy and its noise are on one base on either side of this
+# change; what changes is the base itself, and, for a strategy that does not reinvest (Bv2, FRAB,
+# XSMOM), the sum in place of the compounding. Measured on 50 ideas of four families before the
+# switch (docs/CAPITAL_BASE.md, section 7): the sign of the yearly return never changes; the place
+# among the noise books changes for two XSMOM ideas (xsmom-research-nobull-causal 1.00 -> 0.95,
+# xsmom-research-nobull-retune 0.995 -> 0.96) because the stand compounded XSMOM's profit and
+# the strategy does not; for Bv2 the places agree within one noise book of a hundred.
+#
+# What stays on the stand's numbers, and why:
+#   * min_capital_usd, venue facts, point_in_time_universe, accrual_applied: dollars or facts,
+#     not a percent of anything;
+#   * forward_days, forward_days_needed, regime days (holdout_share, regime_coverage_days): days;
+#   * the stand series itself is still recorded on every run and shown beside the other one in
+#     the console and the reports as «как считает стенд (от баланса книги)».
+#
+# A book whose base is undefined (Bv2 with deposits: `CapitalBaseRefused`, run records
+# `cap_base_refused`) has no `cap_` metrics, so its rules above are "unknown" and it routes
+# needs-more-data, with the reason saying that the base of percent is undefined. It is NOT
+# judged on the stand's number instead: the stand's share of a balance that deposits grow is
+# the very orange the owner asked to stop comparing with apples, and a verdict that silently
+# switches the base per book would make two ideas' verdicts incomparable. The honest answer is
+# "cannot be judged until the owner says what a hundred percent of a book with deposits is".
+#
+# Earlier verdicts are not rewritten: each keeps its own rules version and data range. Every
+# open idea is measured again under this version (`qlab restamp run --all`); runs of closed
+# ideas are not resurrected (CLAUDE.md, the graveyard rule).
+
+version: "2026-10-29.2"
+based_on: "2026-10-29.1"
+
+rules:
+  - id: net_edge_positive
+    stage: edge
+    metric: cap_ann_return
+    comparator: ">"
+    threshold: 0.0
+    fatal: true
+    rationale: >
+      Owner, 2026-10-03: «давай уберем пока 4% — и сделаем больше 0»; owner, 2026-10-29 («Да, и
+      правила»): the yearly return after real costs and full funding accrual, as a percent of the
+      strategy's own money (docs/CAPITAL_BASE.md), must be positive. Same line as before, the
+      base is the money the strategy started with and not the book's balance; summed, not
+      compounded, for a book that does not reinvest its profit. Whether it is distinguishable
+      from luck is shape_aware_edge's question.
+  - id: shape_aware_edge
+    stage: edge
+    metric: noise_cap_return_percentile
+    comparator: ">="
+    threshold: 0.99
+    fatal: true
+    near_margin: 0.1
+    fit_period: informational
+    on_short_forward: wait
+    rationale: >
+      Owner, 2026-10-29 («Да, и правила»): the share of matched noise books that the strategy's
+      yearly return on its own money beats. The noise books are read on the base and the
+      reinvest choice of the strategy they imitate, so both sides are on one base. Line (99%),
+      fit-period use and the wait on a short forward test are unchanged from 2026-10-24.2.
+
+informational:
+  - id: ex_best_year_positive
+    metric: cap_ann_return_ex_best_year
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      Reading of 2026-10-27.2, now on the strategy's own money (owner, 2026-10-29): without its
+      best counted calendar year the strategy still earns above zero. Zero line unchanged.
+  - id: ex_best_year_4pct
+    metric: cap_ann_return_ex_best_year
+    comparator: ">="
+    threshold: 0.04
+    rationale: >
+      Sign A (2026-10-28.2), now on the strategy's own money (owner, 2026-10-29): without every
+      day of its best counted calendar year the strategy still earns at least 4% a year. The
+      line is the owner's grading scale, "acceptable: above 4% a year"
+      (seed/preregistration/2026-09-21-paper-bv2-trend.yaml). Not defined with fewer than two
+      counted years.
+  - id: years_positive_share
+    metric: cap_years_positive_share
+    comparator: ">="
+    threshold: 0.667
+    rationale: >
+      Sign B (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): at least two thirds
+      of the counted calendar years ended above zero. Not defined with no counted year.
+  - id: ex_best_1pct_positive
+    metric: cap_ann_return_ex_best_1pct
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      Sign V (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): the annualised
+      return without the best 1% of days is above zero (summed, not compounded, for a book that
+      does not reinvest). Not defined when fewer than two bars exist.
+  - id: best_year_share_of_profit
+    metric: cap_best_year_share_of_profit
+    comparator: "<="
+    threshold: 0.5
+    rationale: >
+      Sign G (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): the best counted
+      calendar year gives no more than half of the judged part's profit. Not defined with fewer
+      than two counted years, and not defined when the total profit is not positive.
+
+noise_power:
+  good_return: 0.07
+  min_power: 0.80
+  return_metric: cap_ann_return
+  percentile_metric: noise_cap_return_percentile
+  power_metric: noise_cap_power
+  rationale: >
+    Owner, 2026-10-29 («Да, и правила»): the power of the noise bar is asked of the bar the rules
+    read, on the base the rules read. good_return and min_power are those of 2026-10-24.2 (the
+    lower end of "good" on the owner's scale, «15%+ - отлично. 7-10 - хорошо. выше 4% -
+    приемлимо.», seed/preregistration/2026-09-21-paper-bv2-trend.yaml; the conventional 80%
+    power): 7% a year is now 7% of the strategy's own money. The noise books are ranked on
+    `cap_ann_return` (percentile_metric is the rule whose threshold is the bar), and the power is
+    stored as `noise_cap_power`, beside the stand's `noise_power`, which new runs do not drive any
+    verdict with.
+
+stage2_confirmation:
+  alert_percentile_from: night/decay.yaml
+  total_metric: cap_total_return
+  rationale: >
+    Owner, 2026-10-27, «делай все» -- proof comes from stage 1's long history, stage 2 is a
+    consistency check; owner, 2026-10-29 («Да, и правила»): the positivity rule reads the stage 2
+    total on the strategy's own money (`cap_total_return`), the same figure the segments of stage
+    1's history are compared with (qlab.pipeline.confirm). A run without it (the base is
+    undefined) confirms nothing. The alarm percentile is still read from night/decay.yaml, not
+    copied.

@@ -117,7 +117,14 @@ function OverlayTable({ view }) {
           </tbody>
         </table>
       </div>
+      {table.variants.some((r) => r.comparison && !r.comparison.on_capital) && (
+        <p className="mt-2 text-xs text-amber-700" data-testid="overlay-stand-note">
+          Часть сравнений посчитана по счёту стенда (от баланса книги), а не от денег стратегии:
+          они были записаны до 29.10 и пересчитаются при следующем сравнении.
+        </p>
+      )}
       <p className="mt-2 text-xs text-slate-500">
+        Числа — в процентах от денег стратегии (docs/CAPITAL_BASE.md).
         «помогла» — разница Шарпа положительна, а p с поправкой меньше 5%; «не помогла» — достоверно
         хуже; всё остальное, а также отрезок короче года — «неотличимо от случайности».
       </p>

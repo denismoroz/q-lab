@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
-from qlab.capital_text import CAP_NUMBERS
+from qlab.capital_text import CAP_NUMBERS, basis_ru, numbers_ru
 from qlab.year_view import years_line
 
 MODEL = "opus"  # docs/PLAN.md, "Модели для агентов системы": the strong judge -> opus
@@ -63,6 +63,15 @@ Judge whether the verdict fits the evidence as a whole:
 Look especially at: whether the period is long enough for the rule that decided; each
 market regime separately (does the strategy do what it claims in bull/flat/bear?); what
 related variants and the paper book show; what single fact would change your view.
+
+Which numbers to reason on (docs/CAPITAL_BASE.md, owner 2026-10-29): the keys that start
+with cap_ (cap_ann_return, cap_sharpe, cap_max_dd, cap_total_return, cap_regime_*) and
+noise_cap_* are the run on the strategy's OWN money, a percent of the capital it started with,
+summed rather than compounded when cap_reinvested is 0; the rules decide on exactly these.
+The keys without that prefix (ann_return_net, sharpe_net, max_dd, total_return_net,
+noise_return_percentile, regime_*) are the stand's old share of the book's balance: a book
+that sets cash aside shows a smaller share of the same dollars. Never set a cap_ figure beside
+a stand figure of another run, and prefer the cap_ ones in every claim.
 
 Compare before you conclude:
 - hold_ann_return / hold_ann_return_ex_best_1pct are holding the same coins over the same
@@ -174,7 +183,7 @@ def build_brief(session: Session, trial_id: int, *, paper: list[str] | None = No
                        f"{last.started_at:%Y-%m-%d}): "
                        f"{getattr(last.route, 'value', last.route)} -- {last.route_reason}")
         for k, v in last.metrics.items():
-            if _finite(v) and (k in FAMILY_KEYS or (k.startswith("regime_")
+            if _finite(v) and (k in FAMILY_KEYS or (k.startswith(("regime_", "cap_regime_"))
                                and k.endswith(("_ann_return", "_noise_percentile", "_days")))):
                 facts[f"{other}.{k}"] = float(v)
 
@@ -201,6 +210,9 @@ def build_brief(session: Session, trial_id: int, *, paper: list[str] | None = No
             f"- trial {t.id} ({t.started_at:%Y-%m-%d}): {getattr(t.route, 'value', t.route)} "
             f"-- {t.route_reason}" for t in earlier),
         "related variants": "\n".join(related),
+        # The run's leading numbers, on the strategy's own money (docs/CAPITAL_BASE.md).
+        "numbers on the strategy's own money": (
+            f"{numbers_ru(trial.metrics)} ({basis_ru(trial.metrics)})"),
         # The result year by year (docs/YEARS.md): is the profit in one lucky period?
         "by calendar year": years_line(trial.metrics) or "",
     }

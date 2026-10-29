@@ -193,6 +193,15 @@ class NoisePower(BaseModel):
     good_return: float
     min_power: float = Field(gt=0.0, lt=1.0)
     rationale: str
+    return_metric: str = "ann_return_net"
+    """The metric of the noise books the bar ranks on (and `good_return` is a level of):
+    the stand's yearly return up to rules 2026-10-29.1, `cap_ann_return` (a percent of the
+    strategy's own money, docs/CAPITAL_BASE.md) from 2026-10-29.2."""
+    percentile_metric: str = "noise_return_percentile"
+    """The metric of the rule that is the noise bar: its threshold is the bar the power is
+    asked about, and a failure of it is the one a weak bar turns into "too early to tell"."""
+    power_metric: str = "noise_power"
+    """The key the measured power is stored under in a run's metrics."""
 
 
 class Stage2Confirmation(BaseModel):
@@ -216,6 +225,9 @@ class Stage2Confirmation(BaseModel):
     """A YAML file with a top-level `alert_percentile` (0-100): the owner's
     threshold, `night/decay.yaml`. While it is null nothing is confirmed."""
     rationale: str
+    total_metric: str = "total_return_net"
+    """The stage 2 total return the positivity rule reads: the stand's up to rules
+    2026-10-29.1, `cap_total_return` (on the strategy's own money) from 2026-10-29.2."""
 
 
 class Rule(BaseModel):

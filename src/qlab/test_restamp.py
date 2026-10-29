@@ -801,3 +801,26 @@ def test_a_hand_run_keeps_its_state_apart_from_the_nights(world, tmp_path, monke
     assert out.exit_code == 0, out.output
     assert (tmp_path / "data" / "restamp" / "runs").is_dir()
     assert "old-pass" in out.output
+
+
+def test_a_line_names_the_move_of_the_place_among_the_noise_books() -> None:
+    """Rules 2026-10-29.2 read the place among random books on the strategy's own money: the
+    line says where it moved, so a status that changed on it is explained."""
+    before = {"trial": 1, "route": "paper", "status": "validated", "ann": 0.41, "dd": -0.7,
+              "on_capital": True, "noise": 1.0}
+    after = {**before, "trial": 2, "route": "needs-forward", "noise": 0.965}
+    line = restamp.stage_line("Первый этап", before, after)
+    assert "место среди случайных книг 100.0% → 96.5% (планка 99%)" in line
+    same = restamp.stage_line("Первый этап", before, {**before, "trial": 3})
+    assert "место среди случайных книг" not in same
+
+
+def test_the_switch_to_the_strategys_money_is_a_reason_to_run_again() -> None:
+    reasons = restamp.stale_reasons(
+        {"stand": "2026-10-29.1", "rules": "2026-10-29.1", "noise_short": False}, "2026-10-29.1",
+        "2026-10-29.2")
+    assert [r["kind"] for r in reasons] == ["rules"]
+    # readings only: nothing to run again
+    assert restamp.stale_reasons(
+        {"stand": "2026-10-29.1", "rules": "2026-10-28.2", "noise_short": False}, "2026-10-29.1",
+        "2026-10-29.1") == []
