@@ -237,6 +237,36 @@ def test_retire_needs_a_reason_and_writes_the_transition(cli_db):
     assert "already retired" in again.output
 
 
+def test_retire_closes_the_second_stage_with_the_first(cli_db):
+    """Owner, 2026-10-29 («да, по всем рекомендациям»): the second stage closes with its first."""
+    from qlab.registry import repo
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import (
+        AssetClass,
+        Idea,
+        IdeaStatus,
+        Profile,
+        SourceType,
+        StageTransition,
+    )
+
+    runner.invoke(app, ["init-db"])
+    with session_scope() as session:
+        for idea_id in ("first", "first-hl"):
+            repo.upsert_idea(session, id=idea_id, title=idea_id, source_type=SourceType.INTERNAL,
+                             asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
+                             status=IdeaStatus.VALIDATED,
+                             notes="Second stage of first" if idea_id.endswith("-hl") else None)
+        session.get(Idea, "first-hl").parent_id = "first"
+    result = runner.invoke(app, ["retire", "first", "--reason", "the owner withdrew it"])
+    assert result.exit_code == 0, result.output
+    assert "first-hl: second stage of first -> retired" in result.output
+    with session_scope() as session:
+        assert session.get(Idea, "first-hl").status == IdeaStatus.RETIRED
+        row = session.query(StageTransition).filter_by(idea_id="first-hl").one()
+        assert "the owner withdrew it" in row.reason
+
+
 def test_idea_set_parent_links_a_variant_and_refuses_a_cycle_or_unknown_ids(cli_db):
     from qlab.registry import repo
     from qlab.registry.db import session_scope

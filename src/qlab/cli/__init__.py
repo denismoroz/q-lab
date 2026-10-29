@@ -510,14 +510,15 @@ def evaluate_cmd(
     rules_version: str | None = typer.Option(
         None, "--rules", help="Rules version to evaluate against (default: latest)"
     ),
-    noise_trials: int | None = typer.Option(
-        None,
+    noise_trials: int = typer.Option(
+        200,
         "--noise-trials",
         help=(
-            "Also run this many structurally matched noise trials and fold the "
-            "candidate's noise percentile into its verdict (the shape-aware bar, "
-            "docs/TASKS.md T28). Without it, a ruleset with `shape_aware_edge` "
-            "reads that rule as unknown and routes needs-more-data."
+            "How many structurally matched noise trials the candidate is compared with "
+            "(the shape-aware bar, docs/TASKS.md T28); 200 as the night does, so a hand run "
+            "and the night's run are the same measurement (owner, 2026-10-29, "
+            "docs/EVALUATION_PATHS.md Р19). 0 runs without them: a SKETCH, not a verdict -- "
+            "`shape_aware_edge` reads as unknown and the route is needs-more-data."
         ),
     ),
 ) -> None:
@@ -539,7 +540,7 @@ def evaluate_cmd(
 
     with session_scope() as session:
         try:
-            if noise_trials is None:
+            if noise_trials <= 0:
                 result = evaluate_spec(
                     spec, session=session, ruleset=ruleset, deployable_capital_usd=capital
                 )
@@ -560,6 +561,10 @@ def evaluate_cmd(
     typer.echo(f"idea:         {spec.idea_id}  ({spec.title})")
     typer.echo(f"rules:        {ruleset.version}")
     typer.echo(f"trial_id:     {result.trial_id}")
+    if noise_trials <= 0:
+        typer.echo("SKETCH, NOT A VERDICT: run without noise books (--noise-trials 0), so the "
+                   "rule that compares the result with noise could not be read. Run again with "
+                   "the default 200 for the measurement the night makes.")
     typer.echo("")
 
     def _echo_status() -> None:
@@ -636,6 +641,8 @@ def evaluate_cmd(
         typer.echo(line)
 
     typer.echo(f"routing: {result.routing.route}  ({result.routing.reason})")
+    if noise_trials <= 0:
+        typer.echo("(a sketch: no noise books were run, so this route is not a verdict)")
     if result.routing.route == "shelf" and result.routing.required_capital_usd is not None:
         typer.echo(f"required capital: ${result.routing.required_capital_usd:,.2f}")
     _echo_status()
@@ -1068,6 +1075,7 @@ def retire_cmd(
     A retired idea is production-owned: no later run moves it."""
     from qlab.registry import repo
     from qlab.registry.db import session_scope
+    from qlab.registry.lifecycle import close_second_stage
     from qlab.registry.models import Idea, IdeaStatus
 
     if not reason.strip():
@@ -1086,6 +1094,13 @@ def retire_cmd(
             repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.RETIRED,
                             reason=reason)
             typer.echo(f"{idea_id}: {was.value} -> retired")
+            # The second stage is the second look at the same mechanism: it closes with the
+            # first (owner, 2026-10-29, docs/EVALUATION_PATHS.md, Р10).
+            closed = close_second_stage(
+                session, parent_id=idea_id, closed_as=IdeaStatus.RETIRED,
+                reason=f"the first stage {idea_id} was retired: {reason}")
+            if closed is not None:
+                typer.echo(f"{closed}: second stage of {idea_id} -> retired")
 
 
 @app.command("families")

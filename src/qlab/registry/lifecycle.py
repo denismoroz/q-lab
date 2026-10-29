@@ -54,6 +54,7 @@ from sqlalchemy.orm import Session
 
 from qlab.registry import repo
 from qlab.registry.models import Idea, IdeaStatus, TrialRoute, Verdict
+from qlab.registry.stages import stage2_child
 
 ROUTE_TARGET: dict[TrialRoute, IdeaStatus] = {
     TrialRoute.REJECT: IdeaStatus.REJECTED,
@@ -183,13 +184,61 @@ def apply_route(
             rules_version=rules_version,
             trial_id=trial_id,
         )
+        if decision.new_status == IdeaStatus.REJECTED:
+            close_second_stage(
+                session,
+                parent_id=idea_id,
+                closed_as=IdeaStatus.REJECTED,
+                reason=f"the first stage {idea_id} was rejected by trial {trial_id}",
+                rules_version=rules_version,
+            )
     return decision
 
 
+CLOSED_STATUSES: frozenset[IdeaStatus] = frozenset(
+    {IdeaStatus.REJECTED, IdeaStatus.RETIRED, IdeaStatus.DECAYED}
+)
+"""Statuses an idea does not leave by itself: it is over (or, for a rejected one, waits for data
+it never had)."""
+
+
+def close_second_stage(
+    session: Session,
+    *,
+    parent_id: str,
+    closed_as: IdeaStatus,
+    reason: str,
+    rules_version: str | None = None,
+) -> str | None:
+    """Close the second stage (`<parent>-hl`, docs/TWO_STAGE.md) of an idea that was just closed.
+
+    A second stage is the second look at its parent's mechanism; when the parent is rejected or
+    retired there is nothing left for it to confirm, and before this existed it stayed
+    "passed, waits for the owner" (owner, 2026-10-29, on docs/EVALUATION_PATHS.md, Р10: closing
+    follows the parent). The child gets the parent's closed status and the reason is written to
+    its `stage_transition`. A child already closed, or in `paper` / `live` (a human's decision,
+    which a parent's closing does not undo), is left alone. Returns the child's id when it moved."""
+    if closed_as not in (IdeaStatus.REJECTED, IdeaStatus.RETIRED):
+        raise ValueError(f"a second stage closes as rejected or retired, not {closed_as.value}")
+    child = stage2_child(session, parent_id)
+    if child is None or child.status in CLOSED_STATUSES or child.status in PRODUCTION_STATUSES:
+        return None
+    repo.set_status(
+        session,
+        idea_id=child.id,
+        new_status=closed_as,
+        reason=f"second stage closes with its first stage: {reason}",
+        rules_version=rules_version,
+    )
+    return child.id
+
+
 __all__ = [
+    "CLOSED_STATUSES",
     "PRODUCTION_STATUSES",
     "ROUTE_TARGET",
     "StatusDecision",
     "apply_route",
+    "close_second_stage",
     "next_status",
 ]
