@@ -1,15 +1,16 @@
 # The owner's switch that turns the token guard's own ceilings off (qlab.budget.guard.limits_off).
 #
 # Owner, 2026-10-28: «давай пока отключим проверку лимитов. посмотрим что получится и завтра
-# решим что с этим делать».
+# решим что с этим делать». Owner, 2026-10-29, after the first uncapped night (about 6.6M tokens,
+# weekly window 30% -> 42%): «убираем пока потолок».
 #
 # Off means: no 70% weekly target, no night, stage or candidate caps, no --max-budget-usd.
 # What stays: the account check (night/account.yaml), the night's stop time, and the stop on
 # the subscription's own limits (a refusal or a full window). Every call is still written to
-# token_spend, so this night gives the first real measurement of the personal account.
+# token_spend.
 #
-# The switch lapses by itself at `until`: here the weekly reset of the personal account
-# (Thursday 05:00 UTC), after the night of 2026-10-29 has ended. Delete the file to turn the
-# guard back on earlier.
-until: 2026-10-29T05:00:00+00:00
-reason: one night without the guard's ceilings, owner's decision of 2026-10-28, to see what an uncapped night spends
+# The switch lapses by itself at `until`: here the next weekly reset of the personal account
+# (Thursday 05:00 UTC), so the owner decides again after a week of uncapped nights. Delete the
+# file to turn the guard back on earlier.
+until: 2026-11-05T05:00:00+00:00
+reason: the guard's ceilings stay off for now, owner's decision of 2026-10-29 after the first uncapped night

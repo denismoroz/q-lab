@@ -213,7 +213,10 @@ def test_drops_are_sorted_for_the_owner_and_change_no_status(tmp_path, monkeypat
 
     with session_scope() as session:
         _add_ideas(session, [("i1", "paper", None), ("i1-v", "bench", "i1"),
-                             ("i1-old", "rejected", "i1"), ("i2", "paper", None)])
+                             ("i1-old", "rejected", "i1"), ("i2", "paper", None),
+                             # a retired branch head that stays a variant through its active
+                             # child (2026-10-29: proposed again a day after the owner retired it)
+                             ("i1-gone", "retired", "i1"), ("i1-gone-b", "bench", "i1-gone")])
     config.write_text("cadence: nightly\nstrategies:\n  s1: {ideas: [i1], specs: []}\n",
                       encoding="utf-8")
     (tmp_path / "specs" / "owner").mkdir(parents=True)
@@ -226,6 +229,7 @@ def test_drops_are_sorted_for_the_owner_and_change_no_status(tmp_path, monkeypat
         return researcher.ResearchOutcome(
             memo=None, drops=[researcher.DropProposal("i1-v", "weak"),
                               researcher.DropProposal("i1-old", "already out"),
+                              researcher.DropProposal("i1-gone", "retired yesterday"),
                               researcher.DropProposal("i1-m", "measures nothing new"),
                               researcher.DropProposal("i2", "another strategy"),
                               researcher.DropProposal("ghost", "no such thing"),
@@ -238,7 +242,8 @@ def test_drops_are_sorted_for_the_owner_and_change_no_status(tmp_path, monkeypat
     assert entry["drops"] == [{"idea": "i1-v", "why": "weak"},
                               {"idea": "i1-m", "why": "measures nothing new",
                                "spec": "specs/owner/i1-m.yaml"}]
-    assert entry["closed"] == [{"idea": "i1-old", "status": "rejected"}]
+    assert entry["closed"] == [{"idea": "i1-old", "status": "rejected"},
+                               {"idea": "i1-gone", "status": "retired"}]
     problems = " ".join(entry["problems"])
     assert "`i2`, an idea of strategy i2" in problems
     assert "`ghost`, which is neither" in problems and "`i1`, the strategy itself" in problems

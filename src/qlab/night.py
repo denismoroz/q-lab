@@ -1489,11 +1489,12 @@ def split_drops(session, drops: list, variants: list[str], root: str,
         if idea is not None and strategy_root(session, d.idea_id) != root:
             problems.append(f"DROP names `{d.idea_id}`, an idea of strategy "
                             f"{strategy_root(session, d.idea_id)}: ignored")
-        elif d.idea_id in variants or (idea is not None and idea.status in ACTIVE_STATUSES
-                                       and d.idea_id != root):
-            proposals.append({"idea": d.idea_id, "why": d.why})
-        elif idea is not None and d.idea_id != root:
+        elif idea is not None and idea.status not in ACTIVE_STATUSES and d.idea_id != root:
+            # before the variants check: a variant the researcher was shown can be closed already
+            # (2026-10-29: five of six proposals were ideas the owner retired the day before)
             closed.append({"idea": d.idea_id, "status": str(idea.status.value)})
+        elif d.idea_id in variants or (idea is not None and d.idea_id != root):
+            proposals.append({"idea": d.idea_id, "why": d.why})
         elif idea is not None:
             problems.append(f"DROP names `{d.idea_id}`, the strategy itself: ignored")
         else:

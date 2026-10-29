@@ -489,7 +489,7 @@ def _new_survivor(plan: Plan, entry: dict, stage2_config, planned: set) -> Plan 
     from qlab.night import is_generator_idea
     from qlab.pipeline.stage2 import survives
     from qlab.registry.db import session_scope
-    from qlab.registry.stages import stage2_child
+    from qlab.registry.stages import child_id_taken, stage2_child
 
     if (stage2_config is None or not stage2_config.enabled or entry["action"] != "rerun"
             or (plan.idea_id, "stage2") in planned or plan.spec_path is None
@@ -497,6 +497,10 @@ def _new_survivor(plan: Plan, entry: dict, stage2_config, planned: set) -> Plan 
         return None
     with session_scope() as session:
         has_child = stage2_child(session, plan.idea_id) is not None
+        # `<idea>-hl` may be another idea, as in `plan_waiting` (2026-10-29: the report showed
+        # bv2-research-shared-pool's second stage refused every night for that reason)
+        if not has_child and child_id_taken(session, plan.idea_id):
+            return None
     if not (is_generator_idea(plan.idea_id) or has_child
             or _stage2_experiment(Path(plan.spec_path))):
         return None

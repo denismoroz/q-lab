@@ -449,6 +449,22 @@ def test_an_idea_whose_rerun_makes_it_a_survivor_gets_its_second_stage_the_same_
     assert "waiting:gen-x:stage2" in state["done"]
 
 
+def test_a_new_survivor_whose_second_stage_id_is_another_idea_gets_no_second_stage(
+        tmp_path, registry, stand) -> None:
+    # bv2-research-shared-pool next to the researcher's own bv2-research-shared-pool-hl
+    # (2026-10-29): the plan skipped it, the survivor check after the re-run did not
+    _generated(tmp_path, registry, stage1="needs-more-data", child=None)
+    with registry.session_scope() as s:
+        _idea(s, "gen-x-hl", IdeaStatus.BENCH, parent="gen-x")  # an experiment, not a stage 2
+        _trial(s, "gen-x-hl", "needs-forward", ago=60)
+    stand.results["gen-x"] = ItemResult(kind="waiting", name="gen-x", trial_id=901,
+                                        route="paper", previous_route="needs-more-data")
+    state = _stage(tmp_path)
+    assert ("idea", "gen-x") in [c[:2] for c in stand.calls]
+    assert "stage2" not in [c[0] for c in stand.calls]
+    assert [e["step"] for e in state["waiting"] if e["idea"] == "gen-x"] == ["idea"]
+
+
 def test_a_second_stage_switched_off_in_its_config_is_not_run(
         tmp_path, registry, stand, monkeypatch) -> None:
     _generated(tmp_path, registry, stage1="paper", child="needs-forward")
