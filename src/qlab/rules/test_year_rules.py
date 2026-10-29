@@ -213,8 +213,8 @@ def test_a_loss_has_no_share_so_that_rule_does_not_apply(year_rules) -> None:
 OWNER_QUOTE = "когда наберем статистику - решим - какое правило"
 
 
-def test_the_latest_version_is_28_2_and_retires_both_year_rules() -> None:
-    latest = load_latest()
+def test_28_2_retires_both_year_rules() -> None:
+    latest = load("2026-10-28.2", DEFAULT_RULES_DIR)
     assert latest.version == "2026-10-28.2" and latest.based_on == "2026-10-28.1"
     assert not {r.id for r in latest.rules} & {EX_BEST, SHARE}
     retired = {r.id: r for r in latest.retired}

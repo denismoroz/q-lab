@@ -348,3 +348,23 @@ def test_a_clean_run_records_the_counts_with_nothing_replaced(session):
     assert (m["noise_n_requested"], m["noise_n_usable"], m["noise_n_unusable"],
             m["noise_n_replaced"]) == (8, 8, 0, 0)
 
+
+def test_a_run_of_the_bv2_family_records_the_protection_measurement(session, monkeypatch):
+    """docs/PROTECTION.md: the judged part of a Bv2-family run carries the `prot_*` metrics,
+    read by no rule; any other strategy's run carries none."""
+    from qlab.pipeline.evaluate import evaluate_spec
+
+    plain = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+                          deployable_capital_usd=1_000_000.0)
+    assert not any(k.startswith("prot_") for k in plain.metrics)
+
+    monkeypatch.setattr("qlab.protection.BV2_CODE_REFS", frozenset(
+        {"qlab.calibration.test_shape_aware:ToyMomentumStrategy"}))
+    family = evaluate_spec(_spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+                           deployable_capital_usd=1_000_000.0)
+    m = family.metrics
+    assert m["prot_weeks"] >= 8 and m["prot_days"] > 56
+    # the strategy's own return over the judged part is the run's own total (no base, compounded)
+    assert m["prot_total_return"] == pytest.approx(m["total_return_net"], abs=1e-9)
+    assert m["prot_reinvested"] == 1.0
+    assert "prot_long_worst_fall" in m and "prot_worst_fall" in m

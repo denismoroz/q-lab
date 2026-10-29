@@ -70,3 +70,7 @@ data/anomalies/
 
 # restamp ledger and hand-run state (docs/RESTAMP.md)
 data/restamp/
+
+# Protection measurements of Bv2-family runs made before the measurement was recorded
+# (qlab protection --compute); they can be made again
+data/protection/

@@ -2637,6 +2637,53 @@ def year_signs_cmd(
         typer.echo(line)
 
 
+@app.command("protection")
+def protection_cmd(
+    compute: bool = typer.Option(
+        False, "--compute",
+        help="Measure again, from the stored spec and snapshot, the runs that carry no "
+             "measurement (CPU only, a minute or more each) and store the result in "
+             "data/protection/; without it a run with no measurement shows no numbers"),
+    all_ideas: bool = typer.Option(
+        False, "--all-ideas", help="Include retired, rejected and decayed ideas"),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of a table"),
+    rules_version: str | None = typer.Option(
+        None, "--rules", help="Rules version whose lines the readings use (default: latest)"),
+) -> None:
+    """How well Bv2 protects (docs/PROTECTION.md): for each idea of the Bv2 family, its latest
+    routed run's four readings П1 - П4 -- worst fall against its own long side held unhedged,
+    loss in the weeks the coins fell, share of a rise it keeps, no loss over the whole part.
+    The readings decide nothing (rules 2026-10-29.1); the owner will later choose whether a
+    protection sign becomes a rule. Writes nothing to the registry."""
+    import json
+
+    from qlab import protection
+
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+    with session_scope() as session:
+        rows = protection.collect(session, ruleset, compute=compute, live_only=not all_ideas)
+    if as_json:
+        typer.echo(json.dumps({
+            "rules_version": ruleset.version,
+            "readings": {r.letter: {"id": r.rule_id, "title": r.title}
+                         for r in protection.READINGS},
+            "rows": [r.to_json() for r in rows], "summary": protection.summarize(rows)},
+            ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"rules: {ruleset.version}; latest routed run of each "
+               + ("Bv2-family idea" if all_ideas else "live Bv2-family idea"))
+    if not rows:
+        typer.echo("no run of the Bv2 family in the registry")
+        return
+    for line in protection.render_table(rows):
+        typer.echo(line)
+    typer.echo("")
+    for spec in protection.READINGS:
+        typer.echo(f"{spec.letter}: {spec.title}")
+    typer.echo("«да / нет» и число; «—» — не определено; «(нет замера)» — у прогона замера нет, "
+               "`--compute` его сделает")
+
+
 from qlab.anomalies.cli import anomalies_app, anomaly_app  # noqa: E402 - registered last
 
 app.add_typer(anomalies_app, name="anomalies")

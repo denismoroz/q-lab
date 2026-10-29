@@ -48,8 +48,14 @@ from qlab.harness.metrics import (
     periods_per_year,
     year_breakdown,
 )
-from qlab.harness.run import run_backtest
-from qlab.harness.strategy import Strategy, capital_setup, own_costs, validate_weights
+from qlab.harness.run import RunResult, run_backtest
+from qlab.harness.strategy import (
+    CapitalSetup,
+    Strategy,
+    capital_setup,
+    own_costs,
+    validate_weights,
+)
 from qlab.pipeline.sources import require_sources
 from qlab.pipeline.spec import StrategySpec
 from qlab.regimes import breakdown as regime_breakdown
@@ -1134,6 +1140,24 @@ def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage |
     return JudgedRows(first=first, last=last, split=split, warmup=warmup, judged=judged)
 
 
+def _protection(spec: StrategySpec, result: RunResult, part_panel: MarketPanel,
+                part_weights: pd.DataFrame, capital: CapitalSetup) -> dict[str, float]:
+    """The protection measurement of a run of the Bv2 family (`qlab.protection`,
+    docs/PROTECTION.md): a description read by no rule, empty for any other strategy. A failure of
+    the measurement must not fail a run whose verdict does not depend on it."""
+    from qlab.protection import is_bv2_family, protection_from_run
+
+    if not is_bv2_family(spec.code_ref, spec.params):
+        return {}
+    on_capital = capital.refused is None
+    try:
+        return protection_from_run(result, part_panel, part_weights,
+                                   capital.base if on_capital else None,
+                                   result.capital_reinvested if on_capital else True)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def evaluate_spec(
     spec: StrategySpec,
     *,
@@ -1383,6 +1407,7 @@ def evaluate_spec(
                 judged_run.update(result=result, panel=part_panel, weights=part_weights)
                 # The judged part year by year (docs/YEARS.md): a description, read by no rule.
                 measured.update(year_breakdown(result.net_return))
+                measured.update(_protection(spec, result, part_panel, part_weights, capital))
             measured.update(hold_benchmark(part_panel.prices, part_weights))
             # How the result splits across BTC's bull / flat / bear days
             # (docs/REGIMES.md): a description, read by no rule.

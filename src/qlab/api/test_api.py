@@ -826,3 +826,34 @@ def test_a_trial_carries_its_year_view_or_null(client, session_factory):
     # The raw metrics are still all there, unchanged.
     assert trial["metrics"]["year_2021_return"] == 0.9
     assert client.get("/api/trials?limit=1").json()["items"][0]["year_view"]["best_year"] == 2021
+
+
+def test_a_trial_carries_its_protection_readings_or_null(client, session_factory):
+    """docs/PROTECTION.md: the `prot_*` metrics of a Bv2-family run as the four readings
+    П1 - П4 against the lines of the newest ruleset; null for any other run."""
+    from qlab.registry.models import Spec, TrialRoute
+
+    assert client.get("/api/ideas/alpha/trials").json()["items"][0]["protection"] is None
+
+    session = session_factory()
+    spec = session.query(Spec).filter(Spec.idea_id == "alpha").one()
+    metrics = {"ann_return_net": 0.2, "prot_weeks": 24.0, "prot_days": 170.0,
+               "prot_total_return": 0.08, "prot_worst_fall": -0.04,
+               "prot_long_worst_fall": -0.13, "prot_fall_ratio": 0.31,
+               "prot_fall_capture": 0.45, "prot_rise_capture": 0.5, "prot_fall_weeks": 10.0,
+               "prot_rise_weeks": 11.0}
+    repo.add_trial(
+        session, spec_id=spec.id, config_hash="prot", snapshot_id="snap-1", code_sha="x",
+        params={}, status=TrialStatus.OK, route=TrialRoute.REJECT, route_reason="r",
+        started_at=datetime(2026, 10, 29, tzinfo=UTC), metrics=metrics)
+    session.commit()
+    session.close()
+
+    view = client.get("/api/ideas/alpha").json()["latest_outcome"]["trial"]["protection"]
+    readings = {r["letter"]: r for r in view["readings"]}
+    assert list(readings) == ["П1", "П2", "П3", "П4"]
+    assert readings["П1"]["state"] == "holds" and readings["П1"]["value"] == 0.31
+    assert readings["П2"]["state"] == "fails" and readings["П2"]["threshold"] == 0.3
+    assert readings["П3"]["state"] == "number" and readings["П3"]["threshold"] is None
+    assert readings["П4"]["state"] == "holds"
+    assert view["numbers"]["prot_weeks"] == 24.0 and view["min_weeks"] == 8

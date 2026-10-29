@@ -682,6 +682,7 @@ def write_report(day: date, state: dict) -> Path:
     lines += publication_lines(state)
     lines += _forward_chart_lines(day)
     lines += _year_signs_lines()
+    lines += _protection_lines(day)
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     tokens = _token_lines(day)
     if account.get("ok") is False:
@@ -799,6 +800,24 @@ def _year_signs_lines() -> list[str]:
         return [f"## {year_signs.SECTION_TITLE}", "",
                 f"Не посчитано: {type(exc).__name__}: {exc}", ""]
     return [f"## {year_signs.SECTION_TITLE}", "", *body, ""] if body else []
+
+
+def _protection_lines(day: date) -> list[str]:
+    """The protection readings of the Bv2 family (`qlab.protection`, docs/PROTECTION.md): the
+    totals over the live ideas' latest measured runs and a line for each run of the night. A
+    recording, not a verdict. Empty when no run carries a measurement; a failure is one line."""
+    from qlab import protection
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    since = datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+    try:
+        with session_scope() as session:
+            body = protection.report_lines(session, load_latest(), since=since)
+    except Exception as exc:  # noqa: BLE001 - a report line, not a failed night
+        return [f"## {protection.SECTION_TITLE}", "",
+                f"Не посчитано: {type(exc).__name__}: {exc}", ""]
+    return [f"## {protection.SECTION_TITLE}", "", *body, ""] if body else []
 
 
 def _funnel_lines(day: date) -> list[str]:

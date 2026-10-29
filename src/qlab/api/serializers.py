@@ -15,6 +15,7 @@ from datetime import date, datetime
 from functools import lru_cache
 from typing import Any
 
+from qlab.protection import view_of_trial as protection_view
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
 from qlab.year_view import year_view
 
@@ -182,6 +183,9 @@ def trial_json(
         # The metrics' per-year keys regrouped for the console (docs/YEARS.md); null for a
         # run from before the view existed. Copied from the stored metrics, nothing computed.
         "year_view": year_view(trial.metrics, _latest_ruleset()),
+        # The protection readings of a Bv2-family run (docs/PROTECTION.md): P1 - P4 against the
+        # lines of the ruleset, recorded and deciding nothing; null for any other run.
+        "protection": protection_view(trial.id, trial.metrics, _latest_ruleset()),
         "status": trial.status.value,
         # Null for runs made before routes were stored (docs/TASKS.md T31).
         "route": trial.route.value if trial.route is not None else None,

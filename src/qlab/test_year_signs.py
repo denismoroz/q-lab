@@ -277,7 +277,7 @@ def cli_db(tmp_path, monkeypatch):
 
 
 def test_the_command_prints_a_row_per_idea_and_the_totals(cli_db):
-    result = CliRunner().invoke(app, ["year-signs"])
+    result = CliRunner().invoke(app, ["year-signs", "--rules", "2026-10-28.2"])
     assert result.exit_code == 0, result.output
     out = result.output
     assert "rules: 2026-10-28.2; latest judged trial of each idea" in out
@@ -291,7 +291,8 @@ def test_the_command_prints_a_row_per_idea_and_the_totals(cli_db):
 
 
 def test_the_command_with_all_trials_counts_every_trial(cli_db):
-    result = CliRunner().invoke(app, ["year-signs", "--all-trials", "--json"])
+    result = CliRunner().invoke(app, ["year-signs", "--all-trials", "--json",
+                                      "--rules", "2026-10-28.2"])
     assert result.exit_code == 0, result.output
     body = json.loads(result.output)
     assert body["all_trials"] is True and body["rules_version"] == "2026-10-28.2"
@@ -299,7 +300,8 @@ def test_the_command_with_all_trials_counts_every_trial(cli_db):
     assert body["rows"][0]["signs"] == {"А": "holds", "Б": "holds", "В": "holds", "Г": "fails"}
     assert body["rows"][1]["outcome"] == "rejected"
     assert body["summary"]["trials"] == 3 and body["summary"]["ideas"] == 2
-    latest = json.loads(CliRunner().invoke(app, ["year-signs", "--json"]).output)
+    latest = json.loads(CliRunner().invoke(
+        app, ["year-signs", "--json", "--rules", "2026-10-28.2"]).output)
     assert [r["trial_id"] for r in latest["rows"]] == [2, 3]
 
 

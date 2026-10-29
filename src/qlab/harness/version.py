@@ -25,9 +25,10 @@ The decisive rules have their own version (`rules/*.yaml`, stored on every verdi
 version also makes a run stale, without a bump here.
 
 **Deliberately not bumped** (2026-10-29): the noise-book count (a book that gave no number is
-replaced, `noise_n_*` metrics; `qlab.restamp` selects the runs that lacked it by its own reason).
-A bump would measure ~35 ideas again, including a two-hour candle refetch, for numbers that moved
-on a handful of runs.
+replaced, `noise_n_*` metrics; `qlab.restamp` selects the runs that lacked it by its own reason)
+and the protection readings of the Bv2 family (`prot_*` metrics, rules 2026-10-29.1; older runs are
+measured by `qlab protection --compute`). A bump would measure ~35 ideas again, including a
+two-hour candle refetch, for numbers that moved on a handful of runs.
 
 History:
 

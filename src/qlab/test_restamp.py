@@ -331,6 +331,23 @@ def test_a_run_recomputed_for_its_noise_books_is_not_taken_again(world, registry
                    _stage(world, dry_run=True, no_cap=True)["restamp"]["entries"])
 
 
+def test_a_rules_version_that_only_adds_readings_is_no_reason_to_measure_again() -> None:
+    """Rules 2026-10-29.1 added the protection readings and nothing that decides; measuring
+    thirty-odd ideas again for it would move no verdict."""
+    assert not restamp.rules_changed("2026-10-28.2", "2026-10-29.1")
+    assert not restamp.rules_changed("2026-10-28.2", "2026-10-28.2")
+    # 2026-10-28.1 -> .2 retired two decisive rules; 2026-09-20.1 is far from the latest
+    assert restamp.rules_changed("2026-10-28.1", "2026-10-28.2")
+    assert restamp.rules_changed(OLD_RULES, "2026-10-29.1")
+    # a version that cannot be loaded counts as changed: a stale run must not hide
+    assert restamp.rules_changed("frab-legacy", "2026-10-29.1")
+    view = {"stand": STAND_VERSION, "rules": "2026-10-28.2", "noise_short": False}
+    assert restamp.stale_reasons(view, STAND_VERSION, "2026-10-29.1") == []
+    view["rules"] = "2026-10-28.1"
+    assert [r["kind"] for r in restamp.stale_reasons(view, STAND_VERSION, "2026-10-28.2")] == [
+        "rules"]
+
+
 def test_retired_rejected_noise_and_runless_ideas_are_left_alone(world) -> None:
     state = _stage(world, dry_run=True)
     assert not {"retired-one", "rejected-one", "noise-dollar_neutral-random", "no-run",

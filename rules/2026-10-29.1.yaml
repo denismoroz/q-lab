@@ -1,0 +1,67 @@
+# Protection readings for the Bv2 family, recorded and decided by nobody.
+#
+# Owner, 2026-10-27: Bv2 is insurance, not an income strategy (it holds coins and, in falls,
+# hedges them with short perpetual positions); the noise bar measures income only. Owner,
+# 2026-10-29: «да, чини учёт и сделай замер защиты для Bv2». Measure before rule (owner,
+# 2026-10-28, on the year signs: «просто соберем по признакам проходи или нет ... когда наберем
+# статистику - решим - какое правило - лучше»): every run of the Bv2 family records the `prot_*`
+# metrics (`qlab.protection`, docs/PROTECTION.md) and these readings say, for each, whether its
+# line holds, does not hold or is not defined. They never become a verdict row, fail a candidate or
+# move a route; whether a protection sign becomes a rule is the owner's decision after he has seen
+# the statistics.
+#
+# THE LINES ARE DECLARED HERE, BEFORE THE NUMBERS WERE LOOKED AT, and are not tuned on data: half
+# the fall, three tenths of the fall, not below zero. They are round numbers of the proposal, with
+# no source in the registry's runs. The only things in the code are the minima that make a reading
+# defined at all: at least 8 whole calendar weeks in the judged part (and 8 falling weeks for P2, 8
+# rising weeks for P3) and, for P1, a long side that fell by at least 2% of the strategy's money.
+#
+# What is compared: the strategy's own money (docs/CAPITAL_BASE.md, summed for Bv2) against its
+# own long side, unhedged: the positive weights the book declared over time, times the base,
+# times the coins' price moves, with no costs and no funding.
+#
+# Nothing else changes: no decisive rule, no existing reading, no threshold. A ruleset version that
+# adds readings only moves no verdict, so it is not a reason to measure old runs again
+# (`qlab.restamp`); runs of the Bv2 family made from now on carry the measurement, older ones get
+# it from `qlab protection --compute`.
+
+version: "2026-10-29.1"
+based_on: "2026-10-28.2"
+
+informational:
+  - id: protection_fall_cut
+    metric: prot_fall_ratio
+    comparator: "<="
+    threshold: 0.5
+    rationale: >
+      Reading P1, worst fall cut. The strategy's worst fall on its own money (peak to trough) is at
+      most half of the worst fall its own long side would have had without the shorts, over the
+      same part. Owner, 2026-10-27 (Bv2 is insurance) and 2026-10-29 («сделай замер защиты для
+      Bv2»). Half is a round number declared up front, not a fit. Not defined with fewer than 8
+      whole calendar weeks, or when the long side's worst fall is under 2% of the strategy's
+      money (nothing to be protected from).
+  - id: protection_fall_weeks_loss
+    metric: prot_fall_capture
+    comparator: "<="
+    threshold: 0.3
+    rationale: >
+      Reading P2, loss in falling weeks. Over the whole calendar weeks in which the long side
+      fell, the sum of the strategy's weekly returns divided by the sum of the long side's: how
+      much of a fall the strategy still takes (negative: it earned while the coins fell). At most
+      0.3 holds. Three tenths is a round number declared up front, not a fit. Not defined with
+      fewer than 8 falling weeks.
+  - id: protection_rise_kept
+    metric: prot_rise_capture
+    rationale: >
+      Reading P3, the cost of the insurance: the same ratio over the weeks the long side rose, how
+      much of a rise the strategy keeps. A number shown beside P2, no line (the owner may draw one
+      once he has seen the numbers). Not defined with fewer than 8 rising weeks.
+  - id: protection_no_loss
+    metric: prot_total_return
+    comparator: ">="
+    threshold: 0.0
+    rationale: >
+      Reading P4, no loss over the whole part. The strategy's return on its own money over the
+      judged part, summed for a book that does not reinvest, is not below zero: insurance that
+      costs more than it saves is not insurance. Not defined with fewer than 8 whole calendar
+      weeks.

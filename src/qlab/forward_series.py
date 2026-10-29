@@ -261,16 +261,31 @@ def _rules_version(session: Session, trial_id: int) -> str | None:
     return None if row is None else row[0]
 
 
-def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) -> Replay:
-    """Re-run the stored spec of trial `trial_id` on its stored snapshot and return the judged
-    part's series. Writes nothing: no trial, no verdict, no status; the caller `save`s it.
+@dataclass(frozen=True)
+class ReplayedRun:
+    """A stored run backtested again: the pieces a reading of its judged part needs."""
 
-    The cut rows come from `qlab.pipeline.evaluate.judged_rows`, the rules' version from the
-    run's own verdicts. When the replayed total differs from the one the trial recorded (the
-    strategy's code changed since), the payload says so (`matches_trial` false)."""
+    spec: Any
+    trial: Any
+    result: Any
+    part_panel: Any
+    part_weights: pd.DataFrame
+    capital: Any
+    """`qlab.harness.strategy.CapitalSetup`: the base (None: 1) and the declared reinvest choice."""
+
+
+def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None,
+               part: str = "forward") -> tuple[ReplayedRun | None, str | None]:
+    """Re-run the stored spec of trial `trial_id` on its stored snapshot over one part of the
+    window and return the pieces, or `(None, reason)` -- the reason in plain Russian. Writes
+    nothing.
+
+    `part` is `"forward"` (the forward test, which the chart draws) or `"judged"` (the part the
+    verdict was read on: the forward test when the run split one off, else the window after the
+    warm-up; the year view and the protection reading are read on it). The cut rows come from
+    `qlab.pipeline.evaluate.judged_rows`, the rules' version from the run's own verdicts."""
     from qlab.data.snapshot import load_snapshot
     from qlab.harness.costs import CostModel
-    from qlab.harness.metrics import held_coins, hold_returns
     from qlab.harness.run import run_backtest
     from qlab.harness.strategy import capital_setup, own_costs
     from qlab.pipeline.evaluate import (
@@ -286,16 +301,16 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
 
     trial = session.get(Trial, trial_id)
     if trial is None:
-        return Replay(None, f"прогона {trial_id} нет в реестре")
+        return None, f"прогона {trial_id} нет в реестре"
     if trial.metrics is None or trial.snapshot_id is None:
-        return Replay(None, "у прогона нет чисел или снимка данных: считать нечего")
-    if trial.metrics.get("judged_on_forward") != 1.0:
-        return Replay(None, "у этого прогона нет проверки вперёд: судили период подбора")
+        return None, "у прогона нет чисел или снимка данных: считать нечего"
+    if part == "forward" and trial.metrics.get("judged_on_forward") != 1.0:
+        return None, "у этого прогона нет проверки вперёд: судили период подбора"
     spec_row = session.get(Spec, trial.spec_id)
     path = spec_file_for(session, trial.spec_id, spec_root)
     if spec_row is None or path is None:
-        return Replay(None, "файл спека, с которым шёл прогон, не найден или с тех пор изменён: "
-                            "ряд честно не восстановить")
+        return None, ("файл спека, с которым шёл прогон, не найден или с тех пор изменён: "
+                      "ряд честно не восстановить")
     spec = load_spec(path)
     version = _rules_version(session, trial_id)
     try:
@@ -305,15 +320,19 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
     try:
         panel = load_snapshot(trial.snapshot_id, session=session)
     except (ValueError, OSError) as exc:
-        return Replay(None, f"нет данных, на которых шёл прогон: {exc}")
+        return None, f"нет данных, на которых шёл прогон: {exc}"
     if panel.meta.get("history_truncated"):
         panel = cut_truncated_history(panel)
 
     coverage = (complete_book_window(panel, spec.required_instruments)
                 if spec.required_instruments is not None else None)
     rows = judged_rows(spec, panel, coverage, ruleset)
-    if rows.split.forward is None:
-        return Replay(None, "в окне прогона нет проверки вперёд")
+    if part == "forward":
+        if rows.split.forward is None:
+            return None, "в окне прогона нет проверки вперёд"
+        lo, hi = rows.split.forward
+    else:
+        lo, hi = rows.judged
     try:
         strategy = resolve_strategy(spec.code_ref)
         weights = strategy.target_weights(panel, spec.params)
@@ -321,21 +340,35 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
                           slippage_bps=spec.costs.slippage_bps)
         extra_cost = own_costs(strategy, panel, spec.params)
         capital = capital_setup(strategy, panel, spec.params)
-        lo, hi = rows.split.forward
         part_panel = _slice_rows(panel, lo, hi)
         part_weights = weights.iloc[lo:hi + 1]
         result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
                               extra_cost=extra_cost, **capital.kwargs)
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary
-        return Replay(None, f"прогон не удалось повторить: {type(exc).__name__}: {exc}")
+        return None, f"прогон не удалось повторить: {type(exc).__name__}: {exc}"
+    return ReplayedRun(spec, trial, result, part_panel, part_weights, capital), None
+
+
+def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) -> Replay:
+    """Re-run the stored spec of trial `trial_id` on its stored snapshot and return the judged
+    part's series. Writes nothing: no trial, no verdict, no status; the caller `save`s it.
+
+    When the replayed total differs from the one the trial recorded (the strategy's code
+    changed since), the payload says so (`matches_trial` false)."""
+    from qlab.harness.metrics import held_coins, hold_returns
+
+    run, reason = replay_run(session, trial_id, spec_root=spec_root, part="forward")
+    if run is None:
+        return Replay(None, reason)
+    spec, trial, result = run.spec, run.trial, run.result
     recorded = trial.metrics.get("total_return_net")
     recorded_capital = trial.metrics.get("cap_total_return")
-    drawn_on_capital = capital.refused is None
+    drawn_on_capital = run.capital.refused is None
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
-        hold_return=hold_returns(part_panel.prices, part_weights, result.net_return.index),
-        hold_coins=held_coins(part_weights), source="rebuild",
+        hold_return=hold_returns(run.part_panel.prices, run.part_weights, result.net_return.index),
+        hold_coins=held_coins(run.part_weights), source="rebuild",
         recorded_total=recorded if isinstance(recorded, int | float) else None,
         capital_return=result.capital_return if drawn_on_capital else None,
         reinvested=result.capital_reinvested if drawn_on_capital else True,

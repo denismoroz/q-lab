@@ -14,7 +14,10 @@ a routed run whose
 
 * stand version (`trial.stand_version`, `qlab.harness.version`) is older than the current one (no
   version at all is older than every one), or
-* rules version (the version stamped on its verdicts) is older than the latest rules, or
+* rules version (the version stamped on its verdicts) is older than the latest rules **and the two
+  differ in what decides** (`rules_changed`: a version that only adds informational readings, as
+  2026-10-29.1 added the protection readings, moves no verdict and is no reason to run anything
+  again), or
 * noise books: the run's noise bar was measured on fewer than the 200 books asked for, because some
   books gave no number and nobody drew replacements yet (`noise_books_short`; owner 2026-10-29,
   «да, чини учёт»; docs/T28_SHAPE_AWARE_BAR.md). This is a reason of its own and not a bump of the
@@ -159,6 +162,25 @@ NOISE_BOOKS_ASKED = 200
 """The number of random books a run's noise bar is measured on."""
 
 
+def decisive_part(ruleset) -> dict:
+    """What of a ruleset can move a verdict: everything but its version, its parent's name and the
+    informational readings (which are shown beside verdicts and decide nothing)."""
+    return ruleset.model_dump(mode="json", exclude={"version", "based_on", "informational"})
+
+
+def rules_changed(was: str, now: str) -> bool:
+    """Whether rules version `now` decides anything differently from `was`. A version that cannot
+    be loaded (a sentinel, a missing file) counts as changed: a stale run must not hide."""
+    from qlab.rules import loader
+
+    if was == now:
+        return False
+    try:
+        return decisive_part(loader.load(was)) != decisive_part(loader.load(now))
+    except Exception:  # noqa: BLE001 - when in doubt the run is measured again
+        return True
+
+
 def noise_books_short(metrics: Mapping | None) -> bool:
     """Whether a run's noise bar stands on fewer random books than were asked for and nobody drew
     replacements.
@@ -187,7 +209,8 @@ def stale_reasons(view: Mapping | None, stand: str, rules: str | None) -> list[d
     out = []
     if is_older(view.get("stand"), stand):
         out.append({"kind": "stand", "was": view.get("stand"), "now": stand})
-    if rules is not None and view.get("rules") is not None and is_older(view["rules"], rules):
+    if rules is not None and view.get("rules") is not None and is_older(view["rules"], rules) \
+            and rules_changed(view["rules"], rules):
         out.append({"kind": "rules", "was": view["rules"], "now": rules})
     if view.get("noise_short"):
         out.append({"kind": "noise_books", "was": view.get("noise_percentile"), "now": None})
@@ -686,5 +709,5 @@ def _moved_status(e: Mapping) -> bool:
 
 
 __all__ = ["CONFIG", "Config", "Item", "SECTION_TITLE", "entry_lines", "find_items", "load_config",
-           "load_ledger", "noise_books_short", "report_lines", "restamp_stage", "run_view",
-           "stale_reasons"]
+           "load_ledger", "noise_books_short", "report_lines", "restamp_stage", "rules_changed",
+           "run_view", "stale_reasons"]

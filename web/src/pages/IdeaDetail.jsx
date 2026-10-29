@@ -6,6 +6,7 @@ import { Absent, Json, Pager, Panel, QueryState, StatusBadge } from '../componen
 import { VerdictLegend, VerdictList } from '../components/Verdict.jsx'
 import TrialTable from '../components/TrialTable.jsx'
 import YearView from '../components/YearView.jsx'
+import Protection from '../components/Protection.jsx'
 import ForwardCharts from '../components/ForwardCharts.jsx'
 import OverlayPanels from '../components/OverlayPanels.jsx'
 import Anomalies from '../components/Anomalies.jsx'
@@ -263,6 +264,7 @@ function Outcome({ outcome }) {
       )}
       <RegimeTable m={m} />
       <YearView view={trial.year_view} />
+      <Protection view={trial.protection} />
       <p className="mt-3 text-xs text-slate-500">
         прогон #{trial.id}, {trial.started_at?.slice(0, 10)}
         {outcome.unrouted_trials
@@ -320,6 +322,7 @@ function StageColumn({ title, hint, stage, ideaId }) {
           </div>
           {rows.length > 0 && <NumberList title={null} numbers={rows} />}
           <YearView view={trial.year_view} compact />
+          <Protection view={trial.protection} compact />
           <p className="mt-2 break-words font-mono text-xs text-slate-500">{trial.route_reason}</p>
           <p className="mt-2 text-xs text-slate-500">
             данные: {STAGE_VENUE[stage.venue] ?? stage.venue}
