@@ -80,6 +80,9 @@ def load_config(path: Path | None = None) -> dict:
     if config.get("on_decay_alert") not in ("report_only", "exclude"):
         raise ValueError("on_decay_alert must be report_only or exclude")
     config.setdefault("capital_ladder_usd", [])
+    split = config.setdefault("split", True)
+    if not isinstance(split, bool):
+        raise ValueError(f"split must be true or false, got {split!r}")
     return config
 
 
@@ -166,6 +169,7 @@ class Strategy:
     evidence: Evidence | None
     min_capital_usd: float | None
     current_capital_usd: float | None = None
+    own_capital_usd: float | None = None  # the book's strategy_capital_usd, paper or live
     other_books: list[str] = field(default_factory=list)
     decay_alert: str | None = None
     decay_percentile: float | None = None
@@ -663,6 +667,45 @@ def report_lines(proposal: Proposal, changes: list[str]) -> list[str]:
     return out
 
 
+OWN_SETTINGS_TITLE = "Деньги стратегий: у каждой свои настройки"
+
+
+def own_settings_lines(strategies: list[Strategy]) -> list[str]:
+    """The section when there is no common pool to split (owner, 2026-10-29: «нет. у каждой
+    стратегии свои настройки»): each strategy's own money from its settings next to the minimum
+    it needs, its decay check and the paper rule. No shares, no total, no other sums."""
+    out = ["Общей суммы, которую делят между стратегиями, нет: у каждой стратегии свои деньги в её "
+           "настройках (решение владельца 29.10: «у каждой стратегии свои настройки»). Код "
+           "ничего не двигает; здесь — хватает ли каждой её собственных денег.", ""]
+    roles = {"live": "настоящие деньги", "paper": "бумага", "stand": "только стенд"}
+    for st in strategies:
+        if st.excluded:
+            continue
+        own = st.own_capital_usd
+        head = f"**{st.label}** — {roles.get(st.role, st.role)}"
+        if own is not None:
+            head += f"; деньги в настройках {_usd(own)}"
+        out.append(head)
+        text = f"    {floor_text(st.floor)}."
+        if own is not None and st.min_capital_usd is not None:
+            text += (" Своих денег хватает." if own >= st.min_capital_usd else
+                     f" **Своих денег не хватает**: нужно от {_usd(st.min_capital_usd)}.")
+        elif own is None:
+            text += " Своих денег в настройках нет: книги у неё нет, только прогон стенда."
+        out.append(text)
+        if st.decay_percentile is not None:
+            out.append(f"    Сверка с историей стенда: хуже нынешнего результата были "
+                       f"{st.decay_percentile:.0f} из 100 таких же отрезков; "
+                       + ("детектор затухания поднял тревогу." if st.decay_alert
+                          else "тревоги нет."))
+        if st.paper_ready:
+            out.append("    По правилу бумаги (4–6 недель, повтор на стенде сошёлся) книга готова "
+                       "к решению владельца.")
+        if st.other_books:
+            out.append("    Тот же замысел идёт ещё в книгах: " + ", ".join(st.other_books) + ".")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Building the strategies from the night's data
 # ---------------------------------------------------------------------------
@@ -844,6 +887,7 @@ def build_strategies(session, *, books: dict[str, dict] | None = None, root: Pat
             min_capital_usd=working_minimum(floor, latest_min_capital(session, idea_id)),
             floor=floor,
             current_capital_usd=(float(cfg["strategy_capital_usd"]) if cfg.get("live") else None),
+            own_capital_usd=float(cfg["strategy_capital_usd"]),
             other_books=[cfg2.get("label", i2) for i2, cfg2, _ in group[1:]],
             decay_alert=decayed.get("alert"),
             decay_percentile=((decayed.get("ret") or {}).get("percentile")),
@@ -910,6 +954,10 @@ def run_allocation(session, day: date, end: date, *, books: dict[str, dict] | No
     strategies, problems = build_strategies(
         session, books=books, root=root, decay_results=decay_results, paper_rules=paper_rules,
         end=end, stand_fn=stand_fn)
+    if not config.get("split", True):
+        return {"title": OWN_SETTINGS_TITLE,
+                "lines": own_settings_lines(strategies) + [f"    {p}" for p in problems],
+                "proposal": None, "snapshot": {}, "changes": []}
     proposal = allocate(strategies, capital=float(config["deployable_capital_usd"]),
                         max_count=max_strategies(config), config=config)
     previous = latest_allocation(night_dir, before=day)
@@ -957,7 +1005,8 @@ def night_stage(day: date, end: date, state: dict, *, root: Path | None = None) 
 
 
 __all__ = [
-    "CONFIG", "Evidence", "Line", "MoneyError", "Proposal", "SECTION_TITLE", "Strategy",
+    "CONFIG", "Evidence", "Line", "MoneyError", "OWN_SETTINGS_TITLE", "Proposal", "SECTION_TITLE",
+    "Strategy",
     "allocate", "assert_strategy_money", "book_evidence", "build_strategies", "changes_since",
     "correlation_table", "daily_returns", "daily_std", "inverse_volatility", "latest_allocation",
     "latest_min_capital", "load_config", "max_strategies", "night_signals", "night_stage",

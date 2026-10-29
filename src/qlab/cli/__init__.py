@@ -2467,7 +2467,7 @@ def pool_allocation_cmd(
         out = pool.run_allocation(session, today, today, config=pool.load_config(config),
                                   root=paper_root, decay_results=results, paper_rules=rules,
                                   night_dir=night_dir)
-    typer.echo(f"## {pool.SECTION_TITLE}\n")
+    typer.echo(f"## {out.get('title') or pool.SECTION_TITLE}\n")
     typer.echo("\n".join(out["lines"]))
 
 

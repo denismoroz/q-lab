@@ -11,7 +11,12 @@
 # (qlab.capital_floor; owner, 2026-10-26: «на каждую стратегию выводить минимум возможный -
 # чтобы стратегия работала и будем отталкиваться от него. минимум должен быть обоснованный»).
 # The split uses that minimum where it was measured, the stand's position floor elsewhere.
-version: "2026-10-26.2"
+# 2026-10-29.1: no common pool (owner, 2026-10-29, asked for the total to split: «нет. у каждой
+# стратегии свои настройки»). `split: false` -- the night shows each strategy's own money from its
+# settings (strategy_capital_usd) against the minimum it needs, the decay check and the paper rule;
+# no shares, no total, no other sums. The method below stays for a split the owner may ask for.
+version: "2026-10-29.1"
+split: false
 preregistration: seed/preregistration/2026-10-25-capital-allocation.yaml
 
 # The method. `inverse_volatility` is the only method this version knows; the loader refuses

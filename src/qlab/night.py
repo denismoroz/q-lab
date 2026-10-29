@@ -541,7 +541,7 @@ def write_report(day: date, state: dict) -> Path:
     if split := state.get("allocation"):
         from qlab.pool_allocation import SECTION_TITLE as ALLOCATION_TITLE
 
-        lines += [f"## {ALLOCATION_TITLE}", "", *split["lines"], ""]
+        lines += [f"## {split.get('title') or ALLOCATION_TITLE}", "", *split["lines"], ""]
     if directed := state.get("director"):
         lines += ["## Руководитель исследований", "", *_director_lines(directed), ""]
     if studied := state.get("research"):

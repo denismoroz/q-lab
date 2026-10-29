@@ -325,6 +325,30 @@ def test_the_shipped_config_loads_and_uses_the_owners_four_weeks() -> None:
     assert pool_allocation.max_strategies(config) == 6
 
 
+def test_the_shipped_config_splits_nothing_each_strategy_has_its_own_money() -> None:
+    # owner, 2026-10-29: «нет. у каждой стратегии свои настройки»
+    assert pool_allocation.load_config(Path("night/allocation.yaml"))["split"] is False
+
+
+def test_without_a_split_each_strategy_is_shown_against_its_own_money() -> None:
+    enough = _strategy("bv2", 0.005, minimum=150.0, own_capital_usd=257.0, decay_percentile=72.0)
+    short = _strategy("trend", 0.004, minimum=7500.0, own_capital_usd=3000.0, paper_ready=True)
+    stand = _strategy("xsmom", 0.02, minimum=240.0, role="stand", days=0)
+    text = "\n".join(pool_allocation.own_settings_lines([enough, short, stand]))
+    assert "деньги в настройках $257" in text and "Своих денег хватает." in text
+    assert "**Своих денег не хватает**: нужно от $7 500" in text
+    assert "книги у неё нет" in text and "72 из 100" in text and "готова" in text
+    for pooled in ("Предложено", "от всей суммы", "общей сумме", "$3 000 — рабочее"):
+        assert pooled not in text
+
+
+def test_the_night_without_a_split_names_its_own_section(session, tmp_path: Path) -> None:
+    out = pool_allocation.run_allocation(
+        session, date(2026, 10, 25), date(2026, 10, 24), books={},
+        config={**CONFIG, "split": False}, root=tmp_path / "paper", night_dir=tmp_path / "nights")
+    assert out["title"] == pool_allocation.OWN_SETTINGS_TITLE and out["proposal"] is None
+
+
 def test_an_unknown_method_is_refused_not_replaced(tmp_path: Path) -> None:
     text = Path("night/allocation.yaml").read_text(encoding="utf-8").replace(
         "method: inverse_volatility", "method: risk_parity_optimised")
