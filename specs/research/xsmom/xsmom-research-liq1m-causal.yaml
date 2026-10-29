@@ -1,0 +1,91 @@
+# Causal twin of xsmom-research-liq1m (qlab twin, src/qlab/twin.py): its numbers are chosen
+# by code, from the past only, on Binance's history (docs/RETUNE.md). Written by
+# code, not by hand.
+idea_id: xsmom-research-liq1m-causal
+title: 'XSMOM, честный универс, 20 ног: брать в книгу только монеты с оборотом от $1 млн за прошлые сутки
+  (порог живого движка): числа выбирает код раз в месяц только по прошлому, история Binance с 2019'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.xsmom:XsmomCrossSectionalMomentum
+  base_params:
+    universe: null
+    lookbacks_days:
+    - 14
+    - 21
+    - 30
+    - 45
+    - 60
+    rebalance_days: 1
+    anchor_dow: 3
+    n_positions: 20
+  grid:
+    rebalance_days:
+      rebalance_days=1:
+        rebalance_days: 1
+      rebalance_days=7:
+        rebalance_days: 7
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-09-20'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 12.0
+simultaneous_legs: 1
+execution_venue: hyperliquid
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of xsmom-research-liq1m: the numbers it trades are chosen by code, every month, from returns
+  realised before the choice (the declared lists of night/own_numbers.yaml); the data is Binance''s history,
+  a proxy for hyperliquid''s market, with the original''s costs and minimum leg.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2020-01-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  data starts 2019-09-08; the longest warm-up read from the parameters is 60 days (lookbacks_days = 60),
+  so the book can first trade on 2019-11-07; a candidate is eligible only after one whole month re-tuning
+  period, so the first re-tuning after 2019-11-07 is 2019-12-01 and the first choice is made at the one
+  after it, 2020-01-01. This is warm-up arithmetic read generically from the parameters (every day, hour,
+  window and lookback number, whatever the strategy does with it), not a result. If the strategy needs
+  more than the parameters show (enough instruments listed on Binance, a signal that waits for history),
+  the true first choice is later and the days before it are judged as flat days. The grid is the whole
+  declared list of each open parameter (rebalance_days) from night/own_numbers.yaml, 2 candidates. What
+  this does not prove: the lists were declared in night/own_numbers.yaml (version 2026-10-26.2) before
+  this twin ran; what was seen of the history when they were declared is not recorded, so the choice is
+  only as honest as the lists are (the spec''s own date for its numbers: 2026-06-15).'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/xsmom/xsmom-research-liq1m.yaml: the same window end'
+  base_params.lookbacks_days: funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)
+  base_params.anchor_dow: funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)
+  base_params.n_positions: 'derived: (32 // 3) * 2; the live auto-tercile on the 32-coin DEFAULT_XSMOM_UNIVERSE,
+    docs/XSMOM_T21.md'
+  base_params.rebalance_days: 'night/own_numbers.yaml (version 2026-10-26.2): the declared list for each
+    of rebalance_days; owner 2026-10-26: own numbers chosen on data before the cut'
+  inner_code_ref: 'src/qlab/strategies/xsmom.py: the code of the spec'
+  grid: 'night/own_numbers.yaml (version 2026-10-26.2): the declared list for each of rebalance_days;
+    owner 2026-10-26: own numbers chosen on data before the cut'
+  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0'
+selects_causally: true
