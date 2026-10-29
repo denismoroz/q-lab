@@ -500,6 +500,10 @@ def write_report(day: date, state: dict) -> Path:
                   if not r.error and (line := years_line(r.metrics, signs=True))]
         if any(not r.error and years_line(r.metrics) for r in group):
             lines.append("")
+    if state.get("ladder"):
+        from qlab.ladder import SECTION_TITLE as LADDER_TITLE
+
+        lines += [f"## {LADDER_TITLE}", "", *state["ladder"], ""]
     if state.get("waiting") or state.get("waiting_notes"):
         from qlab.waiting import SECTION_TITLE as WAITING_TITLE
         from qlab.waiting import report_lines as waiting_lines
@@ -905,7 +909,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
         deployable_capital_usd: float = 3000.0,
         stop_at: datetime | None = None, programmer: bool = True,
-        catalogue: bool = True, cards: bool = True) -> Path:
+        catalogue: bool = True, cards: bool = True, ladder: bool | None = None) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -922,6 +926,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     runs, then the investigator on the flagged ones, bounded and guarded) runs before the
     overlays, because an overlay base must have been scanned with no flag fired
     (`qlab.overlay_stage.anomaly_refusal`).
+    `ladder` (default on; `qlab.ladder`) puts one table of every open idea's seven steps into the
+    report, read last, after every stage has written its runs: no token, no verdict.
     Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped."""
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
@@ -1068,6 +1074,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
                 deployable_capital_usd=deployable_capital_usd, force=generate)
     stop_prefetch(prefetcher, state)
+    if ladder is not False:
+        # The ladder of every open idea as one table, read after every stage has written its
+        # runs (qlab.ladder, docs/LADDER.md); a reading, so it is last and costs no token.
+        lines_ = guarded(day, state, "ladder", ladder_stage)
+        if lines_:
+            state["ladder"] = lines_
     save_state(day, state)  # with the stop line, if the stop time cut the night
     try:
         return write_report(day, state)
@@ -1126,6 +1138,17 @@ def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
             f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
         save_state(day, state)
         return None
+
+
+def ladder_stage() -> list[str]:
+    """The morning report's table of every open idea's ladder (`qlab.ladder.report_lines`),
+    reached through the night so that the suite can keep whole-night tests off the owner's
+    registry (conftest.py)."""
+    from qlab import ladder
+    from qlab.registry.db import session_scope
+
+    with session_scope() as session:
+        return ladder.report_lines(session, ladder.load_ledgers())
 
 
 def restamp_stage(*args, **kwargs):

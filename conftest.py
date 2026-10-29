@@ -66,6 +66,8 @@ def _no_real_agent_ledgers(monkeypatch) -> None:
     # (a whole-night test that did not stub it would run up to four of them). A test of the stage
     # calls qlab.restamp.restamp_stage directly.
     monkeypatch.setattr(night, "restamp_stage", lambda *a, **kw: None)
+    # The ladder table of the morning report reads every open idea of the owner's registry.
+    monkeypatch.setattr(night, "ladder_stage", lambda *a, **kw: None)
     # The overlays stage runs variants on the stand against the real registry and writes spec
     # files and a ledger (2026-10-28: a night test that did not patch it ran two variants of a
     # real base). A test of the stage calls qlab.overlay_stage.overlays_stage directly.
