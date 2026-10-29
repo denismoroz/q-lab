@@ -67,3 +67,6 @@ data/overlays/
 
 # the anomaly stage: its ledger and the logs of the investigator's toolkit calls (docs/ANOMALIES.md)
 data/anomalies/
+
+# restamp ledger and hand-run state (docs/RESTAMP.md)
+data/restamp/

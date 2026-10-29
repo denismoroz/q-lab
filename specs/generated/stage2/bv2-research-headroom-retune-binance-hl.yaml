@@ -57,7 +57,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-27'
+  end: '2026-10-28'
   instruments:
   - AVAX
   - AVAX-SPOT

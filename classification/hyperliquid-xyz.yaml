@@ -9,6 +9,7 @@ annotation_snapshots:
 - '2026-10-26'
 - '2026-10-27'
 - '2026-10-28'
+- '2026-10-29'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -812,6 +813,16 @@ instruments:
         USD. Jio Platforms provides digital connectivity services in India. JIO is
         currently a pre-IPO market reflecting the anticipated share price; it is expected
         to convert to...
+    - valid_from: '2026-10-30'
+      observed_on: '2026-10-29'
+      asset_class: stock
+      class_key: stock:unknown
+      venue_category: stocks
+      underlying: 'JIO references 1 equity share of Jio Platforms Limited (NSE: JPL).
+        The oracle converts the INR share price to USD at the prevailing USD/INR FX
+        rate. Jio Platforms provides digital connectivity and digital services in
+        India.'
+      note: no known exchange named in the description
   xyz:JP225:
     listed_from: '2026-04-09'
     listed_from_basis: first_candle
@@ -1176,6 +1187,21 @@ instruments:
       underlying: 'NOW references 1 share of ServiceNow, Inc. common stock (NYSE:
         NOW), quoted in USD. ServiceNow provides cloud-based workflow and enterprise
         automation software.'
+  xyz:NU:
+    listed_from: '2026-10-29'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-10-29'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-10-29'
+      observed_on: '2026-10-29'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'NU references 1 Class A ordinary share of Nu Holdings Ltd. (NYSE:
+        NU), quoted in USD. Nubank provides digital financial services, including
+        accounts, credit cards, loans, and investments.'
   xyz:NVDA:
     listed_from: '2025-11-12'
     listed_from_basis: first_candle

@@ -1,0 +1,299 @@
+# Overlay variant of bv2-research-headroom-causal (qlab overlays, src/qlab/overlay_variants.py):
+# the same strategy with a chain of overlays on its weights (docs/OVERLAYS.md).
+# Written by code, not by hand.
+idea_id: bv2-research-headroom-causal-ov-gate-vol
+title: 'Bv2 как на проде, но пул маржи рассчитан на спот, выросший в 1.5 раза (эксперимент исследователя
+  1): числа выбирает код раз в месяц только по прошлому, история Binance с 2019: надстройки — не торговать
+  в одном из рыночных состояний + уменьшать размер, когда собственные результаты стали неспокойнее обычного'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.overlays:Overlaid
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.live.bv2:LiveBv2
+      base_params:
+        coins:
+        - BTC
+        - ETH
+        - SOL
+        - AVAX
+        capital_usd: 257.0
+        spot_share: 0.5
+        hedge_threshold: 0.0
+        sticky_exit_hours: 12
+        ratchet_threshold: 0.5
+        carry_enabled: false
+        carry_fraction: 0.6
+        carry_entry_apr: 0.1
+        carry_exit_hours: 24
+        slippage: 0.0005
+        min_order_usd: 10.0
+        margin_enabled: true
+        short_leverage:
+          BTC: 3.0
+          ETH: 2.0
+          SOL: 1.5
+          AVAX: 1.5
+        default_leverage: 1.0
+        maint_margin_rate:
+          BTC: 0.0125
+          ETH: 0.02
+          SOL: 0.025
+          AVAX: 0.05
+        default_maint_margin_rate: 0.05
+        margin_buffer: 0.1
+        hedge_margin_headroom: 1.0
+        rebalance_at_im_share: 0.5
+        mode: paper
+      grid:
+        variant:
+          base: {}
+          experiment:
+            hedge_margin_headroom: 1.5
+      refit_every: M
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 5.25
+        slippage_bps: 0.9
+    overlays: []
+    costs:
+      taker_fee_bps: 5.25
+      slippage_bps: 0.9
+  grid:
+    overlay:
+      market_gate:skip-bull+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - flat
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-bull+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - flat
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+      market_gate:skip-flat+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-flat+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - bear
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+      market_gate:skip-bear+vol_target:d30-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - flat
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+      market_gate:skip-bear+vol_target:d90-max1:
+        overlays:
+        - name: market_gate
+          params:
+            detector: direction_terciles
+            trade_in:
+            - bull
+            - flat
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 5.25
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1h
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-10-28'
+  instruments:
+  - BTC-SPOT
+  - ETH-SPOT
+  - SOL-SPOT
+  - AVAX-SPOT
+  - BTC
+  - ETH
+  - SOL
+  - AVAX
+costs:
+  taker_fee_bps: 5.25
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+execution_venue: hyperliquid
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of bv2-research-headroom: the numbers it trades are chosen by code, every month, from returns
+  realised before the choice (the base strategy-b-v2 against its experiment (hedge_margin_headroom));
+  the data is Binance''s history, a proxy for hyperliquid''s market, with the original''s costs and minimum
+  leg.'
+- 'The twin trades only 8 named columns (BTC-SPOT, ETH-SPOT, SOL-SPOT, AVAX-SPOT, BTC, ETH, SOL, AVAX),
+  the required_instruments of bv2-research-headroom, not the whole market: the list was chosen by 2025-06-01
+  and would know which coins survived if applied to the history before it (survivorship), so the twin
+  is judged only from 2025-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08 are warm-up
+  for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+- 'Overlay variant of bv2-research-headroom-causal (qlab.overlay_variants, docs/OVERLAYS.md): the same
+  strategy with market_gate, vol_target applied to its target weights; the strategy''s own numbers are
+  untouched. The numbers of the overlays are chosen by code every month from the past only.'
+noise_universe: held
+measure_hedge_timing: true
+required_instruments:
+- BTC-SPOT
+- ETH-SPOT
+- SOL-SPOT
+- AVAX-SPOT
+- BTC
+- ETH
+- SOL
+- AVAX
+params_fixed_at: '2020-06-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  base can first trade on 2019-11-01; the longest warm-up of the overlay family (market_gate, vol_target)
+  is 180 days, so the overlay can first act on 2020-04-29; a candidate is eligible only after one whole
+  month re-tuning period, so the first re-tuning after 2020-04-29 is 2020-05-01 and the first choice is
+  made at the one after it, 2020-06-01. The family is declared whole in docs/OVERLAYS.md before any run:
+  6 candidates, none chosen by looking at the data it is judged on. What this does not prove: the family
+  itself (which overlays and which settings are offered) was written by people who had seen the market.'
+judged_from: '2025-06-01'
+sources:
+  base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
+    «раз в неделю/день или месяц»'
+  base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  base_params.inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/bv2/bv2-research-headroom.yaml: the same window end'
+  base_params.inner_params.base_params.coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.capital_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.hedge_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.sticky_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.ratchet_threshold: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.carry_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.carry_fraction: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.carry_entry_apr: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.carry_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.slippage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.min_order_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.margin_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.short_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.default_leverage: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.default_maint_margin_rate: seed/prod_params/2026-10-02-b2.json
+    (frab.db strategies.params_json, read-only export)
+  base_params.inner_params.base_params.margin_buffer: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.base_params.hedge_margin_headroom: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.rebalance_at_im_share: seed/prod_params/2026-10-02-b2.json (frab.db
+    strategies.params_json, read-only export)
+  base_params.inner_params.base_params.mode: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.inner_params.inner_code_ref: 'src/qlab/strategies/live/bv2.py: the strategy both strategy-b-v2
+    and bv2-research-headroom run'
+  base_params.inner_params.grid.variant.base: 'specs/bv2-live.yaml: the base''s numbers, unchanged'
+  base_params.inner_params.grid.variant.experiment.hedge_margin_headroom: seed/prod_params/2026-10-02-b2_cold.json
+    (frab.db strategies.params_json, read-only export, instance b2_cold)
+  data.instruments: 'specs/research/bv2/bv2-research-headroom.yaml: required_instruments of bv2-research-headroom,
+    the coins its book trades'
+  instruments_chosen_at: 'specs/bv2-live.yaml: params_fixed_at = 2025-06-01 of strategy-b-v2, the earliest
+    documented day the list of bv2-research-headroom existed'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2025-06-01); the days before are warm-up'
+  base_params.inner_params.score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and
+    perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount'
+  costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
+    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
+    min_order_usd
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  base_params.inner_code_ref: 'specs/research/bv2/bv2-research-headroom-causal.yaml: the base''s code_ref,
+    unchanged'
+  inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
+  base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
+    it'
+  base_params.costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035
+    in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line
+    32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
+    both legs move by the same amount'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+regime_claim:
+  bull: earns
+  bear: beats_market
+selects_causally: true
+instruments_chosen_at: '2025-06-01'
