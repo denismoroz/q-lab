@@ -14,7 +14,11 @@ a routed run whose
 
 * stand version (`trial.stand_version`, `qlab.harness.version`) is older than the current one (no
   version at all is older than every one), or
-* rules version (the version stamped on its verdicts) is older than the latest rules,
+* rules version (the version stamped on its verdicts) is older than the latest rules, or
+* noise books: the run's noise bar was measured on fewer than the 200 books asked for, because some
+  books gave no number and nobody drew replacements yet (`noise_books_short`; owner 2026-10-29,
+  «да, чини учёт»; docs/T28_SHAPE_AWARE_BAR.md). This is a reason of its own and not a bump of the
+  stand version: only the runs whose number can differ are measured again,
 
 or whose last recomputation failed (a ledger, below). A second stage (`<idea>-hl`) is checked
 the same way and is re-run with its parent; a second stage whose first stage is closed is not
@@ -145,8 +149,31 @@ def run_view(session, idea_id: str | None) -> dict | None:
         "ann": _number(m.get("cap_ann_return" if capital else "ann_return_net")),
         "dd": _number(m.get("cap_max_dd" if capital else "max_dd")),
         "on_capital": capital,
+        "noise_short": noise_books_short(m), "noise_percentile": _number(
+            m.get("noise_return_percentile")),
         "stand": trial.stand_version, "rules": _rules_version(session, trial.id),
         "end": str((spec.data_requirements or {}).get("end") or "")[:10] or None}
+
+
+NOISE_BOOKS_ASKED = 200
+"""The number of random books a run's noise bar is measured on."""
+
+
+def noise_books_short(metrics: Mapping | None) -> bool:
+    """Whether a run's noise bar stands on fewer random books than were asked for and nobody drew
+    replacements.
+
+    A run made since the replacement exists records `noise_n_usable` and `noise_n_requested`; its
+    count is what it is (a shortage that survived the bounded replacement is the honest answer)
+    and is never a reason to run it again. An older run records no counts; the bar's denominator
+    shows in the percentile itself: with 200 books it is a multiple of 1/200, with 199 or 150 it
+    generally is not."""
+    if not metrics or "noise_n_usable" in metrics:
+        return False
+    percentile = _number(metrics.get("noise_return_percentile"))
+    if percentile is None:
+        return False
+    return abs(percentile * NOISE_BOOKS_ASKED - round(percentile * NOISE_BOOKS_ASKED)) > 1e-6
 
 
 def stale_reasons(view: Mapping | None, stand: str, rules: str | None) -> list[dict]:
@@ -162,6 +189,8 @@ def stale_reasons(view: Mapping | None, stand: str, rules: str | None) -> list[d
         out.append({"kind": "stand", "was": view.get("stand"), "now": stand})
     if rules is not None and view.get("rules") is not None and is_older(view["rules"], rules):
         out.append({"kind": "rules", "was": view["rules"], "now": rules})
+    if view.get("noise_short"):
+        out.append({"kind": "noise_books", "was": view.get("noise_percentile"), "now": None})
     return out
 
 
@@ -542,6 +571,9 @@ def _reasons_ru(reasons: list[dict]) -> str:
             parts.append(f"способ измерения сменился ({was} → {r['now']})")
         elif r["kind"] == "rules":
             parts.append(f"правила сменились ({r['was']} → {r['now']})")
+        elif r["kind"] == "noise_books":
+            parts.append("шумовых книг в замере меньше 200: часть книг не дала числа, и замену "
+                         "им тогда не тянули")
         else:
             parts.append("прошлый пересчёт не удался")
     return "; ".join(parts)
@@ -654,4 +686,5 @@ def _moved_status(e: Mapping) -> bool:
 
 
 __all__ = ["CONFIG", "Config", "Item", "SECTION_TITLE", "entry_lines", "find_items", "load_config",
-           "load_ledger", "report_lines", "restamp_stage", "run_view", "stale_reasons"]
+           "load_ledger", "noise_books_short", "report_lines", "restamp_stage", "run_view",
+           "stale_reasons"]

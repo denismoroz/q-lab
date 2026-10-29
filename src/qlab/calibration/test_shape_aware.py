@@ -306,3 +306,45 @@ def test_not_evaluable_spec_writes_one_trial_and_runs_no_noise(session):
     trials = session.query(Trial).all()
     assert len(trials) == 1
     assert trials[0].status == TrialStatus.NOT_EVALUABLE
+
+
+def test_a_book_without_a_number_is_replaced_and_the_counts_are_recorded(session, monkeypatch):
+    """The bar is measured on the 8 books asked for, not on 7: the book that gave no number is
+    replaced and the trial says how many were asked for, usable, unusable and replaced."""
+    import dataclasses
+
+    import qlab.calibration.run as run_module
+
+    real = run_module._evaluate_noise
+
+    def wrapped(spec, session, ruleset, deployable_capital_usd):
+        evaluation = real(spec, session, ruleset, deployable_capital_usd)
+        if int(spec.params["seed"]) == 2:
+            return dataclasses.replace(evaluation, metrics=None, error="StructuralMismatchError")
+        return evaluation
+
+    monkeypatch.setattr(run_module, "_evaluate_noise", wrapped)
+
+    result = evaluate_spec_with_shape_aware_bar(
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+        deployable_capital_usd=1_000_000.0, n_trials=8)
+
+    m = result.candidate.metrics
+    assert (m["noise_n_requested"], m["noise_n_usable"], m["noise_n_unusable"],
+            m["noise_n_replaced"]) == (8, 8, 1, 1)
+    assert result.percentiles.n_requested == 8
+    assert result.percentiles.n_usable_return == 8
+    assert result.percentiles.n_replaced == 1
+    # the percentile is a multiple of 1/8: the denominator is the books asked for
+    scaled = m["noise_return_percentile"] * 8
+    assert scaled == pytest.approx(round(scaled))
+
+
+def test_a_clean_run_records_the_counts_with_nothing_replaced(session):
+    result = evaluate_spec_with_shape_aware_bar(
+        _spec(), session=session, ruleset=_shape_aware_ruleset(threshold=0.0),
+        deployable_capital_usd=1_000_000.0, n_trials=8)
+    m = result.candidate.metrics
+    assert (m["noise_n_requested"], m["noise_n_usable"], m["noise_n_unusable"],
+            m["noise_n_replaced"]) == (8, 8, 0, 0)
+

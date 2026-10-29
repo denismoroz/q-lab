@@ -51,6 +51,7 @@ from qlab.calibration.percentile import (
     ShapeAwarePercentiles,
     _usable_metric_values,
     compute_shape_aware_percentiles,
+    noise_book_counts,
     noise_percentile,
     noise_power,
 )
@@ -153,6 +154,7 @@ def evaluate_spec_with_shape_aware_bar(
         deployable_capital_usd=deployable_capital_usd,
         reference=spec,
         seed_offset=seed_offset,
+        replace_unusable=True,
     )
 
     def _extra_metrics(base_metrics: dict[str, float]) -> dict[str, float]:
@@ -162,7 +164,9 @@ def evaluate_spec_with_shape_aware_bar(
             reference_idea_id=spec.idea_id,
             series=series,
         )
-        extra: dict[str, float] = {}
+        # How many books the bar stands on: asked for, usable, drawn again for the ones that
+        # gave no number (docs/T28_SHAPE_AWARE_BAR.md, "Учёт шумовых книг").
+        extra: dict[str, float] = dict(noise_book_counts(noise_trials, series=series))
         if percentiles.return_percentile is not None:
             extra["noise_return_percentile"] = percentiles.return_percentile
         if percentiles.sharpe_percentile is not None:

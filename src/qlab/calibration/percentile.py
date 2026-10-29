@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from qlab.calibration.run import NoiseTrial
+from qlab.calibration.run import NoiseTrial, usable_noise_book
 
 # The one series this module's percentile is computed against. Every figure
 # quoted in docs/TASKS.md T27/T28 and in `rules/2026-09-22.1.yaml`'s own
@@ -70,6 +70,31 @@ class ShapeAwarePercentiles:
     n_usable_sharpe: int
     return_percentile: float | None
     sharpe_percentile: float | None
+    # Extra books drawn because earlier ones gave no number (qlab.calibration.run).
+    n_replaced: int = 0
+
+
+def noise_book_counts(noise_trials: Sequence[NoiseTrial], *, series: str = CANONICAL_SERIES
+                      ) -> dict[str, float]:
+    """How the noise sample was assembled, as the metrics a trial records:
+
+    * `noise_n_requested` -- books asked for (replacements do not count);
+    * `noise_n_usable` -- books that gave an annual return, the sample the bar ranks against;
+    * `noise_n_unusable` -- books drawn that gave none (the structural band refused them, the run
+      failed): they stay in the registry as trials;
+    * `noise_n_replaced` -- extra books drawn to stand in for them.
+
+    `usable < requested` means the bar was measured on fewer books than asked for even after
+    the bounded replacement; the console and the report say so.
+    """
+    mine = [t for t in noise_trials if t.series == series]
+    usable = sum(usable_noise_book(t) for t in mine)
+    return {
+        "noise_n_requested": float(sum(not t.replacement for t in mine)),
+        "noise_n_usable": float(usable),
+        "noise_n_unusable": float(len(mine) - usable),
+        "noise_n_replaced": float(sum(t.replacement for t in mine)),
+    }
 
 
 def noise_percentile(candidate_value: float, noise_values: Sequence[float]) -> float:
@@ -136,7 +161,10 @@ def _usable_metric_values(
     shrinkage is exactly what `docs/XSMOM_T21.md` found happen to 150 of
     200 trials before the rebalance-cadence fix (T27, gap 5), and it must
     be reported honestly (`ShapeAwarePercentiles.n_usable_return` /
-    `n_usable_sharpe`), never silently backfilled.
+    `n_usable_sharpe`), never silently backfilled: when the caller replaces unusable books
+    (`qlab.calibration.run.run_noise_series(replace_unusable=True)`), the
+    replacements are separate trials with their own seeds, counted in
+    `ShapeAwarePercentiles.n_replaced` and in the trial's `noise_n_*` metrics.
     """
     values: list[float] = []
     for trial in noise_trials:
@@ -170,12 +198,14 @@ def compute_shape_aware_percentiles(
     reference spec's identity) -- it is the caller's responsibility, see
     `qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar`.
 
-    `n_requested` counts every `noise_trials` entry in `series`, regardless
-    of whether it produced a usable number -- the honest denominator for
-    "how many trials did this calibration cost", independent of how many
-    were usable for either percentile.
+    `n_requested` counts the books asked for in `series`, regardless of whether
+    each produced a usable number; replacement books (drawn for the ones that
+    gave none, `n_replaced`) are not counted in it. The sample the percentile
+    ranks against is every usable book, replacements included.
     """
-    n_requested = sum(1 for trial in noise_trials if trial.series == series)
+    n_requested = sum(1 for trial in noise_trials
+                      if trial.series == series and not trial.replacement)
+    n_replaced = sum(1 for trial in noise_trials if trial.series == series and trial.replacement)
 
     return_values = _usable_metric_values(noise_trials, series=series, metric="ann_return_net")
     sharpe_values = _usable_metric_values(noise_trials, series=series, metric="sharpe_net")
@@ -202,6 +232,7 @@ def compute_shape_aware_percentiles(
         n_usable_sharpe=len(sharpe_values),
         return_percentile=return_percentile,
         sharpe_percentile=sharpe_percentile,
+        n_replaced=n_replaced,
     )
 
 
@@ -209,6 +240,7 @@ __all__ = [
     "CANONICAL_SERIES",
     "ShapeAwarePercentiles",
     "compute_shape_aware_percentiles",
+    "noise_book_counts",
     "noise_percentile",
     "noise_power",
 ]

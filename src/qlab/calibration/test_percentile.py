@@ -15,6 +15,7 @@ import pytest
 from qlab.calibration.percentile import (
     CANONICAL_SERIES,
     compute_shape_aware_percentiles,
+    noise_book_counts,
     noise_percentile,
 )
 from qlab.calibration.run import NoiseTrial
@@ -167,3 +168,40 @@ def test_noise_power_is_how_often_a_good_book_of_this_shape_passes() -> None:
     wide = list(np.linspace(-1.0, 1.0, 200))  # a wide one: 7% is lost in it
     assert noise_power(wide, 0.07, 0.99) < 0.1
     assert noise_power([0.1], 0.07, 0.99) is None
+
+
+def _book(i: int, *, usable: bool = True, replacement: bool = False) -> NoiseTrial:
+    trial = _noise_trial(ann_return_net=0.001 * i if usable else None, sharpe_net=None)
+    return NoiseTrial(series=trial.series, generator=trial.generator, seed=i,
+                      evaluation=trial.evaluation, replacement=replacement)
+
+
+def test_the_same_candidate_reads_differently_on_199_and_on_200_books() -> None:
+    """The defect behind the replacement (docs/T28_SHAPE_AWARE_BAR.md): losing to two books
+    reads 197/199 = 0.98995 on 199 books and exactly 0.99 on 200."""
+    candidate = {"ann_return_net": 0.1975, "sharpe_net": 1.0}
+    books = [_book(i) for i in range(200)]
+    on_200 = compute_shape_aware_percentiles(candidate, books, reference_idea_id="x")
+    assert on_200.return_percentile == pytest.approx(0.99)
+    on_199 = compute_shape_aware_percentiles(
+        candidate, [*books[:50], _book(50, usable=False), *books[51:]], reference_idea_id="x")
+    assert on_199.n_usable_return == 199
+    assert on_199.return_percentile < 0.99
+
+
+def test_replacements_fill_the_sample_and_are_not_counted_as_requested() -> None:
+    books = [_book(i) for i in range(199)] + [_book(199, usable=False)]
+    books.append(_book(1_000_000, replacement=True))
+    p = compute_shape_aware_percentiles({"ann_return_net": 0.1975}, books,
+                                        reference_idea_id="x")
+    assert (p.n_requested, p.n_usable_return, p.n_replaced) == (200, 200, 1)
+    assert noise_book_counts(books) == {
+        "noise_n_requested": 200.0, "noise_n_usable": 200.0, "noise_n_unusable": 1.0,
+        "noise_n_replaced": 1.0}
+
+
+def test_book_counts_say_so_when_the_sample_stays_short() -> None:
+    books = [_book(0), _book(1, usable=False), _book(2, usable=False, replacement=True)]
+    assert noise_book_counts(books) == {
+        "noise_n_requested": 2.0, "noise_n_usable": 1.0, "noise_n_unusable": 2.0,
+        "noise_n_replaced": 1.0}

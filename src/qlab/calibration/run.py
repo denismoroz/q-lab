@@ -13,9 +13,10 @@ this module.
 
 from __future__ import annotations
 
+import math
 import os
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -67,6 +68,13 @@ GENERATOR_NAMES: tuple[str, ...] = tuple(GENERATORS)
 NOISE_WORKERS_ENV = "QLAB_NOISE_WORKERS"
 DEFAULT_NOISE_WORKERS = 10
 
+# A replacement book (a book drawn because an earlier one gave no number) takes its seed from
+# here, far above the seeds of the requested books (`seed_offset + i`), so the two ranges never
+# meet and a replacement is a book that was never in the requested set. Replacement `r` of a call
+# uses `REPLACEMENT_SEED_BASE + seed_offset + r`: fixed by the call's arguments alone, so a rerun
+# draws the same replacements.
+REPLACEMENT_SEED_BASE = 1_000_000
+
 
 @dataclass(frozen=True, slots=True)
 class NoiseTrial:
@@ -78,6 +86,22 @@ class NoiseTrial:
     generator: str
     seed: int
     evaluation: Evaluation
+    # True for a book drawn to stand in for one that gave no number (see `run_noise_series`).
+    replacement: bool = False
+
+
+def usable_noise_book(trial: NoiseTrial) -> bool:
+    """Whether the book produced the number the noise bar ranks on: an annual return.
+
+    A book gives none when its run errored or was refused (a `StructuralMismatchError`: its
+    shape fell outside the band around the strategy it imitates), or when the return came back
+    NaN. `qlab.calibration.percentile` drops exactly these books.
+    """
+    metrics = trial.evaluation.metrics
+    if metrics is None:
+        return False
+    value = metrics.get("ann_return_net")
+    return isinstance(value, int | float) and not math.isnan(value)
 
 
 def load_reference_spec(path: Path | str = REFERENCE_SPEC_PATH) -> StrategySpec:
@@ -179,6 +203,7 @@ def run_noise_series(
     deployable_capital_usd: float,
     reference: StrategySpec,
     seed_offset: int = 0,
+    replace_unusable: bool = False,
 ) -> list[NoiseTrial]:
     """Run `n_trials` noise strategies for one series through the real
     `evaluate_spec` (docs/TASKS.md T16: "не меньше 200 шумовых стратегий на
@@ -189,6 +214,16 @@ def run_noise_series(
     seed is `seed_offset + i`, so calling this twice with a different
     `seed_offset` never repeats the same noise book, and every run remains
     reproducible from `(series, generator, seed)` alone.
+
+    `replace_unusable` (docs/T28_SHAPE_AWARE_BAR.md, "Учёт шумовых книг"): a book can give no
+    number -- its shape fell outside the structural band, its run failed -- and then the bar
+    would be measured on fewer books than were asked for, where a percentile of "loses to 2 of
+    N" reads differently for N = 199 and N = 200. With this on, every book that gave none is
+    followed by a replacement, drawn the same way with a fresh seed (`REPLACEMENT_SEED_BASE`),
+    until `n_trials` books are usable or as many extra books as were requested have been drawn;
+    then the honest smaller count stays. Replacements continue the round-robin of generators.
+    The unusable books stay in the registry as the trials they are, and in the returned list
+    (replacements marked `replacement=True`).
     """
     if n_trials <= 0:
         raise ValueError(f"n_trials must be positive, got {n_trials}")
@@ -200,7 +235,33 @@ def run_noise_series(
         (series, GENERATOR_NAMES[i % len(GENERATOR_NAMES)], seed_offset + i)
         for i in range(n_trials)
     ]
-    workers = min(noise_workers(), n_trials)
+    trials = _run_jobs(jobs, session=session, ruleset=ruleset,
+                       deployable_capital_usd=deployable_capital_usd, reference=reference)
+    if not replace_unusable:
+        return trials
+    drawn_extra = 0
+    while drawn_extra < n_trials:
+        missing = n_trials - sum(usable_noise_book(t) for t in trials)
+        if missing <= 0:
+            break
+        count = min(missing, n_trials - drawn_extra)
+        extra_jobs = [
+            (series, GENERATOR_NAMES[(n_trials + drawn_extra + j) % len(GENERATOR_NAMES)],
+             REPLACEMENT_SEED_BASE + seed_offset + drawn_extra + j)
+            for j in range(count)
+        ]
+        drawn_extra += count
+        trials += [replace(t, replacement=True) for t in _run_jobs(
+            extra_jobs, session=session, ruleset=ruleset,
+            deployable_capital_usd=deployable_capital_usd, reference=reference)]
+    return trials
+
+
+def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: RuleSet,
+              deployable_capital_usd: float, reference: StrategySpec) -> list[NoiseTrial]:
+    """The books `jobs` name -- (series, generator, seed) -- in worker processes when the
+    registry is shared, else in this process."""
+    workers = min(noise_workers(), len(jobs))
     if workers > 1 and _shared_database(session):
         return _run_parallel(jobs, workers=workers, session=session, ruleset=ruleset,
                              deployable_capital_usd=deployable_capital_usd, reference=reference)
@@ -310,6 +371,7 @@ __all__ = [
     "REAL_SPEC_PATHS",
     "REFERENCE_SPEC_PATH",
     "SERIES",
+    "REPLACEMENT_SEED_BASE",
     "NoiseTrial",
     "build_noise_spec",
     "ensure_noise_idea",
@@ -318,4 +380,5 @@ __all__ = [
     "noise_workers",
     "run_noise_series",
     "run_real_strategies",
+    "usable_noise_book",
 ]

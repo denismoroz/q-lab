@@ -285,6 +285,52 @@ def test_stale_ideas_are_taken_by_their_stand_version_or_their_rules_version(wor
     assert by["old-pass"]["reasons"][0]["was"] is None  # an old trial has no version
 
 
+def test_a_run_whose_noise_bar_lost_books_is_taken_without_a_new_stand_version(
+        world, registry) -> None:
+    """Owner 2026-10-29, «да, чини учёт»: 197 of 199 books reads 0.98995, not the 0.99 that 198
+    of 200 reads. A run measured that way is stale for that reason alone; one measured on 200
+    books, and one that records its own counts (even short ones), is not."""
+    for name in ("short-books", "full-books", "counted-short"):
+        _write_spec(world.specs / f"{name}.yaml", name)
+    with registry.session_scope() as s:
+        _idea(s, "short-books")
+        _trial(s, "short-books", "needs-forward", metrics={"noise_return_percentile": 197 / 199})
+        _idea(s, "full-books")
+        _trial(s, "full-books", "needs-forward", metrics={"noise_return_percentile": 198 / 200})
+        _idea(s, "counted-short")
+        _trial(s, "counted-short", "needs-forward", metrics={
+            "noise_return_percentile": 150 / 199, "noise_n_requested": 200.0,
+            "noise_n_usable": 199.0, "noise_n_replaced": 200.0})
+    state = _stage(world, dry_run=True, no_cap=True)
+    by = {e["idea"]: e for e in state["restamp"]["entries"]}
+    assert [r["kind"] for r in by["short-books"]["reasons"]] == ["noise_books"]
+    assert "full-books" not in by and "counted-short" not in by
+    assert "меньше 200" in restamp._reasons_ru(by["short-books"]["reasons"])
+
+
+def test_the_noise_book_test_reads_the_counts_or_else_the_percentile_denominator() -> None:
+    assert restamp.noise_books_short({"noise_return_percentile": 197 / 199})
+    assert restamp.noise_books_short({"noise_return_percentile": 0.7039473684210527})
+    assert not restamp.noise_books_short({"noise_return_percentile": 0.99})
+    assert not restamp.noise_books_short({"noise_return_percentile": 1.0})
+    assert not restamp.noise_books_short({})
+    assert not restamp.noise_books_short(None)
+    # a run that records its counts has been through the replacement already
+    assert not restamp.noise_books_short({"noise_return_percentile": 197 / 199,
+                                          "noise_n_usable": 199.0})
+
+
+def test_a_run_recomputed_for_its_noise_books_is_not_taken_again(world, registry) -> None:
+    _write_spec(world.specs / "short-books.yaml", "short-books")
+    with registry.session_scope() as s:
+        _idea(s, "short-books")
+        _trial(s, "short-books", "needs-forward", metrics={"noise_return_percentile": 197 / 199})
+    state = _stage(world, only={"short-books"})
+    assert _ids(state) == ["short-books"]
+    assert not any(e["idea"] == "short-books" for e in
+                   _stage(world, dry_run=True, no_cap=True)["restamp"]["entries"])
+
+
 def test_retired_rejected_noise_and_runless_ideas_are_left_alone(world) -> None:
     state = _stage(world, dry_run=True)
     assert not {"retired-one", "rejected-one", "noise-dollar_neutral-random", "no-run",

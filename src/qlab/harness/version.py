@@ -24,6 +24,11 @@ the console, a new file format of a stored series, a faster way to the same numb
 The decisive rules have their own version (`rules/*.yaml`, stored on every verdict); a new rules
 version also makes a run stale, without a bump here.
 
+**Deliberately not bumped** (2026-10-29): the noise-book count (a book that gave no number is
+replaced, `noise_n_*` metrics; `qlab.restamp` selects the runs that lacked it by its own reason).
+A bump would measure ~35 ideas again, including a two-hour candle refetch, for numbers that moved
+on a handful of runs.
+
 History:
 
 * `2026-10-28.1` -- the first version. Under it: year signs recorded beside the rules (rules

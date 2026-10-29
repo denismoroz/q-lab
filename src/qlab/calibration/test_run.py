@@ -23,12 +23,15 @@ from sqlalchemy.pool import StaticPool
 
 from qlab.calibration.noise import GENERATORS
 from qlab.calibration.run import (
+    GENERATOR_NAMES,
     NOISE_CODE_REF,
+    REPLACEMENT_SEED_BASE,
     build_noise_spec,
     ensure_noise_idea,
     noise_idea_id,
     run_noise_series,
     run_real_strategies,
+    usable_noise_book,
 )
 from qlab.data.snapshot import PANEL_RULES_VERSION
 from qlab.harness.panel import MarketPanel
@@ -342,6 +345,103 @@ def test_run_noise_series_seed_offset_avoids_collisions(session):
 
     all_seeds = [t.seed for t in first] + [t.seed for t in second]
     assert len(all_seeds) == len(set(all_seeds))
+
+
+def _failing_books(monkeypatch, *, fail) -> None:
+    """Noise books for which `fail(seed)` is true give no number, as a book refused by the
+    structural band does: the run is real, then its metrics are dropped and an error set."""
+    import dataclasses
+
+    import qlab.calibration.run as run_module
+
+    real = run_module._evaluate_noise
+
+    def wrapped(spec, session, ruleset, deployable_capital_usd):
+        evaluation = real(spec, session, ruleset, deployable_capital_usd)
+        if fail(int(spec.params["seed"])):
+            return dataclasses.replace(evaluation, metrics=None, error="StructuralMismatchError")
+        return evaluation
+
+    monkeypatch.setattr(run_module, "_evaluate_noise", wrapped)
+
+
+def _run(session, *, n_trials=8, seed_offset=0, replace_unusable=True):
+    return run_noise_series(
+        series="dollar_neutral", n_trials=n_trials, session=session,
+        ruleset=_permissive_ruleset(), deployable_capital_usd=1_000_000.0,
+        reference=_reference_spec(), seed_offset=seed_offset,
+        replace_unusable=replace_unusable)
+
+
+def test_a_book_that_gives_no_number_is_replaced_by_a_fresh_one(session, monkeypatch):
+    _failing_books(monkeypatch, fail=lambda seed: seed == 3)
+    trials = _run(session)
+
+    usable = [t for t in trials if usable_noise_book(t)]
+    assert len(usable) == 8
+    assert len(trials) == 9
+    spare = [t for t in trials if t.replacement]
+    assert len(spare) == 1
+    # a seed far from the requested range, so the replacement was never in the requested set
+    assert spare[0].seed == REPLACEMENT_SEED_BASE
+    assert spare[0].seed not in {t.seed for t in trials if not t.replacement}
+    # the book that gave nothing stays a trial of its own
+    broken = next(t for t in trials if not usable_noise_book(t))
+    assert broken.seed == 3 and broken.evaluation.trial_id is not None
+    assert broken.evaluation.trial_id != spare[0].evaluation.trial_id
+
+
+def test_replacements_are_deterministic_for_the_same_call(session, monkeypatch):
+    _failing_books(monkeypatch, fail=lambda seed: seed in (11, 14, 16))
+    first = _run(session, seed_offset=10)
+    second = _run(session, seed_offset=10)
+
+    def key(trials):
+        return [(t.generator, t.seed, t.replacement, usable_noise_book(t)) for t in trials]
+
+    assert key(first) == key(second)
+    assert [t.seed for t in first if t.replacement] == [
+        REPLACEMENT_SEED_BASE + 10 + j for j in range(3)]
+    # a different offset draws different replacements
+    other = _run(session, seed_offset=50)
+    assert {t.seed for t in other if t.replacement}.isdisjoint(
+        {t.seed for t in first if t.replacement})
+
+
+def test_replacements_continue_the_round_robin_of_generators(session, monkeypatch):
+    _failing_books(monkeypatch, fail=lambda seed: seed < 3)
+    trials = _run(session, n_trials=8)
+    spare = [t for t in trials if t.replacement]
+    assert [t.generator for t in spare] == [
+        GENERATOR_NAMES[(8 + j) % len(GENERATOR_NAMES)] for j in range(3)]
+
+
+def test_replacement_is_bounded_by_the_number_of_books_asked_for(session, monkeypatch):
+    # every requested book and every replacement gives nothing: draws stop at 2 * n
+    _failing_books(monkeypatch, fail=lambda seed: True)
+    trials = _run(session, n_trials=5)
+    assert len(trials) == 10
+    assert sum(t.replacement for t in trials) == 5
+    assert not any(usable_noise_book(t) for t in trials)
+
+
+def test_a_partial_shortage_keeps_the_honest_smaller_count(session, monkeypatch):
+    # seeds 0..3 fail and so do the first two replacements: 4 missing, 4 extra draws allowed
+    fails = {0, 1, 2, 3, REPLACEMENT_SEED_BASE, REPLACEMENT_SEED_BASE + 1}
+    _failing_books(monkeypatch, fail=lambda seed: seed in fails)
+    trials = _run(session, n_trials=4)
+    assert sum(usable_noise_book(t) for t in trials) == 2
+    assert sum(t.replacement for t in trials) == 4
+
+
+def test_nothing_is_replaced_when_not_asked_or_when_every_book_is_usable(session, monkeypatch):
+    _failing_books(monkeypatch, fail=lambda seed: seed == 2)
+    off = _run(session, replace_unusable=False)
+    assert len(off) == 8 and not any(t.replacement for t in off)
+
+    monkeypatch.undo()
+    clean = _run(session, seed_offset=100)
+    assert len(clean) == 8 and not any(t.replacement for t in clean)
 
 
 def test_run_noise_series_rejects_non_positive_n_trials(session):
