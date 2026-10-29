@@ -104,7 +104,9 @@ no_spot:
 # Stage 1 routes that go on to stage 2: every strategy rule passed, or none failed
 # yet. A stage 1 `reject` is final (the graveyard); the routes that decide nothing
 # (not-evaluable, needs-more-data, error) have nothing to confirm.
-#   paper, shelf          -- passed every rule on Binance
+#   paper, shelf          -- passed every rule on Binance (`shelf` is only in runs recorded
+#                            before rules 2026-10-29.3: no run is routed there any more, but the
+#                            old ones still go on to stage 2)
 #   needs-infrastructure  -- passed every strategy rule; only Binance's missing
 #                            order adapter failed (venues/binance.yaml), which is
 #                            exactly what Hyperliquid, where the adapter is, settles

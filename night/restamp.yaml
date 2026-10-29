@@ -27,4 +27,5 @@ max_attempts: 2
 # Order of the night: ideas that passed or live in production first (the ones that reach the owner),
 # then the rest, the idea with more reasons to be recomputed first, then the newer run.
 passed_statuses: [live, paper, validated]
+# (`shelf` is the old route of runs recorded before rules 2026-10-29.3.)
 passed_routes: [paper, shelf, needs-infrastructure]

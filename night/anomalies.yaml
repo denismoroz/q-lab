@@ -22,7 +22,8 @@ enabled: true
 scan:
   # Which runs are scanned: the latest routed run of an idea whose route is one of these --
   # the runs that passed every rule they can be judged by (paper: passed and runnable now;
-  # shelf: passed, short of capital; needs-infrastructure: passed, not runnable here). These
+  # shelf: the old route of runs recorded before rules 2026-10-29.3; needs-infrastructure: passed,
+  # not runnable here). These
   # are the runs that reach the owner, where a false pass costs something.
   # 2026-10-29 (owner, on docs/EVALUATION_PATHS.md, Р11: «да, по всем рекомендациям, делай»):
   # needs-forward is scanned too. Its flags had fired on four XSMOM twins while their route was
