@@ -152,7 +152,7 @@ WARMUP_BARS = 48
 #: B2Params.from_dict drops keys it does not know, so a spec asking for one against an older frab
 #: would silently run without it -- `_require_frab_support` refuses instead.
 _FRAB_MECHANISM_PARAMS = ("shared_margin", "topup_delay_hours", "short_window_days",
-                         "long_window_days", "partial_hedge_share")
+                         "long_window_days", "partial_hedge_share", "graded_hedge_depth")
 
 
 @dataclass(frozen=True)
@@ -247,7 +247,8 @@ def _require_frab_support(params: Mapping[str, object]) -> None:
     if unsupported:
         raise ValueError(
             f"params {unsupported} need a newer frab checkout (shared margin pool and delayed "
-            "top-ups: d06f53b; signal windows and the partial hedge: 7304000): the checkout "
+            "top-ups: d06f53b; signal windows and the partial hedge: 7304000; the graded hedge: "
+            "02cfd7d): the checkout "
             "in use ignores them, which would run a different strategy than the spec says. "
             "Point QLAB_FRAB_SRC at a checkout that has them."
         )
