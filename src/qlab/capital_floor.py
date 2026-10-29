@@ -11,10 +11,14 @@ actually holds at $100.
 A sum WORKS when all three hold (the criterion the owner chose on 2026-10-26, «Как большая
 книга»):
 
-1. every position is placeable and placed: the smallest position the book holds at that sum
-   is at least the venue's minimum order (`min_leg_notional`; a strategy whose code does not
-   model the minimum, like the stand's FRAB, is held to it all the same), and no position the
-   reference book holds is dropped;
+1. every position is placeable and placed: the smallest order that opens a leg at that sum is
+   at least the venue's minimum order (`min_leg_notional`; a strategy whose code does not model
+   the minimum, like the stand's FRAB, is held to it all the same), and no position the
+   reference book holds is dropped. A strategy that declares the orders it sent
+   (`qlab.harness.strategy.own_orders`, docs/MIN_CAPITAL.md) is measured by them -- the same
+   quantity as the stand's `min_capital_usd`, so the two cannot disagree about it -- and not by
+   the weights, which read a position a cut left behind as a leg to buy and a balance that
+   outgrew its working money as a smaller position;
 2. its daily return per dollar moves with the reference book's: correlation at least
    `MIN_CORRELATION`, the owner's threshold for a paper book tracking the stand
    (seed/preregistration/2026-09-21-paper-bv2-trend.yaml, «>= 0.80»; qlab.paper_rule);
@@ -41,7 +45,7 @@ import pandas as pd
 from qlab.harness.costs import CostModel
 from qlab.harness.metrics import ZERO_WEIGHT_TOL, min_capital_usd
 from qlab.harness.run import run_backtest
-from qlab.harness.strategy import own_costs
+from qlab.harness.strategy import own_costs, own_orders
 from qlab.pipeline.spec import StrategySpec, load_spec
 
 #: The book every smaller sum is compared with (owner, 2026-10-26).
@@ -57,7 +61,7 @@ MONEY_KEYS = ("capital_usd", "budget_cap_usdc")
 #: Where measured floors are kept, one file per spec; and the version of this method -- a
 #: stored floor is reused only for the same spec text and the same method.
 STORE = Path("data/capital_floors")
-METHOD_VERSION = "2026-10-26.1"
+METHOD_VERSION = "2026-10-29.1"
 
 
 @dataclass
@@ -141,8 +145,12 @@ def daily(returns: pd.Series) -> pd.Series:
 
 
 def judge(usd: float, weights: pd.DataFrame, net: pd.Series, ref_weights: pd.DataFrame,
-          ref_daily: pd.Series, min_leg_notional: float) -> Step:
-    """One step against the reference book (pure)."""
+          ref_daily: pd.Series, min_leg_notional: float,
+          orders: pd.DataFrame | None = None) -> Step:
+    """One step against the reference book (pure). `orders`: the shares of the sum the
+    strategy's orders that opened a leg took, in the weights' shape, when it declares them
+    (`PlacedOrders.sizes` of the run at this sum); the position test then reads them instead
+    of the weights."""
     held_ref = np.abs(ref_weights.to_numpy(dtype=float)) > ZERO_WEIGHT_TOL
     held = np.abs(weights.reindex_like(ref_weights).fillna(0.0).to_numpy(dtype=float)) \
         > ZERO_WEIGHT_TOL
@@ -153,12 +161,18 @@ def judge(usd: float, weights: pd.DataFrame, net: pd.Series, ref_weights: pd.Dat
     if len(both) >= 2 and both.iloc[:, 0].std() > 0 and both.iloc[:, 1].std() > 0:
         corr = float(both.iloc[:, 0].corr(both.iloc[:, 1]))
     total = float((1.0 + net).prod() - 1.0)
-    sizes = np.abs(weights.reindex_like(ref_weights).fillna(0.0).to_numpy(dtype=float)) * usd
-    below = float((held & (sizes < min_leg_notional)).sum() / held.sum()) if held.any() else 0.0
+    if orders is None:
+        shares, measured_on, what = weights, weights, "positions"
+    else:
+        shares, measured_on, what = orders, orders, "opening orders"
+    sizes = np.abs(shares.reindex_like(ref_weights).fillna(0.0).to_numpy(dtype=float)) * usd
+    placed = np.abs(sizes) > ZERO_WEIGHT_TOL * usd
+    cells = held if orders is None else placed
+    below = float((cells & (sizes < min_leg_notional)).sum() / cells.sum()) if cells.any() else 0.0
     why: list[str] = []
     if below > 0:
-        why.append(f"{below:.2%} of its positions are below the ${min_leg_notional:g} minimum "
-                   f"order (all fit from ${min_capital_usd(weights, min_leg_notional):,.0f})")
+        why.append(f"{below:.2%} of its {what} are below the ${min_leg_notional:g} minimum "
+                   f"order (all fit from ${min_capital_usd(measured_on, min_leg_notional):,.0f})")
     if dropped > 0:
         why.append(f"{dropped:.2%} of the reference book's positions not held")
     if corr is None or corr < MIN_CORRELATION:
@@ -190,18 +204,24 @@ def measure(spec: StrategySpec, panel, *, ladder: tuple[float, ...] = LADDER_USD
     if spec.judged_from is not None:
         first = int(panel.prices.index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC")))
 
-    def run(usd: float) -> tuple[pd.DataFrame, pd.Series]:
+    def run(usd: float) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame | None]:
         params, _ = with_money(spec.params, usd)
         strategy = resolve_strategy(spec.code_ref)
         weights = strategy.target_weights(panel, params)
         result = run_backtest(panel, weights, costs, panel.funding,
                               extra_cost=own_costs(strategy, panel, params))
-        return weights.iloc[first:], result.net_return.iloc[first:]
+        placed = own_orders(strategy, panel, params)
+        return (weights.iloc[first:], result.net_return.iloc[first:],
+                None if placed is None else placed.sizes.iloc[first:])
 
     _, has_money = with_money(spec.params, REFERENCE_USD)
-    ref_weights, ref_net = run(REFERENCE_USD)
-    position_floor = (min_capital_usd(ref_weights, spec.min_leg_notional)
-                      if (np.abs(ref_weights.to_numpy(dtype=float)) > ZERO_WEIGHT_TOL).any()
+    ref_weights, ref_net, ref_orders = run(REFERENCE_USD)
+    # The position floor is the stand's `min_capital_usd`: by the orders a book-driving strategy
+    # sent, by the weights otherwise (docs/MIN_CAPITAL.md).
+    basis = ref_weights if ref_orders is None or not (
+        np.abs(ref_orders.to_numpy(dtype=float)) > ZERO_WEIGHT_TOL).any() else ref_orders
+    position_floor = (min_capital_usd(basis, spec.min_leg_notional)
+                      if (np.abs(basis.to_numpy(dtype=float)) > ZERO_WEIGHT_TOL).any()
                       else None)
     index = ref_net.index
     window = (index[0].date().isoformat(), index[-1].date().isoformat()) if len(index) else ("", "")
@@ -213,8 +233,10 @@ def measure(spec: StrategySpec, panel, *, ladder: tuple[float, ...] = LADDER_USD
     ref_daily = daily(ref_net)
     steps = []
     for usd in ladder:
-        weights, net = (ref_weights, ref_net) if usd == REFERENCE_USD else run(usd)
-        steps.append(judge(usd, weights, net, ref_weights, ref_daily, spec.min_leg_notional))
+        weights, net, placed = ((ref_weights, ref_net, ref_orders) if usd == REFERENCE_USD
+                                else run(usd))
+        steps.append(judge(usd, weights, net, ref_weights, ref_daily, spec.min_leg_notional,
+                           orders=placed))
     floor = floor_from(steps)
     reference = next(s for s in steps if s.usd == REFERENCE_USD)
     note = ("" if floor is not None else

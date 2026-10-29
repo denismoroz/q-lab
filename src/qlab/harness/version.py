@@ -42,13 +42,19 @@ History:
   `hedge_timing_on_capital`; the hedge timing's figures (`hedge_timing_*`, `spot_only_ann_return`,
   `always_hedged_ann_return`) are on the strategy's own money when the run has a base. The noise
   bar of the rules is `noise_cap_return_percentile`; its stand twin stays recorded.
+* `2026-10-29.2` -- `min_capital_usd` of a strategy that drives a real book is measured from the
+  orders the book sent that opened a leg, on the strategy's own money, not from the weights
+  (docs/MIN_CAPITAL.md; owner 2026-10-29: «нужно капитала $174 000 - фантастика - с этим нужно
+  разбираться»). The weights' number stays beside it as `min_capital_weights_usd`; new metrics
+  `min_capital_from_orders`, `orders_opening`, `orders_skipped`. It can move a verdict: the shelf
+  ("passed, not enough capital") is decided by it.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-10-29.1"
+STAND_VERSION = "2026-10-29.2"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 

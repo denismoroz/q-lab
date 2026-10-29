@@ -86,3 +86,54 @@ def test_a_noise_book_is_read_on_the_base_and_the_choice_of_the_strategy_it_imit
     params = {"reference_code_ref": "qlab.strategies.trend:TrendTSMOMEnsemble",
               "reference_params": {}}
     assert profit_reinvested(noise, params) is True
+
+
+#: code_ref -> whether it declares the orders it placed (`placed_orders`, docs/MIN_CAPITAL.md)
+#: and so has its `min_capital_usd` measured from them. The strategies that drive a real book
+#: (frab's) do; those that only compute weights do not, and their weights are the account.
+ORDERS_DECLARED = {
+    "qlab.strategies.live.bv2:LiveBv2": True,
+    "qlab.strategies.live.frab:LiveFrab": True,
+    "qlab.strategies.live.frab_binance_spot:LiveFrabBinanceSpot": True,  # inherits
+    "qlab.strategies.live.frab_binance_spot:LiveFrabAllBinance": True,  # inherits
+    "qlab.strategies.retune:Retune": True,  # stitches its candidates' orders
+    "qlab.strategies.regime_gate:RegimeGate": True,  # pass-through to the inner strategy
+    "qlab.strategies.cadence:SplitCadence": True,
+    "qlab.strategies.overlays.core:Overlaid": True,
+    "qlab.calibration.noise:NoiseStrategy": True,
+    "qlab.strategies.bv2:BStrategyV2": False,  # a transcription: weights only
+    "qlab.strategies.frab:FrabFundingHarvest": False,
+    "qlab.strategies.xsmom:XsmomCrossSectionalMomentum": False,
+    "qlab.strategies.trend:TrendTSMOMEnsemble": False,
+    "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble": False,  # signals, no book
+    "qlab.strategies.bab:BettingAgainstBeta": False,
+    "qlab.strategies.blocks:Composed": False,
+}
+
+
+@pytest.mark.parametrize("code_ref,expected", sorted(ORDERS_DECLARED.items()))
+def test_each_strategy_family_says_whether_it_declares_its_orders(code_ref: str,
+                                                                  expected: bool) -> None:
+    assert callable(getattr(resolve_strategy(code_ref), "placed_orders", None)) is expected
+
+
+def test_a_wrapper_has_the_orders_of_the_strategy_it_wraps() -> None:
+    import pandas as pd
+
+    from qlab.harness.panel import MarketPanel
+    from qlab.harness.strategy import PlacedOrders, own_orders
+
+    index = pd.date_range("2026-01-01", periods=5, freq="1D", tz="UTC")
+    panel = MarketPanel(snapshot_id="p", prices=pd.DataFrame({"A": 100.0}, index=index),
+                        funding=pd.DataFrame(0.0, index=index, columns=["A"]),
+                        tradeable=pd.DataFrame(True, index=index, columns=["A"]), meta={})
+    inner = {"inner_code_ref": "qlab.strategies.test_retune:Ordering",
+             "inner_params": {"order": 0.2}}
+    for ref in ("qlab.strategies.regime_gate:RegimeGate", "qlab.strategies.cadence:SplitCadence",
+                "qlab.strategies.overlays.core:Overlaid"):
+        orders = own_orders(resolve_strategy(ref), panel, {**inner, "overlays": []})
+        assert isinstance(orders, PlacedOrders) and orders.sizes["A"].max() == 0.2, ref
+    plain = {"inner_code_ref": "qlab.strategies.test_retune:ConstantSign",
+             "inner_params": {"sign": 1}}
+    assert own_orders(resolve_strategy("qlab.strategies.regime_gate:RegimeGate"), panel,
+                      plain) is None

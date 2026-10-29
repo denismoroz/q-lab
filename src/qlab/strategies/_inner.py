@@ -9,6 +9,12 @@ For a wrapper that changes how much is held (a gate that keeps the book in cash,
 target) the inner book's own equity path is the one imagined to run underneath; that is an
 approximation, stated in docs/CAPITAL_BASE.md, and exact whenever the inner strategy has no
 base of its own (trend, XSMOM, FRAB: base 1).
+
+The same goes for the orders a book-driving inner strategy placed (`placed_orders`,
+docs/MIN_CAPITAL.md): a wrapper holds the inner strategy's positions at other times or in other
+sizes, and the orders that open them are the inner strategy's orders. Passed through unchanged:
+a gate or a volatility target that holds less than the inner book is an approximation on the
+cautious side (the smallest inner order stays in).
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from qlab.harness.panel import MarketPanel
-from qlab.harness.strategy import own_base, profit_reinvested
+from qlab.harness.strategy import PlacedOrders, own_base, own_orders, profit_reinvested
 
 
 class InnerCapital:
@@ -41,3 +47,8 @@ class InnerCapital:
     def profit_reinvested(self, params: Mapping[str, object]) -> bool:
         inner, inner_params = self._inner(params)
         return profit_reinvested(inner, inner_params)
+
+    def placed_orders(self, panel: MarketPanel, params: Mapping[str, object]
+                      ) -> PlacedOrders | None:
+        inner, inner_params = self._inner(params)
+        return own_orders(inner, panel, inner_params)

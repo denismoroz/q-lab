@@ -64,6 +64,7 @@ import pandas as pd
 
 from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.panel import MarketPanel
+from qlab.harness.strategy import PlacedOrders
 from qlab.strategies.live._loader import import_frab
 from qlab.strategies.live._marks import spot_marks
 
@@ -135,6 +136,9 @@ class LiveFrabRun:
     # (`LiveFrabHooks.extra_cost_usd`); None when the driver has none.
     extra_costs: pd.Series | None = None
     diagnostics: dict[str, float] = field(default_factory=dict)
+    # What each position was OPENED with, as a share of the budget, in the weights' shape (zero
+    # where nothing was opened): the orders the strategy sent (`LiveFrab.placed_orders`).
+    opened: pd.DataFrame | None = None
 
 
 class LiveFrabHooks:
@@ -203,6 +207,17 @@ class LiveFrab:
     def target_weights(self, panel: MarketPanel, params: Mapping[str, object]) -> pd.DataFrame:
         return self.run(panel, params).weights
 
+    def placed_orders(self, panel: MarketPanel, params: Mapping[str, object]) -> PlacedOrders:
+        """The orders that opened a position (a spot purchase and a short of the size the slot
+        gives it), each as a share of the budget. The driver sends every one it decides, with
+        no minimum of its own, so nothing is skipped; a top-up that shrinks a held position is
+        not an order to place, and the weights read what it leaves as a leg
+        (docs/MIN_CAPITAL.md)."""
+        run = self.run(panel, params)
+        assert run.opened is not None
+        return PlacedOrders(sizes=run.opened,
+                            skipped=pd.Series(0.0, index=panel.prices.index, name="skipped"))
+
     def run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveFrabRun:
         params = dict(params)
         universe = [str(c) for c in params.pop("universe")]
@@ -247,6 +262,7 @@ class LiveFrab:
         exposure = np.zeros((n, len(columns)))
         col = {c: (columns.get_loc(c), columns.get_loc(f"{c}{SPOT_COLUMN_SUFFIX}")) for c in coins}
         decided = np.zeros(n, dtype=bool)
+        opened = np.zeros((n, len(columns)))
         open_: dict[str, _Position] = {}
         done: list[_Position] = []
         footprint = p.budget_cap_usdc / p.concurrency_cap
@@ -319,6 +335,9 @@ class LiveFrab:
                         total_fees=size * fee_rate * 2, entry_px=px[c][i])
                     hooks.on_open(open_[c], i)
                     decided[i] = True
+                    # both legs are bought at the hour's close, at the size the slot gives
+                    opened[i, col[c][1]] = size
+                    opened[i, col[c][0]] = open_[c].units * px[c][i]
             if hooks.on_bar(i, open_, done):
                 decided[i] = True
             held_count[i] = len(open_)
@@ -344,7 +363,8 @@ class LiveFrab:
         return LiveFrabRun(
             weights=weights, positions=done + list(open_.values()),
             eligible=pd.Series(eligible, index=index), held=pd.Series(held_count, index=index),
-            extra_costs=extra, diagnostics=hooks.diagnostics())
+            extra_costs=extra, diagnostics=hooks.diagnostics(),
+            opened=pd.DataFrame(opened / p.budget_cap_usdc, index=index, columns=columns))
 
 
 __all__ = ["HOURS_PER_YEAR", "FrabParams", "LiveFrab", "LiveFrabRun", "signal_at", "size_for"]

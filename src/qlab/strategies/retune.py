@@ -62,7 +62,7 @@ import pandas as pd
 from qlab.harness.costs import CostModel
 from qlab.harness.panel import MarketPanel
 from qlab.harness.run import run_backtest
-from qlab.harness.strategy import capital_setup, profit_reinvested
+from qlab.harness.strategy import PlacedOrders, capital_setup, own_orders, profit_reinvested
 
 _REQUIRED = ("inner_code_ref", "base_params", "grid", "refit_every", "window", "objective",
              "score_costs")
@@ -86,6 +86,9 @@ class RetuneRun:
     candidate_capital_returns: pd.DataFrame | None = None
     base: pd.Series | None = None
     reinvested: bool = True
+    # The orders the held candidates placed (`Retune.placed_orders`); None when the inner
+    # strategy does not declare any.
+    orders: PlacedOrders | None = None
 
 
 def expand_grid(base: Mapping[str, object], grid: Mapping[str, Mapping[str, Mapping]]) -> dict:
@@ -163,6 +166,16 @@ class Retune:
         (docs/CAPITAL_BASE.md). None when the inner strategy has no base of its own."""
         return self.run(panel, params).base
 
+    def placed_orders(self, panel: MarketPanel, params: Mapping[str, object]
+                      ) -> PlacedOrders | None:
+        """The orders of the candidate held at each bar, stitched like the weights: an order
+        a candidate placed while another was held is not this strategy's, and an order a
+        candidate placed in the bar it was switched in is (docs/MIN_CAPITAL.md). The orders that
+        re-place a candidate's positions at a switch are not modelled -- the same documented
+        approximation as 'each candidate runs as the inner strategy runs alone'. None when the
+        inner strategy declares no orders."""
+        return self.run(panel, params).orders
+
     def profit_reinvested(self, params: Mapping[str, object]) -> bool:
         """The inner strategy's choice (every candidate is the same strategy)."""
         from qlab.pipeline.evaluate import resolve_strategy
@@ -218,6 +231,7 @@ class Retune:
         returns_by: dict[str, pd.Series] = {}
         capital_by: dict[str, pd.Series] = {}
         bases_by: dict[str, pd.Series | None] = {}
+        orders_by: dict[str, PlacedOrders | None] = {}
         first_active: dict[str, pd.Timestamp | None] = {}
         for name, cand_params in candidates.items():
             w = inner.target_weights(panel, cand_params)
@@ -227,6 +241,7 @@ class Retune:
             returns_by[name] = run.net_return
             capital_by[name] = run.capital_return
             bases_by[name] = setup.base
+            orders_by[name] = own_orders(inner, panel, cand_params)
             active = w.abs().sum(axis=1) > 0
             first_active[name] = active.idxmax() if bool(active.any()) else None
         returns = pd.DataFrame(returns_by)
@@ -238,6 +253,9 @@ class Retune:
         choices: dict[pd.Timestamp, str | None] = {}
         out = np.zeros((len(index), len(panel.prices.columns)))
         has_base = any(b is not None for b in bases_by.values())
+        has_orders = all(o is not None for o in orders_by.values())
+        order_out = np.zeros_like(out) if has_orders else None
+        skipped_out = np.zeros(len(index)) if has_orders else None
         base_out = np.full(len(index), np.nan) if has_base else None
         for n, row in enumerate(refits):
             tau = index[row]
@@ -260,6 +278,10 @@ class Retune:
             stop = refits[n + 1] if n + 1 < len(refits) else len(index)
             if best is not None:
                 out[row:stop] = weights_by[best].to_numpy(dtype=float)[row:stop]
+                if order_out is not None:
+                    held = orders_by[best]
+                    order_out[row:stop] = held.sizes.to_numpy(dtype=float)[row:stop]
+                    skipped_out[row:stop] = held.skipped.to_numpy(dtype=float)[row:stop]
                 if base_out is not None and bases_by[best] is not None:
                     held_base = bases_by[best].reindex(index).to_numpy(dtype=float)
                     base_out[row:stop] = held_base[row:stop]
@@ -274,6 +296,9 @@ class Retune:
             base=None if base_out is None else pd.Series(base_out, index=index,
                                                          name="capital_base"),
             reinvested=reinvested,
+            orders=None if order_out is None else PlacedOrders(
+                sizes=pd.DataFrame(order_out, index=index, columns=panel.prices.columns),
+                skipped=pd.Series(skipped_out, index=index, name="skipped")),
         )
         if len(_CACHE) >= _CACHE_SIZE:
             _CACHE.pop(next(iter(_CACHE)))

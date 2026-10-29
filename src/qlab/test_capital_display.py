@@ -223,3 +223,18 @@ def test_the_anomaly_toolkit_reports_the_run_on_the_money_with_the_stand_in_a_co
     assert out["ann_return_net"] > out["stand"]["ann_return_net"]       # 4x the stand's share
     assert out["total_return_net"] == pytest.approx(60 * 0.001 * 4)     # summed
     assert out["max_dd"] == 0.0
+
+
+def test_the_capital_a_book_needs_says_what_it_rests_on() -> None:
+    plain = {"min_capital_usd": 406.0}
+    assert capital_text.min_capital_ru(plain) == "нужно капитала $406"
+    by_orders = {"min_capital_usd": 256.0, "min_capital_from_orders": 1.0,
+                 "min_capital_weights_usd": 174069.0, "orders_skipped": 25570.0}
+    text = capital_text.min_capital_ru(by_orders)
+    assert text.startswith("нужно капитала $256 (по заявкам, которые книга поставила")
+    assert "25,570 раз не поставила заявку меньше минимума" in text
+    assert "по весам позиций было бы $174,069" in text
+    close = {"min_capital_usd": 99.0, "min_capital_from_orders": 1.0,
+             "min_capital_weights_usd": 100.0, "orders_skipped": 0.0}
+    assert capital_text.min_capital_ru(close) == (
+        "нужно капитала $99 (по заявкам, которые книга поставила)")

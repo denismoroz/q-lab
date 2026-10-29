@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from qlab.capital_floor import (
     MIN_CORRELATION,
@@ -140,3 +141,37 @@ def test_a_floor_is_reused_for_the_same_spec_text_only(tmp_path, monkeypatch) ->
     spec_file.write_text("idea_id: sized\n# changed\n", encoding="utf-8")
     cached(None, spec_file, store=tmp_path / "store")
     assert calls == ["sized", "sized"]
+
+
+class SpeckedBook:
+    """A book whose cut leaves a speck: the weights hold a leg of 0.1% of the money at every sum,
+    but the only order it ever sent that opened a leg was a fifth of the money
+    (docs/MIN_CAPITAL.md)."""
+
+    name = "specked"
+
+    def target_weights(self, panel, params):
+        w = pd.DataFrame(0.0, index=panel.prices.index, columns=panel.prices.columns)
+        w["A"] = 0.5
+        w["B"] = 0.001
+        return w
+
+    def placed_orders(self, panel, params):
+        from qlab.harness.strategy import PlacedOrders
+
+        sizes = pd.DataFrame(0.0, index=panel.prices.index, columns=panel.prices.columns)
+        sizes.iloc[0, 0] = 0.2
+        return PlacedOrders(sizes=sizes, skipped=pd.Series(0.0, index=panel.prices.index))
+
+
+def test_a_speck_in_the_weights_does_not_set_the_floor_of_a_book_that_declares_its_orders(
+        ) -> None:
+    spec = _spec({"capital_usd": 257.0}).model_copy(
+        update={"code_ref": "qlab.test_capital_floor:SpeckedBook"})
+    floor = measure(spec, _panel(), ladder=(25, 50, 75, REFERENCE_USD))
+    assert floor.position_floor_usd == pytest.approx(50.0)  # $10 over a fifth of the money
+    by = {s.usd: s for s in floor.steps}
+    assert by[25].below_minimum == 1.0 and not by[25].works
+    assert any("opening orders" in why for why in by[25].why_not)
+    assert by[50].below_minimum == 0.0 and by[50].works
+    assert floor.floor_usd == 50

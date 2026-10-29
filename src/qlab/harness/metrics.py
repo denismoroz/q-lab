@@ -613,10 +613,19 @@ def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float) -> float:
 
         min_capital_usd = min_leg_notional / min(|weight| for weight != 0)
 
+    The same formula is applied to a frame of ORDERS when the strategy drives a
+    real book and declares what it sent (`qlab.harness.strategy.own_orders`,
+    `qlab.pipeline.evaluate.measured_min_capital`, docs/MIN_CAPITAL.md): the
+    weights of such a book read a position a cut left behind as a leg to buy, and
+    are shares of a balance that outgrows the money at work, so the number they
+    give is not what the venue would be asked for. The frame is then the
+    orders that opened a leg, as shares of the strategy's own money.
+
     Args:
         weights: the full target-weights frame the strategy actually
             produced (e.g. `strategy.target_weights(panel, params)`), same
-            shape as the panel. Every non-zero cell across every period is
+            shape as the panel; or the frame of opening orders, as shares of
+            the strategy's own money. Every non-zero cell across every period is
             considered — a leg that appears in 1 rebalance out of 500 still
             sets the floor.
         min_leg_notional: the venue's minimum tradeable leg size in USD

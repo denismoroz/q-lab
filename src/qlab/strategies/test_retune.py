@@ -168,3 +168,52 @@ def test_the_cache_does_not_hand_a_masked_panel_the_unmasked_answer() -> None:
     assert (second.weights.iloc[41:, 0] == 0).all() and (first.weights.iloc[41:, 0] != 0).any()
     again = Retune().run(panel, params)
     assert again is first  # the same panel still hits the cache
+
+
+class Ordering(ConstantSign):
+    """A book that sends an order of `order` (a share of its money) in column A every tenth bar
+    and leaves one more unsent on every fifth (docs/MIN_CAPITAL.md)."""
+
+    name = "ordering"
+
+    def placed_orders(self, panel, params):
+        from qlab.harness.strategy import PlacedOrders
+
+        index = panel.prices.index
+        sizes = pd.DataFrame(0.0, index=index, columns=panel.prices.columns)
+        sizes.iloc[::10, 0] = float(params["order"])
+        skipped = pd.Series(0.0, index=index)
+        skipped.iloc[::5] = 1.0
+        return PlacedOrders(sizes=sizes, skipped=skipped)
+
+
+ORDERED = {
+    **PARAMS,
+    "inner_code_ref": "qlab.strategies.test_retune:Ordering",
+    "grid": {"side": {"long": {"sign": 1, "order": 0.2}, "short": {"sign": -1, "order": 0.05}}},
+}
+
+
+def test_the_orders_are_stitched_from_the_candidate_held_in_each_period() -> None:
+    from qlab.harness.strategy import own_orders
+
+    panel = _panel(60, 60)
+    run = Retune().run(panel, ORDERED)
+    chosen = run.choices.dropna()
+    assert chosen.loc[:"2026-02-28"].eq("long").all()
+    assert chosen.loc["2026-04-15":].eq("short").all()
+    orders = own_orders(Retune(), panel, ORDERED)
+    sent = orders.sizes["A"]
+    assert sent.loc[:"2026-01-05"].eq(0.0).all(), "nothing is held before the first choice"
+    assert set(sent.loc["2026-02-10":"2026-02-28"].unique()) == {0.0, 0.2}
+    assert set(sent.loc["2026-04-20":].unique()) == {0.0, 0.05}
+    assert orders.skipped.loc[:"2026-01-05"].eq(0.0).all()
+    assert orders.skipped.loc["2026-04-20":].sum() > 0
+    # the same series the run keeps
+    pd.testing.assert_frame_equal(orders.sizes, run.orders.sizes)
+
+
+def test_a_retune_of_a_strategy_that_declares_no_orders_has_none() -> None:
+    from qlab.harness.strategy import own_orders
+
+    assert own_orders(Retune(), _panel(60, 60), PARAMS) is None

@@ -31,6 +31,18 @@ then does its own accounting on those weights -- costs, funding accrual, P&L
 caught the funding sign) and lets matched noise perturb these weights like
 any other book's.
 
+## How orders are read (docs/MIN_CAPITAL.md)
+
+The weights say what the book HOLDS; the venue is asked for what it TRADES. The driver also
+keeps, in dollars, every fill that opened a leg (the first purchase of a coin's spot, a hedge
+short, the carry sleeve) and `LiveBv2.placed_orders` hands them over as shares of the money the
+strategy started with. `min_capital_usd` is measured from these: the weights read a short that a
+cut left behind (a graded hedge cut to a speck) as a leg that must be bought, and are shares of a
+balance that on Binance grows to four times the money at work. The book never sends an order
+under `min_order_usd` (book.py: `hedge_open` needs `notional >= min_ord`, a resize below it waits),
+and it does not say so; the driver counts the hedge orders it wanted and left unsent
+(`counts["order_unsent_open"]`, `["order_unsent_resize"]`, `skipped` per bar).
+
 ## What the live book does that the harness then accounts differently
 
 These are fidelity gaps of the accounting, not missing mechanisms -- every
@@ -128,6 +140,7 @@ import pandas as pd
 from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.gaps import holdable_gaps
 from qlab.harness.panel import MarketPanel
+from qlab.harness.strategy import PlacedOrders
 from qlab.strategies.live._bv2_mechanisms import (
     close_book,
     deposit_into_book,
@@ -151,6 +164,16 @@ WARMUP_BARS = 48
 #: B2Params fields that exist only in a frab checkout with the research mechanisms.
 #: B2Params.from_dict drops keys it does not know, so a spec asking for one against an older frab
 #: would silently run without it -- `_require_frab_support` refuses instead.
+#: The fills that OPEN a leg, and the columns they land on (docs/MIN_CAPITAL.md): the first
+#: purchase of a coin's spot, a hedge short, the carry sleeve's two legs. A grown, cut or refilled
+#: leg is the book's adjustment of a leg it holds, which it leaves unsent under the minimum on its
+#: own; a close or a cut is reduce-only, which the venue takes at any size.
+_OPENING_FILLS = {"init_spot_buy": ("spot",), "hedge_open": ("perp",),
+                  "carry_open": ("spot", "perp")}
+
+#: Dollars of a wanted adjustment below which it is float dust, not a wish.
+_WISH_DUST_USD = 1e-6
+
 _FRAB_MECHANISM_PARAMS = ("shared_margin", "topup_delay_hours", "short_window_days",
                          "long_window_days", "partial_hedge_share", "graded_hedge_depth")
 
@@ -170,6 +193,11 @@ class LiveBv2Run:
     in_universe: pd.DataFrame | None = None  # per coin: a slot is held (or waits) at the bar
     counts: Mapping[str, int] = field(default_factory=dict)  # fills by kind, joins, leaves
     log: tuple[dict, ...] = ()  # joins, leaves, deposits, liquidations: times and amounts
+    # The orders that OPENED a leg, in dollars, in the weights' shape (zero where none was
+    # sent); and, per bar, the wanted hedge orders the book left unsent under the venue's
+    # minimum (`LiveBv2.placed_orders`, docs/MIN_CAPITAL.md).
+    order_usd: pd.DataFrame | None = None
+    skipped: pd.Series | None = None
 
 
 def _external_hedge(hedge_by: Mapping[str, object], index: pd.DatetimeIndex,
@@ -332,6 +360,8 @@ class _Driver:
         self.exposure = np.zeros((self.n, len(self.columns)))
         self.equity = np.zeros(self.n)
         self.deposits = np.zeros(self.n)
+        self.order_usd = np.zeros((self.n, len(self.columns)))
+        self.skipped = np.zeros(self.n)
         self.in_universe = np.zeros((self.n, len(self.columns)), dtype=bool)
         # Bars on which some book actually did something: a fill, a start, or
         # a pause/resume on missing data. Weights are re-read only there.
@@ -410,6 +440,8 @@ class _Driver:
             in_universe=pd.DataFrame(self.in_universe, index=index, columns=columns),
             counts=dict(self.counts),
             log=tuple(self.log),
+            order_usd=pd.DataFrame(self.order_usd, index=index, columns=columns),
+            skipped=pd.Series(self.skipped, index=index, name="skipped"),
         )
 
     # ── one slot, one bar ──────────────────────────────────────────────────
@@ -440,6 +472,7 @@ class _Driver:
             )
         k = f.pos[i]
         extra = {"pool": self.pool} if self.pool is not None else {}
+        wish = self._wish(slot) if not started_now else None
         events = _book.step(
             slot.book,
             bar_ms=_ms(index[i]),
@@ -457,7 +490,52 @@ class _Driver:
             # (`hedge_by`, docs/REGIME_DETECT.md).
             slot.book.hedge_prev = bool(slot.external[i])
         self._count(events, i, f.coin)
+        self._record_orders(events, i, f)
+        if wish is not None:
+            self._count_unsent(slot, wish, events, i)
         slot.stepped = True
+
+    def _wish(self, slot: _Slot) -> tuple[bool, float, float, float] | None:
+        """What the book is about to ask of the hedge on this bar: (a short is open, units of
+        spot held, units short, the share of the spot wanted hedged), or None when it wants no
+        hedge. Read before the step, which is when the book reads them."""
+        book = slot.book
+        if not book.hedge_prev:
+            return None
+        return (bool(book.in_pos), float(book.units_spot), float(book.short_size),
+                float(getattr(book, "hedge_share_prev", 1.0)))
+
+    def _record_orders(self, events: list[dict], i: int, f: _Feed) -> None:
+        """Keep the notional of each fill that opened a leg, on the column it landed on."""
+        for e in events:
+            for leg in _OPENING_FILLS.get(e["kind"], ()):
+                j = f.js if leg == "spot" else f.jp
+                cell = self.order_usd[i, j]
+                self.order_usd[i, j] = e["notional"] if cell == 0.0 else min(cell, e["notional"])
+
+    def _count_unsent(self, slot: _Slot, wish: tuple[bool, float, float, float],
+                      events: list[dict], i: int) -> None:
+        """Count the hedge orders the book wanted on this bar and did not send for being under
+        the venue's minimum -- frab's rule in book.py (`hedge_open` needs `notional >= min_ord`,
+        `_resize_hedge` lets a change below it wait), which the book applies silently and its
+        fills therefore do not show. An entry that the free margin cannot fund is not counted."""
+        book, params, price = slot.book, slot.params, float(slot.feed.px[i])
+        was_open, units, short, share = wish
+        minimum = params.min_order_usd
+        if not was_open:
+            if not book.in_pos and units * share * price < minimum:
+                self.counts["order_unsent_open"] += 1
+                self.skipped[i] += 1.0
+            return
+        if (getattr(params, "partial_hedge_share", 1.0) >= 1.0
+                and not getattr(params, "graded_hedge_depth", 0.0) > 0.0):
+            return
+        if any(e["kind"] in ("hedge_grow", "hedge_cut") for e in events):
+            return
+        wanted = abs(units * share - short) * price
+        if _WISH_DUST_USD < wanted < minimum:
+            self.counts["order_unsent_resize"] += 1
+            self.skipped[i] += 1.0
 
     def _start(self, slot: _Slot, i: int) -> None:
         f, p, index = slot.feed, self.p, self.index
@@ -474,7 +552,8 @@ class _Driver:
         ext = slot.external
         if ext is not None and i > 0 and not np.isnan(ext[i - 1]):
             book.hedge_prev = bool(ext[i - 1])
-        _book.start_book(book, bar_ms=_ms(index[i]), price=f.px[i], params=params)
+        started = _book.start_book(book, bar_ms=_ms(index[i]), price=f.px[i], params=params)
+        self._record_orders(started, i, f)
         self.decided[i] = True
         slot.book, slot.params, slot.i0 = book, params, i
         slot.last_equity = book.equity(f.px[i])
@@ -674,10 +753,25 @@ class LiveBv2:
                 "Bv2 with deposits (deposit_usd): the strategy's capital grows with every "
                 "payment, so a percent of it has no single base; the owner has not decided "
                 "what 100% is (docs/CAPITAL_BASE.md)")
+        return (self.run(panel, params).book_equity / self._capital(params)).rename("capital_base")
+
+    @staticmethod
+    def _capital(params: Mapping[str, object]) -> float:
+        """The money the strategy starts with (`capital_usd`)."""
         rest = {k: v for k, v in params.items()
                 if k not in ("hedge_by", "universe", "deposit_usd", "deposit_every")}
-        capital = float(B2Params.from_dict(rest).capital_usd)
-        return (self.run(panel, params).book_equity / capital).rename("capital_base")
+        return float(B2Params.from_dict(rest).capital_usd)
+
+    def placed_orders(self, panel: MarketPanel, params: Mapping[str, object]) -> PlacedOrders:
+        """The orders the book sent that opened a leg (the first purchase of a coin's spot, a
+        hedge short, the carry sleeve), each as a share of the money the strategy started with.
+        The weights read the held positions as shares of the book's whole balance, which on
+        Binance grows to four times the money set to work by the ratchet's set-aside cash, and
+        read what a cut leaves behind as a leg to buy; an order is in dollars and is sent or
+        not. `qlab.harness.metrics.min_capital_usd` measures from these (docs/MIN_CAPITAL.md)."""
+        run = self.run(panel, params)
+        return PlacedOrders(sizes=run.order_usd / self._capital(params),
+                            skipped=run.skipped.copy())
 
     def run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
         key = _run_key(panel, params)

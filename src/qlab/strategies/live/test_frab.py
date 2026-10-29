@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from qlab.harness.panel import MarketPanel
 from qlab.harness.strategy import validate_weights
@@ -149,3 +150,24 @@ def test_own_spot_prices_pass_the_look_ahead_guard() -> None:
     weights = LiveFrab().target_weights(panel, PARAMS)
     assert weights.abs().to_numpy().sum() > 0
     assert lookahead_violation(LiveFrab(), panel, PARAMS, weights) is None
+
+
+def test_the_orders_are_the_sizes_a_position_opened_with() -> None:
+    """The opening orders are the slot's size on both legs, as a share of the budget; nothing
+    is left unsent because this driver models no minimum order."""
+    from qlab.harness.strategy import own_orders
+
+    n = len(HOURS)
+    panel = _panel({"A": np.full(n, 0.00005), "B": np.full(n, 0.0001), "C": np.zeros(n)})
+    orders = own_orders(LiveFrab(), panel, PARAMS)
+    assert orders is not None and orders.skipped.sum() == 0
+    p = FrabParams.from_dict(PARAMS)
+    run = LiveFrab().run(panel, PARAMS)
+    placed = orders.sizes[(orders.sizes > 0).any(axis=1)]
+    assert len(placed) == 1  # both positions open on the same hour
+    row = placed.iloc[0]
+    assert row["B-SPOT"] * 90 == pytest.approx(size_for(p, 10))
+    assert row["B"] == pytest.approx(row["B-SPOT"])  # equal prices: the short is the same dollars
+    assert row["C"] == 0 and row["C-SPOT"] == 0
+    # a price move after the open changes the weights, never the order that was sent
+    assert run.opened.equals(orders.sizes)

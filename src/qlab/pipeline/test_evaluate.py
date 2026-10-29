@@ -113,6 +113,24 @@ class BasedToy(ToyStrategy):
         return pd.Series(float(params["base"]), index=panel.prices.index)
 
 
+class OrderedToy(ToyStrategy):
+    """A book whose weights hold a speck left behind by a cut (`params["weight"]`, tiny), and
+    that says it opened its leg with an order of `params["order"]` of its money
+    (docs/MIN_CAPITAL.md)."""
+
+    name = "ordered-toy"
+
+    def placed_orders(self, panel: MarketPanel, params):
+        from qlab.harness.strategy import PlacedOrders
+
+        sizes = pd.DataFrame(0.0, index=panel.prices.index, columns=panel.prices.columns)
+        sizes.iloc[0, 0] = float(params["order"])
+        sizes.iloc[5, 1] = 2.0 * float(params["order"])
+        skipped = pd.Series(0.0, index=panel.prices.index)
+        skipped.iloc[3:6] = 1.0
+        return PlacedOrders(sizes=sizes, skipped=skipped)
+
+
 class RaisingStrategy:
     """Always raises -- exercises the 'trial written even on failure' path."""
 
@@ -545,6 +563,41 @@ def test_route_shelf_when_min_capital_exceeds_deployable(session, tmp_path) -> N
     assert result.routing.route == "shelf"
     assert result.routing.required_capital_usd == pytest.approx(12000.0)
     assert result.rules_result.overall_passed is True
+
+
+def test_the_capital_a_book_needs_is_measured_from_its_orders_not_its_weights(
+        session, tmp_path) -> None:
+    """The weights hold a speck a cut left behind: read as a leg to buy it asks for $12M and
+    shelves the run. The book never sent such an order (docs/MIN_CAPITAL.md)."""
+    _register_discovered(session, tmp_path)
+    spec = _make_spec(code_ref="qlab.pipeline.test_evaluate:OrderedToy",
+                      params={"weight": 1e-6, "order": 0.3},
+                      sources={"weight": "owner 2026-01-01: test fixture",
+                               "order": "owner 2026-01-01: test fixture",
+                               "costs": "owner 2026-01-01: test fixture",
+                               "min_leg_notional": "owner 2026-01-01: test fixture"})
+    ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+
+    result = evaluate_spec(spec, session=session, ruleset=ruleset, deployable_capital_usd=1000.0)
+
+    assert result.error is None
+    assert result.metrics["min_capital_usd"] == pytest.approx(12.0 / 0.3)
+    assert result.metrics["min_capital_weights_usd"] == pytest.approx(12.0 / 1e-6)
+    assert result.metrics["min_capital_from_orders"] == 1.0
+    assert result.metrics["orders_opening"] == 2.0
+    assert result.metrics["orders_skipped"] == 3.0
+    assert result.routing.route == "paper"
+
+
+def test_a_book_that_declares_no_orders_keeps_the_weights_number(session, tmp_path) -> None:
+    _register_discovered(session, tmp_path)
+    result = evaluate_spec(_make_spec(params={"weight": 0.4}), session=session,
+                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
+                           deployable_capital_usd=1000.0)
+    assert result.metrics["min_capital_usd"] == pytest.approx(30.0)
+    assert not any(k in result.metrics for k in ("min_capital_weights_usd",
+                                                 "min_capital_from_orders", "orders_opening",
+                                                 "orders_skipped"))
 
 
 def test_route_reject_on_fatal_capital_fit(session, tmp_path) -> None:

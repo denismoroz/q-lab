@@ -164,3 +164,24 @@ def capital_suffix(m: Mapping[str, object] | None) -> str:
     how = ("прибыль не вкладывается обратно, считается суммой" if flag == 0.0
            else "прибыль вкладывается, считается со сложным процентом")
     return f"; на деньгах стратегии ({how}): " + ", ".join(parts)
+
+
+def min_capital_ru(m: Mapping[str, object] | None) -> str:
+    """«нужно капитала $256» and, for a book measured by its orders (docs/MIN_CAPITAL.md), what the
+    number rests on: «по заявкам книги» and, when the book left orders unsent because they were
+    under the minimum, how many times; «(по весам было $174,069)» when the weights' number was far
+    from it."""
+    m = m or {}
+    value = _number(m, "min_capital_usd")
+    text = f"нужно капитала ${value if value is not None else float('nan'):,.0f}"
+    if _number(m, "min_capital_from_orders") != 1.0:
+        return text
+    text += " (по заявкам, которые книга поставила"
+    skipped = _number(m, "orders_skipped")
+    if skipped:
+        text += f"; ещё {skipped:,.0f} раз не поставила заявку меньше минимума"
+    text += ")"
+    by_weights = _number(m, "min_capital_weights_usd")
+    if value and by_weights and not 0.5 <= by_weights / value <= 2.0:
+        text += f"; по весам позиций было бы ${by_weights:,.0f}"
+    return text

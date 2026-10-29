@@ -54,10 +54,13 @@ from qlab.harness.metrics import (
 )
 from qlab.harness.run import RunResult, run_backtest
 from qlab.harness.strategy import (
+    ZERO_WEIGHT_TOL,
     CapitalSetup,
+    PlacedOrders,
     Strategy,
     capital_setup,
     own_costs,
+    own_orders,
     validate_weights,
 )
 from qlab.pipeline.sources import require_sources
@@ -1233,6 +1236,38 @@ def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage |
     return JudgedRows(first=first, last=last, split=split, warmup=warmup, judged=judged)
 
 
+def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
+                         orders: PlacedOrders | None, lo: int, hi: int,
+                         min_leg_notional: float) -> dict[str, float]:
+    """The capital facts of one part of a run (docs/MIN_CAPITAL.md).
+
+    A strategy that declares the orders it placed (`qlab.harness.strategy.own_orders`) is
+    measured from them: `min_capital_usd` is the venue's minimum over the smallest order that
+    opened a leg, as a share of the strategy's own money. The weights are kept beside it as
+    `min_capital_weights_usd`, the number the stand gave before 2026-10-29. Any other strategy
+    has the weights' number alone, as before.
+
+    The capital a strategy needs is the strategy's, not one part's: a part in which it opened
+    nothing is measured with the whole run's orders (as the weights are, when the part held
+    nothing). A book that never opened a leg, or never held one, raises, as before."""
+    flat = not (part_weights.abs() > 0).to_numpy().any()
+    by_weights = min_capital_usd(weights if flat else part_weights, min_leg_notional)
+    out = {"min_capital_usd": by_weights}
+    if orders is None:
+        return out
+    part = orders.sizes.iloc[lo : hi + 1]
+    opened = (part.abs() > ZERO_WEIGHT_TOL).to_numpy()
+    sizes = part if opened.any() else orders.sizes
+    if not (sizes.abs() > ZERO_WEIGHT_TOL).to_numpy().any():
+        return out  # the book never opened a leg: nothing to measure the orders by
+    out["min_capital_weights_usd"] = by_weights
+    out["min_capital_usd"] = min_capital_usd(sizes, min_leg_notional)
+    out["min_capital_from_orders"] = 1.0
+    out["orders_opening"] = float(opened.sum())
+    out["orders_skipped"] = float(orders.skipped.iloc[lo : hi + 1].sum())
+    return out
+
+
 def _protection(spec: StrategySpec, result: RunResult, part_panel: MarketPanel,
                 part_weights: pd.DataFrame, capital: CapitalSetup) -> dict[str, float]:
     """The protection measurement of a run of the Bv2 family (`qlab.protection`,
@@ -1462,6 +1497,10 @@ def evaluate_spec(
         # the `cap_` summaries beside the stand's. Asked before the look-ahead check re-runs
         # the strategy on altered panels, while the run that made the weights is still known.
         capital = capital_setup(strategy, panel, spec.params)
+        # The orders a book-driving strategy sent, when it declares them: the capital it needs
+        # is measured from what went to the venue, on the strategy's own money
+        # (docs/MIN_CAPITAL.md).
+        orders = own_orders(strategy, panel, spec.params)
         if check_lookahead:
             # Every candidate, every run (docs/LOOKAHEAD.md). A fresh instance,
             # so a strategy that remembers its last run (`diagnostics`) still
@@ -1523,10 +1562,10 @@ def evaluate_spec(
             # a part in which it held nothing (trend's two levels sat in cash
             # through their first forward days, 2026-10-06) is a legitimate
             # stretch, measured with the whole run's book. A book flat
-            # everywhere still raises.
-            flat = not (part_weights.abs() > 0).to_numpy().any()
-            measured["min_capital_usd"] = min_capital_usd(
-                weights if flat else part_weights, spec.min_leg_notional)
+            # everywhere still raises. A book that sends real orders is measured
+            # by them (docs/MIN_CAPITAL.md).
+            measured.update(measured_min_capital(
+                weights, part_weights, orders, lo, hi, spec.min_leg_notional))
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage
             if truncated:

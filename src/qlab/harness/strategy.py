@@ -218,6 +218,37 @@ def profit_reinvested(strategy: object, params: Mapping[str, object]) -> bool:
 
 
 @dataclass(frozen=True)
+class PlacedOrders:
+    """The orders a strategy that drives a real book actually sent to the venue, on the
+    strategy's own money (docs/MIN_CAPITAL.md).
+
+    `sizes` has the panel's index and columns; a cell is the notional of an order that OPENED
+    a leg (a first purchase of the spot, a short opened, a position entered) as a share of
+    the money the strategy started with (`capital_usd`, `strategy_capital_usd`), and 0
+    elsewhere. Orders that only shrink or close a position are left out: the venue takes a
+    reduce-only order of any size (frab's own note in
+    `frab/exchanges/hyperliquid/actions/close_position.py`), and what a cut leaves behind is a
+    position HELD, not an order to place.
+
+    `skipped` is, per bar, how many times the book wanted an order and did not send it
+    because the order would have been under the venue's minimum (the book's own rule, the
+    live behaviour); a strategy that models no such rule has all zeros."""
+
+    sizes: pd.DataFrame
+    skipped: pd.Series
+
+
+def own_orders(strategy: object, panel: MarketPanel, params: Mapping[str, object]
+               ) -> PlacedOrders | None:
+    """The orders a strategy that drives a real book placed, or None when it declares none
+    (it defines no `placed_orders(panel, params)`) and its weights are the only account of
+    what it holds. `qlab.pipeline.evaluate` measures `min_capital_usd` from these when there
+    are any, and from the weights otherwise; the sibling of `own_base`."""
+    method = getattr(strategy, "placed_orders", None)
+    return method(panel, params) if callable(method) else None
+
+
+@dataclass(frozen=True)
 class CapitalSetup:
     """What a backtest needs to read a run on the strategy's own money."""
 
