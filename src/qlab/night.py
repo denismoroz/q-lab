@@ -1636,14 +1636,58 @@ def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | Non
     return memos[-1] if memos else None
 
 
+def research_slots(plan: dict) -> int:
+    """How many strategies the researcher takes a night: `rotation: {per_night: N}` in
+    night/research.yaml (owner, 2026-10-30: the researchers spent 8.8M tokens on variants of the
+    same five strategies while new mechanisms waited for code), else all of them."""
+    strategies = len(plan.get("strategies") or {})
+    per_night = (plan.get("rotation") or {}).get("per_night")
+    return min(strategies, int(per_night)) if per_night else strategies
+
+
 def unfinished_research(day: date, plan: dict) -> list[str]:
     """The plan's strategies whose research did not finish on the previous
-    night (the stage ran, a budget stop left them). They go first tonight."""
+    night (the stage ran, a budget stop left them). They go first tonight. With a rotation
+    only a strategy the night started and a stop cut counts: the ones that simply were not
+    their turn are not unfinished."""
     yesterday = load_state(day - timedelta(days=1))
     if "research" not in yesterday:
         return []
+    rotating = bool(plan.get("rotation"))
+    stopped = {e["strategy"] for e in yesterday["research"] if e.get("stopped")}
     return [name for name in plan.get("strategies") or {}
-            if f"research:{name}" not in yesterday.get("done", {})]
+            if f"research:{name}" not in yesterday.get("done", {})
+            and (not rotating or name in stopped)]
+
+
+def last_researched(day: date, names: list[str], *, lookback: int = 60) -> dict[str, date]:
+    """The latest night before `day` on which each strategy's research finished (its done
+    marker in the night's state), so a rotation keeps its turn from night to night."""
+    found: dict[str, date] = {}
+    for back in range(1, lookback + 1):
+        night_day = day - timedelta(days=back)
+        done = load_state(night_day).get("done") or {}
+        for name in names:
+            if name not in found and f"research:{name}" in done:
+                found[name] = night_day
+        if len(found) == len(names):
+            break
+    return found
+
+
+def rotation_order(day: date, names: list[str], directions, unfinished: list[str],
+                   last: dict[str, date]) -> list[str]:
+    """The rotation's order of the waiting strategies: the ones a stop cut first; then those
+    that were NOT researched last night (so a strategy the director marks high importance goes
+    first, yet takes at most every second night and the others keep their turns); then high
+    importance before normal before low; then the one researched longest ago, never first; then
+    by name."""
+    from qlab.directions import priority_rank
+
+    first, yesterday = set(unfinished), day - timedelta(days=1)
+    return sorted(names, key=lambda n: (
+        n not in first, last.get(n) == yesterday, priority_rank(directions, n),
+        last.get(n, date.min), n))
 
 
 def carried_research(day: date, out: list[dict]) -> list[dict]:
@@ -1675,12 +1719,12 @@ def research_due(day: date, plan: dict, *, sweep: bool) -> bool:
 
 def research_stage(day: date, state: dict, *, noise_trials: int,
                    config: Path = RESEARCH, stop_at: datetime | None = None) -> None:
-    """The researcher on each strategy of `night/research.yaml`, on its cadence
-    (`research_due`), in the implement stage's budget (CLAUDE.md order: after
-    rechecks, before the search for new ideas); the stand then runs its
-    experiments. Each strategy is researched at most once per night (the
-    night's `done` marker); one the budget stopped goes first on the next
-    night that runs the stage. Nothing new starts after `stop_at`; experiments
+    """The researcher on the strategies of `night/research.yaml` (all of them, or with a
+    `rotation` the night's one: `rotation_order`), on its cadence (`research_due`), in the
+    implement stage's budget (CLAUDE.md order: after rechecks and the programmer, before the
+    search for new ideas); the stand then runs its experiments. Each strategy is researched at
+    most once per night (the night's `done` marker); one the budget stopped goes first on the
+    next night that runs the stage. Nothing new starts after `stop_at`; experiments
     the stop left unrun run first on the next night (`carried_research`)."""
     from qlab.agents.researcher import research, run_experiments
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
@@ -1699,14 +1743,25 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
     # them: high-priority strategies go first, so a short budget cuts the low ones.
     directions = active_directions()
     waiting = [name for name in strategies if f"research:{name}" not in state["done"]]
-    todo = {name: strategies[name]
-            for name in order_strategies(waiting, directions, unfinished_research(day, plan))}
+    unfinished = unfinished_research(day, plan)
+    if plan.get("rotation"):
+        # One strategy a night (night/research.yaml `rotation`): the stage keeps the turns across
+        # nights; a strategy already finished tonight takes one of tonight's places.
+        places = research_slots(plan) - (len(strategies) - len(waiting))
+        picked = rotation_order(day, waiting, directions, unfinished,
+                                last_researched(day, waiting))[:max(0, places)]
+    else:
+        picked = order_strategies(waiting, directions, unfinished)
+    todo = {name: strategies[name] for name in picked}
     if todo:
         # A run stopped earlier tonight tries again now: its old stop line goes.
         out[:] = [e for e in out if not (e.get("stopped") and e["strategy"] in todo)]
         with session_scope() as session:
+            # `night_share`: with a rotation the one strategy of the night must not take all
+            # that is left (the cards and the search come after), so its cap is the share.
+            share = float(plan.get("night_share") or 0) or None
             stage = NightBudget.open(session, probe(session).report.reading).stage(
-                Stage.IMPLEMENT, candidates=len(todo))
+                Stage.IMPLEMENT, candidates=round(len(todo) / share) if share else len(todo))
             for name, e in todo.items():
                 if past_stop(stop_at, state, f"research:{name}"):
                     break
@@ -1836,7 +1891,7 @@ def director_stage(day: date, state: dict, *, config: Path = DIRECTOR,
                     # One candidate of the implement stage's share among the researcher's
                     # strategies and itself: it must not take the whole of tonight.
                     budget = night_budget.stage(
-                        Stage.IMPLEMENT, candidates=1 + len(plan.get("strategies") or {})
+                        Stage.IMPLEMENT, candidates=1 + research_slots(plan)
                     ).candidate(None)
                     outcome = direct(budget=budget, session=session, config=cfg, plan=plan)
                     entry.update(memo=str(outcome.memo or ""), problems=outcome.problems,

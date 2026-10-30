@@ -1,5 +1,6 @@
-# The researcher, every night, on the five strategies it works on: Bv2, trend, FRAB, XSMOM
-# and FRAB with the spot on Binance (qlab.agents.researcher, docs/NIGHT.md).
+# The researcher, every night, on one of the five strategies it works on in turn (since
+# 2026-10-30; `rotation` below): Bv2, trend, FRAB, XSMOM and FRAB with the spot on Binance
+# (qlab.agents.researcher, docs/NIGHT.md).
 #
 # Owner, 2026-10-24: «мне не нравится вердикт агента - просто ждать - нужно
 # думать как улучшить стратегию - это задача фреймворка».
@@ -22,6 +23,23 @@
 # `nightly` runs the stage every night; `weekly` only on the graveyard's Sunday (and the
 # night after a budget stop left a strategy unfinished).
 cadence: nightly
+
+# Owner, 2026-10-30: «переноси токены на программиста. или даже подключай 2 если нужно.» Of the
+# 58 ideas of the last run 55 were the researchers' variants of the same strategies (they spent
+# 8.8M tokens, and 6.4M the night before), while the new mechanisms waited for building blocks in
+# the programmer's queue. So the researcher no longer works all five strategies every night but
+# ONE a night, in turn (qlab.night.rotation_order): a strategy a budget stop cut goes first; a
+# strategy that was not researched last night comes before one that was, so a strategy the
+# research director marks high importance goes first yet takes at most every second night; then
+# high before normal before low importance, then the one researched longest ago. The turns are
+# read from the nights' done markers, so they are kept across nights. Remove `rotation` to go
+# back to all strategies every night.
+rotation:
+  per_night: 1
+# The night's one strategy may spend this share of what is left when the researcher starts (the
+# cards, the implementer and the search come after it); without a rotation each of the
+# strategies had its equal part of all that was left.
+night_share: 0.5
 
 max_experiments: 2
 # The owner's question below was answered on 2026-10-25 and became the working rule

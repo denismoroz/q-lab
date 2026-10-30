@@ -139,6 +139,86 @@ def test_a_stopped_run_continues_first_on_the_next_night(tmp_path, monkeypatch) 
     db_module._SessionLocal = None
 
 
+# ---- the rotation: one strategy a night (owner, 2026-10-30) ------------------------------
+
+
+def _rotation_env(tmp_path, monkeypatch, *, strategies=("s1", "s2", "s3"), high: str | None = None):
+    """A research_stage environment with a rotation of one strategy a night over `strategies`;
+    `high` is the one the research director marks high importance."""
+    import types
+
+    import qlab.directions as directions_module
+
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch)
+    config.write_text("cadence: nightly\nrotation: {per_night: 1}\nstrategies:\n" + "".join(
+        f"  {n}: {{ideas: [i-{n}], specs: []}}\n" for n in strategies), encoding="utf-8")
+    fixed = None if high is None else types.SimpleNamespace(
+        date=date(2026, 10, 25),
+        researcher={high: types.SimpleNamespace(priority="high", note=None)})
+    monkeypatch.setattr(directions_module, "active_directions", lambda *a, **kw: fixed)
+    return calls, config, db_module
+
+
+def _night(config, day: date) -> dict:
+    state = night.load_state(day)
+    night.research_stage(day, state, noise_trials=1, config=config)
+    night.save_state(day, state)
+    return state
+
+
+def test_a_rotation_takes_one_strategy_a_night_and_keeps_the_turns(tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _rotation_env(tmp_path, monkeypatch)
+    for n in range(4):
+        _night(config, date(2026, 10, 26 + n))
+    assert calls == ["s1", "s2", "s3", "s1"]  # in turn, the longest-waiting first
+    state = _night(config, date(2026, 10, 30))
+    assert calls[-1] == "s2" and set(state["done"]) == {"research:s2"}
+    _night(config, date(2026, 10, 30))  # the same night again: its one place is taken
+    assert calls[-1] == "s2" and calls.count("s2") == 2
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_a_high_importance_strategy_goes_first_but_not_two_nights_running(
+        tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _rotation_env(tmp_path, monkeypatch, high="s3")
+    for n in range(5):
+        _night(config, date(2026, 10, 26 + n))
+    assert calls == ["s3", "s1", "s3", "s2", "s3"]  # every second night, the others in between
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_a_strategy_a_stop_cut_goes_first_the_next_night_not_all_the_others(
+        tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _rotation_env(tmp_path, monkeypatch)
+    _night(config, date(2026, 10, 26))
+    assert calls == ["s1"]
+    from qlab.budget import NightExhausted
+
+    def stopped(name, **kw):
+        raise NightExhausted("the night's budget is spent")
+
+    monkeypatch.setattr(researcher, "research", stopped)
+    state = _night(config, date(2026, 10, 27))  # s2's turn, cut by the budget
+    assert state["research"][-1]["strategy"] == "s2" and state["research"][-1]["stopped"]
+    plan = night.load_research_plan(config)
+    assert night.unfinished_research(date(2026, 10, 28), plan) == ["s2"]  # s3 was just not its turn
+    monkeypatch.setattr(researcher, "research", lambda name, **kw: (
+        calls.append(name) or researcher.ResearchOutcome(memo=None)))
+    _night(config, date(2026, 10, 28))
+    assert calls == ["s1", "s2"]
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_the_research_plan_rotates_one_strategy_a_night_and_the_slots_follow_it() -> None:
+    plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
+    assert plan["rotation"] == {"per_night": 1} and 0 < plan["night_share"] <= 1
+    assert night.research_slots(plan) == 1
+    assert night.research_slots({k: v for k, v in plan.items() if k != "rotation"}) == 5
+
+
 # ---- DROP proposals ---------------------------------------------------------------------
 
 
