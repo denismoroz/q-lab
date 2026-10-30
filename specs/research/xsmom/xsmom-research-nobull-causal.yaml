@@ -48,6 +48,9 @@ costs:
   taker_fee_bps: 5
   slippage_bps: 0.9
 min_leg_notional: 5
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder compares
+# the capital a run needed with (docs/LADDER.md, docs/CAPITAL_BASE.md; cited in sources).
+strategy_capital_usd: 500
 simultaneous_legs: 1
 unexpressed_mechanisms: []
 differs_from_source:
@@ -77,6 +80,7 @@ params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retu
   from 2025-01-01 to 2026-06-15 is in-sample for the grid (it may have been seen), while the days before
   2025-01-01 and after 2026-06-15 were not (the spec''s own date for its numbers: 2026-06-15).'
 sources:
+  "strategy_capital_usd": "owner 2026-10-30: «от 500» (the owner, asked what money XSMOM runs on; the strategy's own money for these research ideas is 500)"
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
     месяц»'

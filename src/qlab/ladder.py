@@ -120,6 +120,8 @@ class Reason(StrEnum):
     TWIN_REFUSED_OTHER = "twin_refused_other"
     # Added with the venue split (2026-10-30):
     NO_VERSION_ON_VENUE = "no_version_on_venue"
+    # Added with independent venues (2026-10-30.2):
+    SECOND_VENUE_QUEUED = "second_venue_queued"
 
 
 REASON_RU: dict[Reason, str] = {
@@ -140,6 +142,7 @@ REASON_RU: dict[Reason, str] = {
     Reason.TWIN_ONLY_WHILE_WAITING: "двойник строится, только пока идея ждёт проверки вперёд",
     Reason.TWIN_REFUSED_OTHER: "двойник не построен по другой причине (слова кода в подробностях)",
     Reason.NO_VERSION_ON_VENUE: "нет версии на этой площадке",
+    Reason.SECOND_VENUE_QUEUED: "вторая площадка не проводилась: стоит в очереди закрытых идей",
 }
 
 STEP_KEYS = ("description", "binance", "hyperliquid", "money", "readings", "paper", "owner")
@@ -207,6 +210,9 @@ class StepRun:
     noise_percentile: float | None = None
     noise_power: float | None = None
     min_capital_usd: float | None = None
+    consistency_trial: int | None = None
+    """The first-stage trial this run's pass was checked against instead of the noise bar (the
+    consistency check, docs/TWO_STAGE.md); None: the noise bar decided, or no pass."""
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -340,10 +346,28 @@ class VenueView:
     money: VenueMoney | None
     trial_id: int | None
     run_idea: str | None
+    noise_power: float | None = None
+    consistency_trial: int | None = None
+    """The first-stage trial the pass was checked against instead of the noise bar; None when
+    the noise bar decided (or there is no pass)."""
 
     @property
     def reason_ru(self) -> str | None:
         return None if self.reason is None else REASON_RU[self.reason]
+
+    @property
+    def by_history_only(self) -> bool:
+        """A pass that rests on the consistency check with Binance's history, not on the noise bar
+        (the bar had no power on this venue's short window)."""
+        return self.outcome == Outcome.PASSED and self.consistency_trial is not None
+
+    def history_note_ru(self) -> str:
+        """«на Hyperliquid — только сверкой с историей Binance, планка шума там не решает (сила
+        10%)»: what a pass of this venue rests on, when it is not the noise bar."""
+        power = ("сила не измерена" if self.noise_power is None
+                 else f"сила {self.noise_power:.0%}")
+        return (f"на {self.title} — только сверкой с историей Binance, планка шума там не решает "
+                f"({power})")
 
     def word_ru(self) -> str:
         """«пройдена», «не пройдена», «рано судить», «не проводилась: причина»."""
@@ -360,22 +384,27 @@ class VenueView:
             "execution_ru": self.execution_ru,
             "money": None if self.money is None else self.money.to_dict(),
             "trial_id": self.trial_id, "run_idea": self.run_idea,
+            "noise_power": self.noise_power, "consistency_trial": self.consistency_trial,
+            "by_history_only": self.by_history_only,
         }
 
 
 def summary_ru(views: tuple[VenueView, ...]) -> str:
-    """Which venue passed and which did not, in one sentence (docs/VENUE_SPLIT.md)."""
+    """Which venue passed and which did not, in one sentence (docs/VENUE_SPLIT.md). A pass that
+    rests only on the check against Binance's history, because the noise bar had no power on the
+    venue's short window, says so (owner, 2026-10-30: it must not read as a plain pass)."""
     by = {v.venue: v for v in views}
     binance, hl = by["binance"], by["hyperliquid"]
+    history = "".join(f"; {v.history_note_ru()}" for v in (binance, hl) if v.by_history_only)
     if binance.outcome == Outcome.PASSED and hl.outcome == Outcome.PASSED:
-        return "прошла на обеих площадках: на Binance и на Hyperliquid"
+        return "прошла на обеих площадках: на Binance и на Hyperliquid" + history
     if binance.outcome == Outcome.PASSED or hl.outcome == Outcome.PASSED:
         yes, no = (binance, hl) if binance.outcome == Outcome.PASSED else (hl, binance)
         tail = {Outcome.FAILED: "не прошла", Outcome.UNDECIDED: "рано судить",
                 Outcome.NOT_RUN: f"не проводилась ({no.reason_ru})"}[no.outcome]
         extra = ("; на Binance у нас нет адаптера, идея ждёт инфраструктуры"
                  if yes.venue == "binance" else "")
-        return f"прошла на {yes.title}, на {no.title} — {tail}{extra}"
+        return f"прошла на {yes.title}, на {no.title} — {tail}{extra}{history}"
     words = {Outcome.FAILED: "не прошла", Outcome.UNDECIDED: "рано судить",
              Outcome.NOT_RUN: "не проводилась"}
     return (f"ни одна площадка не пройдена: на Binance — {words[binance.outcome]}, "
@@ -387,6 +416,9 @@ class Ladder:
     idea_id: str
     status: str
     steps: tuple[Step, ...]
+    venue_gap: Any = None
+    """`qlab.venue_gap.VenueGap` when one venue passed and the other did not: why they differ,
+    from measurements (None when the venues agree)."""
 
     @property
     def venues(self) -> tuple[VenueView, ...]:
@@ -403,7 +435,9 @@ class Ladder:
                 execution_ru=step.execution_ru or execution_ru(step.venue),
                 money=money.get(step.venue),
                 trial_id=None if run is None else run.trial_id,
-                run_idea=None if run is None else run.idea_id))
+                run_idea=None if run is None else run.idea_id,
+                noise_power=None if run is None else run.noise_power,
+                consistency_trial=None if run is None else run.consistency_trial))
         return tuple(out)
 
     @property
@@ -413,7 +447,8 @@ class Ladder:
     def to_dict(self) -> dict[str, Any]:
         return {"idea_id": self.idea_id, "status": self.status,
                 "steps": [s.to_dict() for s in self.steps],
-                "venues": [v.to_dict() for v in self.venues], "summary_ru": self.summary_ru}
+                "venues": [v.to_dict() for v in self.venues], "summary_ru": self.summary_ru,
+                "venue_gap": None if self.venue_gap is None else self.venue_gap.to_dict()}
 
 
 @dataclass(frozen=True)
@@ -441,6 +476,9 @@ class Ledgers:
     """Idea -> its paper or live book (`night/paper_books.yaml`)."""
     stage1_survives: frozenset[str] = DEFAULT_STAGE1_SURVIVES
     """The first-stage routes that go on to the second (`night/stage2.yaml`)."""
+    independent: bool = False
+    """The newest rules judge the two venues independently (rules 2026-10-30.2): no first-stage
+    route stops the second venue."""
     anomaly_routes: frozenset[str] = DEFAULT_ANOMALY_ROUTES
     """The routes the anomaly scan reads (`night/anomalies.yaml`)."""
     spec_stems: frozenset[str] = frozenset()
@@ -492,6 +530,12 @@ def spec_money(spec_dir: Path) -> dict[str, float]:
     return {idea: next(iter(sums)) for idea, sums in seen.items() if len(sums) == 1}
 
 
+def _independent() -> bool:
+    from qlab.pipeline.stage2 import independent_venues
+
+    return independent_venues()
+
+
 def load_ledgers(root: Path = Path(".")) -> Ledgers:
     """The ledgers and configs as the night leaves them. Never raises: a missing or broken file
     reads as empty, and the ladder then names the reason it can name."""
@@ -516,6 +560,7 @@ def load_ledgers(root: Path = Path(".")) -> Ledgers:
         implement=_json(root / "data" / "implement" / "ledger.json"),
         queue=queue, deferred_twins=deferred, money=money, paper_books=held, spec_stems=stems,
         stage1_survives=frozenset(stage2.get("stage1_survives") or DEFAULT_STAGE1_SURVIVES),
+        independent=_independent(),
         anomaly_routes=frozenset((anomalies.get("scan") or {}).get("routes")
                                  or DEFAULT_ANOMALY_ROUTES),
         root=root)
@@ -585,7 +630,9 @@ def _step_run(session: Session, run: _Run) -> StepRun:
         forward_days=_number(m, "forward_days"),
         forward_days_needed=_number(m, "forward_days_needed"),
         noise_percentile=_percentile(m), noise_power=_power(m),
-        min_capital_usd=_number(m, "min_capital_usd"))
+        min_capital_usd=_number(m, "min_capital_usd"),
+        consistency_trial=(None if _number(m, "stage1_trial_id") is None
+                           else int(_number(m, "stage1_trial_id") or 0)))
 
 
 def _short(text: str | None, n: int = 260) -> str:
@@ -723,19 +770,28 @@ def _step1(session: Session, idea: Idea, own: _Run | None, ledgers: Ledgers) -> 
 def _no_second_stage(session: Session, idea: Idea, own: _Run, ledgers: Ledgers) -> Step:
     """Step 3 of a Binance idea whose second stage does not exist."""
     if idea.status in CLOSED_STATUSES:
+        if ledgers.independent and idea.status == IdeaStatus.REJECTED and own.route == "reject":
+            # Rejected on Binance before the venues were judged independently: Hyperliquid is
+            # owed, and the night's queue of closed ideas runs it (night/second_venue.yaml).
+            return _not_run(3, Reason.SECOND_VENUE_QUEUED,
+                            "отвергнута на Binance до того, как площадки стали оцениваться "
+                            "независимо; Hyperliquid ещё не смотрел, ночь берёт такие идеи по "
+                            "очереди, самые старые первыми")
         return _not_run(3, Reason.CLOSED_BEFORE,
                         f"статус «{idea.status.value}»: до второго этапа дело не дошло")
     if child_id_taken(session, idea.id):
         return _not_run(3, Reason.ID_TAKEN,
                         f"имя «{child_id(idea.id)}» принадлежит другой идее (опыту "
                         "исследователя); писать второй этап под ним нельзя")
-    if own.route not in ledgers.stage1_survives:
+    if not ledgers.independent and own.route not in ledgers.stage1_survives:
         return _not_run(3, Reason.FIRST_STEP_UNDECIDED,
                         "первый этап ничего не решил или отвергнут: второму этапу нечего "
                         "подтверждать")
     owed = (ledgers.overlays.get(idea.id) or {}).get("stage2_pending")
     return _not_run(3, Reason.WAITS_FOR_NIGHT,
-                    "первый этап прошёл или ждёт, второй этап ещё не записан"
+                    ("первый этап прошёл или ждёт, " if own.route in ledgers.stage1_survives
+                     else "Hyperliquid оценивается независимо от Binance, ")
+                    + "второй этап ещё не записан"
                     + (" (в журнале надстроек он значится в долгу)" if owed else ""))
 
 
@@ -998,6 +1054,85 @@ def _on_venue(step: Step, venue: str) -> Step:
     return dataclasses.replace(step, venue=venue, execution_ru=execution_ru(venue))
 
 
+def _failed_rules(session: Session, trial_id: int) -> tuple:
+    """The strategy rules a run did not pass, with their numbers (the infrastructure rules are a
+    fact about our code, not about the strategy, and are left out)."""
+    from qlab import venue_gap
+    from qlab.rules.loader import load_latest
+    from qlab.rules.schema import RuleKind
+
+    try:
+        kinds = {r.id: r.kind for r in load_latest().rules}
+    except Exception:  # noqa: BLE001 - a reading must not fail the page
+        kinds = {}
+    rows = (session.query(Verdict).filter(Verdict.trial_id == trial_id, Verdict.passed.is_(False))
+            .order_by(Verdict.id).all())
+    seen: set[str] = set()
+    out = []
+    for row in rows:
+        if kinds.get(row.rule_id) == RuleKind.INFRASTRUCTURE or row.rule_id in seen:
+            continue
+        seen.add(row.rule_id)
+        out.append(venue_gap.FailedRule(
+            row.rule_id, row.metric, None if row.value is None else float(row.value),
+            row.comparator, None if row.threshold is None else float(row.threshold)))
+    return tuple(out)
+
+
+def _venue_facts(session: Session, step: Step, money: VenueMoney | None):
+    """What `qlab.venue_gap` needs of one venue, read off its step and its run."""
+    from qlab import venue_gap
+
+    run = step.run
+    common = dict(venue=step.venue or "", title=VENUE_TITLE.get(step.venue or "", step.venue or ""),
+                  outcome=step.outcome.value,
+                  money_outcome=None if money is None else money.outcome.value,
+                  money_detail=None if money is None else money.detail)
+    if run is None or step.outcome == Outcome.NOT_RUN:
+        return venue_gap.VenueFacts(**common, not_run_reason=step.reason_ru,
+                                    not_run_detail=_short(step.detail, 160) or None,
+                                    run_idea=None if run is None else run.idea_id,
+                                    trial_id=None if run is None else run.trial_id)
+    trial = session.get(Trial, run.trial_id)
+    spec = None if trial is None else session.get(Spec, trial.spec_id)
+    costs = (spec.costs_model or {}) if spec is not None else {}
+    from qlab.year_view import capital_view, year_rows
+
+    metrics = (trial.metrics or {}) if trial is not None else {}
+    rows = year_rows(capital_view(metrics) or metrics)
+    return venue_gap.VenueFacts(
+        years=tuple((r.year, r.ret, r.days) for r in rows),
+        **common, route=run.route, run_idea=run.idea_id, trial_id=run.trial_id,
+        data_start=run.data_start, data_end=run.data_end, forward_days=run.forward_days,
+        forward_days_needed=run.forward_days_needed, noise_percentile=run.noise_percentile,
+        noise_power=run.noise_power, consistency_trial=run.consistency_trial,
+        taker_fee_bps=costs.get("taker_fee_bps"), slippage_bps=costs.get("slippage_bps"),
+        failed_rules=_failed_rules(session, run.trial_id) if step.outcome != Outcome.PASSED
+        else ())
+
+
+def _venue_gap(session: Session, idea_id: str, steps: list[Step], ledgers: Ledgers):
+    """Why the venues differ, when exactly one passed (`qlab.venue_gap`); None when they agree.
+    The profit share needs the two runs taken apart, which the night measures and stores; a page
+    only reads it."""
+    from qlab import venue_gap
+
+    money = {m.venue: m for m in steps[3].money}
+    facts = [_venue_facts(session, step, money.get(step.venue or "")) for step in steps[1:3]]
+    pair = venue_gap.applies(facts[0], facts[1])
+    kind = "verdict"
+    if pair is None and venue_gap.uneven(facts[0], facts[1]):
+        pair, kind = (facts[0], facts[1]), "uneven"
+    if pair is None:
+        return None
+    passed, other = pair
+    shares, why = ([], "одна из площадок не проводилась: сравнивать монеты не с чем")
+    if passed.trial_id is not None and other.trial_id is not None:
+        shares, why = venue_gap.load_stored(
+            idea_id, (passed.trial_id, other.trial_id), ledgers.root)
+    return venue_gap.compose(passed, other, shares=shares, shares_why=why, kind=kind)
+
+
 def build_ladder(session: Session, idea_id: str, ledgers: Ledgers | None = None) -> Ladder | None:
     """The seven steps of one idea; None when the idea does not exist. Reads only."""
     ledgers = ledgers or Ledgers()
@@ -1019,7 +1154,8 @@ def build_ladder(session: Session, idea_id: str, ledgers: Ledgers | None = None)
     steps.append(_step5(session, idea, steps, own, ledgers))
     steps.append(_step6(session, idea, ledgers))
     steps.append(_step7(session, idea, steps))
-    return Ladder(idea_id, idea.status.value, tuple(steps))
+    gap = _venue_gap(session, idea_id, steps, ledgers)
+    return Ladder(idea_id, idea.status.value, tuple(steps), gap)
 
 
 def build_ladders(session: Session, idea_ids: list[str], ledgers: Ledgers | None = None
@@ -1044,8 +1180,16 @@ STATUS_ORDER = {"live": 0, "paper": 1, "validated": 2, "bench": 3, "candidate": 
 def open_idea_ids(session: Session) -> list[str]:
     """The ideas the owner follows: open, calibration noise left out, in the order of their
     standing (live, paper, validated, bench, candidate), then by name."""
+    def parent_closed(idea: Idea) -> bool:
+        """A second stage that still waits while its first stage is closed (the night's queue of
+        closed ideas runs it; only a pass revives the pair) is not an open idea of its own."""
+        parent = session.get(Idea, idea.parent_id) if idea.parent_id and is_stage2_child(idea) \
+            else None
+        return parent is not None and parent.status in CLOSED_STATUSES
+
     rows = [(i.status.value, i.id) for i in session.query(Idea)
-            if i.status not in CLOSED_STATUSES and not i.id.startswith("noise-")]
+            if i.status not in CLOSED_STATUSES and not i.id.startswith("noise-")
+            and not parent_closed(i)]
     return [name for _, name in sorted(rows, key=lambda r: (STATUS_ORDER.get(r[0], 9), r[1]))]
 
 
@@ -1064,7 +1208,8 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         "причина названа на странице идеи; у пятой ступени ✓ значит «показания записаны». "
         "Прошедшая на Binance идея — «нужна инфраструктура»: адаптера Binance у нас нет.", "",
         "| идея | статус | 1 | 2 Binance | 3 Hyperliquid | 4 деньги B / H | 5 | 6 | 7 | "
-        "итог по площадкам |", "|---|---|---|---|---|---|---|---|---|---|"]
+        "итог по площадкам | почему площадки расходятся |",
+        "|---|---|---|---|---|---|---|---|---|---|---|"]
     reasons: dict[Reason, int] = {}
     for found in ladders:
         s = found.steps
@@ -1072,7 +1217,8 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         cells = [SYMBOL[s[0].outcome], SYMBOL[s[1].outcome], SYMBOL[s[2].outcome], money,
                  SYMBOL[s[4].outcome], SYMBOL[s[5].outcome], SYMBOL[s[6].outcome]]
         lines.append(f"| {found.idea_id} | {found.status} | " + " | ".join(cells)
-                     + f" | {found.summary_ru} |")
+                     + f" | {found.summary_ru} | "
+                     + ("" if found.venue_gap is None else found.venue_gap.short_ru) + " |")
         for step in found.steps:
             if step.reason is not None:
                 reasons[step.reason] = reasons.get(step.reason, 0) + 1

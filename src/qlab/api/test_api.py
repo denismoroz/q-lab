@@ -942,3 +942,6 @@ def test_idea_detail_carries_the_ladder_of_seven_steps(client, session_factory, 
     assert "адаптера заявок на этой площадке у нас нет" in binance["execution_ru"]
     assert {m["venue"] for m in body["steps"][3]["money"]} == {"binance", "hyperliquid"}
     assert body["summary_ru"].startswith("ни одна площадка не пройдена")
+    # why the venues differ (docs/VENUE_SPLIT.md): the key is always there, empty when they agree
+    assert "venue_gap" in body and body["venue_gap"] is None
+    assert hl["by_history_only"] is False and "noise_power" in hl

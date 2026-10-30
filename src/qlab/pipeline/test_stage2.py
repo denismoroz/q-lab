@@ -46,6 +46,7 @@ from qlab.rules.schema import (
     ShortForwardUse,
     Stage,
     Stage2Confirmation,
+    VenueSplit,
 )
 
 PARENT = "gen-test-momentum"
@@ -541,10 +542,66 @@ def test_a_pass_on_binance_alone_is_never_a_reject_and_names_the_missing_adapter
 
 
 def test_only_survivors_of_stage_1_go_on() -> None:
-    assert [stage2.survives(r, CONFIG) for r in
+    """Rules before 2026-10-30.2: a stage 1 reject is final."""
+    assert [stage2.survives(r, CONFIG, independent=False) for r in
             ("paper", "shelf", "needs-infrastructure", "needs-forward", "reject",
              "not-evaluable", "needs-more-data", "error", None)] == [
         True, True, True, True, False, False, False, False, False]
+
+
+def test_with_independent_venues_every_run_goes_on_to_the_second_venue() -> None:
+    """Rules 2026-10-30.2 (owner: «смотрим обе площадки независимо»): Hyperliquid is run whatever
+    Binance said; only an idea with no run at all has nothing to anchor a second stage on."""
+    assert [stage2.survives(r, CONFIG, independent=True) for r in
+            ("paper", "shelf", "needs-infrastructure", "needs-forward", "reject",
+             "not-evaluable", "needs-more-data", "error", None)] == [
+        True, True, True, True, True, True, True, True, False]
+    assert stage2.survives("reject", CONFIG) is True  # the newest rules are independent
+
+
+@pytest.mark.parametrize("binance,hyperliquid,expected", [
+    # a pass on either venue passes the idea; Hyperliquid's route is the better one
+    ("needs-infrastructure", "paper", "paper"),
+    ("reject", "paper", "paper"),                         # Binance's reject no longer ends it
+    ("needs-forward", "paper", "paper"),                  # nor does Binance's waiting
+    ("not-evaluable", "paper", "paper"),
+    ("needs-infrastructure", "reject", "needs-infrastructure"),
+    ("needs-infrastructure", "needs-forward", "needs-infrastructure"),
+    ("needs-infrastructure", None, "needs-infrastructure"),
+    # rejected only when no venue passed and none is pending
+    ("reject", "reject", "reject"),
+    ("reject", "not-evaluable", "reject"),                # nothing waits: the venue cannot judge
+    ("reject", None, "reject"),
+    ("not-evaluable", "reject", "reject"),
+    # a reject with the other venue undecided: the idea stays open, undecided
+    ("reject", "needs-forward", "needs-forward"),
+    ("reject", "needs-more-data", "needs-forward"),
+    ("reject", "error", "needs-forward"),                 # a crashed run has not spoken
+    ("needs-forward", "reject", "needs-forward"),
+    ("error", "reject", "needs-forward"),
+    # nothing decided anywhere: the undecided venue's route stands, Binance's first
+    ("needs-forward", "needs-forward", "needs-forward"),
+    ("needs-more-data", "needs-forward", "needs-more-data"),
+    ("not-evaluable", "needs-forward", "needs-forward"),
+    ("not-evaluable", "not-evaluable", "not-evaluable"),
+    ("not-evaluable", None, "not-evaluable"),
+])
+def test_independent_venues_pass_if_one_passes_and_reject_only_when_nothing_waits(
+        binance: str, hyperliquid: str | None, expected: str) -> None:
+    combined = stage2.combine(binance, hyperliquid, config=CONFIG, best_of_venues=True,
+                              independent=True)
+    assert combined.route == expected
+    assert stage2.combine_venues(binance, hyperliquid).route == expected
+
+
+def test_the_reason_of_a_combined_route_names_both_venues() -> None:
+    combined = stage2.combine("reject", "needs-forward", config=CONFIG, independent=True,
+                              stage2_reason="the noise bar has no power")
+    assert "one venue rejected and the other has not decided yet" in combined.reason
+    assert "Binance reject, Hyperliquid needs-forward" in combined.reason
+    assert "the noise bar has no power" in combined.reason
+    passed = stage2.combine("reject", "paper", config=CONFIG, independent=True)
+    assert passed.reason.startswith("passed on Hyperliquid (paper); Binance reject")
 
 
 # ---- the step ---------------------------------------------------------------------------
@@ -643,12 +700,15 @@ def test_too_few_coins_on_the_venue_is_not_evaluable_with_a_plain_reason_and_a_t
         assert session.query(Verdict).filter(Verdict.trial_id == trial.id).count() == 0
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_stage_1_survivors_only_go_on_and_a_reject_is_never_run_on_the_venue(
         registry, tmp_path, monkeypatch) -> None:
     _stand(monkeypatch, _market(), PASSING)
-    for route in ("reject", "not-evaluable", "needs-more-data", "error", None):
+    for route in ("reject", "not-evaluable", "needs-more-data", "error"):
         result = _run(tmp_path, route)
         assert result.status == "skipped" and "only survivors go on" in result.skipped
+    result = _run(tmp_path, None)  # no stage 1 run at all: nothing to anchor a second stage on
+    assert result.status == "skipped" and "no stage 1 run" in result.skipped
     with db_module.session_scope() as session:
         assert session.get(Idea, CHILD) is None  # nothing was created ...
         assert session.query(Trial).count() == 0  # ... and nothing run
@@ -768,6 +828,7 @@ def stage2_dict(result: stage2.Stage2Result) -> dict:
     return asdict(result)
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_the_report_explains_a_skip_a_wait_and_a_measurement_in_words(
         registry, tmp_path, monkeypatch) -> None:
     skipped = stage2.report_lines({"route": "reject"}, stage2_dict(_run(tmp_path, "reject")))
@@ -1047,3 +1108,147 @@ def test_a_second_stage_takes_hyperliquids_own_minimum_leg_not_binances() -> Non
     # a first stage already judged for Hyperliquid (a legacy proxy) keeps its own number
     legacy = _spec(min_leg_notional=12.0, execution_venue="hyperliquid")
     assert stage2.translate(legacy, CONFIG).spec.min_leg_notional == 12.0
+
+
+# ---- independent venues (rules 2026-10-30.2, docs/VENUE_SPLIT.md) -----------------------------
+
+INDEPENDENT = VenueSplit(overall="best_of_venues", independent=True, shared_coins_history=True,
+                         rationale="t")
+PASSING_IND = RuleSet(version="2026-10-30.2", rules=[CAPITAL_FIT_GENEROUS],
+                      venue_split=INDEPENDENT)
+FAILING_IND = RuleSet(version="2026-10-30.2", rules=[CAPITAL_FIT_TIGHT], venue_split=INDEPENDENT)
+
+
+def _reason_of_last_transition(idea_id: str) -> str:
+    with db_module.session_scope() as session:
+        return (session.query(StageTransition).filter(StageTransition.idea_id == idea_id)
+                .order_by(StageTransition.id.desc()).first().reason)
+
+
+def test_a_binance_reject_does_not_stop_a_hyperliquid_pass_from_passing_the_idea(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), PASSING_IND)
+    _set_status(PARENT, IdeaStatus.REJECTED)  # Binance's stage 1 rejected it a moment ago
+
+    result = _run(tmp_path, "reject")
+
+    assert result.status == "evaluated" and result.independent  # Hyperliquid was run
+    assert (result.route, result.combined_route) == ("paper", "paper")
+    assert _status(PARENT) == IdeaStatus.VALIDATED and _status(CHILD) == IdeaStatus.VALIDATED
+    assert _reason_of_last_transition(PARENT).startswith("trial ")
+    assert "passed on Hyperliquid (paper); Binance reject" in _reason_of_last_transition(PARENT)
+    text = "\n".join(stage2.report_lines({"route": "reject"}, stage2_dict(result)))
+    assert "прошла на Hyperliquid, на Binance отвергнута" in text
+
+
+def test_rejected_on_both_venues_is_rejected_and_the_pair_is_closed(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), FAILING_IND)
+    _set_status(PARENT, IdeaStatus.REJECTED)
+
+    result = _run(tmp_path, "reject")
+
+    assert (result.route, result.combined_route) == ("reject", "reject")
+    assert _status(PARENT) == IdeaStatus.REJECTED and _status(CHILD) == IdeaStatus.REJECTED
+    text = "\n".join(stage2.report_lines({"route": "reject"}, stage2_dict(result)))
+    assert "отвергнута на обеих площадках" in text
+
+
+def test_a_binance_reject_with_hyperliquid_undecided_leaves_the_idea_open(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand_without_power(monkeypatch, None)
+    confirming = CONFIRMING.model_copy(update={"venue_split": INDEPENDENT})
+    monkeypatch.setattr("qlab.rules.loader.load_latest", lambda: confirming)
+    _set_status(PARENT, IdeaStatus.REJECTED)
+
+    result = _run(tmp_path, "reject")
+
+    # no Binance result that passed: Hyperliquid is judged by its own rules, and the weak noise bar
+    # reads «рано судить», never a pass; no consistency check was even attempted
+    assert result.route == "needs-forward" and result.confirmation is None
+    assert result.combined_route == "needs-forward"
+    assert _status(PARENT) == IdeaStatus.BENCH  # open, undecided: Hyperliquid has not spoken
+    assert "one venue rejected and the other has not decided yet" in _reason_of_last_transition(
+        PARENT)
+    text = "\n".join(stage2.report_lines({"route": "reject"}, stage2_dict(result)))
+    assert "на Binance отвергнута, на Hyperliquid ещё не решила" in text
+
+
+def test_a_closed_idea_is_revived_by_a_pass_only_and_the_transition_says_why(
+        registry, tmp_path, monkeypatch) -> None:
+    note = "second-venue queue: rejected on Binance on 2026-10-02"
+    _stand(monkeypatch, _market(), PASSING_IND)
+    _set_status(PARENT, IdeaStatus.REJECTED)
+    result = _run(tmp_path, "reject", settle_note=note, only_a_pass_moves=True)
+    assert result.combined_route == "paper" and _status(PARENT) == IdeaStatus.VALIDATED
+    assert note in _reason_of_last_transition(PARENT)
+
+
+def test_a_closed_idea_stays_closed_when_hyperliquid_cannot_decide(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand_without_power(monkeypatch, None)
+    confirming = CONFIRMING.model_copy(update={"venue_split": INDEPENDENT})
+    monkeypatch.setattr("qlab.rules.loader.load_latest", lambda: confirming)
+    _set_status(PARENT, IdeaStatus.REJECTED)
+
+    result = _run(tmp_path, "reject", only_a_pass_moves=True)
+
+    assert result.route == "needs-forward" and result.combined_route == "needs-forward"
+    assert "only a pass revives a closed idea" in result.combined_reason
+    assert _status(PARENT) == IdeaStatus.REJECTED and result.parent_status == "rejected"
+
+
+def test_a_crashed_second_stage_has_not_spoken_so_a_binance_reject_does_not_stand(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), PASSING_IND)
+    _set_status(PARENT, IdeaStatus.REJECTED)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("data source down")
+
+    monkeypatch.setattr("qlab.pipeline.stage2.book_window", boom)
+    result = _run(tmp_path, "reject")
+
+    assert result.status == "error" and "data source down" in result.error
+    assert result.combined_route == "needs-forward"  # pending, tried again; not a reject
+    assert _status(PARENT) == IdeaStatus.BENCH
+
+
+def test_a_later_binance_reject_does_not_close_an_idea_whose_hyperliquid_side_passed(
+        registry, tmp_path, monkeypatch) -> None:
+    """The status of a Binance run is the better of the two venues': a Binance run that now rejects
+    must not send an idea to the graveyard while Hyperliquid's latest run passed (a re-run of
+    Binance's verdict under new rules, a restamp)."""
+    _stand(monkeypatch, _market(), PASSING_IND)
+    _set_status(PARENT, IdeaStatus.VALIDATED)
+    assert _run(tmp_path, "paper").combined_route == "paper"  # both passed: validated
+
+    _stand(monkeypatch, _market(), FAILING_IND)  # Binance's own run now fails a rule
+    with db_module.session_scope() as session:
+        outcome = evaluate_spec(_spec(), session=session, ruleset=FAILING_IND,
+                                check_lookahead=False)
+    assert str(outcome.routing.route) == "reject"
+    assert _status(PARENT) == IdeaStatus.VALIDATED  # Hyperliquid's pass keeps the idea
+    assert _status(CHILD) == IdeaStatus.VALIDATED   # and its second stage is not closed with it
+
+
+def test_a_binance_reject_with_no_second_stage_run_yet_rejects_as_before(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), FAILING_IND)
+    with db_module.session_scope() as session:
+        repo.upsert_idea(session, id=PARENT, title="t", source_type=SourceType.INTERNAL,
+                         asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER, notes="")
+    with db_module.session_scope() as session:
+        evaluate_spec(_spec(), session=session, ruleset=FAILING_IND, check_lookahead=False)
+    assert _status(PARENT) == IdeaStatus.REJECTED  # the second venue may still revive it
+
+
+def test_a_pass_by_the_history_check_is_worded_as_such_in_the_report() -> None:
+    result = {"independent": True, "combined_route": "paper", "parent_status": "validated",
+              "route": "paper", "data_end": "2026-10-29",
+              "confirmation": {"status": "confirmed", "noise_power": 0.02}}
+    text = stage2._combined_ru("needs-infrastructure", result)
+    assert text == ("прошла на обеих площадках, статус «validated»; на Hyperliquid — только "
+                    "сверкой с историей Binance, планка шума там не решает (сила 2%)")
+    plain = stage2._combined_ru("needs-infrastructure", {**result, "confirmation": None})
+    assert plain == "прошла на обеих площадках, статус «validated»"

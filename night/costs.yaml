@@ -50,7 +50,9 @@ venues:
         docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not applied, it needs BNB
         on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the two legs
       taker_fee_bps: >-
-        docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular user,
+        owner 2026-10-30, asked which fee tier his Binance account sits on: «у меня обычный
+        аккаунт» (a regular account: no VIP tier, no volume discount), so the regular-user rate
+        stands; docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular user,
         0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
         (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not
         be read, the article gives the rate as its example)

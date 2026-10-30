@@ -585,6 +585,7 @@ def _experiment(tmp_path: Path, idea_id: str, source: str, folder: str = "resear
     return path
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_researchers_experiment_on_binance_that_survived_stage_1_gets_its_second_stage(
         tmp_path, registry) -> None:
     with registry.session_scope() as s:
@@ -604,6 +605,22 @@ def test_a_researchers_experiment_on_binance_that_survived_stage_1_gets_its_seco
     assert ("plain-binance", "stage2") not in plans  # not a researcher's experiment
     assert ("exp-binance-failed", "stage2") not in plans  # stage 1 decided nothing
     assert ("exp-binance", "stage2") not in _plans(tmp_path, registry)  # stage 2 switched off
+
+
+def test_independent_venues_give_every_binance_experiment_its_second_stage(
+        tmp_path, registry) -> None:
+    """Rules 2026-10-30.2: Hyperliquid is judged whatever Binance said, so an experiment whose
+    stage 1 decided nothing yet (or was rejected) still gets its second stage."""
+    with registry.session_scope() as s:
+        for idea, route in (("exp-undecided", "needs-more-data"), ("exp-rejected", "reject")):
+            _idea(s, idea, IdeaStatus.BENCH)
+            _trial(s, idea, route, ago=90)
+    _experiment(tmp_path, "exp-undecided", "binance")
+    _experiment(tmp_path, "exp-rejected", "binance")
+    plans = _plans(tmp_path, registry, stage2_config=STAGE2_CONFIG)
+    assert plans[("exp-undecided", "stage2")].due
+    assert plans[("exp-rejected", "stage2")].due
+    assert ("exp-rejected", "idea") not in plans  # Binance's own verdict is not asked again
 
 
 def test_a_twin_is_an_ordinary_idea_for_the_waiting_plan(tmp_path, registry) -> None:

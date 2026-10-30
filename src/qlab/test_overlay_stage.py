@@ -465,6 +465,7 @@ def test_every_run_is_a_trial_and_counts_in_the_bases_family(world, registry) ->
         assert s.get(Idea, f"{XSMOM}-ov-enter").driver_id == "momentum"
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_survivor_goes_to_the_second_stage_and_a_rejected_one_does_not(world) -> None:
     world.results[f"{XSMOM}-ov-own"] = "reject"
     world.results[f"{XSMOM}-ov-enter"] = "paper"
@@ -477,6 +478,7 @@ def test_a_survivor_goes_to_the_second_stage_and_a_rejected_one_does_not(world) 
     assert [c[1] for c in world.calls if c[0] == "stage2"] == [f"{XSMOM}-ov-enter"]
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_survivor_run_without_its_second_stage_owes_it_and_a_later_night_does_it(
         world) -> None:
     world.results[f"{XSMOM}-ov-enter"] = "paper"

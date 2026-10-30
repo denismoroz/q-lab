@@ -453,7 +453,8 @@ def _rerun_idea(plan: Plan, end: date, *, noise_trials: int) -> dict:
             "status": _status(plan.idea_id), "why": plan.why}
 
 
-def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: int, config) -> dict:
+def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: int, config,
+                  **stage2_kwargs) -> dict:
     """The second stage on the fresh tail. `stage1` is tonight's re-run of the first
     stage when there was one; otherwise stage 1's latest outcome in the registry."""
     from qlab import night, own_numbers
@@ -480,7 +481,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
         spec = own_numbers.fixed_at_choice(spec, chosen, retune.params_fixed_at)
     outcome = stage2.run_stage2(night.with_end(spec, end),
                          stage1_route=route, stage1_trial_id=trial_id, noise_trials=noise_trials,
-                             config=config)
+                             config=config, **stage2_kwargs)
     m = outcome.metrics or {}
     if outcome.skipped:  # stage 1 no longer lets the idea through, or stage 2 is switched off
         return {**_entry(plan, end), "action": "wait", "why": outcome.skipped, "due_end": None}

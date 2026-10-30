@@ -331,6 +331,7 @@ def test_data_from_the_execution_venue_has_no_second_stage_to_pass(world) -> Non
     assert world.evaluated["toy-idea-causal"].execution_venue is None
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_only_a_survivor_goes_to_the_second_stage(world) -> None:
     world.routes = {"toy-idea": "reject", "toy-idea-causal": "paper"}
     world.add_card()

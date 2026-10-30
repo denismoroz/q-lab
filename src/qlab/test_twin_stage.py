@@ -257,6 +257,7 @@ def test_an_existing_twin_file_is_never_rebuilt_but_is_run_once_if_it_never_ran(
     assert [c[:2] for c in world.calls] == [("stand", TWIN), ("stage2", TWIN)]
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_twin_that_fails_stage_1_does_not_reach_stage_2(world) -> None:
     world.results[TWIN] = "reject"
     state = _stage(world)

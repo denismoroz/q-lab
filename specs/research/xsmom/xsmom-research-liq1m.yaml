@@ -51,11 +51,15 @@ costs:
   slippage_bps: 0.9
 
 min_leg_notional: 12.0
+# The strategy's own money, the base of every percent and the sum step 4 of the ladder compares
+# the capital a run needed with (docs/LADDER.md, docs/CAPITAL_BASE.md; cited in sources).
+strategy_capital_usd: 500
 simultaneous_legs: 1
 
 unexpressed_mechanisms: []
 
 sources:
+  "strategy_capital_usd": "owner 2026-10-30: «от 500» (the owner, asked what money XSMOM runs on; the strategy's own money for these research ideas is 500)"
   "params": "specs/xsmom-honest-20legs.yaml params, unchanged; their own sources are listed there"
   "lookbacks_days": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)"
   "rebalance_days": "funding-rate-arbitrage/src/frab/strategy/xsmom/params.py (XsmomParams defaults)"

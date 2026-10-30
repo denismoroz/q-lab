@@ -106,3 +106,32 @@ def test_revival_from_an_undated_rejection_is_refused() -> None:
     )
     assert decision.new_status is None
     assert "undated" in decision.reason
+
+
+def test_the_other_venues_data_revives_a_rejection_it_never_saw() -> None:
+    """Rules 2026-10-30.2: a rejection on Binance's history did not see Hyperliquid's data, so a
+    Hyperliquid pass revives the idea whatever the dates say. Only a failure on the venue's OWN
+    earlier data has to be older than the run."""
+    day = date(2026, 10, 29)
+    # no earlier failure on Hyperliquid at all: nothing to wait out (undated, same day, all fine)
+    decision = next_status(IdeaStatus.REJECTED, TrialRoute.PAPER, run_data_end=day,
+                           rejected_on_data_end=None, other_venue=True)
+    assert decision.new_status == IdeaStatus.VALIDATED
+    # the same arguments for the one-venue reading are refused
+    refused = next_status(IdeaStatus.REJECTED, TrialRoute.PAPER, run_data_end=day,
+                          rejected_on_data_end=None)
+    assert refused.new_status is None and "undated" in refused.reason
+    # a failure on Hyperliquid's own data up to the same day is old news; a later day is new
+    same = next_status(IdeaStatus.REJECTED, TrialRoute.PAPER, run_data_end=day,
+                       rejected_on_data_end=day, other_venue=True)
+    assert same.new_status is None and "this venue's data" in same.reason
+    later = next_status(IdeaStatus.REJECTED, TrialRoute.PAPER, run_data_end=date(2026, 10, 30),
+                        rejected_on_data_end=day, other_venue=True)
+    assert later.new_status == IdeaStatus.VALIDATED
+
+
+def test_a_pending_second_venue_reopens_a_binance_rejection_to_the_bench() -> None:
+    decision = next_status(IdeaStatus.REJECTED, TrialRoute.NEEDS_FORWARD,
+                           run_data_end=date(2026, 10, 29), rejected_on_data_end=None,
+                           other_venue=True)
+    assert decision.new_status == IdeaStatus.BENCH

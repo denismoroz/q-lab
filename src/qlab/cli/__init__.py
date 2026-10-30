@@ -937,6 +937,106 @@ def restamp_run_cmd(
         typer.echo(f"error in {name}: {text}", err=True)
 
 
+second_venue_app = typer.Typer(
+    help="The queue of ideas rejected on Binance whose Hyperliquid side was never run "
+    "(docs/VENUE_SPLIT.md).", no_args_is_help=True)
+app.add_typer(second_venue_app, name="second-venue")
+
+
+@second_venue_app.command("count")
+def second_venue_count_cmd() -> None:
+    """How many closed ideas wait for their Hyperliquid run and how many nights that takes.
+    Reads the registry; runs nothing."""
+    from datetime import date as _date
+
+    from qlab import second_venue, waiting
+    from qlab.registry.db import session_scope
+
+    config = second_venue.load_config()
+    with session_scope() as session:
+        owed, refused = second_venue.find_candidates(
+            session, waiting.spec_files(), ledger=second_venue.load_ledger(),
+            today=_date.today(), config=config)
+    numbers = second_venue.counts(owed, config)
+    typer.echo(f"owed: {numbers['owed']}; {numbers['max_per_night']} a night; "
+               f"nights: {numbers['nights']}")
+    for cand in owed:
+        typer.echo(f"  {cand.idea_id}  rejected {cand.rejected_on}  ({cand.spec_path})")
+    for idea, why in sorted(refused.items()):
+        typer.echo(f"  not queued: {idea}: {why}")
+
+
+@second_venue_app.command("run")
+def second_venue_run_cmd(
+    idea: list[str] = typer.Option(  # noqa: B008
+        [], "--idea", help="Only these ideas (repeat the option)"),
+    max_new: int | None = typer.Option(
+        None, "--max", help="At most this many (default: the config's per-night cap)"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+) -> None:
+    """The night's queue stage by hand: the Hyperliquid side of the oldest closed ideas. The state
+    of a hand run is kept apart in data/restamp/runs/, never in a night's."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import night, second_venue
+
+    night.STATE_DIR = _Path("data/restamp/runs")
+    day, end = _date.today(), night.last_closed_day()
+    state = night.load_state(day)
+    state.pop("second_venue", None)
+    second_venue.second_venue_stage(day, end, state, noise_trials=noise_trials,
+                                    only=list(idea) or None, max_new=max_new)
+    for line in second_venue.report_lines(state.get("second_venue")):
+        typer.echo(line)
+    for name, text in (state.get("stage_errors") or {}).items():
+        typer.echo(f"error in {name}: {text}", err=True)
+
+
+venue_gap_app = typer.Typer(
+    help="Why the two venues of an idea differ (docs/VENUE_SPLIT.md).", no_args_is_help=True)
+app.add_typer(venue_gap_app, name="venue-gap")
+
+
+@venue_gap_app.command("run")
+def venue_gap_run_cmd(
+    idea: list[str] = typer.Option(  # noqa: B008
+        [], "--idea", help="Measure these ideas now, measured or not"),
+    max_ideas: int = typer.Option(50, "--max", help="At most this many ideas"),
+) -> None:
+    """Measure, for open ideas whose venues differ, the profit made on coins the other venue does
+    not list, and store it for the pages and the report (data/venue_gap/). Code only."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import night, venue_gap
+
+    night.STATE_DIR = _Path("data/restamp/runs")
+    day, end = _date.today(), night.last_closed_day()
+    state = night.load_state(day)
+    venue_gap.venue_gap_stage(day, end, state, only=list(idea) or None, max_per_night=max_ideas)
+    block = state.get("venue_gap") or {}
+    for entry in block.get("entries") or []:
+        typer.echo(f"{entry['idea']}: " + ("measured" if entry["measured"]
+                                           else f"not measured ({entry['why']})"))
+    typer.echo(f"pending: {block.get('pending', 0)}")
+
+
+@venue_gap_app.command("show")
+def venue_gap_show_cmd(idea: str = typer.Argument(...)) -> None:
+    """The reason the idea's two venues differ, as the page shows it."""
+    from qlab import ladder
+    from qlab.registry.db import session_scope
+
+    with session_scope() as session:
+        found = ladder.build_ladder(session, idea, ladder.load_ledgers())
+    if found is None:
+        typer.echo(f"error: no idea {idea!r}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(found.summary_ru)
+    typer.echo("the venues agree" if found.venue_gap is None else found.venue_gap.text_ru)
+
+
 regimes_app = typer.Typer(help="Market regimes: BTC bull / flat / bear (docs/REGIMES.md).",
                           no_args_is_help=True)
 app.add_typer(regimes_app, name="regimes")

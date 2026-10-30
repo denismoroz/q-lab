@@ -76,6 +76,7 @@ def test_a_survivor_on_binance_goes_to_stage_2_as_the_generator_does(second) -> 
 
 
 @pytest.mark.parametrize("route", ["reject", "needs-more-data", "error", "not-evaluable"])
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_stage_1_that_did_not_survive_goes_nowhere(second, route) -> None:
     assert _lines(_spec(), _result(route)) == [] and second == []
 

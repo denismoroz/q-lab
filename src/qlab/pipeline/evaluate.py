@@ -1443,14 +1443,25 @@ def evaluate_spec(
         )
         decision = None
         if update_idea_status:
+            status_route, status_reason, venue_ideas = routing.route, routing.reason, None
+            if (ruleset.venue_split is not None and ruleset.venue_split.independent
+                    and (spec.execution_venue or spec.data.source) == "binance"):
+                # Independent venues (rules 2026-10-30.2, docs/VENUE_SPLIT.md): a Binance run is
+                # one venue's verdict. The idea's status is the better of the two, so a Binance
+                # reject must not close an idea whose Hyperliquid side passed or has not decided.
+                from qlab.pipeline.stage2 import parent_route
+
+                status_route, status_reason, venue_ideas = parent_route(
+                    session, spec.idea_id, routing.route, routing.reason)
             decision = apply_route(
                 session,
                 idea_id=spec.idea_id,
-                route=TrialRoute(routing.route),
-                route_reason=routing.reason,
+                route=TrialRoute(status_route),
+                route_reason=status_reason,
                 trial_id=trial.id,
                 rules_version=ruleset.version,
                 run_data_end=data_end,
+                venue_ideas=venue_ideas,
             )
         return trial.id, decision
 

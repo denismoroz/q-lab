@@ -222,6 +222,14 @@ class VenueSplit(BaseModel):
 
     overall: Literal["best_of_venues"]
     """How the two venues' routes make the idea's: the better one."""
+    independent: bool = False
+    """From 2026-10-30.2 (owner, 2026-10-30: «смотрим обе площадки независимо. проходить если
+    где-то»): both venues are always judged, whatever the other said. A reject on Binance no longer
+    ends the idea before Hyperliquid is run (and the other way round). The idea passes when a venue
+    passed; it is rejected when no venue passed and none that has not decided is left (a venue that
+    cannot judge the idea at all, `not-evaluable` or no run, is not waited for); a reject on one
+    venue with the other still undecided leaves the idea open, undecided. False (2026-10-30.1):
+    a Binance reject is final and Hyperliquid is not run after it."""
     shared_coins_history: bool
     """Whether the consistency check compares Hyperliquid's window with Binance's history on the
     coins Hyperliquid also lists (True) or with Binance's whole history (False)."""
