@@ -933,3 +933,12 @@ def test_idea_detail_carries_the_ladder_of_seven_steps(client, session_factory, 
         assert step["outcome_ru"] and step["title"]
     with_run = [s for s in body["steps"] if s["number"] in (2, 3) and s["run"]]
     assert with_run and all(s["trial"]["id"] == s["run"]["trial_id"] for s in with_run)
+    # venue split (docs/VENUE_SPLIT.md): Binance and Hyperliquid side by side, each with its own
+    # verdict, fact about execution and money check
+    assert [v["venue"] for v in body["venues"]] == ["binance", "hyperliquid"]
+    binance, hl = body["venues"]
+    assert binance["outcome"] == "not_run" and binance["reason_ru"]
+    assert hl["outcome"] == "undecided" and "frab на 10.8.0.5" in hl["execution_ru"]
+    assert "адаптера заявок на этой площадке у нас нет" in binance["execution_ru"]
+    assert {m["venue"] for m in body["steps"][3]["money"]} == {"binance", "hyperliquid"}
+    assert body["summary_ru"].startswith("ни одна площадка не пройдена")

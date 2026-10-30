@@ -101,10 +101,11 @@ def flag_sentence(f: FlagResult) -> str:
         corr = ("—" if d.get("daily_correlation") is None
                 else format(d["daily_correlation"], ".2f"))
         return (f"{head}. На общем отрезке {d.get('days')} дн. ({d.get('start')} — {d.get('end')}) "
-                f"первая ступень даёт {_pct(d.get('stage1_ann'), 0)} в год, вторая "
-                f"{_pct(d.get('stage2_ann'), 0)}; расхождение {_pct(f.value, 0)} в год при границе "
+                f"на Binance {_pct(d.get('stage1_ann'), 0)} в год, на Hyperliquid "
+                f"{_pct(d.get('stage2_ann'), 0)}; разница {_pct(f.value, 0)} в год при границе "
                 f"{_pct(f.line, 0)}; дневные доходности согласуются на "
-                f"{corr}")
+                f"{corr}. Это разница двух площадок, а не дефект одной из них: у каждой свой "
+                f"вердикт (docs/VENUE_SPLIT.md)")
     if f.name == "stand_vs_paper":
         return (f"{head}. На одном отрезке стенд {_pct(d.get('stand_return'))}, бумажная книга "
                 f"{_pct(d.get('paper_return'))}; расхождение {_pct(f.value)} при границе "

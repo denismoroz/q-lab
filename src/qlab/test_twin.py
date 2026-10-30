@@ -83,8 +83,10 @@ def test_xsmom_experiment_and_base_make_the_two_candidate_grid_of_the_hand_made_
     by_hand = _load("research", "xsmom", "xsmom-research-nobull-retune.yaml")
     twin = result.spec
     assert twin.code_ref == by_hand.code_ref
-    for key in ("inner_code_ref", "base_params", "window", "objective", "score_costs"):
+    for key in ("inner_code_ref", "base_params", "window", "objective"):
         assert twin.params[key] == by_hand.params[key], key
+    # the hand-made twin scored with Hyperliquid's costs; this one is judged for Binance
+    assert twin.params["score_costs"] == {"taker_fee_bps": 5.0, "slippage_bps": 0.9}
     # The same two candidates; only the experiment's label differs (skip_bull by hand).
     assert list(twin.params["grid"]) == list(by_hand.params["grid"]) == ["gate"]
     assert list(twin.params["grid"]["gate"].values()) == list(
@@ -92,7 +94,7 @@ def test_xsmom_experiment_and_base_make_the_two_candidate_grid_of_the_hand_made_
     assert twin.params["refit_every"] == "M"
     assert (twin.data.source, twin.data.interval, twin.data.start, twin.data.end) == (
         by_hand.data.source, by_hand.data.interval, by_hand.data.start, by_hand.data.end)
-    assert twin.costs == xsmom_experiment.costs
+    assert (twin.costs.taker_fee_bps, twin.costs.slippage_bps) == (5.0, 0.9)  # Binance's row
     assert twin.idea_id == "xsmom-research-nobull-causal"
     assert twin.selects_causally
 
@@ -266,14 +268,15 @@ def test_the_twin_is_a_valid_spec_with_its_sources_and_survives_the_file(
 
 def test_the_twin_keeps_what_the_original_declares(frab_experiment, frab_base):
     twin = causal_twin(frab_experiment, base=frab_base).spec
-    assert twin.min_leg_notional == frab_experiment.min_leg_notional
+    assert twin.min_leg_notional == 5.0  # Binance's own (docs/VENUE_SPLIT.md), not the original's
     assert twin.simultaneous_legs == frab_experiment.simultaneous_legs
     assert twin.unexpressed_mechanisms == frab_experiment.unexpressed_mechanisms
     assert twin.data.interval == frab_experiment.data.interval
     assert twin.data.include_spot and twin.data.spot_prices == "own"
     assert twin.data.spot_source is None and twin.data.source == "binance"
     assert twin.data.end == frab_experiment.data.end
-    assert twin.costs == frab_experiment.costs
+    # a two-leg book on Binance pays the mean of the perpetual's and the spot's fee
+    assert (twin.costs.taker_fee_bps, twin.costs.slippage_bps) == (7.5, 0.9)
     assert twin.title.startswith(frab_experiment.title)
     assert "числа выбирает код раз в месяц" in twin.title
     assert twin.exploratory is None and twin.judged_from is None
@@ -334,11 +337,14 @@ def test_a_binance_spec_keeps_its_source_and_goes_back_to_the_archive_start():
     assert "already Binance" in twin.params_fixed_evidence
 
 
-def test_the_execution_venue_is_the_originals_when_the_spec_has_the_field(
+def test_the_twin_is_judged_for_binance_and_names_no_other_execution_venue(
         xsmom_base, xsmom_experiment):
+    """Venue split (docs/VENUE_SPLIT.md): the twin is the idea's Binance verdict, not a proxy for
+    the original's venue."""
     twin = causal_twin(xsmom_experiment, base=xsmom_base).spec
-    if "execution_venue" in StrategySpec.model_fields:
-        assert twin.execution_venue == "hyperliquid"
+    assert twin.execution_venue is None and twin.data.source == "binance"
+    assert (twin.costs.taker_fee_bps, twin.costs.slippage_bps) == (5.0, 0.9)
+    assert twin.min_leg_notional == 5.0
 
 
 # --------------------------------------------------------------------------

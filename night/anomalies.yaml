@@ -113,7 +113,9 @@ flags:
 
   unlisted_on_execution_venue:
     # Share of the profit, from the first day the execution venue's listing is known, earned on
-    # coins that venue did not list that day. Defined only for a run on another venue's data.
+    # coins that venue did not list that day. Defined only for a run judged for Hyperliquid on another
+    # venue's data (a run recorded before the venue split, docs/VENUE_SPLIT.md): a Binance run is judged
+    # for Binance and is not flagged for coins Hyperliquid lacks.
     share: 0.3
     provisional: true
     rationale: >

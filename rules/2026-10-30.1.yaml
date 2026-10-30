@@ -1,0 +1,137 @@
+# Binance and Hyperliquid are judged separately (docs/VENUE_SPLIT.md).
+#
+# Owner, 2026-10-30, on `xsmom-research-liq1m-causal` (+44.7% a year on Binance's history, Sharpe
+# 0.96; its second stage on Hyperliquid +13.2%, 2026 -15%) and on the proposed rule «профит с монет,
+# которых нет на площадке исполнения»: «нет на площадке исполнения - не совсем подходит - нужно
+# разделять на HL and Binance», then «да, делай раздельно Binance и HL». Until now a run on Binance's
+# history was a proxy for Hyperliquid (its spec said `execution_venue: hyperliquid`, with
+# Hyperliquid's costs and minimum leg) and the second stage repeated the idea on Hyperliquid; the
+# idea needed BOTH to pass and a reject at either killed it.
+#
+# What changes (and nothing else: the rule rows below are those of 2026-10-29.3, no threshold moves):
+#
+#   * a run is judged for the venue it is made on: a Binance run with Binance's data, coins,
+#     costs, minimum leg and facts about execution (a pass routes `needs-infrastructure`, because
+#     the lab has no Binance order adapter: a fact about our code, never a reject);
+#   * the idea's route is the BETTER of the two venues' routes (`venue_split.overall`): a pass on
+#     Hyperliquid is `paper` and the idea is `validated`; a pass on Binance alone is
+#     `needs-infrastructure` and the idea waits on the bench, named as such; an idea is rejected
+#     only when no venue passed and none still waits. A reject on one venue with a pass on the
+#     other is a legitimate, visible result; the reject keeps its own range of data.
+#   * Hyperliquid's short window still cannot feed the noise bar; its verdict is then the
+#     consistency check with Binance's history (`stage2_confirmation`, unchanged), taken on the
+#     coins Hyperliquid also lists (`venue_split.shared_coins_history`).
+#
+# A verdict stored under 2026-10-29.3 keeps its route; every open idea is measured again under this
+# version (`qlab restamp run --all`) and the report names each idea whose route or status moved.
+
+version: "2026-10-30.1"
+based_on: "2026-10-29.3"
+
+rules:
+  - id: net_edge_positive
+    stage: edge
+    metric: cap_ann_return
+    comparator: ">"
+    threshold: 0.0
+    fatal: true
+    rationale: >
+      Owner, 2026-10-03: «давай уберем пока 4% — и сделаем больше 0»; owner, 2026-10-29 («Да, и
+      правила»): the yearly return after real costs and full funding accrual, as a percent of the
+      strategy's own money (docs/CAPITAL_BASE.md), must be positive. Same line as before, the
+      base is the money the strategy started with and not the book's balance; summed, not
+      compounded, for a book that does not reinvest its profit. Whether it is distinguishable
+      from luck is shape_aware_edge's question.
+  - id: shape_aware_edge
+    stage: edge
+    metric: noise_cap_return_percentile
+    comparator: ">="
+    threshold: 0.99
+    fatal: true
+    near_margin: 0.1
+    fit_period: informational
+    on_short_forward: wait
+    rationale: >
+      Owner, 2026-10-29 («Да, и правила»): the share of matched noise books that the strategy's
+      yearly return on its own money beats. The noise books are read on the base and the
+      reinvest choice of the strategy they imitate, so both sides are on one base. Line (99%),
+      fit-period use and the wait on a short forward test are unchanged from 2026-10-24.2.
+
+venue_split:
+  overall: best_of_venues
+  shared_coins_history: true
+  rationale: >
+    Owner, 2026-10-30 («да, делай раздельно Binance и HL»): one verdict per venue, each judged on its
+    own data, coins, costs and minimum leg. The idea's route is the better of the two, so a pass on
+    one venue and a miss on the other shows as both, and the page and the report name which venue
+    passed. The consistency check reads Binance's history on the coins Hyperliquid also lists, so
+    that Hyperliquid's window is set against the same market it was run on.
+
+informational:
+  - id: ex_best_year_positive
+    metric: cap_ann_return_ex_best_year
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      Reading of 2026-10-27.2, now on the strategy's own money (owner, 2026-10-29): without its
+      best counted calendar year the strategy still earns above zero. Zero line unchanged.
+  - id: ex_best_year_4pct
+    metric: cap_ann_return_ex_best_year
+    comparator: ">="
+    threshold: 0.04
+    rationale: >
+      Sign A (2026-10-28.2), now on the strategy's own money (owner, 2026-10-29): without every
+      day of its best counted calendar year the strategy still earns at least 4% a year. The
+      line is the owner's grading scale, "acceptable: above 4% a year"
+      (seed/preregistration/2026-09-21-paper-bv2-trend.yaml). Not defined with fewer than two
+      counted years.
+  - id: years_positive_share
+    metric: cap_years_positive_share
+    comparator: ">="
+    threshold: 0.667
+    rationale: >
+      Sign B (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): at least two thirds
+      of the counted calendar years ended above zero. Not defined with no counted year.
+  - id: ex_best_1pct_positive
+    metric: cap_ann_return_ex_best_1pct
+    comparator: ">"
+    threshold: 0.0
+    rationale: >
+      Sign V (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): the annualised
+      return without the best 1% of days is above zero (summed, not compounded, for a book that
+      does not reinvest). Not defined when fewer than two bars exist.
+  - id: best_year_share_of_profit
+    metric: cap_best_year_share_of_profit
+    comparator: "<="
+    threshold: 0.5
+    rationale: >
+      Sign G (2026-10-28.2), on the strategy's own money (owner, 2026-10-29): the best counted
+      calendar year gives no more than half of the judged part's profit. Not defined with fewer
+      than two counted years, and not defined when the total profit is not positive.
+
+noise_power:
+  good_return: 0.07
+  min_power: 0.80
+  return_metric: cap_ann_return
+  percentile_metric: noise_cap_return_percentile
+  power_metric: noise_cap_power
+  rationale: >
+    Owner, 2026-10-29 («Да, и правила»): the power of the noise bar is asked of the bar the rules
+    read, on the base the rules read. good_return and min_power are those of 2026-10-24.2 (the
+    lower end of "good" on the owner's scale, «15%+ - отлично. 7-10 - хорошо. выше 4% -
+    приемлимо.», seed/preregistration/2026-09-21-paper-bv2-trend.yaml; the conventional 80%
+    power): 7% a year is now 7% of the strategy's own money. The noise books are ranked on
+    `cap_ann_return` (percentile_metric is the rule whose threshold is the bar), and the power is
+    stored as `noise_cap_power`, beside the stand's `noise_power`, which new runs do not drive any
+    verdict with.
+
+stage2_confirmation:
+  alert_percentile_from: night/decay.yaml
+  total_metric: cap_total_return
+  rationale: >
+    Owner, 2026-10-27, «делай все» -- proof comes from stage 1's long history, stage 2 is a
+    consistency check; owner, 2026-10-29 («Да, и правила»): the positivity rule reads the stage 2
+    total on the strategy's own money (`cap_total_return`), the same figure the segments of stage
+    1's history are compared with (qlab.pipeline.confirm). A run without it (the base is
+    undefined) confirms nothing. The alarm percentile is still read from night/decay.yaml, not
+    copied.

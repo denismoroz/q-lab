@@ -297,7 +297,8 @@ def test_frozen_stretches_need_the_minimum_run_in_a_row() -> None:
 def test_the_listing_flag_reads_the_execution_venues_list(monkeypatch) -> None:
     from qlab.anomalies import toolkit
 
-    run = toy.toy_run()
+    # judged for Hyperliquid on Binance's data (a run recorded before the venue split)
+    run = toy.toy_run(execution_venue="hyperliquid")
     dec = decompose(run)
     listed = pd.DataFrame(True, index=run.panel.prices.index, columns=run.panel.prices.columns)
     listed["PUMP"] = False
@@ -314,3 +315,19 @@ def test_the_listing_flag_reads_the_execution_venues_list(monkeypatch) -> None:
     assert scan.listing_flag(None, run, dec, CFG).state == fl.UNDEFINED
     on_venue = toy.toy_run(venue="hyperliquid")
     assert "самой биржи исполнения" in scan.listing_flag(None, on_venue, dec, CFG).reason
+
+
+def test_a_binance_run_is_judged_for_binance_and_not_flagged_for_coins_hyperliquid_lacks(
+        monkeypatch) -> None:
+    """Venue split (docs/VENUE_SPLIT.md): the flag reads the listing of the venue the run is
+    judged for, so a Binance run with no execution venue is never flagged against Hyperliquid's."""
+    from qlab.anomalies import toolkit
+
+    run = toy.toy_run()  # Binance data, no execution venue: judged for Binance
+    listed = pd.DataFrame(False, index=run.panel.prices.index, columns=run.panel.prices.columns)
+    monkeypatch.setattr(toolkit, "listed_mask", lambda session, stored: listed)
+
+    flag = scan.listing_flag(None, run, decompose(run), CFG)
+
+    assert flag.state == fl.UNDEFINED and not flag.fired
+    assert "своей биржи (binance)" in flag.reason

@@ -44,6 +44,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab import venue_split
 from qlab.card_fields import param_at
 from qlab.costs import DEVIATION_KEY
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
@@ -925,8 +926,9 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     exactly those variants and neither a base pair nor the declared lists are looked for.
     `honest_from` is (a day, where the card says it) -- the first day the card's data honestly
     exists: a hand-picked coin list is judged from it (`chosen_list`, `listed_at`), and a card
-    without a list starts the data no earlier. `execution_venue` names the venue the orders
-    would go to when the card's data is a proxy for it."""
+    without a list starts the data no earlier. `execution_venue` is kept for the callers that
+    pass it and is ignored: since the venue split (docs/VENUE_SPLIT.md) the twin is judged for
+    Binance itself and names no other venue."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
@@ -987,7 +989,8 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         f"Causal twin of {spec.idea_id}: the numbers it trades are "
         f"chosen by code, every {PERIODS[refit_every][0]}, from returns realised before the "
         f"choice ({grid.differs}); the data is Binance's history, a proxy for {spec.data.source}'s "
-        "market, with the original's costs and minimum leg.",
+        "market, judged for Binance itself: Binance's costs and minimum leg and Binance's facts "
+        "about execution (docs/VENUE_SPLIT.md).",
     ]
     if spec.required_instruments and spec.data.source != TWIN_VENUE and venue_names is None:
         notes.append("The required instruments keep the original venue's names (the Binance "
@@ -1033,12 +1036,12 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "instruments_chosen_at": None if chosen is None else chosen.chosen_at,
         "differs_from_source": [*spec.differs_from_source, *notes],
     }
-    if "execution_venue" in StrategySpec.model_fields:
-        update["execution_venue"] = execution_venue or getattr(
-            spec, "execution_venue", None) or (
-            spec.data.source if spec.data.source != TWIN_VENUE else None)
     update["data"] = data.model_dump(mode="python")
     twin = StrategySpec.model_validate({**spec.model_dump(mode="python"), **update})
+    # Venue split (docs/VENUE_SPLIT.md, owner 2026-10-30): the twin is the idea's verdict for
+    # Binance, on Binance's data with Binance's costs, minimum leg and facts about execution; it is
+    # no longer a proxy for the original's venue, so it names no `execution_venue`.
+    twin = venue_split.binance_version(twin)
     return TwinResult(
         twin, None, grid.kind, tuple(grid.candidates), spec.idea_id,
         instruments=() if chosen is None else chosen.names,

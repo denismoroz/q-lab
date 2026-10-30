@@ -50,7 +50,7 @@ params:
   window: expanding
   objective: sharpe_net
   score_costs:
-    taker_fee_bps: 5.25
+    taker_fee_bps: 7.5
     slippage_bps: 0.9
 data:
   source: binance
@@ -69,14 +69,13 @@ data:
   - SOL
   - AVAX
 costs:
-  taker_fee_bps: 5.25
+  taker_fee_bps: 7.5
   slippage_bps: 0.9
-min_leg_notional: 10.0
+min_leg_notional: 5
 # The strategy's own money, the base of every percent and the sum step 4 of the ladder
 # compares the capital a run needed with (docs/LADDER.md; cited in sources).
 strategy_capital_usd: 257
 simultaneous_legs: 2
-execution_venue: hyperliquid
 unexpressed_mechanisms: []
 differs_from_source:
 - 'Causal twin of bv2-research-headroom: the numbers it trades are chosen by code, every month, from returns
@@ -88,6 +87,12 @@ differs_from_source:
   and would know which coins survived if applied to the history before it (survivorship), so the twin
   is judged only from 2025-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08 are warm-up
   for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
 noise_universe: held
 measure_hedge_timing: true
 required_instruments:
@@ -124,7 +129,8 @@ params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retu
   list as point-in-time (docs/FIT_VS_FORWARD.md).'
 judged_from: '2025-06-01'
 sources:
-  "strategy_capital_usd": "the spec's own parameter base_params.capital_usd = 257: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  strategy_capital_usd: 'the spec''s own parameter base_params.capital_usd = 257: seed/prod_params/2026-10-02-b2.json
+    (frab.db strategies.params_json, read-only export)'
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
     месяц»'
@@ -183,17 +189,25 @@ sources:
     documented day the list of bv2-research-headroom existed'
   judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
     = 2025-06-01); the days before are warm-up'
-  score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
-    both legs move by the same amount'
-  "costs.differs_from_table": "5.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
-  costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
-    both legs move by the same amount'
-  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
-    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
-  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
-    б.п. на ногу (taker 3.5 + проскальзывание)»'
-  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
-    min_order_usd
+  score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5.0, Binance USDT-M futures'' MIN_NOTIONAL
+    of the ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); BTC (50) and five contracts
+    (20) differ and are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
   regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'

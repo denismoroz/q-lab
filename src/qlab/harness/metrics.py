@@ -589,7 +589,8 @@ def capital_metrics(result: RunResult) -> dict[str, float]:
     return out
 
 
-def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float) -> float:
+def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float,
+                    floors: Mapping[str, float] | None = None) -> float:
     """Minimum book capital at which the strategy is executable AS SPECIFIED.
 
     Deliberately NOT a coverage curve and NOT a "runs from $X with degraded
@@ -635,6 +636,13 @@ def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float) -> float:
             without knowing the venue's floor is not a real number, so
             omitting this argument is a `TypeError`, not a free pass.
 
+        floors: the minimum of each instrument where the venue states one per
+            instrument (Binance: BTC 50, five contracts 20, the rest 5;
+            `qlab.venues.config.leg_floors`, docs/VENUE_SPLIT.md). The capital is then
+            the largest of `floor / |weight|` over every non-zero cell, which is the
+            formula above when every instrument has the same floor. An instrument
+            that has no entry takes `min_leg_notional`.
+
     Raises:
         ValueError: `min_leg_notional` is not positive, or `weights` never
             takes a non-zero position anywhere (the floor is undefined —
@@ -642,6 +650,17 @@ def min_capital_usd(weights: pd.DataFrame, min_leg_notional: float) -> float:
     """
     if min_leg_notional <= 0:
         raise ValueError(f"min_leg_notional must be > 0, got {min_leg_notional}")
+    if floors:
+        cells = np.abs(weights.to_numpy(dtype=float))
+        per_column = np.array([float(floors.get(str(c), min_leg_notional))
+                               for c in weights.columns])
+        held = np.where(np.isnan(cells) | (cells <= ZERO_WEIGHT_TOL), np.nan, cells)
+        if np.isnan(held).all():
+            raise ValueError(
+                "weights never take a non-zero position anywhere; min_capital_usd "
+                "is undefined for an all-flat book"
+            )
+        return float(np.nanmax(per_column[np.newaxis, :] / held))
 
     magnitudes = np.abs(weights.to_numpy(dtype=float))
     magnitudes = magnitudes[~np.isnan(magnitudes)]

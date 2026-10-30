@@ -235,11 +235,8 @@ def test_the_two_leg_binance_data_proxies_say_their_orders_go_to_hyperliquid() -
     recovery mechanism, and they route `needs-more-data` for ever."""
     repo = Path(__file__).resolve().parents[3]
     proxies = [
-        "specs/bv2-binance.yaml",
         "specs/research/bv2/bv2-research-btceth.yaml",
-        "specs/research/bv2/bv2-research-headroom-retune-binance.yaml",
         "specs/research/bv2/bv2-research-partial-hedge.yaml",
-        "specs/research/bv2/bv2-research-shared-pool.yaml",
         "specs/research/bv2/bv2-research-short-window.yaml",
         *(p.relative_to(repo).as_posix()
           for p in sorted((repo / "specs/bv2-owner-ideas").glob("*.yaml"))),
@@ -248,6 +245,41 @@ def test_the_two_leg_binance_data_proxies_say_their_orders_go_to_hyperliquid() -
         spec = load_spec(repo / name)
         assert spec.data.source == "binance" and spec.simultaneous_legs == 2, name
         assert spec.execution_venue == "hyperliquid", name
+
+
+def test_the_open_binance_specs_are_judged_for_binance_with_binances_numbers() -> None:
+    """Venue split (docs/VENUE_SPLIT.md, owner 2026-10-30): a spec on Binance's history names no
+    other venue for its orders, and its costs, minimum leg and facts about execution are Binance's.
+    Before the split these were the specs that called Binance a DATA proxy for Hyperliquid."""
+    from qlab import costs
+    from qlab.costs import order_venue
+
+    repo = Path(__file__).resolve().parents[3]
+    names = [
+        "specs/bv2-binance.yaml",
+        "specs/research/bv2/bv2-research-headroom-causal.yaml",
+        "specs/research/bv2/bv2-research-headroom-retune-binance.yaml",
+        "specs/research/bv2/bv2-research-shared-pool.yaml",
+        "specs/research/bv2/bv2-research-top10-pool.yaml",
+        "specs/trend-binance-cap-gated-causal.yaml",
+        "specs/research/trend/trend-research-flat-choice.yaml",
+        "specs/research/trend/trend-research-gate-hl-causal.yaml",
+        "specs/research/xsmom/xsmom-research-liq1m-causal.yaml",
+        "specs/research/xsmom/xsmom-research-nobull-causal.yaml",
+    ]
+    row = costs.venue_costs("binance")
+    for name in names:
+        spec = load_spec(repo / name)
+        assert spec.data.source == "binance" and spec.execution_venue is None, name
+        assert order_venue(spec) == "binance", name
+        assert spec.min_leg_notional == 5.0, name
+        assert costs.problems(spec) == [], name
+        assert spec.costs.taker_fee_bps == (row.two_leg_taker_fee_bps if spec.simultaneous_legs == 2
+                                            else row.taker_fee_bps), name
+        score = spec.params.get("score_costs")
+        if score is not None:  # a retune scores its candidates with the spec's own costs
+            assert score == {"taker_fee_bps": spec.costs.taker_fee_bps,
+                             "slippage_bps": spec.costs.slippage_bps}, name
 
 
 def test_the_binance_spot_strategy_runs_at_the_owners_three_budgets() -> None:

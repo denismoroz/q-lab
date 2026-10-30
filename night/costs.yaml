@@ -36,7 +36,19 @@ venues:
   binance:
     taker_fee_bps: 5.0
     slippage_bps: 0.9
+    # A book that holds a spot leg against a perpetual on Binance (Bv2, the hedged FRAB books)
+    # pays the perpetual's fee on one leg and the spot's on the other, both moving together, so the
+    # fee of its turnover is their mean (owner, 2026-10-30, on the venue split: «Binance row must
+    # cover spot and perp legs»). A spec with `simultaneous_legs` of 2 or more on Binance takes
+    # this number (qlab.costs); the slippage is the same row's.
+    two_leg_taker_fee_bps: 7.5
     sources:
+      two_leg_taker_fee_bps: >-
+        derived: (5.0 + 10.0) / 2; the perpetual's 5 bps is the number above, Binance spot's
+        taker for a regular user is 0.100% (10 bps), the Fees page
+        https://www.binance.com/en/fee/schedule (read 2026-10-25, recorded at
+        docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not applied, it needs BNB
+        on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the two legs
       taker_fee_bps: >-
         docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular user,
         0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231

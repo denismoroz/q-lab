@@ -327,8 +327,8 @@ def test_data_from_the_execution_venue_has_no_second_stage_to_pass(world) -> Non
     runs = state["implemented"][0]["runs"]
     assert runs["stage2-spec"]["action"] == "skipped"
     assert "hyperliquid" in runs["stage2-spec"]["reason"]
-    # the causal version runs on Binance's history as a proxy for the card's venue
-    assert world.evaluated["toy-idea-causal"].execution_venue == "hyperliquid"
+    # the causal version is the idea's verdict for Binance, not a proxy for the card's venue
+    assert world.evaluated["toy-idea-causal"].execution_venue is None
 
 
 def test_only_a_survivor_goes_to_the_second_stage(world) -> None:

@@ -509,6 +509,37 @@ def test_an_idea_needs_both_stages_to_survive(stage1: str, stage2_route: str | N
     assert stage2.combine(stage1, stage2_route, config=CONFIG).route == expected
 
 
+@pytest.mark.parametrize("binance,hyperliquid,expected", [
+    # the idea's route is the better of the two venues' routes (rules 2026-10-30.1)
+    ("needs-infrastructure", "paper", "paper"),            # passed on both: Hyperliquid's route
+    ("needs-infrastructure", "shelf", "shelf"),
+    ("needs-infrastructure", "reject", "needs-infrastructure"),   # Binance alone, not a reject
+    ("paper", "reject", "needs-infrastructure"),                  # a run recorded before the split
+    ("needs-infrastructure", "needs-forward", "needs-infrastructure"),
+    ("needs-infrastructure", "not-evaluable", "needs-infrastructure"),
+    ("needs-infrastructure", "error", "needs-infrastructure"),
+    ("needs-infrastructure", None, "needs-infrastructure"),
+    ("needs-forward", "paper", "needs-forward"),           # Binance has not decided: nothing passed
+    ("needs-forward", "reject", "needs-forward"),          # a miss on Hyperliquid kills nothing
+    ("reject", "paper", "reject"),                         # a Binance reject is final, as before
+    ("not-evaluable", "paper", "not-evaluable"),
+])
+def test_the_idea_takes_the_better_of_its_two_venues(binance: str, hyperliquid: str | None,
+                                                     expected: str) -> None:
+    combined = stage2.combine(binance, hyperliquid, config=CONFIG, best_of_venues=True)
+    assert combined.route == expected
+    if expected == "needs-infrastructure" and hyperliquid != "needs-infrastructure":
+        assert "Binance" in combined.reason  # the reason names the venue the idea stands on
+
+
+def test_a_pass_on_binance_alone_is_never_a_reject_and_names_the_missing_adapter() -> None:
+    combined = stage2.combine("needs-infrastructure", "reject", config=CONFIG,
+                              stage2_reason="positivity rule failed", best_of_venues=True)
+    assert combined.route == "needs-infrastructure"
+    assert "passed on Binance" in combined.reason and "Hyperliquid rejected" in combined.reason
+    assert "no order adapter" in combined.reason
+
+
 def test_only_survivors_of_stage_1_go_on() -> None:
     assert [stage2.survives(r, CONFIG) for r in
             ("paper", "shelf", "needs-infrastructure", "needs-forward", "reject",
@@ -807,7 +838,7 @@ def _stand_without_power(monkeypatch, history: confirm.Stage1History | Exception
 
     monkeypatch.setattr("qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar", bar)
 
-    def loader(session, spec, trial_id):
+    def loader(session, spec, trial_id, **_ignored):
         calls.append((spec.idea_id, trial_id))
         if isinstance(history, Exception):
             raise history
@@ -977,3 +1008,29 @@ def test_a_second_stage_never_writes_into_an_idea_that_already_has_its_id(
         assert child_id_taken(session, PARENT)
     lines = stage2.report_lines({"route": "paper"}, dataclasses.asdict(result))
     assert "уже занято другой идеей" in lines[0]
+
+
+def test_the_report_names_the_venue_an_idea_passed_on_when_the_other_one_did_not() -> None:
+    """Rules 2026-10-30.1 (docs/VENUE_SPLIT.md): a pass on Binance alone is not «пройти оба»."""
+    miss = {"route": "reject", "combined_route": "needs-infrastructure", "parent_status": "bench",
+            "data_end": "2026-10-27"}
+    text = stage2._combined_ru("needs-infrastructure", miss)
+    assert "прошла на Binance" in text and "адаптера Binance у нас нет" in text
+    assert "на Hyperliquid отвергнута" in text and "воскресить" in text
+    assert "Пройти надо обоим" not in text
+    waits = {"route": "needs-forward", "combined_route": "needs-infrastructure",
+             "parent_status": "bench"}
+    assert "на Hyperliquid ещё не решила" in stage2._combined_ru("needs-infrastructure", waits)
+
+
+def test_the_confirmation_line_says_which_coins_of_binances_history_were_used() -> None:
+    base = {"status": "confirmed", "percentile": 22.0, "alert_percentile": 7.0, "segments": 1768,
+            "independent_segments": 3, "window_days": 666, "stage1_trial_id": 162995,
+            "stage1_from": "2020-02-29", "stage1_to": "2026-10-28", "rules_version": "2026-10-30.1",
+            "total_return": 0.24}
+    shared = "\n".join(stage2._confirmation_ru({**base, "stage1_coins_shared": 216,
+                                                 "stage1_coins_total": 923}))
+    assert "216 из 923 колонок" in shared and "есть и на Hyperliquid" in shared
+    whole = "\n".join(stage2._confirmation_ru({**base, "stage1_whole_history_reason":
+                                                 "the second venue lists none of stage 1's coins"}))
+    assert "история Binance взята целиком" in whole and "lists none" in whole

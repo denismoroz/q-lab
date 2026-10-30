@@ -98,13 +98,53 @@ class Stage1History:
     """The same bars as shares of the strategy's own money (None: not known, read the old way)."""
     reinvested: bool = True
     """The strategy's declared choice: True compounds the segments, False sums them."""
+    coins_shared: int | None = None
+    """How many of stage 1's columns the second venue also lists, when the history was taken on
+    those alone (rules from 2026-10-30.1, `RuleSet.venue_split.shared_coins_history`); None: the
+    whole history."""
+    coins_total: int | None = None
+    whole_history_reason: str | None = None
+    """Why the history is the whole of stage 1's, when the shared coins were asked for and it
+    could not be taken on them."""
 
 
-def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
+def _run_on_shared_coins(spec, panel, venue_names):
+    """Stage 1's strategy on the columns of its panel the second venue also lists, as (the run,
+    shared, total), or (None, 0, total, why) when that cannot be computed."""
+    from qlab.pipeline.stage2 import venue_name
+
+    names = venue_names() if callable(venue_names) else venue_names
+    columns = [str(c) for c in panel.prices.columns]
+    keep = [c for c in columns if venue_name(c, names) is not None]
+    if len(keep) == len(columns):
+        return decay.run_on_panel(spec, panel), len(keep), len(columns), None
+    if not keep:
+        return None, 0, len(columns), "the second venue lists none of stage 1's coins"
+    try:
+        run = decay.run_on_panel(spec, panel.restrict(keep))
+    except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary; the whole history stands
+        return None, len(keep), len(columns), (
+            f"the strategy could not be run on the {len(keep)} shared coins: "
+            f"{type(exc).__name__}: {exc}")
+    if not (run.net_return != 0.0).any():
+        return None, len(keep), len(columns), (
+            f"the strategy held nothing on the {len(keep)} shared coins")
+    return run, len(keep), len(columns), None
+
+
+def load_stage1_history(session, spec, trial_id: int | None, *,
+                        venue_names=None) -> Stage1History:
     """Stage 1's forward net returns: its strategy run again on the data snapshot its
     trial was decided on. Writes nothing and downloads nothing. The noise bar's power is the one
     on the strategy's own money (`noise_cap_power`, rules from 2026-10-29.2) when the trial
-    has it, else the stand's `noise_power`."""
+    has it, else the stand's `noise_power`.
+
+    `venue_names` (a collection of the second venue's names, or a function returning it) asks for
+    the history on the coins the second venue also lists (rules from 2026-10-30.1,
+    docs/VENUE_SPLIT.md): Hyperliquid's window is then set against the same market it was run on,
+    not against Binance coins Hyperliquid never listed. When that cannot be computed (the venue
+    lists none of the coins, the strategy fails or holds nothing on them) the whole history
+    stands, and `whole_history_reason` says why."""
     from qlab.data.snapshot import load_snapshot
     from qlab.registry.models import Trial
 
@@ -123,8 +163,15 @@ def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
     except (OSError, ValueError) as exc:
         raise Stage1HistoryMissing(
             f"stage 1's data snapshot {trial.snapshot_id} cannot be read: {exc}") from exc
+    shared = total = reason = None
+    run = None
     try:
-        run = decay.run_on_panel(spec, panel)
+        if venue_names is not None:
+            run, shared, total, reason = _run_on_shared_coins(spec, panel, venue_names)
+            if run is None:
+                shared = None
+        if run is None:
+            run = decay.run_on_panel(spec, panel)
     except decay.StandHistoryMissing as exc:
         raise Stage1HistoryMissing(str(exc)) from exc
     since = pd.Timestamp(spec.params_fixed_at, tz="UTC")
@@ -133,7 +180,8 @@ def load_stage1_history(session, spec, trial_id: int | None) -> Stage1History:
     stored = trial.metrics or {}
     power = stored.get("noise_cap_power", stored.get("noise_power"))
     return Stage1History(trial_id, forward, None if power is None else float(power),
-                         capital_return=capital, reinvested=run.reinvested)
+                         capital_return=capital, reinvested=run.reinvested,
+                         coins_shared=shared, coins_total=total, whole_history_reason=reason)
 
 
 # --------------------------------------------------------------------------
@@ -212,6 +260,12 @@ class Confirmation:
     """The power from which the noise comparison decides (rules `noise_power`)."""
     noise_good_return: float | None = None
     """The yearly return of the "good" strategy the power is asked about."""
+    stage1_coins_shared: int | None = None
+    """How many of stage 1's coins the second venue also lists, when stage 1's history was taken on
+    those alone (rules from 2026-10-30.1)."""
+    stage1_coins_total: int | None = None
+    stage1_whole_history_reason: str | None = None
+    """Why stage 1's whole history was used although the shared coins were asked for."""
 
 
 def read_alert_percentile(path: str) -> float | None:
@@ -293,7 +347,9 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
     except Exception as exc:  # noqa: BLE001 - the run must still be recorded, as it was before
         return not_applied(f"stage 1's history could not be computed: "
                            f"{type(exc).__name__}: {exc}", alert_percentile=alert)
-    known = dict(alert_percentile=alert, stage1_trial_id=history.trial_id)
+    known = dict(alert_percentile=alert, stage1_trial_id=history.trial_id,
+                 stage1_coins_shared=history.coins_shared, stage1_coins_total=history.coins_total,
+                 stage1_whole_history_reason=history.whole_history_reason)
     # Stage 1's own power is not required: a stage 1 survivor PASSED its noise comparison
     # (an unpowered failure routes needs-forward, which is not in STAGE1_CONFIRMS), and low
     # power only lets good strategies fail -- it does not let empty ones pass a 99% bar.
@@ -339,6 +395,8 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
         on_capital=on_capital, stage1_trial_id=history.trial_id,
         stage1_from=seg.history_from.isoformat() if seg.history_from else None,
         stage1_to=seg.history_to.isoformat() if seg.history_to else None,
+        stage1_coins_shared=history.coins_shared, stage1_coins_total=history.coins_total,
+        stage1_whole_history_reason=history.whole_history_reason,
         noise_power=float(power), stage1_noise_power=history.noise_power,
         noise_min_power=power_rule.min_power, noise_good_return=power_rule.good_return,
         rules_version=ruleset.version)
@@ -348,6 +406,9 @@ def review_stage2(ctx: RoutingContext, *, stage1_route: str,
         "stage1_on_capital": 1.0 if on_capital else 0.0,
         "stage1_trial_id": float(history.trial_id), "stage1_alert_percentile": alert,
         "stage1_window_days": float(days)}
+    if history.coins_shared is not None and history.coins_total is not None:
+        numbers["stage1_coins_shared"] = float(history.coins_shared)
+        numbers["stage1_coins_total"] = float(history.coins_total)
     if failed:
         what = []
         if POSITIVE_RULE in failed:

@@ -72,6 +72,13 @@ class StoredRun:
     def venue(self) -> str:
         return self.spec.data.source
 
+    @property
+    def judged_for(self) -> str:
+        """The venue this run is judged for: where its orders would go (`execution_venue`), else the
+        venue of its data. Since the venue split (docs/VENUE_SPLIT.md) a run on Binance's data is
+        judged for Binance, not as a proxy for Hyperliquid."""
+        return getattr(self.spec, "execution_venue", None) or self.spec.data.source
+
     def part(self, weights: pd.DataFrame | None = None) -> tuple[MarketPanel, pd.DataFrame]:
         """The judged rows of the panel and of `weights` (the stored book by default)."""
         from qlab.pipeline.evaluate import _slice_rows

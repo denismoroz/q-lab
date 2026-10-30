@@ -127,6 +127,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
                        else ruleset.holdout_share or base.holdout_share),
         noise_power=ruleset.noise_power or base.noise_power,
         stage2_confirmation=ruleset.stage2_confirmation or base.stage2_confirmation,
+        venue_split=ruleset.venue_split or base.venue_split,
         informational=list({r.id: r for r in (*base.informational, *ruleset.informational)}
                            .values()),
         regime_coverage_days=(ruleset.regime_coverage_days

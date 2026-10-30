@@ -52,11 +52,11 @@ params:
       window: expanding
       objective: sharpe_net
       score_costs:
-        taker_fee_bps: 3.5
+        taker_fee_bps: 5
         slippage_bps: 0.9
     overlays: []
     costs:
-      taker_fee_bps: 3.5
+      taker_fee_bps: 5
       slippage_bps: 0.9
   grid:
     overlay:
@@ -112,7 +112,7 @@ params:
   window: expanding
   objective: sharpe_net
   score_costs:
-    taker_fee_bps: 3.5
+    taker_fee_bps: 5
     slippage_bps: 0.9
 data:
   source: binance
@@ -122,9 +122,9 @@ data:
   start: '2019-09-08'
   end: '2026-10-26'
 costs:
-  taker_fee_bps: 3.5
+  taker_fee_bps: 5
   slippage_bps: 0.9
-min_leg_notional: 10.0
+min_leg_notional: 5
 # The strategy's own money, the base of every percent and the sum step 4 of the ladder
 # compares the capital a run needed with (docs/LADDER.md; cited in sources).
 strategy_capital_usd: 3000
@@ -138,6 +138,12 @@ differs_from_source:
 - 'Overlay variant of trend-binance-cap-gated-causal (qlab.overlay_variants, docs/OVERLAYS.md): the same
   strategy with vol_target applied to its target weights; the strategy''s own numbers are untouched. The
   numbers of the overlays are chosen by code every month from the past only.'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
+  where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
+  a run that passes every rule routes needs-infrastructure because the lab has no Binance order adapter.
+  Text above that speaks of the original''s or Hyperliquid''s costs and minimum leg describes the spec
+  as it was before that day.'
 noise_universe: panel
 measure_hedge_timing: false
 params_fixed_at: '2020-11-01'
@@ -149,7 +155,8 @@ params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retu
   none chosen by looking at the data it is judged on. What this does not prove: the family itself (which
   overlays and which settings are offered) was written by people who had seen the market.'
 sources:
-  "strategy_capital_usd": "the spec's own parameter base_params.inner_params.base_params.inner_params.capital_usd = 3000: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)"
+  strategy_capital_usd: 'the spec''s own parameter base_params.inner_params.base_params.inner_params.capital_usd
+    = 3000: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)'
   base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
     «раз в неделю/день или месяц»'
   base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
@@ -198,16 +205,23 @@ sources:
     every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке:
     книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва» -- the regimes the source
     says trend earns in; nothing is claimed for flat'
-  base_params.inner_params.score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line
-    32: «taker 3.5 + проскальзывание»'
-  "costs.differs_from_table": "3.5 + 0.9 bp are not the binance row of night/costs.yaml (5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»"
-  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
-  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md
-    line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
-  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
-    б.п. на ногу (taker 3.5 + проскальзывание)»'
-  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
-    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  base_params.inner_params.score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M
+    perpetual taker, a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
+    (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not be read, the article
+    gives the rate as its example)'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular
+    user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line
+    58: Binance has no measurement of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md
+    line 32) is used and marked unmeasured'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5.0, Binance USDT-M futures'' MIN_NOTIONAL
+    of the ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); BTC (50) and five contracts
+    (20) differ and are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
   regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
     on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
     — заявка на «crisis alpha» подтверждается едва»'
@@ -218,18 +232,25 @@ sources:
   inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
   base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
     it'
-  base_params.costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 +
-    проскальзывание»'
-  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line
-    32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  base_params.costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker,
+    a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has
+    no measurement of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md
+    line 32) is used and marked unmeasured'
   grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
     месяц»'
   window: 'docs/RETUNE.md (expanding window: no number introduced)'
   objective: docs/RETUNE.md (Sharpe after costs)
-  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
-  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
-    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular
+    user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
 regime_claim:
   bull: earns

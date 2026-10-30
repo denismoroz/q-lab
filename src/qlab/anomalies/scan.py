@@ -200,14 +200,21 @@ def run_flags(dec: Decomposition, cfg: Config) -> tuple[list[fl.FlagResult], dic
 
 def listing_flag(session: Session, stored: StoredRun, dec: Decomposition, cfg: Config
                  ) -> fl.FlagResult:
-    """The share of the profit earned on coins the execution venue (Hyperliquid, where the lab
-    trades) does not list, from the first day its listing is known. Only for a run whose data
-    is another venue's."""
+    """The share of the profit earned on coins the venue the run is judged for does not list,
+    from the first day its listing is known. A run is judged for its own venue (docs/VENUE_SPLIT.md,
+    owner 2026-10-30): a Binance run is not flagged for coins Hyperliquid lacks, that is the other
+    venue's verdict and `venue_divergence` reads the difference. The flag is for a run whose data
+    is another venue's but which is judged for Hyperliquid (a run recorded before the split)."""
     from qlab.anomalies import toolkit
 
     line = cfg.flag("unlisted_on_execution_venue")
-    if stored.venue == "hyperliquid":
+    if stored.judged_for == "hyperliquid" and stored.venue == "hyperliquid":
         return fl._undefined(line.name, "прогон идёт на данных самой биржи исполнения")
+    if stored.judged_for != "hyperliquid":
+        return fl._undefined(
+            line.name, f"прогон судится для своей биржи ({stored.judged_for}): монеты, которых нет "
+                       "на другой бирже, — не его дефект; разницу двух бирж показывает "
+                       "признак «две биржи показывают разное»")
     mask = toolkit.listed_mask(session, stored)
     if mask is None:
         return fl._undefined(line.name, "в реестре нет снимка биржи исполнения со списком монет")

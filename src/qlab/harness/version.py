@@ -56,13 +56,20 @@ History:
   version, without moving a number: the cost table (`night/costs.yaml`) is the default of
   second stages and generated specs (their costs equal the old defaults for Hyperliquid, 4.5 + 0.9
   bp), and the day the numbers of a generated or researched spec were fixed is named by code.
+* `2026-10-30.1` -- the venue split (docs/VENUE_SPLIT.md; owner 2026-10-30: «да, делай раздельно
+  Binance и HL»). A run on Binance's history is judged for Binance: Binance's costs (5 bp, the
+  two-leg mean 7.5 bp for a book with a spot leg), Binance's minimum leg per contract (a book's
+  minimum capital reads BTC 50, five contracts 20, the rest 5), Binance's facts about execution
+  (a pass routes `needs-infrastructure`); the second stage takes Hyperliquid's own minimum leg;
+  the idea's route is the better of the two venues (rules 2026-10-30.1); Hyperliquid's consistency
+  check reads Binance's history on the coins Hyperliquid also lists.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-10-29.3"
+STAND_VERSION = "2026-10-30.1"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 
