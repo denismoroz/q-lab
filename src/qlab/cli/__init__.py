@@ -1403,14 +1403,37 @@ def _code_request(request_id: str):
 
 @code_app.command("list")
 def code_list() -> None:
-    """Every code request and where it stands."""
+    """Every code request and where it stands: its kind, its plan, the owner's open questions."""
     from qlab.agents import programmer as prog
 
     for r in prog.load_queue():
-        typer.echo(f"{r.id}  {r.repo:5s} {r.status:8s} attempts {r.attempts}  {r.what}"
-                   + (f"  [{r.branch}]" if r.branch else ""))
+        typer.echo(f"{r.id}  {r.repo:5s} {r.status:8s} attempts {r.attempts}  "
+                   f"{prog.request_kind(r):9s} {r.what}" + (f"  [{r.branch}]" if r.branch else ""))
+        if r.plan_file:
+            typer.echo(f"    plan: {r.plan_file} ({r.plan_tokens:,} planner tokens)")
+        for question in r.questions:
+            typer.echo(f"    QUESTION for the owner: {question}  "
+                       f"(answer: qlab code answer {r.id} --text \"...\")")
+        if r.env_failures:
+            typer.echo(f"    {len(r.env_failures)} tests fail on the untouched base too "
+                       "(the environment's, not the agent's)")
         for problem in r.problems + [f"review: {g}" for g in r.review]:
             typer.echo(f"    {problem.splitlines()[0]}")
+
+
+@code_app.command("answer")
+def code_answer(request_id: str = typer.Argument(...),
+                text: str = typer.Option(..., "--text", help="The owner's answer")) -> None:
+    """THE OWNER'S ANSWER to the question the planner stopped a request with: the request goes
+    back to the queue with the answer for both levels and a clean attempt count."""
+    prog, queue, req = _code_request(request_id)
+    try:
+        prog.answer(req, text)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: queued with your answer")
 
 
 @code_app.command("request")

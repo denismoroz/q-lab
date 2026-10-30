@@ -4,16 +4,32 @@
 # агента-программиста».
 #
 # It takes code requests (the research director's `code_requests`, approved with its
-# directions, or the owner's `qlab code request`), one a night, and writes them on a branch
-# `agent/<id>` in a separate worktree. Code then checks the changed paths, runs the tests and
+# directions, or the owner's `qlab code request`), `per_night` of them a night (the ones that
+# give the generator a new block first), and writes them on a branch `agent/<id>` in a separate
+# worktree. Code then checks the changed paths, runs the tests and
 # asks a reviewer agent; a request that passes is committed ON ITS BRANCH and waits for the
 # owner. Nothing reaches a main branch, and nothing is pushed, without `qlab code merge <id>`
 # -- the owner's command.
 enabled: true
-model: sonnet        # docs/PLAN.md: the agents that write code run on sonnet
+model: sonnet        # the WRITER (docs/PLAN.md: the agents that write code run on sonnet)
 reviewer_model: sonnet
 max_turns: 80        # the agent runs the tests itself as it works: that takes turns
-per_night: 1
+# Owner, 2026-10-30: «переноси токены на программиста. или даже подключай 2 если нужно. может
+# нужно сделать программиста 2х уровневым - опус делает план а sonnet - пишет. так как сейчас
+# какаято- чехарда.» Of 58 ideas of the last run 55 were the researchers' variants of the same
+# strategies, while new mechanisms waited for building blocks in this queue (10 requests, one a
+# night) and one failed attempt spent 2.6M tokens. So: two levels (the PLANNER reads the request
+# and the code, read only, and writes a plan; a question about a strategy's behaviour that
+# nobody answered stops the request before a writing token is spent), two requests a night,
+# the stage runs before the researcher, and the researcher works one strategy a night
+# (night/research.yaml `rotation`).
+planner_model: opus
+planner_max_turns: 30
+per_night: 2         # one after another: the tests and the budget guard's session are shared
+# The programmer's share of what the night has left when the stage starts: each request may
+# spend about this share divided among the requests of the night (qlab.night.programmer_stage).
+# The rest is for the researcher, the cards and the search.
+night_share: 0.5
 # Owner, 2026-10-28: «добавь в инструкцию доводить тесты до конца - если ошибка в них и в
 # коде - не останавливаться после пары попыток». The first real request (2026-10-26-1) stopped
 # after two attempts on the agent's OWN wrong test (its comment said the 30-day return was -5%,
@@ -24,6 +40,13 @@ per_night: 1
 # recreating it; a request that failed `max_attempts` times waits for the owner.
 max_attempts: 3
 fix_rounds: 3
+# What a worktree lacks that the tests read (2026-10-30, request 2026-10-28-1: 34 tests failed
+# in its worktree and none because of its work). Worktrees live in data/programmer/worktrees, so
+# the sibling repository the tests cite as `<checkout>/../funding-rate-arbitrage` is looked for
+# there: a read-only link of that name. A repository's `prepare` commands run in each worktree
+# before the tests (a migrated database: a worktree has none, tests open data/qlab.db).
+siblings:
+  funding-rate-arbitrage: /Users/d/prj/funding-rate-arbitrage
 repos:
   frab:
     path: /Users/d/prj/funding-rate-arbitrage
@@ -72,4 +95,6 @@ repos:
       - docs/BLOCKS.md
       - docs/ANOMALIES.md
     test_command: [uv, run, pytest, -q, -p, no:cacheprovider, src/qlab]
+    prepare:
+      - [uv, run, qlab, init-db]
     test_timeout_s: 1800

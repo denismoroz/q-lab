@@ -1031,6 +1031,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         save_state(day, state)
     if assess and not past_stop(stop_at, state, "assess"):
         guarded(day, state, "assess", assess_stage, day, state)
+    if programmer and not past_stop(stop_at, state, "programmer"):
+        # The programmer comes BEFORE the director and the researcher (owner, 2026-10-30:
+        # «переноси токены на программиста»): new mechanisms wait for the building blocks in its
+        # queue, while the researchers' variants of the same five strategies had the night's
+        # first tokens. Behind the rechecks and their second opinions, which come first.
+        guarded(day, state, "programmer", programmer_stage, day, state, stop_at=stop_at)
     if (director if director is not None else research is not False) \
             and not past_stop(stop_at, state, "director"):
         # Before the researcher and the generator it steers; in the implement stage's
@@ -1047,8 +1053,6 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                     noise_trials=noise_trials,
                     stop_at=stop_at, label="twins-research")
             save_state(day, state)
-    if programmer and not past_stop(stop_at, state, "programmer"):
-        guarded(day, state, "programmer", programmer_stage, day, state)
     if implement and not past_stop(stop_at, state, "implement"):
         guarded(day, state, "implement", implement_stage, day, state,
                 noise_trials=noise_trials,
@@ -1330,15 +1334,29 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     save_state(day, state)
 
 
-def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> None:
+def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
+                     stop_at: datetime | None = None) -> None:
     """The programmer agent (`qlab.agents.programmer`, docs/PROGRAMMER.md): the director's
-    approved code requests are queued, then up to `per_night` are attempted, each on its own
-    branch, in the implement stage's budget. Nothing is merged: a passed request waits for the
-    owner's `qlab code merge`. Resumable: an attempt done tonight is not repeated."""
+    approved code requests are queued, then up to `per_night` are attempted one after another,
+    each on its own branch, in the implement stage's budget. The stage runs BEFORE the director
+    and the researcher (owner, 2026-10-30: «переноси токены на программиста»), so it has the
+    night's first agent budget and time; the requests that give the generator a new block go
+    first. The stage may spend `night_share` of what the night has left when it starts, divided
+    among the night's requests (the planner, the writer and the reviewer of one request share
+    its part), and takes no new request after the stop time. Nothing is merged: a passed
+    request waits for the owner's `qlab code merge`; one the planner stopped with an open
+    question waits for `qlab code answer`. Resumable: an attempt done tonight is not repeated."""
     from dataclasses import asdict
 
     from qlab.agents import programmer as prog
-    from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
+    from qlab.budget import (
+        BudgetExhausted,
+        CandidateBudget,
+        NightBudget,
+        NightExhausted,
+        Stage,
+        probe,
+    )
     from qlab.directions import active_directions
     from qlab.registry.db import session_scope
 
@@ -1356,17 +1374,25 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> No
     prog.save_queue(queue)
     done = {e["id"] for e in entry["entries"]}
     max_attempts = int(cfg.get("max_attempts", 3))
-    for _ in range(int(cfg.get("per_night", 1)) - len(done)):
-        req = next(
-            (r for r in queue if r.status in ("queued", "failed") and r.attempts < max_attempts
-             and r.id not in done), None)
+    per_night = int(cfg.get("per_night", 1))
+    share = float(cfg.get("night_share") or 1.0)
+    for _ in range(per_night - len(done)):
+        req = prog.next_request(queue, max_attempts, skip=done)
         if req is None:
+            break
+        if past_stop(stop_at, state, "programmer"):
             break
         try:
             with session_scope() as session:
-                stage = NightBudget.open(session, probe(session).report.reading).stage(
-                    Stage.IMPLEMENT, candidates=1)
-                prog.run_request(req, cfg, budget=stage.candidate(None), session=session)
+                night_budget = NightBudget.open(session, probe(session).report.reading)
+                night_budget.check()
+                # The stage's allowance is fixed when it starts (a re-run of the stage in the
+                # same night keeps it); each request gets an equal part of what is not spent.
+                entry.setdefault("allowance", int(night_budget.tokens_left() * share))
+                spent = sum(e.get("tokens", 0) for e in entry["entries"])
+                cap = max(0, entry["allowance"] - spent) // max(1, per_night - len(done))
+                prog.run_request(req, cfg, session=session, budget=CandidateBudget(
+                    night=night_budget, stage=Stage.IMPLEMENT, idea_id=None, cap_tokens=cap))
         except (NightExhausted, BudgetExhausted) as stop:
             entry["stopped"] = str(stop)
             prog.save_queue(queue)
@@ -1379,6 +1405,7 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER) -> No
             req.status = "blocked"
             req.problems.append(f"{max_attempts} attempts failed: the owner decides")
         entry["entries"].append(asdict(req))
+        done.add(req.id)
         prog.save_queue(queue)
         save_state(day, state)
 
