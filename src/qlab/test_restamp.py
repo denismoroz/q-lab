@@ -362,6 +362,7 @@ def test_a_stale_second_stage_alone_runs_only_the_second_stage(world) -> None:
     assert [c[0] for c in world.calls if c[1] == "parent"] == ["stage2"]
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_second_stage_is_not_run_when_its_first_stage_no_longer_goes_on(
         world, registry) -> None:
     with registry.session_scope() as s:
@@ -493,6 +494,7 @@ def test_a_first_stage_that_survives_sends_the_idea_on_to_the_second_stage(
     assert world.series == [["old-pass"]]  # the forward series is rebuilt
 
 
+@pytest.mark.usefixtures("before_independent_venues")
 def test_a_first_stage_that_no_longer_goes_on_leaves_the_second_stage_and_says_so(
         world, registry) -> None:
     with registry.session_scope() as s:

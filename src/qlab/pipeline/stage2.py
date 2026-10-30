@@ -130,9 +130,29 @@ def stricter_floor(stage1: float | None, venue: float | None) -> float | None:
     return max(floors) if floors else None
 
 
-def survives(route: str | None, config: Stage2Config) -> bool:
-    """Whether a stage 1 route goes on to stage 2."""
-    return route in config.stage1_survives
+def independent_venues() -> bool:
+    """Whether the newest rules judge the two venues independently (`VenueSplit.independent`,
+    from 2026-10-30.2). A rules file that cannot be read means the older, stricter reading."""
+    from qlab.rules.loader import load_latest
+
+    try:
+        split = load_latest().venue_split
+    except Exception:  # noqa: BLE001 - the rules are read again by the run itself
+        return False
+    return split is not None and split.independent
+
+
+def survives(route: str | None, config: Stage2Config, *, independent: bool | None = None) -> bool:
+    """Whether a stage 1 route goes on to stage 2.
+
+    Before rules 2026-10-30.2 only a route that passed or still waits did, and a reject was final.
+    From them (`independent`, default: what the newest rules say) the second venue is always
+    judged, whatever Binance said; a run with no route has nothing to anchor a second stage on."""
+    if route is None:
+        return False
+    if independent is None:
+        independent = independent_venues()
+    return True if independent else route in config.stage1_survives
 
 
 # --------------------------------------------------------------------------
@@ -432,8 +452,75 @@ PASSED = ("paper", "shelf", "needs-infrastructure")
 """Routes of a run that passed every rule of its venue."""
 
 
+VENUE_PENDING = ("needs-forward", "needs-more-data", "error")
+"""Routes of a venue that has not spoken yet: more data, or a crashed run tried again."""
+
+
+def venue_state(route: str | None) -> str:
+    """`pass`, `reject`, `pending` (will decide with data), or `none` (the venue cannot judge the
+    idea: not evaluable, or no run)."""
+    if route in PASSED:
+        return "pass"
+    if route == "reject":
+        return "reject"
+    if route in VENUE_PENDING:
+        return "pending"
+    return "none"
+
+
+def combine_venues(binance: str | None, hyperliquid: str | None, *, why: str = "") -> Combined:
+    """The idea's route when the two venues are judged independently (rules from 2026-10-30.2,
+    docs/VENUE_SPLIT.md; owner, 2026-10-30: «проходить если где-то»). `binance` is the route of the
+    Binance run, `hyperliquid` that of the Hyperliquid run; either may be None (no run).
+
+    * a venue passed: the idea passes, with the better route (a Hyperliquid pass is `paper`, a
+      Binance pass alone `needs-infrastructure`: the lab has no Binance order adapter);
+    * both rejected: reject; a reject on one venue with the other unable to judge at all
+      (not evaluable, no run) is a reject too, nothing is pending;
+    * a reject on one venue with the other still undecided: the idea stays open, undecided
+      (`needs-forward`), because that venue has not spoken yet;
+    * nothing passed or rejected: the undecided venue's route stands, Binance's first."""
+    b, h = venue_state(binance), venue_state(hyperliquid)
+    seen = f"Binance {binance or 'no run'}, Hyperliquid {hyperliquid or 'no run'}"
+    tail = f": {why}" if why else ""
+    if h == "pass":
+        return Combined(str(hyperliquid), f"passed on Hyperliquid ({hyperliquid}); {seen}{tail}")
+    if b == "pass":
+        return Combined("needs-infrastructure", f"passed on Binance ({binance}); {seen}{tail}. "
+                        "The idea stands on Binance alone, where the lab has no order adapter")
+    if "reject" in (b, h):
+        other = h if b == "reject" else b
+        if other in ("reject", "none"):
+            return Combined("reject", f"no venue passed and none is pending; {seen}{tail}")
+        return Combined("needs-forward", f"one venue rejected and the other has not decided yet; "
+                        f"{seen}{tail}")
+    if b == "pending":
+        return Combined(str(binance), f"{seen}{tail}")
+    if h == "pending":
+        return Combined(str(hyperliquid), f"{seen}{tail}")
+    return Combined("not-evaluable", f"neither venue could judge the idea; {seen}{tail}")
+
+
+def parent_route(session, idea_id: str, route: str, reason: str
+                 ) -> tuple[str, str, tuple[str, ...] | None]:
+    """(route, reason, venue ideas) a Binance run moves its idea's status by, under independent
+    venues: the Binance route together with the second stage's latest run on record. The second
+    stage is not run here; only what it already said is read. An idea with no second-stage run
+    keeps the Binance route (the second stage, if it follows, settles the idea itself)."""
+    from qlab.registry.stages import latest_routed, stage2_child
+
+    child = stage2_child(session, idea_id)
+    found = None if child is None else latest_routed(session, child.id)
+    if child is None or found is None:
+        return route, reason, None
+    hl = getattr(found[0].route, "value", found[0].route)
+    combined = combine_venues(route, hl, why=f"Binance: {reason}")
+    return combined.route, combined.reason, (child.id,)
+
+
 def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config,
-            stage2_reason: str = "", best_of_venues: bool = False) -> Combined:
+            stage2_reason: str = "", best_of_venues: bool = False,
+            independent: bool = False) -> Combined:
     """The idea's route from the two stages (the two venues).
 
     Rules before 2026-10-30.1 (`best_of_venues=False`): it needs both to survive:
@@ -462,11 +549,16 @@ def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config
       named. A Hyperliquid reject is the child's own verdict, with its own range of data; it no
       longer kills the idea.
 
+    Rules from 2026-10-30.2 (`independent=True`, `RuleSet.venue_split.independent`): the venues are
+    judged independently, see `combine_venues`.
+
     A stage 2 route that came from the consistency check with stage 1
     (`qlab.pipeline.confirm`) is an ordinary stage 2 route here. It is only ever
     given for a stage 1 that decided (`paper`, `shelf`, `needs-infrastructure`); and
     were it ever given for a stage 1 that still waits, the `needs-forward` line below
     keeps the idea waiting: "too early" on stage 1 never turns into a pass."""
+    if independent:
+        return combine_venues(stage1_route, stage2_route, why=stage2_reason)
     if stage1_route not in config.stage1_survives:
         return Combined(stage1_route, f"stage 1 {stage1_route}: stage 2 not run")
     if best_of_venues:
@@ -533,6 +625,9 @@ class Stage2Result:
     spec_path: str | None = None
     combined_route: str | None = None
     combined_reason: str | None = None
+    independent: bool = False
+    """The venues were judged independently (rules from 2026-10-30.2): the first venue's verdict
+    did not decide whether this one ran."""
     parent_status: str | None = None
     confirmation: dict | None = None
     """The consistency check with stage 1's history (`qlab.pipeline.confirm.Confirmation`
@@ -577,7 +672,7 @@ def _ensure_child(session, spec: StrategySpec, parent_id: str, *, measurement: b
 
 
 def _settle(session, result: Stage2Result, combined: Combined, *, rules_version: str | None,
-            end: date | None, parent_id: str, child_id: str) -> None:
+            end: date | None, parent_id: str, child_id: str, independent: bool = False) -> None:
     """Move the parent's status by the two stages together."""
     from qlab.registry.lifecycle import apply_route
     from qlab.registry.models import Idea, TrialRoute
@@ -585,7 +680,10 @@ def _settle(session, result: Stage2Result, combined: Combined, *, rules_version:
     apply_route(
         session, idea_id=parent_id, route=TrialRoute(combined.route),
         route_reason=combined.reason, trial_id=result.trial_id, rules_version=rules_version,
-        run_data_end=end, also_ideas=(child_id,))
+        run_data_end=end, also_ideas=(child_id,),
+        # Independent venues: the second venue's data is new to a Binance rejection, so what
+        # dates the data to beat is the second venue's own earlier failures (rules 2026-10-30.2).
+        venue_ideas=(child_id,) if independent else None)
     result.combined_route = combined.route
     result.combined_reason = combined.reason
     result.parent_status = session.get(Idea, parent_id).status.value
@@ -595,14 +693,20 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
                noise_trials: int,
                config: Stage2Config | None = None, spec_dir: Path = SPEC_DIR,
                venue_names: Collection[str] | None = None,
-               measure: bool = False) -> Stage2Result:
+               measure: bool = False, settle_note: str = "",
+               only_a_pass_moves: bool = False) -> Stage2Result:
     """Stage 2 of one idea whose stage 1 (`spec`, run as trial `stage1_trial_id`)
     routed `stage1_route`. Never raises: a failure is the result's `error`, and the
     idea waits (stage 2 is tried again on the next run).
 
     `measure=True` runs the stage on an idea that did not survive stage 1 (by hand,
     `qlab stage2 --measure`): the mechanism is measured on the second venue and the
-    parent's status is left alone."""
+    parent's status is left alone.
+
+    `settle_note` is put first in the reason the idea's status transition carries (the night's
+    queue of closed ideas says there why a closed idea was looked at again);
+    `only_a_pass_moves` leaves the idea's status alone unless the venues together pass it (a
+    closed idea is revived by a pass, never reopened by a result that cannot decide yet)."""
     result = Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}{CHILD_SUFFIX}",
                           stage1_route=stage1_route, stage1_trial_id=stage1_trial_id,
                           measurement=measure)
@@ -618,7 +722,8 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
         result.skipped = "stage 2 is switched off (night/stage2.yaml)"
         return result
     if not measure and not survives(stage1_route, config):
-        result.skipped = f"stage 1 routed {stage1_route}: only survivors go on"
+        result.skipped = (f"stage 1 routed {stage1_route}: only survivors go on" if stage1_route
+                          else "the idea has no stage 1 run to anchor a second stage on")
         return result
     try:
         if _id_taken(spec.idea_id):
@@ -626,7 +731,8 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
                               f"idea of the registry, not to a second stage of {spec.idea_id!r}")
             return result
         _run(spec, result, config, noise_trials=noise_trials, spec_dir=spec_dir,
-             venue_names=venue_names, measure=measure)
+             venue_names=venue_names, measure=measure, settle_note=settle_note,
+             only_a_pass_moves=only_a_pass_moves)
     except Exception as exc:  # noqa: BLE001 - recorded in the report, the idea waits
         result.status = "error"
         result.error = f"{type(exc).__name__}: {exc}"
@@ -648,20 +754,27 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config) -> None:
     from qlab.registry.db import session_scope
     from qlab.rules.loader import load_latest
 
-    combined = combine(result.stage1_route or "", None, config=config,
-                       stage2_reason=result.error or "",
-                       best_of_venues=load_latest().venue_split is not None)
+    split = load_latest().venue_split
+    independent = split is not None and split.independent
+    result.independent = independent
+    # A crashed second stage has not spoken: for independent venues that is "error" (pending, tried
+    # again), never "no run" (the venue cannot judge), which would let a Binance reject stand.
+    combined = combine(result.stage1_route or "", "error" if independent else None, config=config,
+                       stage2_reason=result.error or "", best_of_venues=split is not None,
+                       independent=independent)
     try:
         with session_scope() as session:
             _settle(session, result, combined, rules_version=load_latest().version,
-                    end=None, parent_id=result.parent_id, child_id=result.idea_id)
+                    end=None, parent_id=result.parent_id, child_id=result.idea_id,
+                    independent=independent)
     except Exception as exc:  # noqa: BLE001 - the error above is the one worth reporting
         result.error = f"{result.error}; and the idea's status was not updated: {exc}"
 
 
 def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
          noise_trials: int, spec_dir: Path,
-         venue_names: Collection[str] | None, measure: bool) -> None:
+         venue_names: Collection[str] | None, measure: bool, settle_note: str = "",
+         only_a_pass_moves: bool = False) -> None:
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.evaluate import evaluate_spec, resolve_panel
     from qlab.pipeline.sources import source_problems
@@ -743,11 +856,25 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
         result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
         if not measure:
+            independent = ruleset.venue_split is not None and ruleset.venue_split.independent
+            result.independent = independent
             combined = combine(result.stage1_route or "", result.route, config=config,
                                stage2_reason=result.reason or "",
-                               best_of_venues=ruleset.venue_split is not None)
+                               best_of_venues=ruleset.venue_split is not None,
+                               independent=independent)
+            if settle_note:
+                combined = Combined(combined.route, f"{settle_note}; {combined.reason}")
+            if only_a_pass_moves and combined.route not in PASSED:
+                from qlab.registry.models import Idea
+
+                result.combined_route = combined.route
+                result.combined_reason = (f"{combined.reason}; the idea stays as it is: only a "
+                                          "pass revives a closed idea")
+                result.parent_status = session.get(Idea, spec.idea_id).status.value
+                return
             _settle(session, result, combined, rules_version=ruleset.version,
-                    end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id)
+                    end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id,
+                    independent=independent)
 
 
 # --------------------------------------------------------------------------
@@ -877,10 +1004,55 @@ def _confirmation_ru(c: Mapping[str, object]) -> list[str]:
     return [line for line in (why, head, verdict) if line]
 
 
+def _independent_ru(binance: object, stage2: Mapping[str, object]) -> str:
+    """The total of two venues judged independently (rules 2026-10-30.2), in words."""
+    status = stage2.get("parent_status")
+    hl_route = stage2.get("route")
+    b, h = venue_state(str(binance) if binance else None), venue_state(
+        str(hl_route) if hl_route else None)
+    if stage2.get("status") == "error":
+        h = "pending"  # a crashed run has not spoken; it is tried again
+    words = {"pass": "прошла", "reject": "отвергнута", "pending": "ещё не решила",
+             "none": "не проводилась"}
+    confirmation = stage2.get("confirmation") or {}
+    power = confirmation.get("noise_power")
+    history = ""
+    if confirmation.get("status") == "confirmed":
+        # A pass that rests on the check against Binance's history alone must not read as a plain
+        # one (owner, 2026-10-30): the noise bar had no power on Hyperliquid's short window.
+        history = ("; на Hyperliquid — только сверкой с историей Binance, планка шума там не "
+                   "решает (" + (f"сила {power:.0%}" if isinstance(power, int | float)
+                                 else "сила не измерена") + ")")
+    if h == "pass" and b == "pass":
+        return f"прошла на обеих площадках, статус «{status}»{history}"
+    if h == "pass":
+        return (f"прошла на Hyperliquid, на Binance {words[b]}; статус «{status}». Площадки "
+                "оцениваются независимо, итог — лучший из двух (docs/VENUE_SPLIT.md)")
+    if b == "pass":
+        tail = ("; отказ на Hyperliquid записан со своим диапазоном данных "
+                f"(по {stage2.get('data_end')}), воскресить его можно только на данных, которых "
+                "тогда не было" if h == "reject" else "")
+        return (f"прошла на Binance (нужна инфраструктура: адаптера Binance у нас нет), на "
+                f"Hyperliquid {words[h]}; статус «{status}»{tail}")
+    if b == "reject" and h == "reject":
+        return ("отвергнута на обеих площадках: на Binance и на Hyperliquid (по "
+                f"{stage2.get('data_end')}); воскресить можно только на данных, которых тогда не "
+                "было")
+    if "reject" in (b, h) and "pending" in (b, h):
+        who = "Binance" if b == "reject" else "Hyperliquid"
+        other = "Hyperliquid" if b == "reject" else "Binance"
+        return (f"на {who} отвергнута, на {other} ещё не решила — идея остаётся открытой, статус "
+                f"«{status}»: вторая площадка не договорила")
+    return (f"площадки вместе пока не решают: Binance {words[b]}, Hyperliquid {words[h]}; "
+            f"статус «{status}»")
+
+
 def _combined_ru(stage1_route: object, stage2: Mapping[str, object]) -> str:
     route = stage2.get("combined_route")
     status = stage2.get("parent_status")
     confirmation = stage2.get("confirmation") or {}
+    if stage2.get("independent"):
+        return _independent_ru(stage1_route, stage2)
     if (confirmation.get("status") == "confirmed"
             and route in ("paper", "shelf", "needs-infrastructure")):
         return (f"прошла оба этапа ({_route_ru(str(route))}), статус «{status}»: первый этап "

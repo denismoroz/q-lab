@@ -74,3 +74,10 @@ data/restamp/
 # Protection measurements of Bv2-family runs made before the measurement was recorded
 # (qlab protection --compute); they can be made again
 data/protection/
+
+# why the two venues of an idea differ: the profit-share measurement the night stores for the pages
+# (docs/VENUE_SPLIT.md); made again by `qlab venue-gap run`
+data/venue_gap/
+
+# the queue of closed ideas whose Hyperliquid side was never run: its ledger (docs/VENUE_SPLIT.md)
+data/second_venue/

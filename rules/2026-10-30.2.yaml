@@ -1,0 +1,43 @@
+# Both venues are always judged, independently (docs/VENUE_SPLIT.md, "Независимые площадки").
+#
+# Owner, 2026-10-30, after the venue split of 2026-10-30.1: «статус по лучшей площадке оставляем»
+# (the idea's route stays the better of the two venues') and «смотрим обе площадки независимо.
+# проходить если где-то. если проходит одна но не проходит другая нужно чтобы была причина почему не
+# проходит». Under 2026-10-30.1 a reject on Binance was final: Hyperliquid was not run after it, so
+# an idea that failed on Binance's history could never show that it works on Hyperliquid.
+#
+# What changes (and nothing else: the rule rows are those of 2026-10-30.1, no threshold moves):
+#
+#   * the other venue is always run, whatever the first said (`venue_split.independent`):
+#     a Binance reject no longer stops Hyperliquid, and an idea rejected before today whose
+#     Hyperliquid side never ran is queued for it (night/second_venue.yaml);
+#   * the idea PASSES when a venue passed (a Hyperliquid pass is `paper`, a Binance pass alone
+#     `needs-infrastructure`); it is REJECTED when no venue passed and nothing is still pending;
+#     a reject on one venue with the other still undecided (`needs-forward`, `needs-more-data`,
+#     `error`) leaves the idea open and undecided, because that venue has not spoken yet. A venue
+#     that cannot judge the idea at all (`not-evaluable`, or no version of the idea there) is not
+#     waited for;
+#   * Hyperliquid's consistency check with Binance's history needs a Binance result that passed
+#     to compare with; when Binance rejected or has not decided, Hyperliquid is judged by its own
+#     rules only, and where its noise bar has no power that reads «не решён — рано судить», never
+#     a pass;
+#   * when the venues differ, code writes why, from measurements only (qlab.venue_gap).
+#
+# A verdict stored under 2026-10-30.1 keeps its route; every open idea is measured again under
+# this version (`qlab restamp run --all`) and the report names each idea whose route or status moved.
+
+version: "2026-10-30.2"
+based_on: "2026-10-30.1"
+
+rules: []
+
+venue_split:
+  overall: best_of_venues
+  independent: true
+  shared_coins_history: true
+  rationale: >
+    Owner, 2026-10-30 («смотрим обе площадки независимо. проходить если где-то»): one verdict per
+    venue, each judged on its own data, coins, costs and minimum leg, and both always produced.
+    The idea's route is still the better of the two («статус по лучшей площадке оставляем»). The
+    consistency check reads Binance's history on the coins Hyperliquid also lists, and only when
+    Binance passed.

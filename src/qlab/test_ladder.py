@@ -420,7 +420,8 @@ def test_a_live_book_has_no_paper_step(session) -> None:
 
 
 def test_load_ledgers_reads_the_files_and_survives_missing_ones(tmp_path) -> None:
-    assert lad.load_ledgers(tmp_path) == Ledgers(root=tmp_path)  # nothing there: all empty
+    # nothing there: all empty (the venues are judged independently under the newest rules)
+    assert lad.load_ledgers(tmp_path) == Ledgers(root=tmp_path, independent=True)
     (tmp_path / "night").mkdir()
     (tmp_path / "data" / "twins").mkdir(parents=True)
     (tmp_path / "data" / "twins" / "ledger.json").write_text('{"a": {"reason": "r"}}')
@@ -552,3 +553,179 @@ def test_a_rejected_binance_run_and_a_missing_second_stage_pass_nowhere(session)
     assert by["hyperliquid"].reason == Reason.CLOSED_BEFORE  # no second stage for a closed idea
     # the run did not measure the capital it needs
     assert by["binance"].outcome == Outcome.UNDECIDED
+
+
+# --------------------------------------------------------------------------
+# Independent venues (rules 2026-10-30.2, docs/VENUE_SPLIT.md)
+
+
+def _fail(session, idea_id: str, trial_id: int, *, rule: str, metric: str, value: float,
+          comparator: str, threshold: float) -> None:
+    from qlab.registry.models import Spec, Trial
+
+    trial = session.get(Trial, trial_id)
+    spec = session.get(Spec, trial.spec_id)
+    repo.add_verdicts(session, [dict(
+        idea_id=idea_id, spec_id=spec.id, trial_id=trial_id, stage=VerdictStage.EDGE,
+        rule_id=rule, rules_version="2026-10-30.2", metric=metric, value=value,
+        comparator=comparator, threshold=threshold, passed=False,
+        data_range_start=date(2025, 1, 1), data_range_end=date(2026, 10, 27))])
+
+
+def test_a_pass_that_rests_on_the_history_check_alone_says_so(session) -> None:
+    """Owner, 2026-10-30: «прошла на обеих площадках» must not hide that Hyperliquid's pass is only
+    the check against Binance's history, the noise bar having no power there."""
+    idea(session, "xs", IdeaStatus.VALIDATED)
+    run(session, "xs", TrialRoute.NEEDS_INFRASTRUCTURE, "binance",
+        metrics={"min_capital_usd": 400.0, "noise_cap_power": 0.9})
+    idea(session, "xs-hl", IdeaStatus.VALIDATED, parent="xs", stage2=True)
+    run(session, "xs-hl", TrialRoute.PAPER, "hyperliquid",
+        metrics={"min_capital_usd": 90.0, "noise_cap_power": 0.10, "stage1_trial_id": 41.0})
+
+    found = ladder(session, "xs", money={"xs": 500.0})
+
+    assert found.summary_ru == (
+        "прошла на обеих площадках: на Binance и на Hyperliquid; на Hyperliquid — только "
+        "сверкой с историей Binance, планка шума там не решает (сила 10%)")
+    hl = found.venues[1]
+    assert hl.by_history_only and hl.consistency_trial == 41 and not found.venues[0].by_history_only
+    assert found.to_dict()["venues"][1]["by_history_only"] is True
+    # a pass the noise bar decided reads as a plain pass
+    idea(session, "plain", IdeaStatus.VALIDATED)
+    run(session, "plain", TrialRoute.NEEDS_INFRASTRUCTURE, "binance")
+    idea(session, "plain-hl", IdeaStatus.VALIDATED, parent="plain", stage2=True)
+    run(session, "plain-hl", TrialRoute.PAPER, "hyperliquid", metrics={"noise_cap_power": 0.95})
+    assert ladder(session, "plain").summary_ru == (
+        "прошла на обеих площадках: на Binance и на Hyperliquid")
+    # and when only one venue passed, the history note rides along too
+    idea(session, "mix", IdeaStatus.VALIDATED)
+    run(session, "mix", TrialRoute.REJECT, "binance")
+    idea(session, "mix-hl", IdeaStatus.VALIDATED, parent="mix", stage2=True)
+    run(session, "mix-hl", TrialRoute.PAPER, "hyperliquid",
+        metrics={"noise_cap_power": 0.05, "stage1_trial_id": 7.0})
+    assert ladder(session, "mix").summary_ru.endswith(
+        "; на Hyperliquid — только сверкой с историей Binance, планка шума там не решает (сила 5%)")
+
+
+def test_a_venue_that_passed_and_one_that_did_not_get_a_reason_from_measurements(session) -> None:
+    idea(session, "gap", IdeaStatus.BENCH)
+    run(session, "gap", TrialRoute.NEEDS_INFRASTRUCTURE, "binance",
+        metrics={"min_capital_usd": 321.0})
+    idea(session, "gap-hl", IdeaStatus.BENCH, parent="gap", stage2=True)
+    failed = run(session, "gap-hl", TrialRoute.REJECT, "hyperliquid",
+                 metrics={"min_capital_usd": 90.0, "noise_cap_power": 0.26})
+    _fail(session, "gap-hl", failed, rule="net_edge_positive", metric="cap_ann_return",
+          value=-0.031, comparator=">", threshold=0.0)
+
+    found = ladder(session, "gap", money={"gap": 257.0})
+
+    gap = found.venue_gap
+    assert gap is not None and gap.kind == "verdict"
+    assert (gap.passed, gap.other, gap.other_outcome) == ("binance", "hyperliquid", "failed")
+    assert gap.rule_ru == "не сошлось: правило `net_edge_positive`: −3,1%, нужно больше 0,0%"
+    kinds = [c.kind for c in gap.causes]
+    assert kinds[0] == "unlisted_coins" and "money" in kinds
+    first = gap.causes[0]
+    assert not first.measured and "причина не измерена" in first.text_ru  # nothing measured yet
+    money = next(c for c in gap.causes if c.kind == "money")
+    assert "Binance: нужно $321, своих $257: не помещается" in money.text_ru
+    assert "Hyperliquid: нужно $90 против денег стратегии $257" in money.text_ru
+    assert found.to_dict()["venue_gap"]["text_ru"].startswith(
+        "Hyperliquid не прошла, хотя Binance прошла: ")
+    # venues that agree have no gap
+    idea(session, "same", IdeaStatus.BENCH)
+    run(session, "same", TrialRoute.REJECT, "binance")
+    assert ladder(session, "same").venue_gap is None
+
+
+def test_the_stored_measurement_of_the_profit_share_reaches_the_page(session, tmp_path) -> None:
+    from qlab import venue_gap as vg
+
+    idea(session, "meas", IdeaStatus.BENCH)
+    b = run(session, "meas", TrialRoute.NEEDS_INFRASTRUCTURE, "binance")
+    idea(session, "meas-hl", IdeaStatus.BENCH, parent="meas", stage2=True)
+    h = run(session, "meas-hl", TrialRoute.REJECT, "hyperliquid")
+    _fail(session, "meas-hl", h, rule="net_edge_positive", metric="cap_ann_return", value=-0.02,
+          comparator=">", threshold=0.0)
+    share = vg.profit_share({"BTC": 0.2, "XYZ": 0.6}, lambda c: c == "BTC", venue="binance",
+                            other="hyperliquid", window_from="2025-01-01", window_to="2026-10-27")
+    vg.save_stored("meas", (b, h), [share], None, tmp_path)
+
+    gap = lad.build_ladder(session, "meas", Ledgers(root=tmp_path)).venue_gap
+
+    text = gap.text_ru
+    assert ("75% прибыли Binance за 2025-01-01 — 2026-10-27 — с монет, которых нет на "
+            "Hyperliquid") in text
+    assert gap.causes[0].measured and gap.causes[0].numbers["share"] == pytest.approx(0.75)
+
+
+def test_two_passes_on_unequal_terms_are_named_uneven(session) -> None:
+    idea(session, "un", IdeaStatus.VALIDATED)
+    run(session, "un", TrialRoute.NEEDS_INFRASTRUCTURE, "binance",
+        metrics={"min_capital_usd": 1000.0})
+    idea(session, "un-hl", IdeaStatus.VALIDATED, parent="un", stage2=True)
+    run(session, "un-hl", TrialRoute.PAPER, "hyperliquid",
+        metrics={"min_capital_usd": 200.0, "noise_cap_power": 0.02, "stage1_trial_id": 9.0,
+                 "year_2025_return": 0.12, "year_2025_days": 365.0,
+                 "year_2026_return": -0.153, "year_2026_days": 301.0})
+
+    found = ladder(session, "un", money={"un": 500.0})
+
+    gap = found.venue_gap
+    assert gap is not None and gap.kind == "uneven"
+    assert gap.short_ru.startswith("деньги: Binance нужно $1,000, своих $500: не помещается")
+    assert "сверкой с историей" in gap.short_ru
+
+
+def test_a_rejected_binance_idea_whose_hyperliquid_side_is_owed_is_queued(session) -> None:
+    idea(session, "old", IdeaStatus.REJECTED)
+    run(session, "old", TrialRoute.REJECT, "binance")
+
+    queued = lad.build_ladder(session, "old", Ledgers(independent=True)).steps[2]
+    before = lad.build_ladder(session, "old", Ledgers()).steps[2]
+
+    assert queued.reason == Reason.SECOND_VENUE_QUEUED
+    assert "вторая площадка не проводилась" in queued.reason_ru
+    assert "очереди" in queued.detail
+    assert before.reason == Reason.CLOSED_BEFORE  # rules before 2026-10-30.2: a reject was final
+    # a retired idea is closed by the owner, not owed a venue
+    idea(session, "gone", IdeaStatus.RETIRED)
+    run(session, "gone", TrialRoute.REJECT, "binance")
+    assert lad.build_ladder(session, "gone", Ledgers(independent=True)).steps[2].reason == \
+        Reason.CLOSED_BEFORE
+
+
+def test_independent_venues_do_not_wait_for_a_surviving_first_stage(session) -> None:
+    idea(session, "rej-open", IdeaStatus.BENCH)  # Binance rejected, Hyperliquid not run yet
+    run(session, "rej-open", TrialRoute.REJECT, "binance")
+
+    step3 = lad.build_ladder(session, "rej-open", Ledgers(independent=True)).steps[2]
+
+    assert step3.reason == Reason.WAITS_FOR_NIGHT
+    assert "независимо" in step3.detail
+
+
+def test_a_second_stage_that_waits_beside_a_closed_first_stage_is_not_an_open_idea(
+        session) -> None:
+    idea(session, "dead", IdeaStatus.REJECTED)
+    run(session, "dead", TrialRoute.REJECT, "binance")
+    idea(session, "dead-hl", IdeaStatus.BENCH, parent="dead", stage2=True)
+    idea(session, "alive", IdeaStatus.BENCH)
+
+    assert lad.open_idea_ids(session) == ["alive"]
+
+
+def test_the_report_table_carries_the_reason_the_venues_differ(session) -> None:
+    idea(session, "t", IdeaStatus.BENCH)
+    run(session, "t", TrialRoute.NEEDS_INFRASTRUCTURE, "binance")
+    idea(session, "t-hl", IdeaStatus.BENCH, parent="t", stage2=True)
+    failed = run(session, "t-hl", TrialRoute.REJECT, "hyperliquid")
+    _fail(session, "t-hl", failed, rule="net_edge_positive", metric="cap_ann_return",
+          value=-0.031, comparator=">", threshold=0.0)
+
+    lines = lad.report_lines(session, Ledgers())
+
+    header = next(line for line in lines if line.startswith("| идея |"))
+    assert header.endswith("| итог по площадкам | почему площадки расходятся |")
+    row = next(line for line in lines if line.startswith("| t |"))
+    assert row.endswith("| Hyperliquid: `net_edge_positive` −3,1% |")

@@ -93,6 +93,7 @@ def next_status(
     *,
     run_data_end: date | None,
     rejected_on_data_end: date | None,
+    other_venue: bool = False,
 ) -> StatusDecision:
     """The status an idea in `current` moves to after a run routed `route`.
 
@@ -100,6 +101,12 @@ def next_status(
     rendered on. `rejected_on_data_end` is the latest data end of any
     failing verdict this idea already has (None when none is dated); it
     only matters for an idea that is currently `rejected`.
+
+    `other_venue` (rules from 2026-10-30.2, docs/VENUE_SPLIT.md): the run is the idea's other
+    venue's, and `rejected_on_data_end` is the latest failing verdict ON THAT VENUE. A rejection
+    on Binance's history never saw Hyperliquid's data, so the data is new whatever the dates say;
+    only a rejection on the venue's own earlier data has to be older than this run. No failing
+    verdict on that venue at all is nothing to wait out.
     """
     target = ROUTE_TARGET.get(route)
     if target is None:
@@ -115,7 +122,15 @@ def next_status(
     if current == target:
         return StatusDecision(None, f"already {current.value}")
 
-    if current == IdeaStatus.REJECTED:
+    if current == IdeaStatus.REJECTED and other_venue:
+        if rejected_on_data_end is not None and (
+                run_data_end is None or run_data_end <= rejected_on_data_end):
+            return StatusDecision(
+                None,
+                f"rejected on this venue's data up to {rejected_on_data_end}; this run's data "
+                f"ends {run_data_end} and holds nothing new; stays rejected",
+            )
+    elif current == IdeaStatus.REJECTED:
         if rejected_on_data_end is None:
             return StatusDecision(
                 None,
@@ -142,6 +157,7 @@ def apply_route(
     rules_version: str | None,
     run_data_end: date | None,
     also_ideas: Sequence[str] = (),
+    venue_ideas: Sequence[str] | None = None,
 ) -> StatusDecision:
     """Apply `next_status` to `idea_id` and write the transition if it moves.
 
@@ -154,15 +170,21 @@ def apply_route(
     for that date: the second stage of a two-stage idea is judged under an idea
     of its own (docs/TWO_STAGE.md), and the data it failed on is the data the
     parent was rejected on.
+
+    `venue_ideas` (rules from 2026-10-30.2): the run is a verdict of the idea's OTHER venue and
+    these ideas (the venue's second stage) are the ones whose failing verdicts date the data it
+    must beat to revive a rejected idea; the idea's own failing verdicts (the first venue's) do
+    not count, since they never saw this venue's data. `next_status(other_venue=True)`.
     """
     idea = session.get(Idea, idea_id)
     if idea is None:
         raise ValueError(f"idea {idea_id!r} does not exist")
 
+    dated = list(venue_ideas) if venue_ideas is not None else [idea_id, *also_ideas]
     rejected_on_data_end = (
         session.query(func.max(Verdict.data_range_end))
         .filter(
-            Verdict.idea_id.in_([idea_id, *also_ideas]),
+            Verdict.idea_id.in_(dated),
             Verdict.passed.is_(False),
             Verdict.trial_id.is_distinct_from(trial_id),
         )
@@ -174,6 +196,7 @@ def apply_route(
         route,
         run_data_end=run_data_end,
         rejected_on_data_end=rejected_on_data_end,
+        other_venue=venue_ideas is not None,
     )
     if decision.new_status is not None:
         repo.set_status(

@@ -124,6 +124,41 @@ function VenueCard({ view }) {
   )
 }
 
+// Why the two venues differ (docs/VENUE_SPLIT.md; owner, 2026-10-30: «если проходит одна но не
+// проходит другая нужно чтобы была причина почему не проходит»). Written by qlab.venue_gap from
+// measurements only; a cause it could not measure is listed as «причина не измерена» with why.
+function VenueGap({ gap }) {
+  if (!gap) return null
+  return (
+    <div
+      className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+      data-testid="venue-gap"
+    >
+      <p className="font-medium" data-testid="venue-gap-title">
+        {gap.kind === 'uneven'
+          ? 'Обе площадки прошли правила, но не на равных'
+          : 'Почему площадки расходятся'}
+      </p>
+      {gap.rule_ru && (
+        <p className="mt-1 break-words" data-testid="venue-gap-rule">
+          {gap.rule_ru}
+        </p>
+      )}
+      <ul className="mt-1 space-y-1">
+        {gap.causes.map((cause, i) => (
+          <li
+            key={`${cause.kind}-${i}`}
+            className={`break-words ${cause.measured ? '' : 'italic text-amber-800'}`}
+            data-testid={`venue-gap-cause-${cause.kind}`}
+          >
+            {cause.text_ru}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function Venues({ ladder }) {
   if (!ladder.venues?.length) return null
   return (
@@ -136,6 +171,7 @@ function Venues({ ladder }) {
           <VenueCard key={view.venue} view={view} />
         ))}
       </div>
+      <VenueGap gap={ladder.venue_gap} />
     </div>
   )
 }

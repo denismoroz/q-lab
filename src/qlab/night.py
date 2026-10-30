@@ -44,6 +44,8 @@ PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's s
 STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
                "twins": "двойники и вторая ступень",
+               "second_venue": "вторая площадка для закрытых идей",
+               "venue_gap": "почему площадки расходятся",
                "twins-research": "двойники экспериментов исследователя",
                "restamp": "пересчёт старых результатов",
                "anomalies": "аномалии", "overlays": "надстройки",
@@ -514,6 +516,12 @@ def write_report(day: date, state: dict) -> Path:
 
         if body := twins_lines(state["twins"]):
             lines += [f"## {TWINS_TITLE}", "", *body, ""]
+    if state.get("second_venue"):
+        from qlab.second_venue import SECTION_TITLE as SECOND_VENUE_TITLE
+        from qlab.second_venue import report_lines as second_venue_lines
+
+        if body := second_venue_lines(state["second_venue"]):
+            lines += [f"## {SECOND_VENUE_TITLE}", "", *body, ""]
     if state.get("restamp"):
         from qlab.restamp import SECTION_TITLE as RESTAMP_TITLE
         from qlab.restamp import report_lines as restamp_lines
@@ -907,7 +915,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         twins: bool | None = None, overlays: bool | None = None,
         anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
         stop_at: datetime | None = None, programmer: bool = True,
-        catalogue: bool = True, cards: bool = True, ladder: bool | None = None) -> Path:
+        catalogue: bool = True, cards: bool = True, ladder: bool | None = None,
+        second_venue: bool | None = None, venue_gap: bool = True) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -918,6 +927,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     unless given: it is the cheap, high-value part of the recheck, and runs right after the
     waiting stage and once more after the researcher. `overlays` (every overlay and pair on a
     strategy that passed, `qlab.overlay_stage`) follows `twins`, which it comes right after.
+    `second_venue` (default: with the twins; `qlab.second_venue`, docs/VENUE_SPLIT.md) runs the
+    Hyperliquid side of the oldest ideas rejected on Binance before the venues were judged
+    independently, a few a night (night/second_venue.yaml). `venue_gap` (`qlab.venue_gap`) measures
+    why the two venues of an open idea differ, for its page and the report: code only.
     `restamp` (`qlab.restamp`: the ideas whose latest run was measured under an older stand or
     rules version, run again, bounded) comes right after the twins and before the anomalies, which
     then scan the new runs. `anomalies` (`qlab.anomalies.stage`: the code detector on the passed
@@ -992,11 +1005,23 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
                 stop_at=stop_at)
         save_state(day, state)
+    if (second_venue if second_venue is not None else run_twins) \
+            and not past_stop(stop_at, state, "second_venue"):
+        # Ideas rejected on Binance before the venues were judged independently get their
+        # Hyperliquid side, the oldest first, a few a night (qlab.second_venue). Code only.
+        guarded(day, state, "second_venue", second_venue_stage, day, end, state,
+                noise_trials=noise_trials, stop_at=stop_at)
+        save_state(day, state)
     if restamp and not past_stop(stop_at, state, "restamp"):
         # Results measured an older way are measured again (docs/RESTAMP.md). Code only. Before
         # the anomalies stage: it scans the runs this one has just made.
         guarded(day, state, "restamp", restamp_stage, day, end, state, noise_trials=noise_trials,
                 stop_at=stop_at)
+        save_state(day, state)
+    if venue_gap and not past_stop(stop_at, state, "venue_gap"):
+        # Why the two venues of an open idea differ: the profit on coins the other venue does not
+        # list, measured on both runs and stored for the pages (qlab.venue_gap). Code only.
+        guarded(day, state, "venue_gap", venue_gap_stage, day, end, state, stop_at=stop_at)
         save_state(day, state)
     if anomalies and not past_stop(stop_at, state, "anomalies"):
         # Too-good results (docs/ANOMALIES.md): flags by code on the passed runs, the
@@ -1150,6 +1175,24 @@ def ladder_stage() -> list[str]:
 
     with session_scope() as session:
         return ladder.report_lines(session, ladder.load_ledgers())
+
+
+def second_venue_stage(*args, **kwargs):
+    """The queue of closed ideas whose Hyperliquid side was never run (`qlab.second_venue`),
+    reached through the night so that the suite can keep whole-night tests off the owner's
+    registry (conftest.py)."""
+    from qlab import second_venue
+
+    return second_venue.second_venue_stage(*args, **kwargs)
+
+
+def venue_gap_stage(*args, **kwargs):
+    """The measurement behind «почему площадки расходятся» (`qlab.venue_gap.venue_gap_stage`),
+    reached through the night so that the suite can keep whole-night tests off the owner's
+    registry (conftest.py)."""
+    from qlab import venue_gap
+
+    return venue_gap.venue_gap_stage(*args, **kwargs)
 
 
 def restamp_stage(*args, **kwargs):

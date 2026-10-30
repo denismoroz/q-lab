@@ -91,7 +91,11 @@ def test_the_ladder_reads_the_money_of_the_spec_files() -> None:
     money = ladder.spec_money(ROOT / "specs")
     assert money["strategy-b-v2"] == 257.0 and money["frab"] == 120.0
     assert money["trend-retune-weekly"] == 3000.0
-    assert "xsmom-research-liq1m" not in money  # nothing declared: not set, not guessed
+    # owner 2026-10-30, «от 500»: XSMOM's research ideas run on $500
+    for idea in ("xsmom-research-liq1m", "xsmom-research-nobull", "xsmom-research-liq1m-causal",
+                 "xsmom-research-nobull-causal"):
+        assert money[idea] == 500.0
+    assert "xyz-deployment-bab" not in money  # nothing declared: not set, not guessed
     assert "frab-live-own-spot" in money and money["frab-live-own-spot"] == 90.0
 
 
@@ -104,3 +108,25 @@ def test_a_second_stage_without_a_file_of_its_own_has_its_first_stages_money() -
     assert strategy_money(child, Ledgers(money={"x": 257.0})) == 257.0
     assert strategy_money(child, Ledgers(money={"x-hl": 90.0, "x": 257.0})) == 90.0
     assert strategy_money("y", Ledgers(money={"x": 257.0})) is None
+
+
+def test_xsmom_money_has_a_checked_source_and_reaches_the_second_stage() -> None:
+    """The owner's «от 500» is a spec field with a source the source check accepts, and the second
+    stage built from the spec carries both (so step 4 reads the money per venue)."""
+    from qlab.pipeline.sources import source_problems
+    from qlab.pipeline.spec import load_spec
+    from qlab.pipeline.stage2 import Stage2Config, translate
+
+    for name in ("liq1m", "nobull", "liq1m-causal", "nobull-causal"):
+        spec = load_spec(ROOT / "specs" / "research" / "xsmom" / f"xsmom-research-{name}.yaml")
+        assert spec.strategy_capital_usd == 500.0 and source_problems(spec) == []
+        assert "owner 2026-10-30" in spec.sources["strategy_capital_usd"]
+        assert "«от 500»" in spec.sources["strategy_capital_usd"]
+    config = Stage2Config(
+        enabled=True, venue="hyperliquid", data_start=spec.data.start, taker_fee_bps=4.5,
+        slippage_bps=0.9, cost_sources={"costs.taker_fee_bps": "owner 2026-01-01: t",
+                                        "costs.slippage_bps": "owner 2026-01-01: t"},
+        stage1_survives=("paper",))
+    child = translate(spec, config, venue_names=[]).spec
+    assert child is not None and child.strategy_capital_usd == 500.0
+    assert child.sources["strategy_capital_usd"] == spec.sources["strategy_capital_usd"]

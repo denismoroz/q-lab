@@ -66,6 +66,11 @@ def _no_real_agent_ledgers(monkeypatch) -> None:
     # (a whole-night test that did not stub it would run up to four of them). A test of the stage
     # calls qlab.restamp.restamp_stage directly.
     monkeypatch.setattr(night, "restamp_stage", lambda *a, **kw: None)
+    # The queue of closed ideas runs their Hyperliquid side against the real registry, and the
+    # venue-gap stage re-runs strategies and writes data/venue_gap. A test of either calls the
+    # function of its own module directly.
+    monkeypatch.setattr(night, "second_venue_stage", lambda *a, **kw: None)
+    monkeypatch.setattr(night, "venue_gap_stage", lambda *a, **kw: None)
     # The ladder table of the morning report reads every open idea of the owner's registry.
     monkeypatch.setattr(night, "ladder_stage", lambda *a, **kw: None)
     # The overlays stage runs variants on the stand against the real registry and writes spec
@@ -155,3 +160,11 @@ def _decided_ideas_are_not_rechecked_by_default(request, monkeypatch) -> None:
 
     monkeypatch.setattr(waiting, "load_recheck", lambda path=waiting.CONFIG: waiting.Recheck(
         enabled=False, decided_recheck_days=7, decided_max_per_night=4))
+
+
+@pytest.fixture
+def before_independent_venues(monkeypatch) -> None:
+    """The reading of rules before 2026-10-30.2 (docs/VENUE_SPLIT.md): a stage 1 reject is final and
+    the second venue is not run after it. The newest rules judge the two venues independently, so a
+    test of the older behaviour asks for this fixture by name."""
+    monkeypatch.setattr("qlab.pipeline.stage2.independent_venues", lambda: False)

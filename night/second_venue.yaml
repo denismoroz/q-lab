@@ -1,0 +1,20 @@
+# The night's queue «вторая площадка не проводилась» (src/qlab/second_venue.py, docs/VENUE_SPLIT.md).
+#
+# Owner, 2026-10-30: «смотрим обе площадки независимо. проходить если где-то». Ideas rejected on
+# Binance's history before rules 2026-10-30.2 never got their Hyperliquid run: under the earlier
+# rules a Binance reject was final. CLAUDE.md allows a revival only on data the verdict did not
+# see, and Hyperliquid's data is such data. Each night the oldest of those ideas are run on
+# Hyperliquid (code only, no agent, no tokens); a pass moves the idea by the normal rules and the
+# transition says why. Anything else (a reject, a result that cannot decide yet) leaves the closed
+# idea closed: only a pass revives it.
+
+enabled: true
+
+# At most this many closed ideas a night, the oldest rejection first. A config value, not a
+# constant of the code: the night has a stop time and each run fetches Hyperliquid's candles.
+max_per_night: 4
+
+# An idea whose Hyperliquid run could not decide yet (the window is short, the noise bar has no
+# power) is looked at again after this many days, on the data that arrived meanwhile. Same rules,
+# same spec: nothing is refitted.
+retry_after_days: 14
