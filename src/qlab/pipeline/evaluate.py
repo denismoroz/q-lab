@@ -936,12 +936,12 @@ def _for_selection_period(ruleset: RuleSet) -> RuleSet:
 
 
 def _failed_for_waiting(ruleset: RuleSet, by_id: Mapping, rows) -> list:
-    """The failed rows that decide whether a run "fails only waiting rules". From rules 2026-10-30.1
-    (venue split, docs/VENUE_SPLIT.md) a failed INFRASTRUCTURE rule is not among them: Binance has no
-    order adapter of ours, so every Binance run fails `venue_supported`, and counting that fact about
-    our code as a strategy failure turned every Binance run whose noise bar cannot yet tell into a
-    reject instead of a wait. The missing infrastructure is still named in the route's reason, and a
-    run that passes everything else still routes `needs-infrastructure`."""
+    """The failed rows that decide whether a run "fails only waiting rules". From rules
+    2026-10-30.1 (venue split, docs/VENUE_SPLIT.md) a failed INFRASTRUCTURE rule is not among them:
+    Binance has no order adapter of ours, so every Binance run fails `venue_supported`, and counting
+    that fact about our code as a strategy failure turned every Binance run whose noise bar cannot
+    yet tell into a reject instead of a wait. The missing infrastructure is still named in the
+    route's reason, and a run that passes everything else still routes `needs-infrastructure`."""
     failed = [r for r in rows if r.passed is False]
     if ruleset.venue_split is None:
         return failed

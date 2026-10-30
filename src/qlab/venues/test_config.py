@@ -115,8 +115,8 @@ def test_real_binance_config_loads_from_repo_root() -> None:
 
     assert venue is not None
     assert venue.execution_adapter is False
-    # A fact about our code (venue split, 2026-10-30): with no adapter nothing of ours fills legs as a
-    # unit, and no unwind was ever built to name (see venues/binance.yaml).
+    # A fact about our code (venue split, 2026-10-30): with no adapter nothing of ours fills legs as
+    # a unit, and no unwind was ever built to name (see venues/binance.yaml).
     assert venue.supports_atomic_multileg is False
     assert venue.uncovered_leg_recovery is None
 
