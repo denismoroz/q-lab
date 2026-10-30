@@ -10,6 +10,7 @@ annotation_snapshots:
 - '2026-10-27'
 - '2026-10-28'
 - '2026-10-29'
+- '2026-10-30'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -764,6 +765,19 @@ instruments:
       asset_class: unclassified
       class_key: unclassified
       note: the venue serves no annotation
+  xyz:ICE:
+    listed_from: '2026-10-29'
+    listed_from_basis: first_candle
+    history:
+    - valid_from: '2026-10-29'
+      observed_on: '2026-10-30'
+      asset_class: stock
+      class_key: stock:US
+      country: US
+      venue_category: stocks
+      underlying: 'ICE references 1 share of Intercontinental Exchange, Inc. common
+        stock (NYSE: ICE), quoted in USD. ICE operates exchanges and clearing houses,
+        including the New York Stock Exchange, and provides market data.'
   xyz:INNOLIGHT:
     listed_from: '2026-10-06'
     listed_from_basis: first_listing_snapshot

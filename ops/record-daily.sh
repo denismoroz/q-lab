@@ -3,6 +3,11 @@
 # Installed as a launchd agent by ops/com.qlab.recorder.plist. Each source is
 # its own call: intervals apply to the source they are written next to.
 set -u
+# The Mac must not fall back asleep mid-run: on 2026-10-30 this 15-minute job took five hours of
+# 45-second dark wakes (ops/night.sh says what that cost). -i holds on battery, -s on power.
+if [[ -z "${QLAB_AWAKE:-}" ]]; then
+  QLAB_AWAKE=1 exec caffeinate -i -s "$0" "$@"
+fi
 cd "$(dirname "$0")/.." || exit 1
 LOG="data/recorded/logs/$(date -u +%Y-%m-%d).log"
 mkdir -p data/recorded/logs

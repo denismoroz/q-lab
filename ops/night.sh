@@ -10,22 +10,27 @@
 # after STOP_AT; a started piece of work finishes (the longest seen was a bv2 run
 # on Binance hourly data, ~46 min, before the snapshot-matching fix and the noise
 # worker pool of 2026-10-26 made it ~30 s), the rest goes to the next night.
-STOP_AT="07:10"
+# A night run by hand after a lost one names its own stop: QLAB_STOP_AT=23:00 ops/night.sh.
+STOP_AT="${QLAB_STOP_AT:-07:10}"
 # Binance instruments fetched two at a time (docs/NIGHT_SPEED.md; owner 2026-10-29: «да, включай 2
 # потока»): its funding limit is 500 requests per 5 min and one thread makes about 30 a minute.
 # Hyperliquid stays one at a time whatever this says. Back to 1 if the log shows 429 refusals.
 export QLAB_FETCH_WORKERS=2
 set -u
+# The whole script stays awake, the wait for the recorder too: on 2026-10-30 the Mac was asleep at
+# 03:05, the recorder crept through 45-second dark wakes until 08:13 while this script waited for
+# it, and the night started after its stop time. -i holds on battery, -s on power.
+if [[ -z "${QLAB_AWAKE:-}" ]]; then
+  QLAB_AWAKE=1 exec caffeinate -i -s "$0" "$@"
+fi
 cd "$(dirname "$0")/.." || exit 1
 LOG="data/night/logs/$(date -u +%Y-%m-%d).log"
 mkdir -p data/night/logs
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
-  # caffeinate -i: the Mac must not fall back asleep mid-run. On 2026-10-10 it
-  # dozed between short wakes and two hours of work took until midday.
   # The night reads what the recorder writes: wait for it if it is still running.
   while pgrep -f ops/record-daily.sh > /dev/null; do sleep 30; done
-  caffeinate -i uv run qlab night run --stop-at "$STOP_AT"
+  uv run qlab night run --stop-at "$STOP_AT"
   rc=$?
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $rc)"
 } >> "$LOG" 2>&1
