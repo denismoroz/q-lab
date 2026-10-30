@@ -57,60 +57,99 @@ data:
   instruments: ["ADA", "ADA-SPOT", "ARB", "ARB-SPOT", "ASTER", "ASTER-SPOT", "AVAX", "AVAX-SPOT", "BCH", "BCH-SPOT", "BNB", "BNB-SPOT", "BOME", "BOME-SPOT", "BTC", "BTC-SPOT", "DEXE", "DEXE-SPOT", "DOGE", "DOGE-SPOT", "EDU", "EDU-SPOT", "ENA", "ENA-SPOT", "ETH", "ETH-SPOT", "FET", "FET-SPOT", "GAS", "GAS-SPOT", "HIFI", "HIFI-SPOT", "LINK", "LINK-SPOT", "LTC", "LTC-SPOT", "MATIC", "MATIC-SPOT", "NEAR", "NEAR-SPOT", "NEIRO", "NEIRO-SPOT", "NOT", "NOT-SPOT", "OP", "OP-SPOT", "ORDI", "ORDI-SPOT", "PAXG", "PAXG-SPOT", "PENGU", "PENGU-SPOT", "PEOPLE", "PEOPLE-SPOT", "RNDR", "RNDR-SPOT", "SEI", "SEI-SPOT", "SOL", "SOL-SPOT", "SUI", "SUI-SPOT", "TAO", "TAO-SPOT", "TON", "TON-SPOT", "TRB", "TRB-SPOT", "TRUMP", "TRUMP-SPOT", "TRX", "TRX-SPOT", "UNI", "UNI-SPOT", "WIF", "WIF-SPOT", "WLD", "WLD-SPOT", "XLM", "XLM-SPOT", "XPL", "XPL-SPOT", "XRP", "XRP-SPOT", "ZEC", "ZEC-SPOT"]
 
 costs:
-  taker_fee_bps: 5.25
+  taker_fee_bps: 7.5
   slippage_bps: 0.9
 
-min_leg_notional: 10.0
+min_leg_notional: 5
 # The strategy's own money, the base of every percent and the sum step 4 of the ladder
 # compares the capital a run needed with (docs/LADDER.md; cited in sources).
 strategy_capital_usd: 257
 simultaneous_legs: 2
-# Binance is the DATA proxy; orders would go to Hyperliquid, whose costs and minimum leg this spec
-# already uses, so the venue facts (adapter, uncovered-leg recovery) are Hyperliquid's
-# (StrategySpec.execution_venue, docs/VENUES.md section 9). No number changes.
-execution_venue: hyperliquid
+# Judged for Binance itself (venue split, 2026-10-30, docs/VENUE_SPLIT.md): there is no
+# `execution_venue`, so the facts about execution (adapter, uncovered-leg recovery) are Binance's
+# and a pass routes needs-infrastructure; costs are the binance row of night/costs.yaml (the mean
+# of the perpetual's and the spot's fee for a two-leg book) and the minimum leg is Binance's. Until
+# 2026-10-30 this spec was a proxy for Hyperliquid (execution_venue: hyperliquid, Hyperliquid's
+# costs of 5.25 + 0.9 bp and minimum leg 10): Hyperliquid's own verdict is its second stage.
 
 noise_universe: held
 measure_hedge_timing: false
 unexpressed_mechanisms: []
 differs_from_source:
-  - "the perp is Binance's, not Hyperliquid's: Hyperliquid listed fewer coins early, so a coin can be held here on a date it could not yet be hedged there"
+- 'the perp is Binance''s, not Hyperliquid''s: Hyperliquid listed fewer coins early, so a coin can be
+  held here on a date it could not yet be hedged there'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
 regime_claim:
   bull: earns
   bear: beats_market
 
 sources:
-  "strategy_capital_usd": "the spec's own parameter capital_usd = 257: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "capital_usd": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "spot_share": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "hedge_threshold": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "sticky_exit_hours": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "ratchet_threshold": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "carry_enabled": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "carry_fraction": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "carry_entry_apr": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "carry_exit_hours": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "slippage": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "min_order_usd": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "margin_enabled": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "short_leverage": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "default_leverage": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Плечо 1.5×; для BTC/ETH/SOL/AVAX — как в тесте»"
-  "maint_margin_rate": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "default_maint_margin_rate": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "margin_buffer": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "mode": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)"
-  "universe.rule": "owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «взять 10 самых ликвидных монет на рынке»"
-  "universe.n": "owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «10 самых ликвидных»"
-  "universe.by": "owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «самых ликвидных монет на рынке»"
-  "universe.rebalance": "funding-rate-arbitrage/src/frab/strategy/b2/retune.py: the first bar of every UTC calendar month, the cadence frab's own Bv2 re-tune uses; the other periods are no source exists for this number: a declared sensitivity grid, docs/BV2_MARGIN.md"
-  "universe.window_days": "no source exists for this number: a declared sensitivity grid, docs/BV2_MARGIN.md"
-  "universe.candidates": "docs/BV2_BASKETS.md, «Откуда список кандидатов»: scripts/research/bv2_candidates.py"
-  "shared_margin": "owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «один пул залога на все монеты» (docs/BV2_MARGIN.md)"
-  "costs.differs_from_table": "5.25 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp); numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
-  "costs.taker_fee_bps": "derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py, both legs move by the same amount"
-  "costs.slippage_bps": "derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»"
-  "min_leg_notional": "seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export), min_order_usd"
-  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
-  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  strategy_capital_usd: 'the spec''s own parameter capital_usd = 257: seed/prod_params/2026-10-02-b2_cold.json
+    (frab.db strategies.params_json, read-only export)'
+  capital_usd: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  spot_share: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  hedge_threshold: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  sticky_exit_hours: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  ratchet_threshold: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_enabled: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  carry_fraction: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_entry_apr: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_exit_hours: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  slippage: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  min_order_usd: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  margin_enabled: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  short_leverage: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  default_leverage: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Плечо 1.5×; для BTC/ETH/SOL/AVAX
+    — как в тесте»
+  maint_margin_rate: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  default_maint_margin_rate: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json,
+    read-only export)
+  margin_buffer: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  hedge_margin_headroom: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  rebalance_at_im_share: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  mode: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  universe.rule: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «взять 10 самых ликвидных
+    монет на рынке»'
+  universe.n: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «10 самых ликвидных»'
+  universe.by: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «самых ликвидных монет
+    на рынке»'
+  universe.rebalance: 'funding-rate-arbitrage/src/frab/strategy/b2/retune.py: the first bar of every UTC
+    calendar month, the cadence frab''s own Bv2 re-tune uses; the other periods are no source exists for
+    this number: a declared sensitivity grid, docs/BV2_MARGIN.md'
+  universe.window_days: 'no source exists for this number: a declared sensitivity grid, docs/BV2_MARGIN.md'
+  universe.candidates: 'docs/BV2_BASKETS.md, «Откуда список кандидатов»: scripts/research/bv2_candidates.py'
+  shared_margin: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «один пул залога на
+    все монеты» (docs/BV2_MARGIN.md)'
+  costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5.0, Binance USDT-M futures'' MIN_NOTIONAL
+    of the ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); BTC (50) and five contracts
+    (20) differ and are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'

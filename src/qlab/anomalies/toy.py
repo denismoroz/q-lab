@@ -62,10 +62,12 @@ class ToyStrategy:
         return toy_weights(panel)
 
 
-def toy_run(trial_id: int = 1, idea_id: str = "toy-idea", venue: str = "binance") -> StoredRun:
+def toy_run(trial_id: int = 1, idea_id: str = "toy-idea", venue: str = "binance",
+            execution_venue: str | None = None) -> StoredRun:
     panel = toy_panel()
     spec = SimpleNamespace(idea_id=idea_id, code_ref="qlab.anomalies.toy:ToyStrategy",
-                           params={}, data=SimpleNamespace(source=venue, interval="1d"))
+                           params={}, execution_venue=execution_venue,
+                           data=SimpleNamespace(source=venue, interval="1d"))
     return StoredRun(trial_id=trial_id, idea_id=idea_id, spec=spec, panel=panel,
                      weights=toy_weights(panel), judged=(0, len(panel.prices) - 1),
                      costs=CostModel(taker_fee_bps=5.0, slippage_bps=5.0), extra_cost=None,

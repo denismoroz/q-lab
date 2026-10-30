@@ -816,18 +816,21 @@ def _binance_spec(session, tmp_path, **overrides: object) -> StrategySpec:
     )
 
 
-def test_two_leg_binance_spec_without_an_execution_venue_stays_undecided(session, tmp_path) -> None:
-    """Unchanged behaviour: Binance names no recovery mechanism, so `atomic_execution` of a
-    two-leg spec is unknown and the run routes `needs-more-data`."""
+def test_two_leg_binance_spec_without_an_execution_venue_fails_on_binances_own_facts(
+        session, tmp_path) -> None:
+    """Venue split (2026-10-30): Binance has no adapter of ours, so nothing fills the legs as a unit
+    and nothing unwinds a stranded one -- `atomic_execution` of a two-leg spec is a known 0, not
+    unknown (it used to be unknown, and the run routed `needs-more-data` for ever). Both are
+    infrastructure rules: the route is `needs-infrastructure` once the strategy rules pass."""
     spec = _binance_spec(session, tmp_path, simultaneous_legs=2)
     ruleset = _ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE, _VENUE_RULE, _ATOMIC_RULE])
 
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
-    assert "atomic_execution" not in result.metrics
+    assert result.metrics["atomic_execution"] == 0.0
     assert result.metrics["venue_supported"] == 0.0
-    assert result.routing.route == "needs-more-data"
+    assert result.routing.route != "needs-more-data"
     assert "read from" not in result.routing.reason
 
 

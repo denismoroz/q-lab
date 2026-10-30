@@ -28,7 +28,7 @@ params:
   window: expanding
   objective: sharpe_net
   score_costs:
-    taker_fee_bps: 3.5
+    taker_fee_bps: 5
     slippage_bps: 0.9
 data:
   source: hyperliquid
@@ -41,18 +41,24 @@ data:
 costs:
   taker_fee_bps: 4.5
   slippage_bps: 0.9
-min_leg_notional: 12.0
+min_leg_notional: 10.0
 simultaneous_legs: 1
-execution_venue: hyperliquid
 unexpressed_mechanisms: []
 differs_from_source:
 - 'Causal twin of xsmom-research-liq1m: the numbers it trades are chosen by code, every month, from returns
   realised before the choice (the declared lists of night/own_numbers.yaml); the data is Binance''s history,
   a proxy for hyperliquid''s market, with the original''s costs and minimum leg.'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
+  where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
+  a run that passes every rule routes needs-infrastructure because the lab has no Binance order adapter.
+  Text above that speaks of the original''s or Hyperliquid''s costs and minimum leg describes the spec
+  as it was before that day.'
 - 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
   stage 1 (xsmom-research-liq1m-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 noise_universe: panel
 measure_hedge_timing: false
 params_fixed_at: '2020-01-01'
@@ -86,10 +92,15 @@ sources:
   inner_code_ref: 'src/qlab/strategies/xsmom.py: the code of the spec'
   grid: 'night/own_numbers.yaml (version 2026-10-26.2): the declared list for each of rebalance_days;
     owner 2026-10-26: own numbers chosen on data before the cut'
-  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
-  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
-    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
-  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/xsmom/params.py: _MIN_LEG = 12.0'
+  score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular
+    user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
   min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
     MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
     by'

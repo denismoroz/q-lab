@@ -105,8 +105,10 @@ def test_the_causal_version_chooses_over_exactly_the_cards_grid(tmp_path) -> Non
     assert result.candidates == ("window_days=7", "window_days=14", "window_days=30")
     assert twin.params["refit_every"] == "M" and twin.params["window"] == "expanding"
     assert twin.params["objective"] == "sharpe_net"
-    assert twin.params["score_costs"] == {"taker_fee_bps": 1.5, "slippage_bps": 0.5}
-    assert twin.data.source == "binance" and twin.execution_venue == "hyperliquid"
+    # judged for Binance itself (docs/VENUE_SPLIT.md): Binance's costs, not the card's
+    assert twin.params["score_costs"] == {"taker_fee_bps": 5.0, "slippage_bps": 0.9}
+    assert twin.costs.taker_fee_bps == 5.0 and twin.min_leg_notional == 5.0
+    assert twin.data.source == "binance" and twin.execution_venue is None
     # the card says its data honestly exists from 2023: the twin starts no earlier
     assert twin.data.start == date(2023, 1, 1)
     assert twin.sources["data.start"].endswith("(data.honest_from = 2023-01-01)")
@@ -117,7 +119,7 @@ def test_the_causal_version_chooses_over_exactly_the_cards_grid(tmp_path) -> Non
 def test_without_honest_from_the_data_starts_at_the_archive() -> None:
     grid, _ = _grid()
     twin = causal_twin(_spec(), grid=grid).spec
-    assert twin.data.start == BINANCE_ARCHIVE_START and twin.execution_venue == "hyperliquid"
+    assert twin.data.start == BINANCE_ARCHIVE_START and twin.execution_venue is None
 
 
 def test_a_hand_picked_list_is_judged_from_the_day_the_card_says_it_was_known() -> None:

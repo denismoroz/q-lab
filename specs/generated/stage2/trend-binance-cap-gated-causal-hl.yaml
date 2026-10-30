@@ -47,7 +47,7 @@ params:
   window: expanding
   objective: sharpe_net
   score_costs:
-    taker_fee_bps: 3.5
+    taker_fee_bps: 5
     slippage_bps: 0.9
 data:
   source: hyperliquid
@@ -68,12 +68,19 @@ differs_from_source:
   returns realised before the choice (the base trend-binance-cap against its regime-gated experiment);
   the data is Binance''s history, a proxy for binance''s market, with the original''s costs and minimum
   leg.'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
+  where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
+  a run that passes every rule routes needs-infrastructure because the lab has no Binance order adapter.
+  Text above that speaks of the original''s or Hyperliquid''s costs and minimum leg describes the spec
+  as it was before that day.'
 - 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
   stage 1 (trend-binance-cap-gated-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
 - A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
   engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 noise_universe: panel
 measure_hedge_timing: false
 params_fixed_at: '2020-04-01'
@@ -142,11 +149,15 @@ sources:
     year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга
     в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва» -- the regimes the source says
     trend earns in; nothing is claimed for flat'
-  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
-  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
-    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
-  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
-    DEFAULT_COINS), min_order_usd: HL''s own minimum order'
+  score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular
+    user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
   regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
     on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
     — заявка на «crisis alpha» подтверждается едва»'

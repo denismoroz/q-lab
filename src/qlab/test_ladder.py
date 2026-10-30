@@ -464,8 +464,12 @@ def test_the_report_table_has_a_row_per_open_idea_and_counts_the_reasons(session
     assert lad.open_idea_ids(session) == ["live-one", "bench-one", "card-one"]
     text = "\n".join(lad.report_lines(session, Ledgers()))
 
-    assert "| live-one | live | ✓ | · | ~ | · | ✓ | · | ✓ |" in text
-    assert "| card-one | candidate | · | · | · | · | · | · | · |" in text
+    # the money of step 4 is one symbol per venue (Binance / Hyperliquid), then who passed
+    assert ("| live-one | live | ✓ | · | ~ | ·/· | ✓ | · | ✓ | "
+            "ни одна площадка не пройдена: на Binance — не проводилась, на Hyperliquid — рано "
+            "судить |") in text
+    assert "| card-one | candidate | · | · | · | ·/· | · | · | · | " in text
+    assert "2 Binance, 3 Hyperliquid" in text
     assert "gone" not in text and "noise-" not in text
     assert "Не проводилось, по причинам" in text and "карточка без реализации" in text
 
@@ -482,3 +486,69 @@ def test_the_night_report_carries_the_ladder_section_when_the_stage_made_one(
     assert "## Лестница открытых идей" in text and "| a | live |" in text
     quiet = night.write_report(date(2026, 10, 30), {"results": []}).read_text(encoding="utf-8")
     assert "Лестница" not in quiet
+
+
+# --------------------------------------------------------------------------
+# The venue split (docs/VENUE_SPLIT.md): one verdict and one money check per venue
+
+
+def test_steps_2_and_3_are_the_two_venues_and_step_4_has_a_line_for_each(session) -> None:
+    idea(session, "both", IdeaStatus.BENCH)
+    run(session, "both", TrialRoute.NEEDS_INFRASTRUCTURE, "binance",
+        metrics={"min_capital_usd": 400.0})
+    idea(session, "both-hl", IdeaStatus.BENCH, parent="both", stage2=True)
+    run(session, "both-hl", TrialRoute.REJECT, "hyperliquid", metrics={"min_capital_usd": 90.0})
+
+    found = ladder(session, "both", money={"both": 257.0})
+
+    binance, hl = found.steps[1], found.steps[2]
+    assert (binance.venue, hl.venue) == ("binance", "hyperliquid")
+    assert (binance.key, hl.key) == ("binance", "hyperliquid")
+    assert binance.outcome == Outcome.PASSED and "адаптера заявок на ней нет" in binance.detail
+    assert "адаптера заявок на этой площадке у нас нет" in binance.execution_ru
+    assert "frab на 10.8.0.5" in hl.execution_ru
+    assert hl.outcome == Outcome.FAILED
+    # each venue has its own money check: Binance needs $400 against $257, Hyperliquid $90
+    by = {m.venue: m for m in found.steps[3].money}
+    assert by["binance"].outcome == Outcome.FAILED
+    assert "нужно $400, своих $257" in by["binance"].detail
+    assert by["hyperliquid"].outcome == Outcome.PASSED and "$90" in by["hyperliquid"].detail
+    # the step leads with the venue we can execute on
+    assert found.steps[3].outcome == Outcome.PASSED
+    # passing on one venue and failing on the other is a result, named as such
+    assert found.summary_ru.startswith("прошла на Binance, на Hyperliquid — не прошла")
+    assert "нет адаптера" in found.summary_ru
+    assert [v.venue for v in found.venues] == ["binance", "hyperliquid"]
+    body = found.to_dict()
+    assert body["venues"][0]["word_ru"] == "пройден" and body["venues"][1]["route"] == "reject"
+    assert body["steps"][3]["money"][0]["venue"] == "binance"
+
+
+def test_an_idea_that_exists_on_one_venue_shows_the_other_as_not_run_with_a_reason(session) -> None:
+    idea(session, "hl-only", IdeaStatus.BENCH)
+    run(session, "hl-only", TrialRoute.PAPER, "hyperliquid", metrics={"min_capital_usd": 50.0})
+
+    found = ladder(session, "hl-only", money={"hl-only": 120.0})
+
+    assert found.steps[1].outcome == Outcome.NOT_RUN and found.steps[1].reason is not None
+    by = {m.venue: m for m in found.steps[3].money}
+    assert by["binance"].outcome == Outcome.NOT_RUN
+    assert by["binance"].reason == Reason.NO_VERSION_ON_VENUE
+    assert by["binance"].reason_ru == "нет версии на этой площадке"
+    assert by["hyperliquid"].outcome == Outcome.PASSED
+    assert found.summary_ru.startswith("прошла на Hyperliquid, на Binance — не проводилась")
+    for step in found.steps:  # no silence: a step not run says why, and only such a step does
+        assert (step.outcome == Outcome.NOT_RUN) == (step.reason is not None)
+
+
+def test_a_rejected_binance_run_and_a_missing_second_stage_pass_nowhere(session) -> None:
+    idea(session, "nowhere", IdeaStatus.REJECTED)
+    run(session, "nowhere", TrialRoute.REJECT, "binance")
+
+    found = ladder(session, "nowhere", money={"nowhere": 100.0})
+
+    assert found.summary_ru.startswith("ни одна площадка не пройдена: на Binance — не прошла")
+    by = {m.venue: m for m in found.steps[3].money}
+    assert by["hyperliquid"].reason == Reason.CLOSED_BEFORE  # no second stage for a closed idea
+    # the run did not measure the capital it needs
+    assert by["binance"].outcome == Outcome.UNDECIDED

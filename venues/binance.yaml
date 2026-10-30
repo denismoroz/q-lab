@@ -30,16 +30,40 @@ title: "Binance USDT-margined perpetual futures"
 #     only the Hyperliquid-backed frab deployment; no Binance venue is live.
 execution_adapter: false
 
-# min_leg_notional_usd — Binance USDT-M futures' own MIN_NOTIONAL filter,
-# read directly from the exchange's public exchangeInfo endpoint.
-#   - live query, 2026-09-21: `curl https://fapi.binance.com/fapi/v1/exchangeInfo`
-#     -> BTCUSDT's filters include
-#     {"filterType": "MIN_NOTIONAL", "notional": "50"}.
-#   - Not consumed by any q-lab rule today — `execution_adapter: false`
-#     above already fails this venue at the first preflight rule — recorded
-#     here only because the field is required and must be sourced, not
-#     guessed.
-min_leg_notional_usd: 50.0
+# min_leg_notional_usd -- Binance USDT-M futures' own MIN_NOTIONAL filter of the ordinary contract,
+# read from the exchange's public exchangeInfo endpoint.
+#   - live query, 2026-10-30: `curl https://fapi.binance.com/fapi/v1/exchangeInfo`, every TRADING
+#     perpetual quoted in USDT (522 contracts), filter {"filterType": "MIN_NOTIONAL", "notional": N}:
+#     516 contracts have N = 5, five have N = 20 (ETH, BCH, LTC, ETC, LINK), one has N = 50 (BTC).
+#     The whole table is seed/venue_facts/2026-10-30-binance_um_min_notional.csv.
+#   - Until 2026-10-30 this file said 50.0 (the 2026-09-21 query of BTCUSDT alone). 50 is true of
+#     BTCUSDT and of nothing else; used as the venue's number it would make every alt-coin book
+#     look ten times dearer on Binance than it is. The venue's number is therefore the ordinary
+#     contract's (5), and the six contracts that differ are `min_leg_notional_by_instrument`.
+#   - The venue split (docs/VENUE_SPLIT.md, owner 2026-10-30): Binance is judged for itself, with
+#     its own minimum leg, so this is a number the stand reads, no longer a field nobody consumed.
+min_leg_notional_usd: 5.0
+
+# min_leg_notional_by_instrument -- the contracts whose MIN_NOTIONAL is not the ordinary 5, keyed by
+# the lab's column name (Binance's baseAsset). Source: the same table,
+# seed/venue_facts/2026-10-30-binance_um_min_notional.csv (every row that is not 5). A book's
+# minimum capital is the largest of "this contract's minimum / its smallest order's share of the
+# money" over its contracts (qlab.harness.metrics.min_capital_usd, `floors`).
+min_leg_notional_by_instrument:
+  BTC: 50.0
+  ETH: 20.0
+  BCH: 20.0
+  LTC: 20.0
+  ETC: 20.0
+  LINK: 20.0
+
+# min_leg_notional_spot_usd -- Binance SPOT's NOTIONAL filter (minNotional) of the spot leg of a
+# hedged book (a `<coin>-SPOT` column).
+#   - live query, 2026-10-30: `curl 'https://api.binance.com/api/v3/exchangeInfo?symbols=[...]'`
+#     for BTCUSDT, ETHUSDT, SOLUSDT, AVAXUSDT, LINKUSDT -> {"filterType": "NOTIONAL",
+#     "minNotional": "5.00000000"} for all five. The rest of the spot list was not read: the
+#     number is Binance's ordinary one and is marked as such.
+min_leg_notional_spot_usd: 5.0
 
 # free_public_data — the fetcher itself needs no key and returns candles and
 # funding for free, but its own module docstring is explicit that a
@@ -57,14 +81,18 @@ min_leg_notional_usd: 50.0
 #     API, no key, same access model as Hyperliquid.
 free_public_data: true
 
-# supports_atomic_multileg — left unset (null), not guessed. No execution
-# adapter exists for this venue (see `execution_adapter` above), so there is
-# no order API this repo has ever exercised to observe atomicity from — the
-# honest answer is "we don't know," not "false by association with
-# Hyperliquid."
-supports_atomic_multileg: null
+# supports_atomic_multileg -- false: a fact about OUR code, not about Binance's API. We have no order
+# adapter for this venue (`execution_adapter: false` above), so nothing of ours places the legs of a
+# hedged entry as one all-or-nothing unit, and no unwind of a stranded leg exists (the next field).
+# Until 2026-10-30 this was left unset (null), and every two-leg book judged for Binance read
+# `atomic_execution` as unknown and routed `needs-more-data` for ever, hiding the strategy rules'
+# answer (the books only reached a route because they borrowed Hyperliquid's facts through
+# `execution_venue`). With the venue split (docs/VENUE_SPLIT.md) a Binance verdict reads Binance's
+# own facts; both missing capabilities are infrastructure rules, so a book that passes everything
+# else routes `needs-infrastructure`, as the owner asked, and not a reject. What Binance's own
+# batch-order API can do is not claimed here.
+supports_atomic_multileg: false
 
-# uncovered_leg_recovery — left unset (null) for the same reason: no
-# execution adapter means no recovery mechanism has ever been built or
-# exercised here to name.
+# uncovered_leg_recovery -- left unset (null): no execution adapter means no recovery mechanism has
+# ever been built or exercised here to name.
 uncovered_leg_recovery: null

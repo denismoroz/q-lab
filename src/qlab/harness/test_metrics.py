@@ -150,6 +150,25 @@ def test_compute_metrics_total_wipeout_floors_ann_return_at_minus_one() -> None:
 # --- min_capital_usd -----------------------------------------------------
 
 
+def test_min_capital_usd_reads_each_contracts_own_floor() -> None:
+    """Binance states a minimum per contract (BTC 50, five more 20, the rest 5): the capital a book
+    needs is the largest of `floor / |weight|` over its legs, which is the single-floor formula
+    when every leg has the same floor (docs/VENUE_SPLIT.md)."""
+    idx = pd.date_range("2026-01-01", periods=2, freq="D", tz="UTC")
+    weights = pd.DataFrame({"BTC": [0.10, 0.20], "SOL": [0.04, 0.0]}, index=idx)
+    # BTC: 50 / 0.10 = 500; SOL: 5 / 0.04 = 125; the smallest leg alone would say 5 / 0.04
+    assert min_capital_usd(weights, 5.0, {"BTC": 50.0, "SOL": 5.0}) == pytest.approx(500.0)
+    # the same floor for every leg is the old formula: floor / smallest weight
+    assert min_capital_usd(weights, 5.0, {"BTC": 5.0, "SOL": 5.0}) == pytest.approx(125.0)
+    assert min_capital_usd(weights, 5.0) == pytest.approx(125.0)
+    # a column the venue states nothing about takes the spec's number; a zero cell holds no leg
+    assert min_capital_usd(weights, 5.0, {"BTC": 50.0}) == pytest.approx(500.0)
+    assert min_capital_usd(weights, 30.0, {"BTC": 5.0}) == pytest.approx(750.0)  # SOL: 30 / 0.04
+    with pytest.raises(ValueError, match="all-flat"):
+        min_capital_usd(weights * 0.0, 5.0, {"BTC": 50.0})
+
+
+
 def test_min_capital_usd_hand_computed() -> None:
     idx = pd.date_range("2026-01-01", periods=2, freq="D", tz="UTC")
     weights = pd.DataFrame(

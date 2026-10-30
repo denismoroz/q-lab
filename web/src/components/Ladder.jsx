@@ -9,6 +9,11 @@ import { basisText, standLine } from '../headline.js'
 // оценены по одному принципу»): the same seven steps for every idea. Every word here is copied
 // from the API's `ladder` field (qlab.ladder reads the registry and the night's ledgers); the page
 // computes nothing. A step not run says why, from a closed list, never silence.
+//
+// Venue split (docs/VENUE_SPLIT.md; owner, 2026-10-30: «да, делай раздельно Binance и HL»): Binance
+// and Hyperliquid are two venues, each with its own verdict, its own check of the strategy's money
+// and its own fact about execution. They are shown side by side before the seven steps; passing on
+// one venue and not on the other is a result and is named.
 
 const OUTCOME_STYLE = {
   passed: 'border-emerald-300 bg-emerald-50 text-emerald-900',
@@ -80,6 +85,77 @@ function RunLine({ run, ideaId }) {
   )
 }
 
+function VenueCard({ view }) {
+  const money = view.money
+  return (
+    <div
+      className="rounded border border-slate-200 p-3"
+      data-testid={`venue-${view.venue}`}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-sm font-semibold text-slate-900">{view.title}</h3>
+        <span
+          className={`rounded border px-2 py-0.5 text-xs font-medium ${OUTCOME_STYLE[view.outcome] ?? ''}`}
+          data-testid={`venue-${view.venue}-outcome`}
+        >
+          {view.outcome_ru}
+        </span>
+        {view.outcome === 'not_run' && view.reason_ru && (
+          <span className="text-sm italic text-slate-600" data-testid={`venue-${view.venue}-reason`}>
+            — {view.reason_ru}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 break-words text-sm text-slate-700">{view.detail}</p>
+      <p
+        className={`mt-2 text-xs ${view.adapter === false ? 'text-amber-800' : 'text-slate-600'}`}
+        data-testid={`venue-${view.venue}-execution`}
+      >
+        исполнение: {view.execution_ru}
+      </p>
+      {money && (
+        <p className="mt-1 break-words text-xs text-slate-700" data-testid={`venue-${view.venue}-money`}>
+          деньги стратегии: <span className="font-medium">{money.outcome_ru}</span>
+          {money.reason_ru && <span className="italic"> ({money.reason_ru})</span>}
+          {money.detail ? ` — ${money.detail}` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function Venues({ ladder }) {
+  if (!ladder.venues?.length) return null
+  return (
+    <div className="mb-4" data-testid="ladder-venues">
+      <p className="mb-2 text-sm font-medium text-slate-900" data-testid="ladder-summary">
+        По площадкам: {ladder.summary_ru}
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {ladder.venues.map((view) => (
+          <VenueCard key={view.venue} view={view} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MoneyLines({ money }) {
+  if (!money?.length) return null
+  return (
+    <ul className="mt-2 space-y-0.5 text-sm text-slate-700">
+      {money.map((m) => (
+        <li key={m.venue} data-testid={`money-${m.venue}`}>
+          <span className="font-medium">{m.venue === 'binance' ? 'Binance' : 'Hyperliquid'}:</span>{' '}
+          {m.outcome_ru}
+          {m.reason_ru && <span className="italic text-slate-500"> ({m.reason_ru})</span>}
+          {m.detail ? ` — ${m.detail}` : ''}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function Readings({ readings }) {
   if (!readings?.length) return null
   return (
@@ -120,7 +196,16 @@ function StepRow({ step, ideaId }) {
           </span>
         )}
       </div>
-      {step.detail && <p className="mt-1 break-words text-sm text-slate-700">{step.detail}</p>}
+      {step.number === 4 ? (
+        <MoneyLines money={step.money} />
+      ) : (
+        step.detail && <p className="mt-1 break-words text-sm text-slate-700">{step.detail}</p>
+      )}
+      {step.execution_ru && (
+        <p className="mt-1 text-xs text-slate-500" data-testid={`step-${step.number}-execution`}>
+          исполнение: {step.execution_ru}
+        </p>
+      )}
       {step.number === 5 ? (
         <Readings readings={step.readings} />
       ) : (
@@ -146,8 +231,9 @@ export default function Ladder({ ladder }) {
   return (
     <Panel
       title="Лестница проверки"
-      subtitle="Одни и те же семь ступеней для каждой идеи. У ступени, которую не проводили, названа причина. «Не решён» — ступень проведена, но данных пока мало для ответа. Решает код по правилам; показания пятой ступени ничего не решают."
+      subtitle="Одни и те же семь ступеней для каждой идеи; Binance и Hyperliquid — две площадки, у каждой свой вердикт, свои монеты, издержки и минимальная ножка. У ступени, которую не проводили, названа причина. «Не решён» — ступень проведена, но данных пока мало для ответа. Решает код по правилам; показания пятой ступени ничего не решают."
     >
+      <Venues ladder={ladder} />
       <ol className="space-y-3">
         {ladder.steps.map((step) => (
           <StepRow key={step.number} step={step} ideaId={ladder.idea_id} />

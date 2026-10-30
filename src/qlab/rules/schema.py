@@ -11,6 +11,7 @@ import math
 import re
 from datetime import date
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -204,6 +205,29 @@ class NoisePower(BaseModel):
     """The key the measured power is stored under in a run's metrics."""
 
 
+class VenueSplit(BaseModel):
+    """Binance and Hyperliquid are judged separately, each on its own data, coins, costs and
+    minimum leg, from 2026-10-30.1 (docs/VENUE_SPLIT.md; owner, 2026-10-30: «да, делай раздельно
+    Binance и HL»).
+
+    The idea's route is then the better of the two venues' routes, not a pass at both: a pass on
+    Hyperliquid is `paper` (the lab can trade there), a pass on Binance alone is
+    `needs-infrastructure` (the lab has no Binance order adapter: a fact about our code, never a
+    reject), and an idea is rejected only when no venue passed and none still waits. Where the
+    noise bar on Hyperliquid's short window has no power, Hyperliquid's verdict is the consistency
+    check with Binance's history (`Stage2Confirmation`), taken on the coins Hyperliquid also lists.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    overall: Literal["best_of_venues"]
+    """How the two venues' routes make the idea's: the better one."""
+    shared_coins_history: bool
+    """Whether the consistency check compares Hyperliquid's window with Binance's history on the
+    coins Hyperliquid also lists (True) or with Binance's whole history (False)."""
+    rationale: str
+
+
 class Stage2Confirmation(BaseModel):
     """How stage 2 of the idea generator's evaluation (Hyperliquid) confirms the
     verdict of stage 1 (Binance's long history) where its own noise comparison
@@ -366,6 +390,9 @@ class RuleSet(BaseModel):
     stage2_confirmation: Stage2Confirmation | None = None
     """From 2026-10-27.1: where the noise bar of stage 2 cannot decide, stage 2
     confirms stage 1's verdict instead (docs/TWO_STAGE.md)."""
+    venue_split: VenueSplit | None = None
+    """From 2026-10-30.1: Binance and Hyperliquid are judged separately and the idea's route is the
+    better of the two (docs/VENUE_SPLIT.md). Absent: both stages must pass, as before."""
     informational: list[InformationalRule] = Field(default_factory=list)
     """From 2026-10-27.2: readings shown beside the verdict that decide nothing
     (the year-by-year view, docs/YEARS.md)."""

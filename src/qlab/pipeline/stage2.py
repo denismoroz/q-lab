@@ -39,6 +39,7 @@ from qlab.costs import venue_costs
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
 from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
+from qlab.venues.config import load_venue
 from qlab.year_view import year_keys, years_line
 
 CONFIG = Path("night/stage2.yaml")
@@ -330,6 +331,19 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                      "(instruments_chosen_at); the days before it are warm-up.")
     sources = {k: v for k, v in spec.sources.items() if k != "costs" and not k.startswith("costs.")}
     sources.update(config.cost_sources)
+    min_leg = spec.min_leg_notional
+    if (spec.execution_venue or spec.data.source) != config.venue:
+        # Stage 1 was judged for another venue (Binance, docs/VENUE_SPLIT.md), with that venue's
+        # minimum leg: the second stage is judged for ITS venue, with the venue's own.
+        venue = load_venue(config.venue)
+        if venue is not None and venue.min_leg_notional_usd is not None:
+            min_leg = venue.min_leg_notional_usd
+            sources["min_leg_notional"] = (
+                f"venues/{config.venue}.yaml min_leg_notional_usd: {min_leg:g}, the venue's own "
+                "minimum order (funding-rate-arbitrage/research/SCREENING.md section 2: "
+                "«HL ~$10»)")
+            notes.append(f"The minimum leg is {config.venue}'s own, ${min_leg:g} "
+                         f"(venues/{config.venue}.yaml), not stage 1's ${spec.min_leg_notional:g}.")
     spot_notes, spot_sources = _spot_legs(instruments or [], config)
     notes += spot_notes
     sources.update(spot_sources)
@@ -342,6 +356,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         "costs": SpecCosts(taker_fee_bps=config.taker_fee_bps,
                            slippage_bps=config.slippage_bps),
         "required_instruments": required,
+        "min_leg_notional": min_leg,
         "exploratory": None,
         "judged_from": known_from,
         "differs_from_source": [*spec.differs_from_source, *notes],
@@ -413,9 +428,15 @@ class Combined:
     reason: str
 
 
+PASSED = ("paper", "shelf", "needs-infrastructure")
+"""Routes of a run that passed every rule of its venue."""
+
+
 def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config,
-            stage2_reason: str = "") -> Combined:
-    """The idea's route from the two stages. It needs both to survive:
+            stage2_reason: str = "", best_of_venues: bool = False) -> Combined:
+    """The idea's route from the two stages (the two venues).
+
+    Rules before 2026-10-30.1 (`best_of_venues=False`): it needs both to survive:
 
     * a reject at either stage rejects (stage 2's with the data range of stage 2:
       the child's verdicts carry it, and `apply_route(also_ideas=...)` reads it);
@@ -427,6 +448,20 @@ def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config
     * a stage 2 that decided nothing (not evaluable, no data, a crash) never
       passes the idea: it waits, with the reason.
 
+    Rules from 2026-10-30.1 (`best_of_venues=True`, `RuleSet.venue_split`, docs/VENUE_SPLIT.md):
+    stage 1 is the verdict for Binance, stage 2 the verdict for Hyperliquid, and the idea's route
+    is the better of the two:
+
+    * Binance has not decided (it waits for forward data) or was not passed: the idea takes
+      Binance's route, whatever Hyperliquid says (Hyperliquid's consistency check needs Binance's
+      history to have decided; a Binance reject is final, as before);
+    * Binance passed and Hyperliquid passed: Hyperliquid's route (`paper`: the lab can trade
+      there);
+    * Binance passed and Hyperliquid rejected or decided nothing: the idea stays passed on Binance
+      alone, `needs-infrastructure` (the lab has no Binance adapter), with the Hyperliquid result
+      named. A Hyperliquid reject is the child's own verdict, with its own range of data; it no
+      longer kills the idea.
+
     A stage 2 route that came from the consistency check with stage 1
     (`qlab.pipeline.confirm`) is an ordinary stage 2 route here. It is only ever
     given for a stage 1 that decided (`paper`, `shelf`, `needs-infrastructure`); and
@@ -434,6 +469,8 @@ def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config
     keeps the idea waiting: "too early" on stage 1 never turns into a pass."""
     if stage1_route not in config.stage1_survives:
         return Combined(stage1_route, f"stage 1 {stage1_route}: stage 2 not run")
+    if best_of_venues:
+        return _best_of_venues(stage1_route, stage2_route, stage2_reason)
     if stage2_route == "reject":
         return Combined("reject", f"stage 2 ({config.venue}) rejected: {stage2_reason}")
     if stage2_route is None or stage2_route in UNDECIDED:
@@ -445,6 +482,20 @@ def combine(stage1_route: str, stage2_route: str | None, *, config: Stage2Config
                         f"{stage2_route}: {stage2_reason}")
     return Combined(stage2_route, f"stage 1 {stage1_route}; stage 2 {stage2_route}: "
                     f"{stage2_reason}")
+
+
+def _best_of_venues(binance: str, hyperliquid: str | None, why: str) -> Combined:
+    """`combine` under `RuleSet.venue_split`: the better of the Binance and Hyperliquid routes."""
+    if binance not in PASSED:
+        # Binance waits for forward data: nothing passed yet. Hyperliquid's result is named.
+        return Combined(binance, f"Binance {binance}; Hyperliquid {hyperliquid or 'no run'}: {why}")
+    if hyperliquid in ("paper", "shelf"):
+        return Combined(hyperliquid, f"passed on Binance ({binance}) and on Hyperliquid "
+                        f"({hyperliquid}): {why}")
+    seen = ("rejected" if hyperliquid == "reject"
+            else f"decided nothing ({hyperliquid or 'no run'})")
+    return Combined("needs-infrastructure", f"passed on Binance ({binance}); Hyperliquid {seen}: "
+                    f"{why}. The idea stands on Binance alone, where the lab has no order adapter")
 
 
 # --------------------------------------------------------------------------
@@ -598,7 +649,8 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config) -> None:
     from qlab.rules.loader import load_latest
 
     combined = combine(result.stage1_route or "", None, config=config,
-                       stage2_reason=result.error or "")
+                       stage2_reason=result.error or "",
+                       best_of_venues=load_latest().venue_split is not None)
     try:
         with session_scope() as session:
             _settle(session, result, combined, rules_version=load_latest().version,
@@ -662,10 +714,14 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                 and result.stage1_route in confirm.STAGE1_CONFIRMS):
             # Only a stage 1 that decided can be confirmed; a stage 1 that waits passes nothing.
             # A measurement shows the check too; it still moves no idea's status.
+            shared = (ruleset.venue_split is not None
+                      and ruleset.venue_split.shared_coins_history)
             reviewer = confirm.Stage2Reviewer(
                 stage1_route=result.stage1_route,
                 load_history=lambda: confirm.load_stage1_history(
-                    session, spec, result.stage1_trial_id))
+                    session, spec, result.stage1_trial_id,
+                    venue_names=(None if not shared else
+                                 (venue_names if venue_names is not None else venue_listing))))
         extra = [*translation.unavailable, *([window.reason] if window is not None
                                              and window.reason is not None else [])]
         if extra:
@@ -688,7 +744,8 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.metrics.update({k: metrics[k] for k in year_keys(metrics)})
         if not measure:
             combined = combine(result.stage1_route or "", result.route, config=config,
-                               stage2_reason=result.reason or "")
+                               stage2_reason=result.reason or "",
+                               best_of_venues=ruleset.venue_split is not None)
             _settle(session, result, combined, rules_version=ruleset.version,
                     end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id)
 
@@ -797,6 +854,13 @@ def _confirmation_ru(c: Mapping[str, object]) -> list[str]:
             f"длина отрезка {c.get('window_days')} дн.; сравнивали с прогоном первого этапа "
             f"{c.get('stage1_trial_id')} ({c.get('stage1_from')} — {c.get('stage1_to')}); "
             f"правила {c.get('rules_version')}")
+    shared, whole = c.get("stage1_coins_shared"), c.get("stage1_coins_total")
+    if isinstance(shared, int | float) and isinstance(whole, int | float):
+        head += (f"; история Binance взята на монетах, которые есть и на Hyperliquid: {shared:.0f} "
+                 f"из {whole:.0f} колонок (docs/VENUE_SPLIT.md)")
+    elif c.get("stage1_whole_history_reason"):
+        head += ("; история Binance взята целиком, на монетах Hyperliquid её посчитать не "
+                 f"удалось: {c['stage1_whole_history_reason']}")
     total = c.get("total_return")
     shown = f"{total:+.1%}" if isinstance(total, int | float) else "—"
     if c.get("status") == "confirmed":
@@ -821,6 +885,18 @@ def _combined_ru(stage1_route: object, stage2: Mapping[str, object]) -> str:
             and route in ("paper", "shelf", "needs-infrastructure")):
         return (f"прошла оба этапа ({_route_ru(str(route))}), статус «{status}»: первый этап "
                 "доказал, второй подтвердил согласие с ним")
+    if (route == "needs-infrastructure" and str(stage1_route) in PASSED
+            and stage2.get("route") not in ("paper", "shelf")):
+        # Venue split (rules 2026-10-30.1, docs/VENUE_SPLIT.md): passed on Binance, not on
+        # Hyperliquid; the idea stands on Binance alone, where the lab has no order adapter.
+        on_hl = ("отвергнута" if stage2.get("route") == "reject"
+                 else f"ещё не решила ({_route_ru(stage2.get('route'))})")
+        tail = ("; отказ на Hyperliquid записан со своим диапазоном данных "
+                f"(по {stage2.get('data_end')}), воскресить его можно только на данных, которых "
+                "тогда не было" if stage2.get("route") == "reject" else "")
+        return (f"прошла на Binance (нужна инфраструктура: адаптера Binance у нас нет), на "
+                f"Hyperliquid {on_hl}; статус «{status}»{tail}. Площадки оцениваются раздельно, "
+                "итог — лучший из двух (docs/VENUE_SPLIT.md)")
     if route == "reject":
         return (f"отвергнута на втором этапе — на данных Hyperliquid по {stage2.get('data_end')}; "
                 "воскресить можно только на данных, которых тогда не было")

@@ -44,7 +44,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-28'
+  end: '2026-10-29'
   instruments:
   - AVAX
   - AVAX-SPOT
@@ -59,12 +59,18 @@ costs:
   slippage_bps: 0.9
 min_leg_notional: 10.0
 simultaneous_legs: 2
-execution_venue: hyperliquid
 unexpressed_mechanisms: []
 differs_from_source:
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
 - 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
   stage 1 (bv2-binance) on hyperliquid''s own perpetual contracts listed at each bar; nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
   AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
   lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
@@ -105,8 +111,8 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-binance): funding-rate-arbit
 sources:
   strategy_capital_usd: 'the spec''s own parameter capital_usd = 257: seed/prod_params/2026-10-02-b2.json
     (frab.db strategies.params_json, read-only export)'
-  min_leg_notional: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export),
-    min_order_usd
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
   coins: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
   capital_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
   spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)

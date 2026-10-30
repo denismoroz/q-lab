@@ -81,7 +81,7 @@ from qlab.rules.schema import (
     RuleSet,
     ShortForwardUse,
 )
-from qlab.venues.config import load_venue
+from qlab.venues.config import leg_floors, load_venue
 from qlab.venues.derive import (
     derive_cross_venue_metrics,
     derive_proxy_venue_metrics,
@@ -935,6 +935,20 @@ def _for_selection_period(ruleset: RuleSet) -> RuleSet:
     return ruleset.model_copy(update={"rules": rules})
 
 
+def _failed_for_waiting(ruleset: RuleSet, by_id: Mapping, rows) -> list:
+    """The failed rows that decide whether a run "fails only waiting rules". From rules
+    2026-10-30.1 (venue split, docs/VENUE_SPLIT.md) a failed INFRASTRUCTURE rule is not among them:
+    Binance has no order adapter of ours, so every Binance run fails `venue_supported`, and counting
+    that fact about our code as a strategy failure turned every Binance run whose noise bar cannot
+    yet tell into a reject instead of a wait. The missing infrastructure is still named in the
+    route's reason, and a run that passes everything else still routes `needs-infrastructure`."""
+    failed = [r for r in rows if r.passed is False]
+    if ruleset.venue_split is None:
+        return failed
+    return [r for r in failed
+            if (rule := by_id.get(r.rule_id)) is None or rule.kind != RuleKind.INFRASTRUCTURE]
+
+
 def decide_fit_forward_route(
     *,
     ruleset: RuleSet,
@@ -1118,7 +1132,7 @@ def _decide_fit_forward(
         # too short to resolve its own Sharpe is too early to tell.
         if routing.route != "reject":
             return routing
-        failed = [r for r in forward.rows if r.passed is False]
+        failed = _failed_for_waiting(ruleset, by_id, forward.rows)
         waits = all(
             (rule := by_id.get(r.rule_id)) is not None
             and rule.on_short_forward == ShortForwardUse.WAIT
@@ -1168,7 +1182,7 @@ def _decide_fit_forward(
             required_capital_usd=metrics.get("min_capital_usd"),
         )
     if routing.route == "reject":
-        failed = [r for r in forward.rows if r.passed is False]
+        failed = _failed_for_waiting(ruleset, by_id, forward.rows)
         waits = all(
             (rule := by_id.get(r.rule_id)) is not None
             and rule.on_short_forward == ShortForwardUse.WAIT
@@ -1227,7 +1241,8 @@ def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage |
 
 def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
                          orders: PlacedOrders | None, lo: int, hi: int,
-                         min_leg_notional: float) -> dict[str, float]:
+                         min_leg_notional: float,
+                         floors: Mapping[str, float] | None = None) -> dict[str, float]:
     """The capital facts of one part of a run (docs/MIN_CAPITAL.md).
 
     A strategy that declares the orders it placed (`qlab.harness.strategy.own_orders`) is
@@ -1240,7 +1255,7 @@ def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
     nothing is measured with the whole run's orders (as the weights are, when the part held
     nothing). A book that never opened a leg, or never held one, raises, as before."""
     flat = not (part_weights.abs() > 0).to_numpy().any()
-    by_weights = min_capital_usd(weights if flat else part_weights, min_leg_notional)
+    by_weights = min_capital_usd(weights if flat else part_weights, min_leg_notional, floors)
     out = {"min_capital_usd": by_weights}
     if orders is None:
         return out
@@ -1250,7 +1265,7 @@ def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
     if not (sizes.abs() > ZERO_WEIGHT_TOL).to_numpy().any():
         return out  # the book never opened a leg: nothing to measure the orders by
     out["min_capital_weights_usd"] = by_weights
-    out["min_capital_usd"] = min_capital_usd(sizes, min_leg_notional)
+    out["min_capital_usd"] = min_capital_usd(sizes, min_leg_notional, floors)
     out["min_capital_from_orders"] = 1.0
     out["orders_opening"] = float(opened.sum())
     out["orders_skipped"] = float(orders.skipped.iloc[lo : hi + 1].sum())
@@ -1513,6 +1528,11 @@ def evaluate_spec(
         # (`qlab.forward_series`): the very result the verdict rests on.
         judged_run: dict[str, object] = {}
 
+        # The minimum leg of each contract where the venue the orders go to states one per
+        # contract (Binance, docs/VENUE_SPLIT.md); None keeps the spec's single number.
+        leg_floors_ = leg_floors(load_venue(spec.execution_venue or spec.data.source),
+                                 weights.columns)
+
         def _measure(lo: int, hi: int, *, forward_part: bool = False,
                      years: bool = False) -> dict[str, float]:
             """Backtest metrics plus the facts the rules read, on rows lo..hi."""
@@ -1553,7 +1573,7 @@ def evaluate_spec(
             # everywhere still raises. A book that sends real orders is measured
             # by them (docs/MIN_CAPITAL.md).
             measured.update(measured_min_capital(
-                weights, part_weights, orders, lo, hi, spec.min_leg_notional))
+                weights, part_weights, orders, lo, hi, spec.min_leg_notional, leg_floors_))
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage
             if truncated:

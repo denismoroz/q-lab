@@ -35,6 +35,10 @@ class VenueCosts:
     slippage_bps: float
     sources: dict[str, str]
     """`taker_fee_bps` / `slippage_bps` -> the citation of the number."""
+    two_leg_taker_fee_bps: float | None = None
+    """The taker fee of a book that holds a spot leg against a perpetual on this venue (the mean of
+    the perpetual's and the spot's), when the row states it (Binance); cited in
+    `sources["two_leg_taker_fee_bps"]`."""
 
 
 @lru_cache(maxsize=4)
@@ -47,8 +51,12 @@ def _load(path: Path) -> dict[str, VenueCosts]:
             for key in ("taker_fee_bps", "slippage_bps"):
                 if not sources.get(key):
                     raise ValueError(f"{path}: venue {venue!r} has no source for {key}")
+            two = row.get("two_leg_taker_fee_bps")
+            if two is not None and not sources.get("two_leg_taker_fee_bps"):
+                raise ValueError(f"{path}: venue {venue!r} has no source for two_leg_taker_fee_bps")
             out[str(venue)] = VenueCosts(str(venue), float(row["taker_fee_bps"]),
-                                         float(row["slippage_bps"]), sources)
+                                         float(row["slippage_bps"]), sources,
+                                         None if two is None else float(two))
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
     return out
@@ -69,8 +77,21 @@ def order_venue(spec) -> str:
     return spec.execution_venue or spec.data.source
 
 
+def two_legged(spec) -> bool:
+    """Whether the spec's book holds a spot leg against a perpetual (two legs at once)."""
+    return int(getattr(spec, "simultaneous_legs", 1) or 1) >= 2
+
+
+def expected_taker_fee_bps(spec, row: VenueCosts) -> float:
+    """The taker fee the venue's row asks of this spec: the perpetual's, or for a two-legged book
+    on a venue whose row states it, the mean of the two legs'."""
+    if two_legged(spec) and row.two_leg_taker_fee_bps is not None:
+        return row.two_leg_taker_fee_bps
+    return row.taker_fee_bps
+
+
 def matches(spec, row: VenueCosts) -> bool:
-    return (abs(spec.costs.taker_fee_bps - row.taker_fee_bps) <= TOLERANCE
+    return (abs(spec.costs.taker_fee_bps - expected_taker_fee_bps(spec, row)) <= TOLERANCE
             and abs(spec.costs.slippage_bps - row.slippage_bps) <= TOLERANCE)
 
 
@@ -92,7 +113,8 @@ def problems(spec, path: Path = TABLE) -> list[str]:
     if deviates:
         return []
     return [f"costs {spec.costs.taker_fee_bps:g} + {spec.costs.slippage_bps:g} bp are not the "
-            f"table's row of {venue} ({row.taker_fee_bps:g} + {row.slippage_bps:g} bp, "
+            f"table's row of {venue} ({expected_taker_fee_bps(spec, row):g} + "
+            f"{row.slippage_bps:g} bp, "
             f"night/costs.yaml): say why in sources[{DEVIATION_KEY!r}]"]
 
 
@@ -106,8 +128,13 @@ def table_citation_problems(path: Path = TABLE) -> list[str]:
     for venue, row in table(path).items():
         for key in ("taker_fee_bps", "slippage_bps"):
             out += citation_problems(f"{venue}.{key}", row.sources[key], getattr(row, key))
+        if row.two_leg_taker_fee_bps is not None:
+            out += citation_problems(f"{venue}.two_leg_taker_fee_bps",
+                                     row.sources["two_leg_taker_fee_bps"],
+                                     row.two_leg_taker_fee_bps)
     return out
 
 
-__all__ = ["DEVIATION_KEY", "TABLE", "VenueCosts", "matches", "order_venue", "problems",
+__all__ = ["DEVIATION_KEY", "TABLE", "VenueCosts", "expected_taker_fee_bps", "matches",
+           "order_venue", "problems", "two_legged",
            "table", "table_citation_problems", "venue_costs"]

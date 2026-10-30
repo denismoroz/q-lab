@@ -102,7 +102,8 @@ def test_a_causal_variant_is_a_retune_of_the_wrapper_over_the_family() -> None:
     assert spec.params["base_params"]["inner_code_ref"] == base.code_ref
     assert spec.params["base_params"]["inner_params"] == base.params
     assert len(spec.params["grid"]["overlay"]) == 60
-    assert spec.params["score_costs"] == {"taker_fee_bps": 3.5, "slippage_bps": 0.9}
+    assert spec.params["score_costs"] == {"taker_fee_bps": base.costs.taker_fee_bps,
+                                          "slippage_bps": base.costs.slippage_bps}
     assert spec.costs == base.costs and spec.data.start == base.data.start
 
 

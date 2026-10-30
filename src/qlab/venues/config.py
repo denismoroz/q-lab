@@ -63,6 +63,14 @@ class VenueConfig(BaseModel):
     #: buffer), not the exchange's raw minimum.
     min_leg_notional_usd: float | None = None
 
+    #: Contracts whose minimum is not `min_leg_notional_usd`, by the lab's column name
+    #: (venue split, docs/VENUE_SPLIT.md). A book's minimum capital reads the right one per leg.
+    min_leg_notional_by_instrument: dict[str, float] | None = None
+
+    #: The minimum of a spot leg (a `<coin>-SPOT` column) of a hedged book, when it differs from
+    #: the perpetual's.
+    min_leg_notional_spot_usd: float | None = None
+
     #: Is market and funding data available for this venue without API
     #: keys, both historically and going forward (not merely a historical
     #: dump)? Feeds `data_forward_available`
@@ -93,6 +101,26 @@ class VenueConfig(BaseModel):
         return value
 
 
+def leg_floors(venue: VenueConfig | None, columns) -> dict[str, float] | None:
+    """The minimum leg of every column of a book on `venue`, or None when the venue states no
+    per-instrument fact (the spec's single `min_leg_notional` then applies to all). A `<coin>-SPOT`
+    column takes the venue's spot minimum, a perpetual its own entry, else the ordinary number."""
+    if venue is None or (venue.min_leg_notional_by_instrument is None
+                         and venue.min_leg_notional_spot_usd is None):
+        return None
+    by_name = venue.min_leg_notional_by_instrument or {}
+    out: dict[str, float] = {}
+    for column in columns:
+        name = str(column)
+        if name.endswith("-SPOT"):
+            floor = venue.min_leg_notional_spot_usd
+        else:
+            floor = by_name.get(name, venue.min_leg_notional_usd)
+        if floor is not None:
+            out[name] = float(floor)
+    return out
+
+
 def load_venue(venue_id: str, *, venues_dir: Path | None = None) -> VenueConfig | None:
     """Load `<venues_dir>/<venue_id>.yaml`, or `None` if no such file exists.
 
@@ -121,4 +149,4 @@ def load_venue(venue_id: str, *, venues_dir: Path | None = None) -> VenueConfig 
     return VenueConfig.model_validate(raw)
 
 
-__all__ = ["DEFAULT_VENUES_DIR", "VenueConfig", "load_venue"]
+__all__ = ["DEFAULT_VENUES_DIR", "VenueConfig", "leg_floors", "load_venue"]

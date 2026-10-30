@@ -19,13 +19,20 @@ the outcome of a step is the stand's own route for that run (`qlab.pipeline.eval
 The steps (docs/EVALUATION_PATHS.md, section 6):
 
 1. description and the checks before the calculation (the idea has a run the stand accepted);
-2. the long history on Binance, with the numbers chosen by code from the past (the idea itself if
-   it runs there, its causal twin if it does not);
-3. its own venue (Hyperliquid), the same numbers (the second stage, or the idea's own run);
-4. the strategy's money against the capital the run needed;
+2. the verdict for Binance, on Binance's long history, coins, costs and minimum leg (the idea itself
+   if it runs there, its causal twin if it does not);
+3. the verdict for Hyperliquid, on Hyperliquid's own data, coins, costs and minimum leg, the same
+   numbers (the second stage, or the idea's own run);
+4. the strategy's money against the capital each venue's run needed (one line per venue);
 5. readings that decide nothing (years, protection, regimes, anomalies, overlays);
 6. paper, four to six weeks;
 7. the owner's decision.
+
+Venue split (2026-10-30, docs/VENUE_SPLIT.md; owner: «да, делай раздельно Binance и HL»): steps 2
+and 3 are the two venues side by side, each with its own outcome, its own check of the strategy's
+money (step 4 has a line per venue) and the fact about execution there (Binance has no order
+adapter of ours: a pass there is «нужна инфраструктура», never a reject). `Ladder.venues` and
+`Ladder.summary_ru` say which venue passed, which did not and which was not run, and why.
 
 Step 4 (phase B, 2026-10-29): the strategy's money is a field of the spec itself
 (`StrategySpec.strategy_capital_usd`, cited in its `sources`), and the capital a run needed
@@ -35,6 +42,7 @@ this step's outcome. A spec that states no money reads «деньги страт
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from collections.abc import Mapping
@@ -110,6 +118,8 @@ class Reason(StrEnum):
     IN_PRODUCTION = "in_production"
     TWIN_ONLY_WHILE_WAITING = "twin_only_while_waiting"
     TWIN_REFUSED_OTHER = "twin_refused_other"
+    # Added with the venue split (2026-10-30):
+    NO_VERSION_ON_VENUE = "no_version_on_venue"
 
 
 REASON_RU: dict[Reason, str] = {
@@ -129,14 +139,15 @@ REASON_RU: dict[Reason, str] = {
     Reason.IN_PRODUCTION: "идея уже в бумаге или в деньгах — двойник не строится",
     Reason.TWIN_ONLY_WHILE_WAITING: "двойник строится, только пока идея ждёт проверки вперёд",
     Reason.TWIN_REFUSED_OTHER: "двойник не построен по другой причине (слова кода в подробностях)",
+    Reason.NO_VERSION_ON_VENUE: "нет версии на этой площадке",
 }
 
-STEP_KEYS = ("description", "binance", "own_venue", "money", "readings", "paper", "owner")
+STEP_KEYS = ("description", "binance", "hyperliquid", "money", "readings", "paper", "owner")
 STEP_TITLES = (
     "Описание и проверки до расчёта",
-    "Длинная история Binance: числа выбирает код по прошлому",
-    "Своя площадка (Hyperliquid): те же числа",
-    "Деньги стратегии",
+    "Binance: вердикт на данных, монетах и издержках Binance",
+    "Hyperliquid: вердикт на данных, монетах и издержках Hyperliquid",
+    "Деньги стратегии: по строке на площадку",
     "Показания: ничего не решают",
     "Бумага 4–6 недель",
     "Решение владельца",
@@ -163,8 +174,9 @@ ROUTE_NOTE_RU: dict[str, str] = {
     "paper": "прошла все правила стенда",
     "shelf": "прошла все правила; до правил 2026-10-29.3 стенд сравнивал нужный капитал с общей "
              "суммой, а не с деньгами стратегии (их читает ступень 4); так записан старый прогон",
-    "needs-infrastructure": "прошла все правила; у площадки данных нет нашего адаптера заявок "
-                            "(его даёт ступень на своей площадке)",
+    "needs-infrastructure": "прошла все правила этой площадки; нужна инфраструктура: нашего "
+                            "адаптера заявок на ней нет (факт о нашем коде, не отказ стратегии); "
+                            "торговать мы можем там, где адаптер есть, — на Hyperliquid",
     "needs-forward": "правила пока не могут решить: мало данных после выбора чисел",
     "needs-more-data": "не хватило метрики, нужной правилу",
     "error": "прогон упал",
@@ -216,6 +228,30 @@ class Reading:
 
 
 @dataclass(frozen=True)
+class VenueMoney:
+    """The check of the strategy's money on one venue: the capital that venue's run needed against
+    the strategy's own money (step 4 has one line per venue)."""
+
+    venue: str
+    outcome: Outcome
+    detail: str
+    reason: Reason | None = None
+
+    @property
+    def outcome_ru(self) -> str:
+        return OUTCOME_RU[self.outcome]
+
+    @property
+    def reason_ru(self) -> str | None:
+        return None if self.reason is None else REASON_RU[self.reason]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"venue": self.venue, "outcome": self.outcome.value, "outcome_ru": self.outcome_ru,
+                "reason": None if self.reason is None else self.reason.value,
+                "reason_ru": self.reason_ru, "detail": self.detail}
+
+
+@dataclass(frozen=True)
 class Step:
     number: int
     key: str
@@ -228,6 +264,12 @@ class Step:
     other_idea: str | None = None
     """The idea whose run the step shows when it is not this one's own (the first stage of a
     second stage, the causal twin of an original)."""
+    venue: str | None = None
+    """The venue of steps 2 and 3 (`binance`, `hyperliquid`)."""
+    execution_ru: str | None = None
+    """What the lab can do on that venue: the fact about its order adapter, in words."""
+    money: tuple[VenueMoney, ...] = ()
+    """Step 4 only: the money check of each venue."""
 
     @property
     def outcome_ru(self) -> str:
@@ -245,13 +287,99 @@ class Step:
             "reason_ru": self.reason_ru, "detail": self.detail,
             "run": None if self.run is None else self.run.to_dict(),
             "readings": [r.to_dict() for r in self.readings], "other_idea": self.other_idea,
+            "venue": self.venue, "execution_ru": self.execution_ru,
+            "money": [m.to_dict() for m in self.money],
         }
 
     def short_ru(self) -> str:
-        """«пройден», «не решён», «—: нет версии на Binance»: one cell of the morning table."""
+        """«пройден», «не проводился: нет версии на Binance»: one cell of a table."""
         if self.outcome == Outcome.NOT_RUN:
             return f"не проводился: {self.reason_ru}"
         return self.outcome_ru
+
+
+VENUE_TITLE = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
+EXECUTION_RU = {
+    True: "у нас есть адаптер заявок (frab на 10.8.0.5): прошедшая правила идея идёт в бумагу",
+    False: "адаптера заявок на этой площадке у нас нет (ни в q-lab, ни во frab): идея, прошедшая "
+           "все правила, получает «нужна инфраструктура» — это факт о нашем коде, а не отказ "
+           "стратегии",
+    None: "есть ли у нас адаптер заявок на этой площадке, не записано",
+}
+
+
+def execution_ru(venue: str) -> str:
+    """The venue's fact about execution, in words (`venues/<venue>.yaml`, `execution_adapter`)."""
+    from qlab.venues.config import load_venue
+
+    config = load_venue(venue)
+    return EXECUTION_RU[None if config is None else config.execution_adapter]
+
+
+def adapter(venue: str) -> bool | None:
+    from qlab.venues.config import load_venue
+
+    config = load_venue(venue)
+    return None if config is None else config.execution_adapter
+
+
+@dataclass(frozen=True)
+class VenueView:
+    """One venue of an idea, read off its ladder: its verdict, what the lab can do there, its
+    money check. The two views are what the console and the morning report show side by side."""
+
+    venue: str
+    title: str
+    outcome: Outcome
+    outcome_ru: str
+    detail: str
+    reason: Reason | None
+    route: str | None
+    adapter: bool | None
+    execution_ru: str
+    money: VenueMoney | None
+    trial_id: int | None
+    run_idea: str | None
+
+    @property
+    def reason_ru(self) -> str | None:
+        return None if self.reason is None else REASON_RU[self.reason]
+
+    def word_ru(self) -> str:
+        """«пройдена», «не пройдена», «рано судить», «не проводилась: причина»."""
+        return {Outcome.PASSED: "пройден", Outcome.FAILED: "не пройден",
+                Outcome.UNDECIDED: "не решён (рано судить)",
+                Outcome.NOT_RUN: f"не проводился: {self.reason_ru}"}[self.outcome]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "venue": self.venue, "title": self.title, "outcome": self.outcome.value,
+            "outcome_ru": self.outcome_ru, "word_ru": self.word_ru(), "detail": self.detail,
+            "reason": None if self.reason is None else self.reason.value,
+            "reason_ru": self.reason_ru, "route": self.route, "adapter": self.adapter,
+            "execution_ru": self.execution_ru,
+            "money": None if self.money is None else self.money.to_dict(),
+            "trial_id": self.trial_id, "run_idea": self.run_idea,
+        }
+
+
+def summary_ru(views: tuple[VenueView, ...]) -> str:
+    """Which venue passed and which did not, in one sentence (docs/VENUE_SPLIT.md)."""
+    by = {v.venue: v for v in views}
+    binance, hl = by["binance"], by["hyperliquid"]
+    if binance.outcome == Outcome.PASSED and hl.outcome == Outcome.PASSED:
+        return "прошла на обеих площадках: на Binance и на Hyperliquid"
+    if binance.outcome == Outcome.PASSED or hl.outcome == Outcome.PASSED:
+        yes, no = (binance, hl) if binance.outcome == Outcome.PASSED else (hl, binance)
+        tail = {Outcome.FAILED: "не прошла", Outcome.UNDECIDED: "рано судить",
+                Outcome.NOT_RUN: f"не проводилась ({no.reason_ru})"}[no.outcome]
+        extra = ("; на Binance у нас нет адаптера, идея ждёт инфраструктуры"
+                 if yes.venue == "binance" else "")
+        return f"прошла на {yes.title}, на {no.title} — {tail}{extra}"
+    words = {Outcome.FAILED: "не прошла", Outcome.UNDECIDED: "рано судить",
+             Outcome.NOT_RUN: "не проводилась"}
+    return (f"ни одна площадка не пройдена: на Binance — {words[binance.outcome]}, "
+            f"на Hyperliquid — {words[hl.outcome]}")
 
 
 @dataclass(frozen=True)
@@ -260,9 +388,32 @@ class Ladder:
     status: str
     steps: tuple[Step, ...]
 
+    @property
+    def venues(self) -> tuple[VenueView, ...]:
+        """Binance and Hyperliquid read off steps 2, 3 and 4: the same two lines for every idea."""
+        money = {m.venue: m for m in self.steps[3].money}
+        out = []
+        for step in (self.steps[1], self.steps[2]):
+            assert step.venue is not None
+            run = step.run
+            out.append(VenueView(
+                venue=step.venue, title=VENUE_TITLE[step.venue], outcome=step.outcome,
+                outcome_ru=step.outcome_ru, detail=step.detail, reason=step.reason,
+                route=None if run is None else run.route, adapter=adapter(step.venue),
+                execution_ru=step.execution_ru or execution_ru(step.venue),
+                money=money.get(step.venue),
+                trial_id=None if run is None else run.trial_id,
+                run_idea=None if run is None else run.idea_id))
+        return tuple(out)
+
+    @property
+    def summary_ru(self) -> str:
+        return summary_ru(self.venues)
+
     def to_dict(self) -> dict[str, Any]:
         return {"idea_id": self.idea_id, "status": self.status,
-                "steps": [s.to_dict() for s in self.steps]}
+                "steps": [s.to_dict() for s in self.steps],
+                "venues": [v.to_dict() for v in self.venues], "summary_ru": self.summary_ru}
 
 
 @dataclass(frozen=True)
@@ -676,16 +827,45 @@ def strategy_money(idea: Idea | str, ledgers: Ledgers) -> float | None:
     return found
 
 
-def _step4(idea: Idea, own: _Run | None, ledgers: Ledgers) -> Step:
-    money = strategy_money(idea, ledgers)
-    need = None if own is None else _number(own.metrics, "min_capital_usd")
+def _venue_money(idea: Idea, step: Step, money: float | None) -> VenueMoney:
+    """The money check of one venue (step 2 or 3 is the venue's run): the capital that run needed
+    against the strategy's own money. A venue with no run has nothing to check."""
+    venue = step.venue or ""
+    if idea.status in CLOSED_STATUSES and (step.outcome == Outcome.NOT_RUN or money is None):
+        return VenueMoney(venue, Outcome.NOT_RUN, f"статус «{idea.status.value}»",
+                          Reason.CLOSED_BEFORE)
+    if step.outcome == Outcome.NOT_RUN:
+        why = f" ({step.reason_ru})" if step.reason_ru else ""
+        return VenueMoney(venue, Outcome.NOT_RUN,
+                          f"на этой площадке прогона нет{why}: деньги проверять не на чем",
+                          Reason.NO_VERSION_ON_VENUE)
+    need = None if step.run is None else step.run.min_capital_usd
     if money is None:
-        if idea.status in CLOSED_STATUSES:
-            return _not_run(4, Reason.CLOSED_BEFORE, f"статус «{idea.status.value}»")
         note = "" if need is None else f"прогону нужно ${need:,.0f}; сравнить не с чем"
-        return _not_run(4, Reason.NO_STRATEGY_MONEY, note)
+        return VenueMoney(venue, Outcome.NOT_RUN, note, Reason.NO_STRATEGY_MONEY)
     outcome, detail = capital_fit(need, money)
-    return Step(4, STEP_KEYS[3], STEP_TITLES[3], outcome, detail)
+    return VenueMoney(venue, outcome, detail)
+
+
+def _step4(idea: Idea, steps: list[Step], ledgers: Ledgers) -> Step:
+    """The strategy's money against the capital each venue's run needed: one line per venue. The
+    step's own outcome is the venue where the lab can execute (Hyperliquid) when it has a line,
+    else Binance's; the lines are what the page and the report show."""
+    money = strategy_money(idea, ledgers)
+    lines = tuple(_venue_money(idea, s, money) for s in (steps[1], steps[2]))
+    binance, hl = lines
+    lead = hl if hl.outcome != Outcome.NOT_RUN else binance
+    detail = " · ".join(f"{VENUE_TITLE[m.venue]}: {m.outcome_ru}"
+                        + (f" ({m.reason_ru})" if m.reason_ru else "")
+                        + (f", {m.detail}" if m.detail else "") for m in lines)
+    if lead.outcome == Outcome.NOT_RUN:
+        reasons = [m.reason for m in lines]
+        reason = (Reason.NO_STRATEGY_MONEY if Reason.NO_STRATEGY_MONEY in reasons
+                  else Reason.CLOSED_BEFORE if Reason.CLOSED_BEFORE in reasons
+                  else Reason.NO_VERSION_ON_VENUE)
+        return Step(4, STEP_KEYS[3], STEP_TITLES[3], Outcome.NOT_RUN, detail, reason=reason,
+                    money=lines)
+    return Step(4, STEP_KEYS[3], STEP_TITLES[3], lead.outcome, detail, money=lines)
 
 
 def capital_fit(need: float | None, money: float) -> tuple[Outcome, str]:
@@ -813,6 +993,11 @@ def _step7(session: Session, idea: Idea, steps: list[Step]) -> Step:
     return _not_run(7, Reason.NOT_REACHED, "")
 
 
+def _on_venue(step: Step, venue: str) -> Step:
+    """A step of steps 2 and 3 named for its venue, with what the lab can do there."""
+    return dataclasses.replace(step, venue=venue, execution_ru=execution_ru(venue))
+
+
 def build_ladder(session: Session, idea_id: str, ledgers: Ledgers | None = None) -> Ladder | None:
     """The seven steps of one idea; None when the idea does not exist. Reads only."""
     ledgers = ledgers or Ledgers()
@@ -825,12 +1010,12 @@ def build_ladder(session: Session, idea_id: str, ledgers: Ledgers | None = None)
     if first.outcome == Outcome.NOT_RUN and own is not None:
         # The run was a refusal to test: nothing after it has anything to compare.
         reason = Reason.FIRST_STEP_UNDECIDED
-        steps = [first, _not_run(2, reason, "первая ступень не дала прогона, которому есть что "
-                                 "сравнивать"),
-                 _not_run(3, reason, "то же"), _step4(idea, own, ledgers)]
+        two = _not_run(2, reason, "первая ступень не дала прогона, которому есть что сравнивать")
+        three = _not_run(3, reason, "то же")
     else:
         two, three = _steps23(session, idea, own, spec, ledgers)
-        steps = [first, two, three, _step4(idea, own, ledgers)]
+    steps = [first, _on_venue(two, "binance"), _on_venue(three, "hyperliquid")]
+    steps.append(_step4(idea, steps, ledgers))
     steps.append(_step5(session, idea, steps, own, ledgers))
     steps.append(_step6(session, idea, ledgers))
     steps.append(_step7(session, idea, steps))
@@ -865,21 +1050,29 @@ def open_idea_ids(session: Session) -> list[str]:
 
 
 def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
-    """One table of every open idea's ladder for the morning report: a symbol per step, then
-    the count of reasons steps were not run. A reading; nothing here decides."""
+    """One table of every open idea's ladder for the morning report: a symbol per step, Binance
+    and Hyperliquid side by side (steps 2, 3 and the money of step 4 once per venue), which venue
+    passed, then the count of reasons steps were not run. A reading; nothing here decides."""
     ladders = build_ladders(session, open_idea_ids(session), ledgers)
     if not ladders:
         return []
     lines = [
-        "Одни и те же семь ступеней для каждой идеи (`docs/LADDER.md`): 1 описание и проверки, "
-        "2 длинная история Binance, 3 своя площадка, 4 деньги стратегии, 5 показания, 6 бумага, "
-        "7 владелец. ✓ пройден, ✗ не пройден, ~ не решён (рано судить), · не проводился, "
-        "причина названа на странице идеи; у пятой ступени ✓ значит «показания записаны».", "",
-        "| идея | статус | 1 | 2 | 3 | 4 | 5 | 6 | 7 |", "|---|---|---|---|---|---|---|---|---|"]
+        "Одни и те же семь ступеней для каждой идеи (`docs/LADDER.md`), Binance и Hyperliquid "
+        "рядом, у каждой площадки свой вердикт (`docs/VENUE_SPLIT.md`): 1 описание и проверки, "
+        "2 Binance, 3 Hyperliquid, 4 деньги стратегии (Binance / Hyperliquid), 5 показания, "
+        "6 бумага, 7 владелец. ✓ пройден, ✗ не пройден, ~ не решён (рано судить), · не проводился, "
+        "причина названа на странице идеи; у пятой ступени ✓ значит «показания записаны». "
+        "Прошедшая на Binance идея — «нужна инфраструктура»: адаптера Binance у нас нет.", "",
+        "| идея | статус | 1 | 2 Binance | 3 Hyperliquid | 4 деньги B / H | 5 | 6 | 7 | "
+        "итог по площадкам |", "|---|---|---|---|---|---|---|---|---|---|"]
     reasons: dict[Reason, int] = {}
     for found in ladders:
-        cells = [SYMBOL[s.outcome] for s in found.steps]
-        lines.append(f"| {found.idea_id} | {found.status} | " + " | ".join(cells) + " |")
+        s = found.steps
+        money = "/".join(SYMBOL[m.outcome] for m in s[3].money)
+        cells = [SYMBOL[s[0].outcome], SYMBOL[s[1].outcome], SYMBOL[s[2].outcome], money,
+                 SYMBOL[s[4].outcome], SYMBOL[s[5].outcome], SYMBOL[s[6].outcome]]
+        lines.append(f"| {found.idea_id} | {found.status} | " + " | ".join(cells)
+                     + f" | {found.summary_ru} |")
         for step in found.steps:
             if step.reason is not None:
                 reasons[step.reason] = reasons.get(step.reason, 0) + 1
@@ -893,6 +1086,7 @@ __all__ = [
     "SECTION_TITLE", "report_lines", "open_idea_ids",
     "BINANCE_SUFFIX", "DEFAULT_ANOMALY_ROUTES", "DEFAULT_STAGE1_SURVIVES", "GATE_STATUSES",
     "Ladder", "Ledgers", "OUTCOME_RU", "Outcome", "REASON_RU", "ROUTE_OUTCOME", "Reading",
-    "Reason", "STEP_KEYS", "STEP_TITLES", "Step", "StepRun", "TWIN_SUFFIX", "build_ladder",
-    "build_ladders", "load_ledgers", "strategy_money", "twin_reason",
+    "Reason", "STEP_KEYS", "STEP_TITLES", "Step", "StepRun", "TWIN_SUFFIX", "VENUE_TITLE",
+    "VenueMoney", "VenueView", "build_ladder", "build_ladders", "load_ledgers", "strategy_money",
+    "summary_ru", "twin_reason",
 ]
