@@ -158,6 +158,16 @@ def test_a_finished_idea_is_not_queued_again_and_an_undecided_one_waits_its_days
     assert found[0].last_outcome == "undecided" and found[0].last_day == "2026-10-10"
 
 
+def test_a_crashed_run_is_tried_again_the_next_night_not_after_two_weeks(
+        tmp_path, registry) -> None:
+    _world(tmp_path, registry)
+    ledger = {"old": {"day": "2026-10-30", "outcome": "error"},
+              "stale": {"day": "2026-10-31", "outcome": "error"},      # today: done tonight
+              "middle": {"day": "2026-10-30", "outcome": "skipped"}}
+    found, _ = _find(tmp_path, registry, ledger)
+    assert [c.idea_id for c in found] == ["old", "middle", "young"]
+
+
 def test_the_stage_runs_the_oldest_up_to_the_cap_and_a_pass_is_cited(
         tmp_path, registry, monkeypatch) -> None:
     _world(tmp_path, registry)

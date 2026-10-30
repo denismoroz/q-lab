@@ -1010,6 +1010,8 @@ def _independent_ru(binance: object, stage2: Mapping[str, object]) -> str:
     hl_route = stage2.get("route")
     b, h = venue_state(str(binance) if binance else None), venue_state(
         str(hl_route) if hl_route else None)
+    if stage2.get("status") == "error":
+        h = "pending"  # a crashed run has not spoken; it is tried again
     words = {"pass": "прошла", "reject": "отвергнута", "pending": "ещё не решила",
              "none": "не проводилась"}
     confirmation = stage2.get("confirmation") or {}

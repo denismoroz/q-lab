@@ -184,8 +184,11 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
         if last in FINAL_OUTCOMES:
             continue
         if last is not None and entry.get("day"):
+            # A result that could not decide waits `retry_after_days` for data to arrive; a run
+            # that crashed or was skipped is tried again the next night.
+            wait = 1 if last in ("error", "skipped") else config.retry_after_days
             try:
-                due = date.fromisoformat(entry["day"]) + timedelta(days=config.retry_after_days)
+                due = date.fromisoformat(entry["day"]) + timedelta(days=wait)
             except ValueError:
                 due = today
             if due > today:
