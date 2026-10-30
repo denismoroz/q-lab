@@ -9,7 +9,7 @@ ideas:
     таймфреймам. ведь таймфреймы они как матрешки - чем ниже тем больше колебаний. если рассмотреть варианты
     определения тренда по более высокому таймфрейму а включать по более низкому... в качестве основы по
     тренду брать не биткоин а монету на которой работать - вот такие идеи
-  status: carded
+  status: implemented
   card: cards/bv2-fast-release-by-own-trend.yaml
   notes: карточка написана 2026-10-28; в очереди реализации
   attempts: 2
@@ -47,7 +47,35 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/director-2026-10-28.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'reviewer: bad-question: The question asks the owner to approve a routing that is already settled.
+    The draft itself says the director put this work first on the FRAB researcher''s list in the 2026-10-30
+    memo. `docs/research/frab-2026-10-30.md` ranks it high and calls it "код, без испытаний" (code, no
+    trials), and `frab-2026-10-29.md` says the same. The owner need not answer it. If the idea is not
+    a strategy the stand can judge, the draft can say that and name where the work was handed (a closed
+    or handed-over outcome, not a question). The question also offers three branches at once: hand it
+    to the researcher, order a separate report from the implementer, or order new per-trade reconciliation
+    code as its own task. It is not one specific question.'
+  review_blocks:
+  - kind: bad-question
+    ref: new
+    text: 'The question asks the owner to approve a routing that is already settled. The draft itself
+      says the director put this work first on the FRAB researcher''s list in the 2026-10-30 memo. `docs/research/frab-2026-10-30.md`
+      ranks it high and calls it "код, без испытаний" (code, no trials), and `frab-2026-10-29.md` says
+      the same. The owner need not answer it. If the idea is not a strategy the stand can judge, the draft
+      can say that and name where the work was handed (a closed or handed-over outcome, not a question).
+      The question also offers three branches at once: hand it to the researcher, order a separate report
+      from the implementer, or order new per-trade reconciliation code as its own task. It is not one
+      specific question.'
+  review_notes:
+  - Neither `paper_check.py`/`paper_replay.py` nor `docs/FRAB_LIVE.md` is named as the thing that does
+    or does not already cover all four parts (execution price, fees, funding, entry/exit time). The question
+    never says which parts are missing, so the owner cannot tell what they would be ordering.
+  - '"Идея закрывается как «передана исследователю»" (the idea is closed as "handed to the researcher")
+    is shown to the owner as a choice, but closing is the system''s step, not the owner''s.'
+  - Terms such as "стенд", "реализатор" and "paper_check.py" are used without a plain-words explanation
+    at first use. The SCHEMA rules for owner-facing text ask for one.
 - id: idea-0003
   date: '2026-10-28'
   source: agent:researcher
@@ -178,4 +206,64 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/xsmom-2026-10-29.md
+  attempts: 0
+- id: idea-0016
+  date: '2026-10-30'
+  source: agent:researcher
+  text: 'Стенд FRAB должен знать предел закрытия живой стратегии: если спот позиции по текущей цене стоит
+    меньше $11, выход не происходит, позиция остаётся и занимает место; и минимум капитала должен считаться
+    с учётом этого предела, а не только по заявкам открытия'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-30.md
+  attempts: 0
+- id: idea-0017
+  date: '2026-10-30'
+  source: agent:researcher
+  text: Если позиция FRAB хочет выйти, а её спот стоит меньше $11, стратегия докупает спот и контракт
+    на минимальный ордер и сразу закрывает всё целиком, а не ждёт, пока цена вернётся
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-30.md
+  attempts: 0
+- id: idea-0018
+  date: '2026-10-30'
+  source: agent:researcher
+  text: 'В FRAB со спотом на Binance минимальный срок держания считать по настоящей комиссии круга этой
+    стратегии (0.29%), а не по комиссии Hyperliquid (0.21%), которая сейчас стоит в формуле frab по умолчанию:
+    правило безубытка уже учитывает настоящую комиссию, а срок держания нет'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-binance-spot-2026-10-30.md
+  attempts: 0
+- id: idea-0019
+  date: '2026-10-30'
+  source: agent:researcher
+  text: 'Прогонять тренд на стенде через настоящую книгу frab, которая не ставит заявок меньше $10 и считает
+    пропуски, как уже сделано для Bv2 и FRAB: тогда лестница сумм от $50 до $10 000 покажет настоящую
+    цену работы на малых деньгах, а нужный капитал будет считаться по заявкам, а не по одной самой мелкой
+    позиции.'
+  status: new
+  card: null
+  notes: из записки docs/research/trend-2026-10-30.md
+  attempts: 0
+- id: idea-0020
+  date: '2026-10-30'
+  source: agent:researcher
+  text: 'Считать нужный капитал стратегии так, как считает живой движок, вместе с его резервом: для XSMOM
+    стенд говорит $240 на 20 ног, а движок при бюджете $257 откроет только 18 ног, потому что сначала
+    откладывает 8% бюджета, и настоящий минимум около $261.'
+  status: new
+  card: null
+  notes: из записки docs/research/xsmom-2026-10-30.md
+  attempts: 0
+- id: idea-0021
+  date: '2026-10-30'
+  source: agent:researcher
+  text: 'Правило об исполнимости книги: сравнивать размер каждой ноги на деньгах стратегии с дневным оборотом
+    монеты на день решения и показывать, какая доля дней не проходит. Сейчас минимальный ордер проверяется,
+    а верхний предел нет, поэтому книга из мелких монет формально помещается в любой капитал.'
+  status: new
+  card: null
+  notes: из записки docs/research/xsmom-2026-10-30.md
   attempts: 0

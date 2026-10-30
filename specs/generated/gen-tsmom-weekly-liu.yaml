@@ -1,0 +1,48 @@
+# mechanism: crypto-ts-momentum
+idea_id: gen-tsmom-weekly-liu
+title: 'Каждая монета по своему знаку: купить, если за прошлую неделю выросла, продать, если упала, пересмотр раз в неделю'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: momentum
+    lookback_days: 7
+  portfolio:
+    block: time_series_sign
+  sizing:
+    block: equal
+    gross: 1.0
+  rebalance_days: 7
+  min_history_days: 30
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-10-29'
+costs:
+  taker_fee_bps: 5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+noise_universe: panel
+unexpressed_mechanisms: []
+differs_from_source:
+- The paper tests bitcoin (and weaker ripple and ethereum) on its own; this spec applies the sign rule to every Binance USDT perpetual.
+- The paper measures predictive regressions and weekly-return quintiles of one coin, not a traded sign portfolio with equal shares.
+- The paper has no costs and no funding; the stand charges both.
+- The paper's sample filter of 30 daily observations is a whole-sample filter, not an admission rule on each date; the block applies it on each date.
+params_fixed_at: '2024-06-12'
+params_fixed_evidence: 'named by code: the start of the last third of the window'
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, blocks: universe: all (Liu, Tsyvinski 2018)'
+  signal: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, blocks: signal: momentum'
+  signal.lookback_days: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, row signal.lookback_days: 7 (weekly return; Liu, Tsyvinski 2018)'
+  portfolio: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, blocks: portfolio: time_series_sign'
+  sizing: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, blocks: sizing: equal (Liu, Tsyvinski 2018)'
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, row rebalance_days: 7 (next-week return, table 14 panel B; Liu, Tsyvinski 2018)'
+  min_history_days: 'docs/MECHANISMS.md, mechanism crypto-ts-momentum, row min_history_days: 30 (Borri, Liu, Tsyvinski, Wu 2026)'
+  costs.taker_fee_bps: 'night/costs.yaml, venue binance, taker_fee_bps'
+  costs.slippage_bps: 'night/costs.yaml, venue binance, slippage_bps'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'
