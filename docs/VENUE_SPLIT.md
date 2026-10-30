@@ -264,6 +264,52 @@ $500, на Hyperliquid $200. То есть расхождение площадо
 `src/qlab/test_venue_gap.py`, `test_second_venue.py`, `test_ladder.py`, `pipeline/test_stage2.py`,
 `registry/test_lifecycle.py`.
 
+### Пересчёт открытых идей по правилам `2026-10-30.2`: было и стало
+
+Копия реестра до пересчёта — `data/qlab.db.bak-2026-10-30-independent`. Пересчёт: `qlab restamp run
+--all` (30 открытых идей; версия стенда прежняя `2026-10-30.1` — ни одно измерение не менялось, сменились
+правила `2026-10-30.1` → `2026-10-30.2`; метки руки прежние: файл `data/restamp/runs/2026-10-30.json`
+отложен как `…before-independent-all`). Пересчитано 29, **сбой 1**: у `bv2-research-top10-pool` второй этап
+упал на «hyperliquid: no candle data for 'MATIC'» (у Hyperliquid нет свечей монеты MATIC на окне);
+первый этап записан, идея ждёт, как и ждала; это не новое, а следствие списка монет идеи.
+
+**Что изменило статус или исход: ничего.** Среди открытых идей нет такой, у которой Binance отвергнут:
+новое правило двигает именно отвергнутых и ждущих, а их Hyperliquid-сторона либо уже считалась, либо
+ждёт данных. Все 153 идеи реестра сравнены до и после (статус, слово Binance, слово Hyperliquid, строки
+денег): расхождений ноль (деньги XSMOM снимок «до» уже читал из исправленных спеков, поэтому
+их «было» взято из таблицы выше). Поэтому настоящие перемены — не в этом пересчёте, а в очереди закрытых идей
+(следующий раздел), которая пойдёт с ближайшей ночи.
+
+**Что изменилось на страницах:**
+
+| идея | было | стало |
+|---|---|---|
+| `xsmom-research-liq1m-causal`, `…-causal-hl` | «прошла на обеих площадках» (Hyperliquid за 2026 год −15,3% не видно); деньги стратегии: не проводился | «прошла на обеих площадках; на Hyperliquid — только сверкой с историей Binance, планка шума там не решает (сила 2%)»; деньги $500: **Binance не пройден (нужно $1 000), Hyperliquid пройден (нужно $200)** |
+| `xsmom-research-liq1m`, `xsmom-research-nobull`, `…-nobull-causal`, `…-nobull-causal-hl` | деньги: не проводился | деньги $500: Binance не пройден (нужно $1 000), Hyperliquid пройден (нужно $240 или $200) |
+| `bv2-research-headroom-retune-binance`, `…-binance-hl` | «прошла на обеих площадках» | то же и «…на Hyperliquid — только сверкой с историей Binance, планка шума там не решает (сила 11%)» |
+| `bv2-research-headroom-retune` (Binance прошла, Hyperliquid «рано судить») | без причины | `venue_gap`: правило `shape_aware_edge` 98,5% при нужных 99,0%, сила планки 3% (меньше 80%: это «рано судить», а не «не работает»); окна Binance 515 дн. и Hyperliquid 150 дн.; издержки 7,5 + 0,9 и 5,25 + 0,9 б.п.; деньги: Binance $321 против $257, Hyperliquid $125 |
+| `trend-research-flat-choice` (Binance прошла, Hyperliquid не проводился) | без причины | `venue_gap`: «на Hyperliquid прогона нет: идентификатор второго этапа занят другой идеей»; деньги Binance $37 591 против $3 000 |
+
+Причина расхождения (поле `venue_gap`) теперь есть у 10 открытых идей. У шести обе площадки прошли
+правила, но не на равных: деньги помещаются на Hyperliquid и не помещаются на Binance
+(`bv2-research-headroom-causal`, `bv2-research-headroom-retune-binance` и их вторые этапы,
+`xsmom-research-liq1m-causal` и её второй этап), а у четырёх из них проход Hyperliquid держится только на сверке
+с историей Binance. У четырёх одна площадка прошла, а другая нет: Hyperliquid «рано судить» у
+`bv2-research-headroom-retune` (`shape_aware_edge` 98,5%) и `xsmom-research-liq1m` (69,5%); вторая площадка
+не проводилась у `trend-research-flat-choice` (имя второго этапа занято) и `trend-research-flat-choice-hl`
+(нет версии на Binance). Профит с монет, которых нет на другой площадке, измерен по каждой паре, где есть
+два прогона: `xsmom-research-liq1m-causal` — 90% прибыли Binance с монет без Hyperliquid (подробно выше), у
+Bv2 — 0%: книга торгует названными монетами, которые есть на обеих площадках.
+
+**Очередь закрытых идей на 2026-10-30: 19 идей, 5 ночей** (по 4 в ночь, с ночи на 31 октября): самые
+старые первыми — `trend-binance-volume` (2026-10-02), `frab-binance-spot-allbinance`, `-300`, `-400`,
+`gen-liquid-momentum-grobys`, `gen-xsmom-borri-capweight` (25 октября), `bv2-research-shared-pool-causal`,
+`bv2-research-partial-hedge-causal`, `bv2-research-shared-pool-hl-causal`, `bv2-research-short-window-causal`,
+`gen-lowvol-ltw-weekly`, `bv2-research-graded-hedge`, шесть надстроек `bv2-research-headroom-causal-ov-*`,
+`gen-tsmom-weekly-liu`. Руками очередь не запускалась: пробный прогон одной идеи сделан только на копии
+реестра (ничего не записано в настоящий) и показал полный путь — отказ на Binance, проход на Hyperliquid,
+идея `bv2-research-partial-hedge-causal` становится `validated`, переход назван словами очереди.
+
 ## Аномалии по площадкам
 
 - `unlisted_on_execution_venue` («прибыль с монет, которых нет на бирже исполнения») считается

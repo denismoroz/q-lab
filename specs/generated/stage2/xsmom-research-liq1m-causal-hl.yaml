@@ -76,6 +76,8 @@ params_fixed_evidence: 'Inherited from stage 1 (xsmom-research-liq1m-causal): Th
   not recorded, so the choice is only as honest as the lists are (the spec''s own date for its numbers:
   2026-06-15).'
 sources:
+  strategy_capital_usd: 'owner 2026-10-30: «от 500» (the owner, asked what money XSMOM runs on; the strategy''s
+    own money for these research ideas is 500)'
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
     месяц»'
@@ -110,6 +112,7 @@ sources:
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
     б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
     is 0.9'
+strategy_capital_usd: 500.0
 regime_claim: {}
 review_answers: {}
 selects_causally: true
