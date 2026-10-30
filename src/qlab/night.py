@@ -2100,6 +2100,10 @@ def implement_stage(day: date, state: dict, *, noise_trials: int, stop_at: datet
                 rec["status"] = "not-expressible" if outcome.not_expressible else "failed"
                 if outcome.ok:
                     spec = load_spec(outcome.spec_path)
+                    # The review row points at the idea: the idea comes first (2026-10-30: the
+                    # row of 'bv2-fast-release-by-own-trend' failed its foreign key and the
+                    # whole stage with it).
+                    _ensure_idea(spec, card, session)
                     review = run_review(
                         spec=spec, spec_text=outcome.spec_path.read_text(encoding="utf-8"),
                         sources={card: Path(card).read_text(encoding="utf-8")},
@@ -2164,17 +2168,27 @@ def _stand_line(entry: dict) -> None:
         entry["stand"] = str(spec_run.get("error"))
 
 
-def _ensure_idea(spec: StrategySpec, card: str) -> None:
+def _ensure_idea(spec: StrategySpec, card: str, session=None) -> None:
+    """The idea of a written spec, in the registry. With a `session` it is written in that one
+    (the implement stage's agent session): its other writes wait in the same transaction, and a
+    second connection would find the database locked."""
     from qlab.registry import repo
     from qlab.registry.db import session_scope
     from qlab.registry.models import AssetClass, Idea, Profile, SourceType
 
-    with session_scope() as session:
-        if session.get(Idea, spec.idea_id) is None:
-            repo.upsert_idea(session, id=spec.idea_id, title=spec.title,
+    def make(s) -> None:
+        if s.get(Idea, spec.idea_id) is None:
+            repo.upsert_idea(s, id=spec.idea_id, title=spec.title,
                              source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
                              profile=Profile.OTHER,
                              notes=f"Implemented by the implementer agent from {card}.")
+
+    if session is not None:
+        make(session)
+        session.flush()
+        return
+    with session_scope() as own:
+        make(own)
 
 
 __all__ = ["ItemResult", "decay_stage", "director_due", "director_stage", "evaluate_item",

@@ -441,6 +441,28 @@ def test_a_reviewers_verified_gap_runs_the_written_spec_only(world) -> None:
     assert _stage(world, {"done": {}})["implemented"] == []  # waits for the owner
 
 
+def test_the_idea_is_registered_before_the_reviewers_row_that_points_at_it(
+        world, monkeypatch) -> None:
+    """2026-10-30: the stage died on `INSERT INTO review ... FOREIGN KEY constraint failed` for a
+    card whose idea was not in the registry yet (the real reviewer writes its row in the agent's
+    session). The idea now comes first, in the same session."""
+    from qlab.registry.models import Review
+
+    def review_that_writes_its_row(*, spec, session, **kw):
+        session.add(Review(idea_id=spec.idea_id, review_key="k", at=datetime.now(UTC),
+                           model="opus", sources=[], accepted=[], rejected=[]))
+        session.flush()  # the foreign key is checked here
+        return ReviewOutcome(accepted=[], rejected=[], raw_text=None)
+
+    monkeypatch.setattr(reviewer, "run_review", review_that_writes_its_row)
+    world.add_card()
+    state = _stage(world)
+    assert "stage_errors" not in state and state["implemented"][0]["idea_id"] == "toy-idea"
+    with world_session() as s:
+        assert s.get(Idea, "toy-idea") is not None
+        assert s.query(Review).filter(Review.idea_id == "toy-idea").count() == 1
+
+
 def test_a_failed_attempt_is_retried_once_and_then_waits_for_the_owner(world) -> None:
     world.problems = ["source: a number without a source"]
     card = world.add_card()
