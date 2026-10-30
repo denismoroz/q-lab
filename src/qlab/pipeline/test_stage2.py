@@ -1034,3 +1034,16 @@ def test_the_confirmation_line_says_which_coins_of_binances_history_were_used() 
     whole = "\n".join(stage2._confirmation_ru({**base, "stage1_whole_history_reason":
                                                  "the second venue lists none of stage 1's coins"}))
     assert "история Binance взята целиком" in whole and "lists none" in whole
+
+
+def test_a_second_stage_takes_hyperliquids_own_minimum_leg_not_binances() -> None:
+    """Venue split (docs/VENUE_SPLIT.md): a first stage judged for Binance carries Binance's
+    minimum leg; the second stage is judged for Hyperliquid, with the venue's own ($10)."""
+    binance = _spec(min_leg_notional=5.0)
+    child = stage2.translate(binance, CONFIG).spec
+    assert child.min_leg_notional == 10.0
+    assert "venues/hyperliquid.yaml min_leg_notional_usd: 10" in child.sources["min_leg_notional"]
+    assert any("minimum leg is hyperliquid's own" in n for n in child.differs_from_source)
+    # a first stage already judged for Hyperliquid (a legacy proxy) keeps its own number
+    legacy = _spec(min_leg_notional=12.0, execution_venue="hyperliquid")
+    assert stage2.translate(legacy, CONFIG).spec.min_leg_notional == 12.0

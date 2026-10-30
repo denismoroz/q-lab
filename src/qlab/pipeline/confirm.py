@@ -110,7 +110,8 @@ class Stage1History:
 
 def _run_on_shared_coins(spec, panel, venue_names):
     """Stage 1's strategy on the columns of its panel the second venue also lists, as (the run,
-    shared, total), or (None, 0, total, why) when that cannot be computed."""
+    columns kept, columns in all, why). The run is None, with `why`, when that cannot be computed:
+    the whole history then stands."""
     from qlab.pipeline.stage2 import venue_name
 
     names = venue_names() if callable(venue_names) else venue_names

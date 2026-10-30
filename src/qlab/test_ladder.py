@@ -504,7 +504,7 @@ def test_steps_2_and_3_are_the_two_venues_and_step_4_has_a_line_for_each(session
     binance, hl = found.steps[1], found.steps[2]
     assert (binance.venue, hl.venue) == ("binance", "hyperliquid")
     assert (binance.key, hl.key) == ("binance", "hyperliquid")
-    assert binance.outcome == Outcome.PASSED and "нет нашего адаптера" in binance.detail
+    assert binance.outcome == Outcome.PASSED and "адаптера заявок на ней нет" in binance.detail
     assert "адаптера заявок на этой площадке у нас нет" in binance.execution_ru
     assert "frab на 10.8.0.5" in hl.execution_ru
     assert hl.outcome == Outcome.FAILED
