@@ -935,6 +935,20 @@ def _for_selection_period(ruleset: RuleSet) -> RuleSet:
     return ruleset.model_copy(update={"rules": rules})
 
 
+def _failed_for_waiting(ruleset: RuleSet, by_id: Mapping, rows) -> list:
+    """The failed rows that decide whether a run "fails only waiting rules". From rules 2026-10-30.1
+    (venue split, docs/VENUE_SPLIT.md) a failed INFRASTRUCTURE rule is not among them: Binance has no
+    order adapter of ours, so every Binance run fails `venue_supported`, and counting that fact about
+    our code as a strategy failure turned every Binance run whose noise bar cannot yet tell into a
+    reject instead of a wait. The missing infrastructure is still named in the route's reason, and a
+    run that passes everything else still routes `needs-infrastructure`."""
+    failed = [r for r in rows if r.passed is False]
+    if ruleset.venue_split is None:
+        return failed
+    return [r for r in failed
+            if (rule := by_id.get(r.rule_id)) is None or rule.kind != RuleKind.INFRASTRUCTURE]
+
+
 def decide_fit_forward_route(
     *,
     ruleset: RuleSet,
@@ -1118,7 +1132,7 @@ def _decide_fit_forward(
         # too short to resolve its own Sharpe is too early to tell.
         if routing.route != "reject":
             return routing
-        failed = [r for r in forward.rows if r.passed is False]
+        failed = _failed_for_waiting(ruleset, by_id, forward.rows)
         waits = all(
             (rule := by_id.get(r.rule_id)) is not None
             and rule.on_short_forward == ShortForwardUse.WAIT
@@ -1168,7 +1182,7 @@ def _decide_fit_forward(
             required_capital_usd=metrics.get("min_capital_usd"),
         )
     if routing.route == "reject":
-        failed = [r for r in forward.rows if r.passed is False]
+        failed = _failed_for_waiting(ruleset, by_id, forward.rows)
         waits = all(
             (rule := by_id.get(r.rule_id)) is not None
             and rule.on_short_forward == ShortForwardUse.WAIT

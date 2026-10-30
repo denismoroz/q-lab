@@ -187,3 +187,20 @@ def test_no_open_binance_idea_is_left_with_hyperliquids_numbers(name) -> None:
     spec = load_spec(found[0])
     assert spec.data.source == "binance" and spec.execution_venue is None
     assert spec.min_leg_notional == 5.0
+
+
+def test_a_missing_adapter_does_not_turn_a_wait_into_a_reject() -> None:
+    """A Binance run fails `venue_supported` (a fact about our code); counted as a failure of the
+    strategy it made every Binance run whose noise bar cannot yet tell a reject instead of a wait
+    (found 2026-10-30 on xsmom-research-nobull-causal). From rules 2026-10-30.1 it is left out."""
+    from qlab.pipeline.evaluate import RuleKind, _failed_for_waiting
+
+    rows = [SimpleNamespace(rule_id="shape_aware_edge", passed=False),
+            SimpleNamespace(rule_id="venue_supported", passed=False),
+            SimpleNamespace(rule_id="net_edge_positive", passed=True)]
+    by_id = {"shape_aware_edge": SimpleNamespace(kind=RuleKind.STRATEGY),
+             "venue_supported": SimpleNamespace(kind=RuleKind.INFRASTRUCTURE)}
+    new, old = load_latest(), load("2026-10-29.3")
+    assert [r.rule_id for r in _failed_for_waiting(new, by_id, rows)] == ["shape_aware_edge"]
+    assert [r.rule_id for r in _failed_for_waiting(old, by_id, rows)] == [
+        "shape_aware_edge", "venue_supported"]  # older verdicts stay reproducible

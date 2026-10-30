@@ -81,14 +81,18 @@ min_leg_notional_spot_usd: 5.0
 #     API, no key, same access model as Hyperliquid.
 free_public_data: true
 
-# supports_atomic_multileg — left unset (null), not guessed. No execution
-# adapter exists for this venue (see `execution_adapter` above), so there is
-# no order API this repo has ever exercised to observe atomicity from — the
-# honest answer is "we don't know," not "false by association with
-# Hyperliquid."
-supports_atomic_multileg: null
+# supports_atomic_multileg -- false: a fact about OUR code, not about Binance's API. We have no order
+# adapter for this venue (`execution_adapter: false` above), so nothing of ours places the legs of a
+# hedged entry as one all-or-nothing unit, and no unwind of a stranded leg exists (the next field).
+# Until 2026-10-30 this was left unset (null), and every two-leg book judged for Binance read
+# `atomic_execution` as unknown and routed `needs-more-data` for ever, hiding the strategy rules'
+# answer (the books only reached a route because they borrowed Hyperliquid's facts through
+# `execution_venue`). With the venue split (docs/VENUE_SPLIT.md) a Binance verdict reads Binance's
+# own facts; both missing capabilities are infrastructure rules, so a book that passes everything
+# else routes `needs-infrastructure`, as the owner asked, and not a reject. What Binance's own
+# batch-order API can do is not claimed here.
+supports_atomic_multileg: false
 
-# uncovered_leg_recovery — left unset (null) for the same reason: no
-# execution adapter means no recovery mechanism has ever been built or
-# exercised here to name.
+# uncovered_leg_recovery -- left unset (null): no execution adapter means no recovery mechanism has
+# ever been built or exercised here to name.
 uncovered_leg_recovery: null
