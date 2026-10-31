@@ -12,6 +12,7 @@ with 1 it reduces to the table's order, which is exactly the order the night alw
 
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 import time
@@ -86,13 +87,46 @@ class ItemTracker:
     Every stage marks a finished piece of work in `state["done"]` with the time, and saves the
     state after it. `observe` (called by `save_state`) sees a new marker under a running step's
     prefix and records an item whose duration is the time since the step's previous marker, or
-    since the step began. Nothing in the stages had to change to be seen."""
+    since the step began. Nothing in the stages had to change to be seen.
+
+    The rows are written by a thread of their own, never by the stage's: `save_state` is called
+    from inside stages, some of which hold an unfinished registry transaction, and a journal write
+    from that same thread would wait for a lock that thread itself holds. The writer simply waits
+    until the stage has committed. `end` drains the queue, so a step's row counts all its items."""
 
     def __init__(self, table: Table, journal) -> None:
         self.table = table
         self.journal = journal
         self._active: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
+        self._queue: queue.Queue = queue.Queue()
+        self._writer: threading.Thread | None = None
+
+    def _write_all(self) -> None:
+        while True:
+            args, kwargs = self._queue.get()
+            try:
+                self.journal.add_item(*args, **kwargs)
+            except Exception:  # noqa: BLE001 - an item lost is a gap in the journal, not a failure
+                pass
+            finally:
+                self._queue.task_done()
+
+    def _put(self, *args, **kwargs) -> None:
+        if self._writer is None:
+            self._writer = threading.Thread(target=self._write_all, name="journal-items",
+                                            daemon=True)
+            self._writer.start()
+        self._queue.put((args, kwargs))
+
+    def drain(self, timeout: float = 120.0) -> None:
+        """Wait until every queued item is written (or the timeout: a stuck registry must not
+        hold the night)."""
+        if self._writer is None:
+            return
+        deadline = time.monotonic() + timeout
+        while self._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
 
     def begin(self, step: Step, step_run_id: int, state: dict) -> None:
         with self._lock:
@@ -104,6 +138,7 @@ class ItemTracker:
         self.observe(state)
         with self._lock:
             self._active.pop(step_id, None)
+        self.drain()
 
     def observe(self, state: dict) -> None:
         with self._lock:
@@ -129,8 +164,7 @@ class ItemTracker:
                 name = key.split(":", 1)[1] if ":" in key else key
                 spent = max(0.0, (moment - slot["last"]).total_seconds())
                 slot["last"] = max(moment, slot["last"])
-                self.journal.add_item(slot["run"], name, "ok", duration_s=round(spent, 2),
-                                      finished_at=moment)
+                self._put(slot["run"], name, "ok", duration_s=round(spent, 2), finished_at=moment)
 
 
 class Runner:
