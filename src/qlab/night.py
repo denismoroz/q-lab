@@ -985,8 +985,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     independently, a few a night and within a time limit (night/second_venue.yaml); it stands
     AFTER the agent stages, so that a night that runs short cuts it, not the agents. The restamp,
     the venue gap, the anomalies and the overlays start nothing new after the deadline of
-    night/schedule.yaml (`code_stages_cut`), for the same reason. `venue_gap` (`qlab.venue_gap`) measures
-    why the two venues of an open idea differ, for its page and the report: code only.
+    night/schedule.yaml (`code_stages_cut`), for the same reason. `venue_gap` (`qlab.venue_gap`)
+    measures why the two venues of an open idea differ, for its page and the report: code only.
     `restamp` (`qlab.restamp`: the ideas whose latest run was measured under an older stand or
     rules version, run again, bounded) comes right after the twins and before the anomalies, which
     then scan the new runs. `anomalies` (`qlab.anomalies.stage`: the code detector on the passed
