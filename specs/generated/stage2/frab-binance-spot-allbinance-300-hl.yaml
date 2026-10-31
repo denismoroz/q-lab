@@ -1,0 +1,148 @@
+# Stage 2 of frab-binance-spot-allbinance-300 (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: frab-binance-spot-allbinance-300-hl
+title: 'FRAB — обе ноги на Binance (спот и короткий контракт), общий бюджет 300 долларов, четыре места
+  (второй этап: hyperliquid)'
+code_ref: qlab.strategies.live.frab_binance_spot:LiveFrabAllBinance
+params:
+  entry_threshold_apr: 0.1
+  phase2_exit_threshold: -0.1
+  base_min_hold_hours: 24
+  cap_min_hold_hours: 720
+  safety_mult: 5
+  signal_window_hours: 8
+  concurrency_cap: 4
+  budget_cap_usdc: 300
+  margin_buffer_factor: 3
+  phase1_negative_patience: 24
+  phase1_breakeven_cap_hours: 720
+  neg_stop_threshold_apr: -0.15
+  neg_stop_patience_hours: 6
+  phase2_giveback_fee_mult: 1.0
+  spot_taker_fee: 0.001
+  perp_taker_fee: 0.0005
+  transfer_delay_hours: 0
+  binance_withdrawal_fee_usdc: 0
+  binance_withdrawal_min_usdc: 0
+  hl_withdrawal_fee_usdc: 0
+  top_up_trigger: 2.0
+  healthy_ratio: 3.0
+  maintenance_over_initial: 0.5
+  leverage_table: seed/venue_facts/2026-10-25-binance_um_margin.csv
+  transfers: batched
+  batch_share: 0
+  idle_share: 1
+  entry_parity_tolerance: 0.03
+  max_wait_hours: 24
+  universe: all_paired
+  leverage: {}
+data:
+  source: hyperliquid
+  interval: 1h
+  include_spot: true
+  spot_prices: own
+  start: '2026-03-08'
+  end: '2026-10-30'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (frab-binance-spot-allbinance-300) on hyperliquid''s own perpetual contracts listed at each
+  bar; nothing was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $50.
+noise_universe: held
+measure_hedge_timing: false
+params_fixed_at: '2026-10-10'
+params_fixed_evidence: 'Inherited from stage 1 (frab-binance-spot-allbinance-300): funding-rate-arbitrage
+  commit a0f5b5e (2026-10-10), «fix(two-phase): выход из POST только когда отданный фандинг покрыл комиссии
+  круга» -- the last change to the decision functions this strategy calls (see specs/frab-live.yaml).
+  The money parameters (fees, margin thresholds) are the published and live values of 2026-10-25, cited
+  one by one, and were not fitted to the data. The total budget (300) is the owner''s choice of 2026-10-25,
+  «блин 90$ это вот очем а? на текущем Frab - так получилось. если нужно 300-400-1000 - давай считать
+  на них.»: a size to be tried, not a parameter fitted to data, so params_fixed_at stays the decision
+  rule''s date. The venue (all on Binance) is the owner''s variant of 2026-10-25, «да, добавляй вариант
+  всё на binance».
+
+  '
+sources:
+  entry_threshold_apr: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1,
+    read-only)
+  phase2_exit_threshold: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id
+    1, read-only)
+  base_min_hold_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1,
+    read-only)
+  cap_min_hold_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1,
+    read-only)
+  safety_mult: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)
+  signal_window_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1,
+    read-only)
+  concurrency_cap: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id 1, read-only)
+  budget_cap_usdc: 'владелец 2026-10-25: «блин 90$ это вот очем а? на текущем Frab - так получилось. если
+    нужно 300-400-1000 - давай считать на них.» Total budget; the slot count stays the live 4.'
+  margin_buffer_factor: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id
+    1, read-only)
+  phase1_negative_patience: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  phase1_breakeven_cap_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  neg_stop_threshold_apr: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json id
+    1, read-only)
+  neg_stop_patience_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  phase2_giveback_fee_mult: funding-rate-arbitrage/src/frab/strategy/two_phase/params.py (TwoPhaseParams
+    default; not in the live params_json)
+  spot_taker_fee: docs/FRAB_BINANCE_SPOT.md; https://www.binance.com/en/fee/schedule (Regular User, taker
+    0.100%, read 2026-10-25)
+  perp_taker_fee: docs/FRAB_BINANCE_SPOT.md; https://www.binance.com/en/support/articles/360033544231
+    (USDⓈ-M Futures, Regular User taker 0.05%, an example in the article; the live table https://www.binance.com/en/fee/futureFee
+    could not be read, read 2026-10-25)
+  transfer_delay_hours: 'docs/FRAB_BINANCE_SPOT.md (a declared assumption: transfers between a user''s
+    own Binance spot and futures wallets are instant; Binance''s own pages name no delay and no fee)'
+  binance_withdrawal_fee_usdc: 'docs/FRAB_BINANCE_SPOT.md (a declared assumption: no fee for a transfer
+    between one''s own wallets on Binance; not confirmed by Binance''s pages)'
+  binance_withdrawal_min_usdc: 'docs/FRAB_BINANCE_SPOT.md (a declared assumption: no minimum for a transfer
+    between one''s own wallets)'
+  hl_withdrawal_fee_usdc: 'docs/FRAB_BINANCE_SPOT.md (not used: no money leaves Binance)'
+  top_up_trigger: funding-rate-arbitrage/src/frab/settings.py (MarginSettings default; a prod override
+    is not visible from q-lab)
+  healthy_ratio: funding-rate-arbitrage/src/frab/settings.py (MarginSettings default; a prod override
+    is not visible from q-lab)
+  maintenance_over_initial: 'derived: 2.5 / 5; Binance exchangeInfo, maintMarginPercent 2.5 over requiredMarginPercent
+    5.0 for every symbol (seed/venue_facts/2026-10-25-binance_um_margin.csv, read 2026-10-25)'
+  leverage_table: 'seed/venue_facts/2026-10-25-binance_um_margin.csv (Binance exchangeInfo: requiredMarginPercent
+    5.0 as 20x, the same flat value for every symbol; per-symbol brackets are only served to a signed
+    request)'
+  transfers: 'docs/FRAB_BINANCE_SPOT.md (with free instant transfers there is nothing to batch: cash on
+    the spot wallet goes to the margin first)'
+  batch_share: 'docs/FRAB_BINANCE_SPOT.md (0: no batching, transfers are free)'
+  idle_share: 'docs/FRAB_BINANCE_SPOT.md (1: idle margin is never withdrawn, transfers are free)'
+  entry_parity_tolerance: funding-rate-arbitrage/src/frab/coin_discovery.py (SPOT_PERP_PARITY_TOLERANCE
+    = 0.03, frab's own tolerance between a spot token and its perp before trading)
+  max_wait_hours: 'docs/FRAB_BINANCE_SPOT.md (a declared parameter: the live engine waits on missing data
+    without a bound, which on a delisted pair holds a slot for ever; a day is declared, nothing sourced)'
+  universe: 'docs/FRAB_BINANCE_SPOT.md (every coin with a Binance USDⓈ-M perpetual and a Binance USDT
+    spot pair, delisted included; the owner''s variant, 2026-10-25: «вариант всё на binance»)'
+  leverage: 'docs/FRAB_BINANCE_SPOT.md (empty: the coin registry''s values are Hyperliquid''s; every coin
+    is sized at the table''s 20x)'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+regime_claim: {}
+review_answers: {}
+selects_causally: false

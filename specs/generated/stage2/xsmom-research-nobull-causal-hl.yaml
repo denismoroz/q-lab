@@ -43,7 +43,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-29'
+  end: '2026-10-30'
   min_daily_volume_usd: 1000000.0
 costs:
   taker_fee_bps: 4.5
