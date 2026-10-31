@@ -830,10 +830,11 @@ def night_run_cmd(
         None, "--trigger", help="schedule / button / hand, for the journal (default: the "
         "QLAB_TRIGGER environment variable, else schedule under launchd, else hand)"),
     concurrency: int = typer.Option(
-        1, "--concurrency", min=1, envvar="QLAB_CONCURRENCY",
+        3, "--concurrency", min=1, envvar="QLAB_CONCURRENCY",
         help="How many steps may run together, one per lane (docs/PIPELINE.md, «Дорожки»): "
-        "1 goes in the table's order, 3 runs the calculations, the checks and the agents "
-        "together. QLAB_CONCURRENCY sets it for the night's script."),
+        "3 runs the calculations, the checks and the agents together (the default since "
+        "2026-10-31, after the rehearsal on a copy), 1 goes in the table's order. "
+        "QLAB_CONCURRENCY sets it for the night's script."),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
     sweep the graveyard by regime on Sundays, reconcile paper, write the

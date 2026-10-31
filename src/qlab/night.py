@@ -1535,7 +1535,8 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     that depend on one of them by `data` are blocked unless it was done earlier the same night.
     `only` limits the run to the named steps (a restart), `restart` names the step restarted. The
     `journal` (`nightflow.journal`) records the run; without one nothing is recorded.
-    `concurrency` is how many steps may run together (1: the table's order)."""
+    `concurrency` is how many steps may run together: 1 goes in the table's order, more runs the
+    steps in lanes (`night/pipeline.yaml`, docs/PIPELINE.md; the command's default is 3)."""
     import os
     import sys
 

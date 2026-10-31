@@ -17,6 +17,10 @@ leave every trial exactly as the same steps one after another do.
     # when the steps of the latest run started and ended, and which of them overlapped
     python scripts/rehearse_lanes.py timeline RUN.db
 
+    # N threads run the stand on ONE spec at once (the same idea from several lanes): every run
+    # must give the same numbers, and the registry must hold one spec row and N trials
+    python scripts/rehearse_lanes.py stress specs/trend-retune-weekly.yaml 4
+
 The copy is made by hand: the project without `data/`, then `data/` cloned (`cp -Rc`) with the
 registry from sqlite's online backup. `QLAB_DB` must name the copy's registry and the working
 directory must be the copy."""
@@ -160,6 +164,48 @@ def _states(argv: list[str]) -> int:
     return 0 if same else 1
 
 
+def _stress(argv: list[str]) -> int:
+    import threading
+
+    from qlab import night
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Spec, Trial
+
+    path, count = argv[0], int(argv[1])
+    spec = load_spec(path)
+    end = night.last_closed_day()
+    results: list[night.ItemResult] = []
+    barrier = threading.Barrier(count)
+
+    def work() -> None:
+        barrier.wait()
+        results.append(night.evaluate_item("stress", spec, end=end, noise_trials=200))
+
+    with session_scope() as session:
+        before = session.query(Trial).count()
+        rows_before = session.query(Spec).filter(Spec.idea_id == spec.idea_id).count()
+    threads = [threading.Thread(target=work) for _ in range(count)]
+    started = datetime.now()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with session_scope() as session:
+        added = session.query(Trial).count() - before
+        rows_after = session.query(Spec).filter(Spec.idea_id == spec.idea_id).count()
+    errors = [r.error for r in results if r.error]
+    numbers = {json.dumps(r.metrics, sort_keys=True) for r in results}
+    print(f"{count} runs of {spec.idea_id} at once in {(datetime.now() - started).total_seconds():.0f}s:"
+          f" {len(errors)} errors, {len(numbers)} distinct set(s) of metrics, routes "
+          f"{sorted({r.route for r in results})}, trial ids {sorted(r.trial_id for r in results)}")
+    print(f"trials added {added} (noise books included), spec rows of the idea "
+          f"{rows_before} -> {rows_after}")
+    for error in errors:
+        print("  ERROR", error[:300])
+    return 0 if not errors and len(numbers) == 1 and rows_after == rows_before else 1
+
+
 def _aware(text: str) -> datetime:
     return datetime.fromisoformat(text)
 
@@ -193,7 +239,8 @@ def _timeline(argv: list[str]) -> int:
 
 
 def main() -> int:
-    commands = {"run": _run, "compare": _compare, "timeline": _timeline, "states": _states}
+    commands = {"run": _run, "compare": _compare, "timeline": _timeline, "states": _states,
+                "stress": _stress}
     if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2
