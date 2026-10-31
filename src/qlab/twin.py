@@ -44,7 +44,7 @@ from pathlib import Path
 
 import yaml
 
-from qlab import venue_split
+from qlab import tree_writes, venue_split
 from qlab.card_fields import param_at
 from qlab.costs import DEVIATION_KEY
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
@@ -1179,6 +1179,7 @@ def write_twin(spec_path: Path, twin: StrategySpec, origin: str) -> Path:
     if target.exists() and target.read_text(encoding="utf-8") != text:
         raise FileExistsError(f"{target} exists and differs: not overwritten")
     target.write_text(text, encoding="utf-8")
+    tree_writes.note(target)
     return target
 
 

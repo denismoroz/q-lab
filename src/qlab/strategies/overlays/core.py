@@ -41,6 +41,7 @@ from typing import ClassVar
 import numpy as np
 import pandas as pd
 
+from qlab.boundedcache import BoundedCache
 from qlab.harness.panel import MarketPanel
 from qlab.strategies._inner import InnerCapital
 from qlab.strategies._periods import periods_for
@@ -188,8 +189,8 @@ def chain_warmup_days(raw: object) -> float:
 # --------------------------------------------------------------------------
 # The wrapper
 
-_CACHE: dict[tuple, tuple[pd.DataFrame, pd.Series | None]] = {}
 _CACHE_SIZE = 8
+_CACHE: BoundedCache[tuple[pd.DataFrame, pd.Series | None]] = BoundedCache(_CACHE_SIZE)
 
 
 def _fingerprint(panel: MarketPanel) -> str:
@@ -209,8 +210,8 @@ def _inner_run(panel: MarketPanel, params: Mapping[str, object], need_returns: b
            hash(tuple(panel.prices.columns)),
            json.dumps([params["inner_code_ref"], params["inner_params"], costs],
                       sort_keys=True, default=str), need_returns)
-    if key in _CACHE:
-        return _CACHE[key]
+    if (hit := _CACHE.get(key)) is not None:
+        return hit
 
     from qlab.pipeline.evaluate import resolve_strategy
 
@@ -231,10 +232,7 @@ def _inner_run(panel: MarketPanel, params: Mapping[str, object], need_returns: b
             CostModel(taker_fee_bps=float(costs["taker_fee_bps"]),
                       slippage_bps=float(costs["slippage_bps"])),
             panel.funding, extra_cost=extra).net_return
-    if len(_CACHE) >= _CACHE_SIZE:
-        _CACHE.pop(next(iter(_CACHE)))
-    _CACHE[key] = (weights, returns)
-    return weights, returns
+    return _CACHE.put(key, (weights, returns))
 
 
 class Overlaid(InnerCapital):

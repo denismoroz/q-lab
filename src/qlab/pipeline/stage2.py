@@ -35,6 +35,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab import tree_writes
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
 from qlab.costs import venue_costs
 from qlab.pipeline import confirm
@@ -723,6 +724,7 @@ def write_spec(spec: StrategySpec, parent_id: str, spec_dir: Path) -> Path:
         f"# Stage 2 of {parent_id} (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from\n"
         f"# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.\n"
         + body, encoding="utf-8")
+    tree_writes.note(path)
     return path
 
 

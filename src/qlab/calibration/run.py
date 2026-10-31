@@ -16,6 +16,7 @@ from __future__ import annotations
 import atexit
 import math
 import os
+import threading
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, replace
@@ -260,7 +261,7 @@ class NoiseRun:
             except BaseException as exc:
                 self._failure = exc
                 if isinstance(exc, BrokenProcessPool):
-                    shutdown_pool()  # the next call starts a new one
+                    discard_broken_pool()  # the next call starts a new one
                 raise
         return self._trials
 
@@ -432,6 +433,11 @@ def _warm_worker(parent_pid: int) -> None:
 # Workers read the registry file named by `QLAB_DB` when they start, so the pool is tied to it.
 _POOL: ProcessPoolExecutor | None = None
 _POOL_KEY: tuple[int, str] | None = None
+# Steps running together (docs/PIPELINE.md, «Дорожки») start noise series from different threads:
+# they all submit to this one pool, whose queue is the shared queue of the night and whose
+# `workers` bound the processes the noise books take, whoever asks. Made and stopped under a lock,
+# so two lanes never make two pools.
+_POOL_LOCK = threading.RLock()
 
 
 def shared_pool(workers: int) -> ProcessPoolExecutor:
@@ -441,21 +447,32 @@ def shared_pool(workers: int) -> ProcessPoolExecutor:
     from qlab.registry.db import get_database_url
 
     key = (workers, get_database_url())
-    if _POOL is not None and _POOL_KEY != key:
-        shutdown_pool()
-    if _POOL is None:
-        _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
-                                    initializer=_warm_worker, initargs=(os.getpid(),))
-        _POOL_KEY = key
-    return _POOL
+    with _POOL_LOCK:
+        if _POOL is not None and _POOL_KEY != key:
+            shutdown_pool()
+        if _POOL is None:
+            _POOL = ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
+                                        initializer=_warm_worker, initargs=(os.getpid(),))
+            _POOL_KEY = key
+        return _POOL
 
 
 def shutdown_pool() -> None:
     """Stop the shared pool (a new one is made on the next use). Runs at exit too."""
     global _POOL, _POOL_KEY
-    pool, _POOL, _POOL_KEY = _POOL, None, None
+    with _POOL_LOCK:
+        pool, _POOL, _POOL_KEY = _POOL, None, None
     if pool is not None:
         pool.shutdown(wait=True, cancel_futures=True)
+
+
+def discard_broken_pool() -> None:
+    """Stop the shared pool if it is broken (a worker died). Every lane whose books were in it sees
+    the failure; the first to get here replaces the pool, and the others find the new, sound one
+    and leave it alone (stopping that would cancel the books the first lane has just submitted)."""
+    with _POOL_LOCK:
+        if _POOL is not None and getattr(_POOL, "_broken", True):
+            shutdown_pool()
 
 
 atexit.register(shutdown_pool)
@@ -470,20 +487,18 @@ def _submit_jobs(jobs: list[tuple[str, str, int]], *, workers: int, ruleset: Rul
     book's `spec` row (versions are numbered per idea, so two workers adding one would collide),
     committed so the workers -- each writing only its own trial and verdict rows -- never wait
     on it. A worker is given the id of its row and does not look for it."""
-    from qlab.pipeline.evaluate import ensure_spec_rows
-    from qlab.registry.db import session_scope
+    from qlab.pipeline.evaluate import ensure_spec_rows_committed
 
-    with session_scope() as own:
-        row_ids = ensure_spec_rows(own, [
-            build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
-            for series, generator, seed in jobs])
+    row_ids = ensure_spec_rows_committed([
+        build_noise_spec(series=series, generator=generator, seed=seed, reference=reference)
+        for series, generator, seed in jobs])
     work = [(series, generator, seed, reference, ruleset, row_id)
             for (series, generator, seed), row_id in zip(jobs, row_ids, strict=True)]
     try:
         pool = shared_pool(workers)
         return [pool.submit(_noise_job, w) for w in work]
     except BrokenProcessPool:
-        shutdown_pool()
+        discard_broken_pool()
         pool = shared_pool(workers)
         return [pool.submit(_noise_job, w) for w in work]
 
@@ -524,6 +539,7 @@ __all__ = [
     "noise_workers",
     "run_noise_series",
     "run_real_strategies",
+    "discard_broken_pool",
     "shared_pool",
     "shutdown_pool",
     "start_noise_series",

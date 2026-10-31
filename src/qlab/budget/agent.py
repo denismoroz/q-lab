@@ -173,6 +173,10 @@ def run_agent(
     else:
         stage, idea_id = "no-budget", None
 
+    # A call takes minutes. The caller's session may hold the registry's one write lock (a row it
+    # flushed, the previous call's token row); steps running together (docs/PIPELINE.md) would wait
+    # out their busy timeout and fail, so what is pending is committed before the call starts.
+    session.commit()
     done = run_claude(args, account=account, cwd=cwd, stdin=subprocess.DEVNULL,
                       capture_output=True, text=True)
     report = parse_stream(done.stdout.splitlines())
@@ -197,7 +201,7 @@ def run_agent(
         status=status,
         account=account.email,
     ))
-    session.flush()
+    session.commit()  # the token row is kept whatever the caller does next, and the lock let go
     if isinstance(budget, CandidateBudget):
         budget.record(usage.total if usage else 0, reading)
     return AgentResult(text=report.text, report=report, exit_code=done.returncode,

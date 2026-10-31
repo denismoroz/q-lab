@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+import threading
 from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -106,11 +107,28 @@ def load_state(day: date) -> dict:
 STATE_OBSERVERS: list = []
 
 
+_WRITE_LOCK = threading.Lock()
+
+
+def write_state_text(day: date, text: str) -> None:
+    """The night's state file, replaced atomically; two writers never share the temporary file."""
+    with _WRITE_LOCK:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _state_path(day).with_suffix(".tmp")
+        tmp.write_text(text)
+        tmp.replace(_state_path(day))
+
+
 def save_state(day: date, state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _state_path(day).with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=1, default=str))
-    tmp.replace(_state_path(day))
+    """Save the night's state. A step's `state` is its view (`qlab.nightflow.statehub`): then the
+    step's own keys are merged into the hub's master and the file is written from the master, so
+    steps running together never walk a dict another one is changing. A plain dict (a hand run, a
+    test) is written as it is."""
+    hub = getattr(state, "hub", None)
+    if hub is not None:
+        hub.save(state)
+        return
+    write_state_text(day, json.dumps(state, indent=1, default=str))
     for observer in list(STATE_OBSERVERS):
         try:
             observer(state)
@@ -168,18 +186,27 @@ def past_stop(stop_at: datetime | None, state: dict, stage: str) -> bool:
     written to `state["deadline"]` with the stages it deferred, and the night goes on."""
     if stop_at is None or datetime.now(UTC) < stop_at:
         return False
+    hub = getattr(state, "hub", None)
+    if hub is not None:  # steps running together: the stop lines live in the hub's master
+        with hub.lock:
+            _note_stop(hub.master, stop_at, stage)
+        return True
+    _note_stop(state, stop_at, stage)
+    return True
+
+
+def _note_stop(state: dict, stop_at: datetime, stage: str) -> None:
     top = stage.split(":")[0]
     if isinstance(stop_at, Deadline):
         block = state.setdefault("deadline", {"at": stop_at.isoformat(), "deferred": []})
         if top not in block["deferred"]:
             block["deferred"].append(top)
-        return True
+        return
     stopped = state.setdefault("stopped_at", {"time": datetime.now(UTC).isoformat(),
                                               "stop_at": stop_at.isoformat(), "before": stage})
     cut = stopped.setdefault("cut", [])
     if top not in cut:
         cut.append(top)
-    return True
 
 
 def previous_route(session, idea_id: str, before: int) -> str | None:
@@ -465,6 +492,19 @@ def decay_stage(day: date, end: date, state: dict) -> None:
         state["decay"] = {"lines": [f"не посчитано: {type(exc).__name__}: {exc}"], "results": []}
 
 
+def unwatched_not_followed(state: dict) -> list[str]:
+    """Bench ideas no spec on the watch list belongs to and that the waiting stage does not
+    follow either (the recheck writes the first list, the waiting stage the second)."""
+    followed = set(state.get("waiting_followed") or [])
+    return [i for i in state.get("unwatched_bench") or [] if i not in followed]
+
+
+def ideas_in_all(state: dict) -> list[dict]:
+    """The inbox ideas added tonight: by the researcher and by the director (two keys, one owner
+    each)."""
+    return [*(state.get("ideas_in") or []), *(state.get("ideas_in_director") or [])]
+
+
 def _pct(v) -> str:
     return f"{v:+.1%}" if isinstance(v, int | float) and v == v else "—"
 
@@ -609,7 +649,7 @@ def write_report(day: date, state: dict) -> Path:
 
         if body := overlays_lines(state["overlays"]):
             lines += [f"## {OVERLAYS_TITLE}", "", *body, ""]
-    if idle := state.get("unwatched_bench"):
+    if idle := unwatched_not_followed(state):
         lines += ["## На скамейке, но не в списке наблюдения", "",
                   "Проверка вперёд у этих идей не растёт: либо добавить в `night/watchlist.yaml`, "
                   "либо вывести (`qlab retire`).", "", *[f"- {i}" for i in idle], ""]
@@ -691,12 +731,12 @@ def write_report(day: date, state: dict) -> Path:
             lines += [f"- остановлено: {read['stopped']}; продолжит в следующую ночь", ""]
         if read.get("error"):
             lines += [f"- сбой до выбора статьи: {read['error']}", ""]
-    if state.get("cards") is not None or state.get("ideas_in"):
+    if state.get("cards") is not None or ideas_in_all(state):
         from qlab import ideas
         from qlab.agents.carder import report_lines as card_lines
 
         lines += ["## Входящие идеи и карточки", "",
-                  *card_lines(state.get("cards"), ideas.load(), state.get("ideas_in") or [])]
+                  *card_lines(state.get("cards"), ideas.load(), ideas_in_all(state))]
         for what, key in (("остановлено", "stopped"), ("сбой", "error")):
             if (state.get("cards") or {}).get(key):
                 lines.append(f"- {what}: {state['cards'][key]}")
@@ -978,7 +1018,9 @@ def _token_lines(day: date) -> str:
 class NightContext:
     """What a step of the night works with: the night's day and data end, its saved `state`, the
     stop times, and the flags `run` was called with (docs/PIPELINE.md). One object is shared by
-    every step; with one step at a time nothing needs a lock."""
+    every step, but each step gets its own `state` through `for_step`: a private copy that the
+    hub merges back (`qlab.nightflow.statehub`), so steps running together never share a dict.
+    `state` here is the master; only the hub changes it once the steps have started."""
 
     day: date
     end: date
@@ -992,22 +1034,67 @@ class NightContext:
     research_on: bool | None = None
     prefetcher: object = None
     report_path: Path | None = None
+    hub: object = None
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def save(self) -> None:
         save_state(self.day, self.state)
 
+    def for_step(self, step) -> StepContext | NightContext:
+        """The context one step runs with: this one, with the step's own view of the state."""
+        if self.hub is None:
+            return self
+        return StepContext(self, self.hub.view(step.id))
+
+    def snapshot(self) -> dict:
+        """The night's state as it stands, for a reader that is not a step."""
+        return self.hub.snapshot() if self.hub is not None else self.state
+
     def finish_prefetch(self) -> None:
         """Stop the background fetch once (the stages that needed its data are done)."""
-        prefetcher, self.prefetcher = self.prefetcher, None
-        stop_prefetch(prefetcher, self.state)
+        with self._lock:
+            prefetcher, self.prefetcher = self.prefetcher, None
+        if prefetcher is None:
+            return
+        if self.hub is None:
+            stop_prefetch(prefetcher, self.state)
+            return
+        scratch: dict = {}
+        stop_prefetch(prefetcher, scratch)
+        self.hub.set_key("prefetch", scratch.get("prefetch"))
 
     def wants_research(self) -> bool:
         """Whether the researcher's branch of the night is on tonight: asked for, or due."""
-        if self.research_on is None:
-            asked = self.flags["research"]
-            self.research_on = bool(asked if asked is not None else research_due(
-                self.day, load_research_plan(), sweep=self.sweep))
-        return self.research_on
+        with self._lock:
+            if self.research_on is None:
+                asked = self.flags["research"]
+                self.research_on = bool(asked if asked is not None else research_due(
+                    self.day, load_research_plan(), sweep=self.sweep))
+            return self.research_on
+
+
+class StepContext:
+    """A `NightContext` as one step sees it: the same day, flags and stop times, and its own
+    `state` (the step's view), saved through its own `save`."""
+
+    def __init__(self, root: NightContext, state: dict) -> None:
+        self._root = root
+        self.state = state
+
+    def save(self) -> None:
+        save_state(self._root.day, self.state)
+
+    def snapshot(self) -> dict:
+        return self._root.snapshot()
+
+    def release(self) -> None:
+        """The step has ended: its view takes no further part in a stop of the night."""
+        hub = getattr(self.state, "hub", None)
+        if hub is not None:
+            hub.close(self.state)
+
+    def __getattr__(self, name: str):
+        return getattr(self._root, name)
 
 
 def _watch_specs() -> list[str]:
@@ -1087,9 +1174,9 @@ def _step_waiting(ctx: NightContext) -> None:
     try:
         waiting_stage(ctx.day, ctx.end, ctx.state, watch=watch, noise_trials=ctx.noise_trials)
     finally:
-        followed = followed_ideas(ctx.state.get("waiting"))
-        ctx.state["unwatched_bench"] = [i for i in ctx.state.get("unwatched_bench", [])
-                                        if i not in followed]
+        # The ideas this stage follows leave the report's «не на списке» line. They are kept apart
+        # from `unwatched_bench`, which is the recheck's key: each step writes only its own.
+        ctx.state["waiting_followed"] = sorted(followed_ideas(ctx.state.get("waiting")))
 
 
 def _step_twins(ctx: NightContext) -> None:
@@ -1450,10 +1537,12 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     `journal` (`nightflow.journal`) records the run; without one nothing is recorded.
     `concurrency` is how many steps may run together (1: the table's order)."""
     import os
+    import sys
 
     from qlab.nightflow.journal import NullJournal
     from qlab.nightflow.plan import make_plan
     from qlab.nightflow.runner import ItemTracker, Runner
+    from qlab.nightflow.statehub import NightStateHub
     from qlab.nightflow.table import load_table
 
     journal = journal if journal is not None else NullJournal()
@@ -1504,10 +1593,15 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         list(only) if only is not None else None), restart=restart, concurrency=concurrency,
         pid=os.getpid(), command=command)
     tracker = ItemTracker(table, journal)
+    # From here on each step works on its own copy of the state and the hub merges it back
+    # (qlab.nightflow.statehub); the master `state` is changed by the hub alone.
+    hub = NightStateHub(state, table, write=lambda text: write_state_text(day, text),
+                        observers=lambda: STATE_OBSERVERS,
+                        strict=os.environ.get("QLAB_STATE_STRICT") == "1")
+    ctx.hub = hub
 
     def note_failure(step_id: str, error: str) -> None:
-        state.setdefault("stage_errors", {})[impls[step_id].error_name] = error
-        save_state(day, state)
+        hub.record_error(impls[step_id].error_name, error)
 
     STATE_OBSERVERS.append(tracker.observe)
     outcome = "ok"
@@ -1525,7 +1619,11 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         STATE_OBSERVERS.remove(tracker.observe)
         try:
             ctx.finish_prefetch()
-            save_state(day, state)
+            hub.save_open_views()  # a stopped night keeps what its steps had in hand
+            hub.save_master()
+            if hub.violations:
+                print(f"[state] {len(hub.violations)} write(s) to keys a step does not own",
+                      file=sys.stderr, flush=True)
         finally:
             journal.finish_run(run_id, outcome)
     return ctx.report_path or REPORT_DIR / f"{day.isoformat()}.md"
@@ -1573,8 +1671,12 @@ def guarded(day: date, state: dict, name: str, fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 - see the docstring
         where = traceback.extract_tb(exc.__traceback__)[-1]
-        state.setdefault("stage_errors", {})[name] = (
-            f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})")
+        text = f"{type(exc).__name__}: {exc} ({Path(where.filename).name}:{where.lineno})"
+        hub = getattr(state, "hub", None)
+        if hub is not None:  # a step's view: the line goes to the hub's master
+            hub.record_error(name, text)
+            return None
+        state.setdefault("stage_errors", {})[name] = text
         save_state(day, state)
         return None
 
@@ -1688,7 +1790,8 @@ def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> Non
 CARDER = Path("night/carder.yaml")
 
 
-def ingest_memo_ideas(day: date, state: dict, memo: str | Path, source: str) -> dict:
+def ingest_memo_ideas(day: date, state: dict, memo: str | Path, source: str,
+                      key: str = "ideas_in") -> dict:
     """The ideas of an agent's memo (its ```ideas block) into the inbox (`qlab.ideas`), and
     into the night's state for the report. Optional by design: a memo without the block adds
     nothing, and a failure here is one line in the state, never the end of the stage."""
@@ -1697,7 +1800,7 @@ def ingest_memo_ideas(day: date, state: dict, memo: str | Path, source: str) -> 
     try:
         found = ideas.ingest_memo(Path(memo), source=source, day=day)
         if found["added"]:
-            state.setdefault("ideas_in", []).extend(
+            state.setdefault(key, []).extend(
                 {"id": e["id"], "source": source, "text": e["text"]}
                 for e in ideas.load() if e["id"] in found["added"])
         return found
@@ -1737,7 +1840,7 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     inbox = ideas.load()
     entry["incoming"] = [{"id": e["id"], "source": e["source"], "text": e["text"]}
                          for e in inbox if str(e["date"]) == day.isoformat()
-                         and e["id"] not in {i["id"] for i in state.get("ideas_in") or []}]
+                         and e["id"] not in {i["id"] for i in ideas_in_all(state)}]
     if moved := carder.sync_implemented(inbox):
         entry["moved"] = moved
         ideas.save(inbox)
@@ -2371,7 +2474,7 @@ def director_stage(day: date, state: dict, *, config: Path = DIRECTOR,
         if "director:agent" in state["done"] and "director:directions" not in state["done"]:
             if entry.get("memo") and "ideas_in" not in entry:
                 entry["ideas_in"] = ingest_memo_ideas(day, state, root / entry["memo"],
-                                                      "agent:director")
+                                                      "agent:director", key="ideas_in_director")
             if entry.get("memo"):
                 mechanism_ids, strategy_names, family_names = known_names(
                     plan, cfg, catalogue(root / CATALOGUE))

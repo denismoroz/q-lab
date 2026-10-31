@@ -10,14 +10,18 @@ Reading is in the second half: the states the page paints, a step's history, its
 
 from __future__ import annotations
 
+import functools
 import os
 import statistics
 import sys
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from qlab.registry.models import PipelineItem, PipelineRun, PipelineStepRun, TokenSpend
@@ -62,6 +66,28 @@ def tokens_between(session: Session, start: datetime, end: datetime) -> int:
     return int(total or 0)
 
 
+#: How often a journal call is tried again when the registry is locked (each try has already
+#: waited the connection's busy timeout), and the pause before the next one.
+LOCKED_TRIES = 4
+
+
+def _one_transaction(method):
+    """A journal call is one self-contained transaction, so it can be done again when the registry
+    was locked by another writer (steps running together write it too). Calls are taken one at a
+    time: the steps' threads, the item writer and the runner all write the journal."""
+    @functools.wraps(method)
+    def call(self, *args, **kwargs):
+        with self._guard:
+            for attempt in range(LOCKED_TRIES):
+                try:
+                    return method(self, *args, **kwargs)
+                except OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt == LOCKED_TRIES - 1:
+                        raise
+                    time.sleep(2 ** attempt)
+    return call
+
+
 class Journal:
     """Writes the journal; every call is its own short transaction."""
 
@@ -69,9 +95,11 @@ class Journal:
         if scope is None:
             from qlab.registry.db import session_scope as scope
         self._scope = scope
+        self._guard = threading.RLock()
 
     # ------------------------------------------------------------------ runs
 
+    @_one_transaction
     def start_run(self, night_date: date, *, trigger: str, steps_off: list[str],
                   only: list[str] | None, restart: str | None, concurrency: int, pid: int,
                   command: str | None = None, note: str | None = None) -> int:
@@ -84,6 +112,7 @@ class Journal:
             session.flush()
             return run.id
 
+    @_one_transaction
     def finish_run(self, run_id: int, state: str, note: str | None = None) -> None:
         with self._scope() as session:
             run = session.get(PipelineRun, run_id)
@@ -91,6 +120,7 @@ class Journal:
             if note:
                 run.note = note
 
+    @_one_transaction
     def sweep_interrupted(self) -> int:
         """Rows left `running` by a process that died. Called when a runner holds the lock, so a
         running row belongs to a process that is gone; a process that still lives (a second
@@ -109,6 +139,7 @@ class Journal:
 
     # ------------------------------------------------------------------ steps
 
+    @_one_transaction
     def start_step(self, run_id: int, step_id: str) -> int:
         with self._scope() as session:
             row = PipelineStepRun(run_id=run_id, step_id=step_id, state="running",
@@ -118,6 +149,7 @@ class Journal:
             session.flush()
             return row.id
 
+    @_one_transaction
     def finish_step(self, step_run_id: int, state: str, *, error: str | None = None,
                     note: str | None = None, tokens: bool = False) -> None:
         with self._scope() as session:
@@ -132,6 +164,7 @@ class Journal:
             if tokens:
                 row.tokens = tokens_between(session, started, row.finished_at)
 
+    @_one_transaction
     def record_step(self, run_id: int, step_id: str, state: str, *, blocked_by: str | None = None,
                     note: str | None = None) -> None:
         """A step that did not run (off, blocked, skipped, cut): one finished row."""
@@ -142,6 +175,7 @@ class Journal:
                 finished_at=moment, duration_s=0.0, items_done=0, items_failed=0,
                 blocked_by=blocked_by, note=note, approximate=False))
 
+    @_one_transaction
     def add_item(self, step_run_id: int, name: str, outcome: str, *,
                  duration_s: float | None = None, detail: str | None = None,
                  finished_at: datetime | None = None) -> None:
@@ -157,6 +191,7 @@ class Journal:
 
     # ------------------------------------------------------------------ reading for the runner
 
+    @_one_transaction
     def done_today(self, night_date: date) -> set[str]:
         """Steps that ended `ok` in some run of this night: a switched-off parent among them does
         not block its children (its output of tonight exists)."""

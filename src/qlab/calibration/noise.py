@@ -53,6 +53,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from qlab.boundedcache import BoundedCache
 from qlab.harness.panel import MarketPanel
 from qlab.harness.strategy import ZERO_WEIGHT_TOL, validate_weights
 from qlab.pipeline.evaluate import resolve_strategy
@@ -605,8 +606,8 @@ def neutralize(
     return pd.DataFrame(result, index=raw.index, columns=raw.columns)
 
 
-_REFERENCE_CACHE: dict[tuple, pd.DataFrame] = {}
 _REFERENCE_CACHE_SIZE = 4
+_REFERENCE_CACHE: BoundedCache[pd.DataFrame] = BoundedCache(_REFERENCE_CACHE_SIZE)
 
 
 def _reference_weights(panel: MarketPanel, code_ref: str, params: Mapping[str, object]
@@ -621,13 +622,11 @@ def _reference_weights(panel: MarketPanel, code_ref: str, params: Mapping[str, o
     key = (panel.snapshot_id, str(index[0]), str(index[-1]), len(index),
            hash(tuple(panel.prices.columns)), code_ref,
            json.dumps(dict(params), sort_keys=True, default=str))
-    if key not in _REFERENCE_CACHE:
-        weights = resolve_strategy(code_ref).target_weights(panel, params)
-        validate_weights(panel, weights)
-        if len(_REFERENCE_CACHE) >= _REFERENCE_CACHE_SIZE:
-            _REFERENCE_CACHE.pop(next(iter(_REFERENCE_CACHE)))
-        _REFERENCE_CACHE[key] = weights
-    return _REFERENCE_CACHE[key]
+    if (hit := _REFERENCE_CACHE.get(key)) is not None:
+        return hit
+    weights = resolve_strategy(code_ref).target_weights(panel, params)
+    validate_weights(panel, weights)
+    return _REFERENCE_CACHE.put(key, weights)
 
 
 def held_only(generator: GeneratorFn, reference: pd.DataFrame, panel: MarketPanel,

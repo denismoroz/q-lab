@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
@@ -425,6 +426,9 @@ def enqueue_requests(dossier: Dossier, scan: Any, day: date, limit: int, *,
     return ids
 
 
+_LOG_ENV_LOCK = threading.Lock()
+
+
 def investigate(session: Session, scan: Any, cfg: Config, *,
                 budget: CandidateBudget | ExplicitNoBudget, day: date,
                 queue_path: Path | None = None) -> store.NewInvestigation:
@@ -436,19 +440,24 @@ def investigate(session: Session, scan: Any, cfg: Config, *,
         budget.cap_tokens = min(budget.cap_tokens, inv.max_tokens_per_investigation)
     log = calls_path(cfg, scan.trial_id)
     log.parent.mkdir(parents=True, exist_ok=True)
-    before = os.environ.get(toolkit.LOG_ENV)
-    os.environ[toolkit.LOG_ENV] = str(log)
-    try:
-        result = run_agent(
-            budget, build_prompt(session, scan, cfg), session=session, agent=AGENT,
-            model=inv.model, max_turns=inv.max_turns, cwd=QLAB_ROOT,
-            extra_args=("--tools", TOOLS, "--allowedTools", ALLOWED, "--disallowedTools",
-                        DISALLOWED))
-    finally:
-        if before is None:
-            os.environ.pop(toolkit.LOG_ENV, None)
-        else:
-            os.environ[toolkit.LOG_ENV] = before
+    # The toolkit's calls find their log through the environment of the agent's process, which
+    # inherits this one's. The environment is the process's, not the thread's: one investigation
+    # sets it at a time (the agents' lane runs one step at a time already; this keeps a hand
+    # run or a second user of the variable from overwriting it mid-call).
+    with _LOG_ENV_LOCK:
+        before = os.environ.get(toolkit.LOG_ENV)
+        os.environ[toolkit.LOG_ENV] = str(log)
+        try:
+            result = run_agent(
+                budget, build_prompt(session, scan, cfg), session=session, agent=AGENT,
+                model=inv.model, max_turns=inv.max_turns, cwd=QLAB_ROOT,
+                extra_args=("--tools", TOOLS, "--allowedTools", ALLOWED, "--disallowedTools",
+                            DISALLOWED))
+        finally:
+            if before is None:
+                os.environ.pop(toolkit.LOG_ENV, None)
+            else:
+                os.environ[toolkit.LOG_ENV] = before
     calls = read_calls(log)
     answer = parse_answer(result.text)
     fired = list(scan.fired)

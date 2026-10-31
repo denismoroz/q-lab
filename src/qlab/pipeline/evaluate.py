@@ -35,6 +35,7 @@ from typing import Literal
 
 import pandas as pd
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from qlab import forward_series
@@ -369,6 +370,17 @@ def _find_matching_snapshot(
     return matches[0]
 
 
+_IDEA_LOCKS: dict[str, threading.Lock] = {}
+_IDEA_LOCKS_GUARD = threading.Lock()
+_VERSION_TRIES = 5
+
+
+def _idea_lock(idea_id: str) -> threading.Lock:
+    """The lock of one idea's spec rows (see `_get_or_create_spec_row`)."""
+    with _IDEA_LOCKS_GUARD:
+        return _IDEA_LOCKS.setdefault(idea_id, threading.Lock())
+
+
 _REQUEST_LOCKS: dict[tuple, threading.Lock] = {}
 _REQUEST_LOCKS_GUARD = threading.Lock()
 
@@ -490,11 +502,27 @@ def _get_or_create_spec_row(session: Session, spec: StrategySpec) -> SpecRow:
     every one of 200 noise books cost more than the books themselves.
     """
     data_requirements, costs_model = _spec_row_content(spec)
-    for row in _candidate_rows(session, [spec]):
-        if _same_content(row, spec, data_requirements, costs_model):
-            return row
-    return _add_spec_row(session, spec, _next_version(session, spec.idea_id),
-                         data_requirements, costs_model)
+    # Versions are numbered by reading the highest one and adding one, so two writers on one idea
+    # (steps running together, docs/PIPELINE.md) must not number at once: the idea's lock covers
+    # the reading and the insert, and the insert is committed before the lock is let go (the row
+    # is then visible to the other writer, and the registry's one write lock is not held while the
+    # evaluation fetches data). A writer of another process still can collide; the unique key on
+    # (idea, version) then refuses the second insert and the numbering is read again.
+    with _idea_lock(spec.idea_id):
+        for attempt in range(_VERSION_TRIES):
+            for row in _candidate_rows(session, [spec]):
+                if _same_content(row, spec, data_requirements, costs_model):
+                    return row
+            try:
+                row = _add_spec_row(session, spec, _next_version(session, spec.idea_id),
+                                    data_requirements, costs_model)
+                session.commit()
+                return row
+            except IntegrityError:
+                session.rollback()
+                if attempt == _VERSION_TRIES - 1:
+                    raise
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 _PLAIN_PARAM_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -603,6 +631,29 @@ def ensure_spec_rows(session: Session, specs: Sequence[StrategySpec]) -> list[in
             rows.insert(0, found)
         ids.append(found.id)
     return ids
+
+
+def ensure_spec_rows_committed(specs: Sequence[StrategySpec]) -> list[int]:
+    """`ensure_spec_rows` in a registry session of its own, committed, under the locks of the
+    specs' ideas (taken in one order, so two callers cannot wait for each other). Steps running
+    together start noise series on the same few noise ideas: the numbering of their versions is
+    taken in turns here, and if another process takes a version first, the unique key refuses the
+    insert and the whole numbering is read again."""
+    from contextlib import ExitStack
+
+    from qlab.registry.db import session_scope
+
+    with ExitStack() as held:
+        for idea_id in sorted({spec.idea_id for spec in specs}):
+            held.enter_context(_idea_lock(idea_id))
+        for attempt in range(_VERSION_TRIES):
+            try:
+                with session_scope() as own:
+                    return ensure_spec_rows(own, specs)
+            except IntegrityError:
+                if attempt == _VERSION_TRIES - 1:
+                    raise
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _code_sha() -> str:
@@ -1407,6 +1458,11 @@ def evaluate_spec(
     spec_row = (session.get(SpecRow, spec_row_id) if spec_row_id is not None else None) \
         or _get_or_create_spec_row(session, spec)
     panel = resolve_panel(session, spec)
+    # The long part (fetching, the backtest, the lookahead check) follows: the registry's one write
+    # lock must not be held across it, or every other writer waits out its busy timeout and fails
+    # (steps run together, docs/PIPELINE.md). The trial is written in a short transaction at the
+    # end.
+    session.commit()
 
     range_start = pd.Timestamp(panel.meta["range_start"]).date()
     range_end = pd.Timestamp(panel.meta["range_end"]).date()

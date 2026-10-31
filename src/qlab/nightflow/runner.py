@@ -4,10 +4,12 @@ A step that raises is marked `failed` and nothing else stops: only its `data` de
 marked `blocked` (with `blocked_by` naming the root cause). Every other step still runs. Each step's
 row is written to the journal when it starts and again when it ends.
 
-`concurrency` is the number of steps that may run together. It is 1 in this phase: the stages share
-the night's `state` dict and write the SQLite registry, which has not been made safe for two stages
-at once. The scheduler is written for more than one (a step starts when every parent has ended);
-with 1 it reduces to the table's order, which is exactly the order the night always had.
+`concurrency` is the number of steps that may run together. With 1 the night goes in the table's
+order, as it always did. With more, the steps run in lanes (docs/PIPELINE.md, «Дорожки»): a step
+starts when every parent has ended and its lane (`Step.lane`) is free, and at most one step runs
+in a lane. Each step works on its own view of the night's state (`qlab.nightflow.statehub`), so
+the steps share no dict; a failed step blocks only its `data` descendants, and a long step of
+one lane delays nothing in another.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ import time
 import traceback
 from collections import Counter
 from collections.abc import Callable, Collection
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -250,82 +251,132 @@ class Runner:
         self.blocked_by: dict[str, str] = {}
         self.errors: dict[str, str] = {}
         self._lock = threading.RLock()
+        self._ctx_of: dict[str, Any] = {}
+        self._rows: dict[str, int] = {}  # step id -> journal row, for the steps running now
+        self._stopping = threading.Event()
 
     # ------------------------------------------------------------------ one step
+
+    def _step_ctx(self, step: Step) -> Any:
+        """The context the step runs with: its own view of the night's state when the night's
+        context makes one (`NightContext.for_step`), else the shared one (a test's stub)."""
+        with self._lock:
+            found = self._ctx_of.get(step.id)
+        if found is None:
+            make = getattr(self.ctx, "for_step", None)
+            found = make(step) if make is not None else self.ctx
+            with self._lock:
+                self._ctx_of[step.id] = found
+        return found
 
     def _finish_without_running(self, step: Step, state: str, **fields) -> None:
         with self._lock:
             self.outcome[step.id] = state
             if fields.get("blocked_by"):
                 self.blocked_by[step.id] = fields["blocked_by"]
-            self.journal.record_step(self.run_id, step.id, state, **fields)
-            self.log(f"=== step {step.id}: {state}"
-                     + (f" ({fields['note']})" if fields.get("note") else ""))
+        self.journal.record_step(self.run_id, step.id, state, **fields)
+        self.log(f"=== step {step.id}: {state}"
+                 + (f" ({fields['note']})" if fields.get("note") else ""))
 
-    def _decide_before_start(self, step: Step) -> bool:
-        """Records the step as not run and returns False when it must not start."""
+    def _precheck(self, step: Step) -> bool:
+        """Records the step as not run and returns False when it is outside the run, switched off
+        or blocked by a parent. Needs no lane: it only reads what the parents came to."""
         with self._lock:
             if self.only is not None and step.id not in self.only:
                 self.outcome[step.id] = OUTSIDE
                 return False
             if step.id in self.off:
-                self._finish_without_running(
-                    step, OFF, note="выключен владельцем"
-                    + ("; сегодня уже выполнен" if step.id in self.done_today else ""))
-                return False
-            found = blocking_parent(self.table, step.id, self.outcome, self.blocked_by,
-                                    self.done_today)
-            if found is not None:
-                root, why = found
-                title = self.table.by_id[root].title
-                self._finish_without_running(
-                    step, BLOCKED, blocked_by=root,
-                    note=(f"«{title}» выключен и сегодня не выполнен" if why == "off"
-                          else f"зависит от упавшего шага «{title}»"))
-                return False
+                off_note = "выключен владельцем" + (
+                    "; сегодня уже выполнен" if step.id in self.done_today else "")
+                found = None
+            else:
+                off_note = None
+                found = blocking_parent(self.table, step.id, self.outcome, self.blocked_by,
+                                        self.done_today)
+        if off_note is not None:
+            self._finish_without_running(step, OFF, note=off_note)
+            return False
+        if found is not None:
+            root, why = found
+            title = self.table.by_id[root].title
+            self._finish_without_running(
+                step, BLOCKED, blocked_by=root,
+                note=(f"«{title}» выключен и сегодня не выполнен" if why == "off"
+                      else f"зависит от упавшего шага «{title}»"))
+            return False
+        return True
+
+    def _start_checks(self, step: Step) -> bool:
+        """The step's own reasons not to run now (a flag, a cadence, the night's stop time),
+        asked when its turn has come. Records the step and returns False when it does not run."""
         impl = self.impls[step.id]
-        if impl.skip_reason is not None and (reason := impl.skip_reason(self.ctx)):
+        sctx = self._step_ctx(step)
+        if impl.skip_reason is not None and (reason := impl.skip_reason(sctx)):
             self._finish_without_running(step, "skipped", note=reason)
             return False
-        if impl.is_cut is not None and impl.is_cut(self.ctx):
+        if impl.is_cut is not None and impl.is_cut(sctx):
             self._finish_without_running(step, "cut", note="вышел срок ночи, новое не начато")
             return False
         return True
 
+    def _decide_before_start(self, step: Step) -> bool:
+        return self._precheck(step) and self._start_checks(step)
+
     def _run_step(self, step: Step) -> None:
         impl = self.impls[step.id]
-        state = self.ctx.state
+        sctx = self._step_ctx(step)
+        step_run_id = self.journal.start_step(self.run_id, step.id)
         with self._lock:
-            step_run_id = self.journal.start_step(self.run_id, step.id)
-            if self.tracker is not None:
-                self.tracker.begin(step, step_run_id, state)
-            self.log(f"=== step {step.id}: start")
+            self._rows[step.id] = step_run_id
+        if self.tracker is not None:
+            self.tracker.begin(step, step_run_id, sctx.state)
+        self.log(f"=== step {step.id}: start")
         started = time.monotonic()
         result, error = "ok", None
         try:
-            impl.run(self.ctx)
-            if (save := getattr(self.ctx, "save", None)) is not None:
+            impl.run(sctx)
+            if (save := getattr(sctx, "save", None)) is not None:
                 save()  # the saved state is what the item tracker reads
-            if impl.inspect is not None and (swallowed := impl.inspect(self.ctx)):
+            if impl.inspect is not None and (swallowed := impl.inspect(sctx)):
                 result, error = "failed", swallowed
         except Exception as exc:  # noqa: BLE001 - a failed step is a row, not the end of the night
             result, error = "failed", describe_error(exc)
             traceback.print_exc(file=sys.stderr)
+            try:
+                if (save := getattr(sctx, "save", None)) is not None:
+                    save()  # what the step had done before it failed stays in the night's state
+            except Exception:  # noqa: BLE001
+                pass
         except BaseException as exc:
             # A stop of the whole night (Ctrl-C, SIGTERM): the row says so, the stop goes on.
-            self._finish_row(step, step_run_id, "interrupted", describe_error(exc))
+            try:
+                self._finish_row(step, step_run_id, "interrupted", describe_error(exc), sctx)
+            except Exception:  # noqa: BLE001 - the stop matters more than the row
+                self._interrupted_row(step.id, describe_error(exc))
             raise
-        self._finish_row(step, step_run_id, result, error)
+        if self._stopping.is_set():
+            return  # the night was stopped meanwhile; the row already says so
+        self._finish_row(step, step_run_id, result, error, sctx)
         self.log(f"=== step {step.id}: {result} in {time.monotonic() - started:.1f}s"
                  + (f" -- {error[:200]}" if error else ""))
 
-    def _finish_row(self, step: Step, step_run_id: int, result: str, error: str | None) -> None:
+    def _interrupted_row(self, step_id: str, error: str) -> None:
+        with self._lock:
+            row = self._rows.pop(step_id, None)
+            self.outcome.setdefault(step_id, "interrupted")
+        if row is not None:
+            self.journal.finish_step(row, "interrupted", error=error,
+                                     tokens=self.table.by_id[step_id].tokens)
+
+    def _finish_row(self, step: Step, step_run_id: int, result: str, error: str | None,
+                    sctx: Any) -> None:
         impl = self.impls[step.id]
-        state = self.ctx.state
+        state = sctx.state
         if self.tracker is not None:
-            self.tracker.end(step.id, state)
+            snapshot = getattr(sctx, "snapshot", None)
+            self.tracker.end(step.id, snapshot() if snapshot is not None else state)
         if impl.finals is not None:
-            extra = impl.finals(self.ctx)
+            extra = impl.finals(sctx)
         else:
             found = (new_failed_items(step, state, self.tracker.failed_before(step.id))
                      if self.tracker is not None else failed_items(step, state))
@@ -333,13 +384,15 @@ class Runner:
         for name, outcome, text in extra:
             self.journal.add_item(step_run_id, name, outcome, detail=text,
                                   duration_s=item_seconds(step, state, name))
-        note = impl.note(self.ctx) if impl.note is not None else None
+        note = impl.note(sctx) if impl.note is not None else None
+        self.journal.finish_step(step_run_id, result, error=error, note=note, tokens=step.tokens)
         with self._lock:
             self.outcome[step.id] = result
+            self._rows.pop(step.id, None)
             if error:
                 self.errors[step.id] = error
-            self.journal.finish_step(step_run_id, result, error=error, note=note,
-                                     tokens=step.tokens)
+        if (release := getattr(sctx, "release", None)) is not None:
+            release()
         if result == "failed" and error and self.on_failure is not None:
             self.on_failure(step.id, error)
 
@@ -351,29 +404,62 @@ class Runner:
                 if self._decide_before_start(step):
                     self._run_step(step)
             return self.outcome
-        return self._execute_together()
+        return self._execute_in_lanes()
 
-    def _execute_together(self) -> dict[str, str]:
-        """A step starts as soon as every parent (of every kind) has ended; at most `concurrency`
-        at a time. Not used in this phase (docs/PIPELINE.md says why)."""
+    def _execute_in_lanes(self) -> dict[str, str]:
+        """A step starts when every parent (of every kind) has ended and its lane is free; at most
+        `concurrency` steps at a time and one per lane. Among the steps ready for a lane the one
+        first in the table's order goes, so a step waiting for another lane does not hold up the
+        ones behind it. The coordinator is this thread; the steps run in threads of their own,
+        which are daemons: a stop of the night (SIGTERM, Ctrl-C) must end the process, not wait
+        for a step that may run for hours."""
         pending = list(self.table.steps)
-        running: dict[Future, Step] = {}
-        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
-            while pending or running:
+        busy: dict[str, str] = {}  # lane -> the step running in it
+        ended: queue.Queue = queue.Queue()
+        threads: dict[str, threading.Thread] = {}
+
+        def work(step: Step) -> None:
+            try:
+                self._run_step(step)
+                ended.put((step.id, None))
+            except BaseException as exc:  # noqa: BLE001 - handed to the coordinator
+                ended.put((step.id, exc))
+
+        try:
+            while pending or busy:
+                started_something = False
                 for step in list(pending):
-                    if len(running) >= self.concurrency:
-                        break
                     if any(p not in self.outcome for p in self.table.parents(step.id)):
                         continue
+                    if not self._precheck(step):
+                        pending.remove(step)
+                        started_something = True
+                        continue
+                    lane = step.lane_key
+                    if lane in busy or len(busy) >= self.concurrency:
+                        continue
                     pending.remove(step)
-                    if self._decide_before_start(step):
-                        running[pool.submit(self._run_step, step)] = step
-                if running:
-                    finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
-                    for future in finished:
-                        running.pop(future)
-                        future.result()  # a stop of the night (BaseException) comes out here
-                elif pending and not any(
-                        all(p in self.outcome for p in self.table.parents(s.id)) for s in pending):
+                    started_something = True
+                    if not self._start_checks(step):
+                        continue
+                    busy[lane] = step.id
+                    threads[step.id] = threading.Thread(
+                        target=work, args=(step,), name=f"step-{step.id}", daemon=True)
+                    threads[step.id].start()
+                if busy:
+                    try:
+                        step_id, exc = ended.get(timeout=1.0)
+                    except queue.Empty:
+                        continue  # wakes the thread now and then so that a signal is taken at once
+                    busy.pop(self.table.by_id[step_id].lane_key, None)
+                    threads.pop(step_id).join()
+                    if exc is not None:
+                        raise exc  # a stop of the night (BaseException) comes out here
+                elif pending and not started_something:
                     raise RuntimeError("the step table has a cycle")
+        except BaseException as exc:
+            self._stopping.set()
+            for step_id in list(busy.values()):
+                self._interrupted_row(step_id, describe_error(exc))
+            raise
         return self.outcome

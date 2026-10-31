@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from qlab import agent_blocks
+from qlab import agent_blocks, tree_writes
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.card_fields import CardFieldError, CardFields, param_at, read_card_fields
 from qlab.pipeline.sources import QLAB_ROOT
@@ -203,7 +203,10 @@ class ImplementOutcome:
 def _changed_paths() -> list[str]:
     done = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
                           cwd=QLAB_ROOT, capture_output=True, text=True, check=True)
-    return [line[3:].strip() for line in done.stdout.splitlines() if line.strip()]
+    # The files the night's code steps write into the tree (a twin, an overlay variant) are not an
+    # agent's: steps run together (docs/PIPELINE.md) and the agents' checks must not undo them.
+    return tree_writes.without_code_writes(
+        [line[3:].strip() for line in done.stdout.splitlines() if line.strip()])
 
 
 def _revert(path: str) -> None:

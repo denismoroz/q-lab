@@ -22,11 +22,25 @@
 # `done_prefixes` / `state_keys`: what a RESTART of the step clears in the night's state file, so
 # that the step does its work again instead of skipping what is marked done.
 # `refresh`: a step that is added to every partial run (a restart), because it only reads.
+#
+# `lane` (owner, 2026-10-31: «запускать параллельно ... шаги пайплайна», three lanes approved):
+# steps of one lane run one at a time, lanes run together. The scheduler starts, in a lane that
+# is free, the first step in the table's order whose parents have all ended, so a step that waits
+# for another lane does not hold up the steps behind it in its own lane.
+#   calc    -- everything that writes trials of ideas through the stand and its ledgers. One at a
+#              time: two of them on one idea would run it twice and the deflation would count it
+#              twice (the `exclusive` edges say the same for a sequential night).
+#   checks  -- reads of the production host and of the stand's panels; they write no trial.
+#   agents  -- the steps that spend tokens, one at a time: the token guard is not safe for two.
+#   final   -- the ladder and the report: after every other lane.
+# `state_keys` are the keys of the night's state that the step writes; no two steps may own one
+# key unless one is the other's ancestor (qlab.nightflow.statehub, checked when the table loads).
 steps:
   - id: detectors
     title: Определители режима
     description: Пересобирает файлы определителей режима рынка на данных до вчерашнего дня.
     kind: data
+    lane: calc
     tokens: false
     items: определитель
     state_keys: [detectors]
@@ -35,6 +49,7 @@ steps:
     title: Список наблюдения
     description: Пересчитывает каждую стратегию из списка наблюдения на свежих данных (по воскресеньям — ещё кладбище по режимам).
     kind: code
+    lane: calc
     tokens: false
     items: стратегия из списка наблюдения (кладбище по воскресеньям)
     done_prefixes: ["watch:", "graveyard:"]
@@ -46,10 +61,11 @@ steps:
     title: Ждущие идеи
     description: Пересчитывает идеи, которые ждут данных и не стоят в списке наблюдения, и их вторую ступень.
     kind: code
+    lane: calc
     tokens: false
     items: ждущая идея и её ступень
     done_prefixes: ["waiting:"]
-    state_keys: [waiting, waiting_notes]
+    state_keys: [waiting, waiting_notes, waiting_followed]
     depends_on:
       - {step: detectors, kind: data, why: "Ждущие идеи читают те же файлы определителей режима."}
 
@@ -57,6 +73,7 @@ steps:
     title: Двойники и вторая ступень
     description: Для идей без проверки вперёд строит двойника, который выбирает числа только по прошлому, и гонит его на истории.
     kind: code
+    lane: calc
     tokens: false
     items: идея, для которой строится двойник
     done_prefixes: ["twins:"]
@@ -69,6 +86,7 @@ steps:
     title: Пересчёт старых результатов
     description: Заново считает идеи, чей последний результат измерен старой версией стенда или правил.
     kind: code
+    lane: calc
     tokens: false
     items: идея
     done_prefixes: ["restamp:"]
@@ -82,6 +100,7 @@ steps:
     title: Почему площадки расходятся
     description: Для идеи, прошедшей на одной площадке и не прошедшей на другой, измеряет, из-за чего они разошлись (только чтение).
     kind: code
+    lane: calc
     tokens: false
     items: идея
     state_keys: [venue_gap]
@@ -92,6 +111,7 @@ steps:
     title: Аномалии — проверка кодом
     description: Проверяет семью признаков «слишком хорошо» на прошедших прогонах; решает код, токены не тратятся.
     kind: code
+    lane: calc
     tokens: false
     items: прогон
     done_prefixes: ["anomalies:scan:"]
@@ -103,9 +123,11 @@ steps:
     title: Аномалии — разбор агентом
     description: Агент-следователь разбирает прогоны, на которых сработал признак (в пределах бюджета токенов).
     kind: agent
+    lane: agents
     tokens: true
     items: прогон с сработавшим признаком
     done_prefixes: ["anomalies:inv:"]
+    state_keys: [anomalies]
     depends_on:
       - {step: anomalies, kind: data, why: "Разбирает ровно те прогоны, на которых проверка кодом подняла признак."}
 
@@ -113,6 +135,7 @@ steps:
     title: Надстройки
     description: Для стратегий, прошедших первую ступень, прогоняет надстройки и пары надстроек и сравнивает с базой.
     kind: code
+    lane: calc
     tokens: false
     items: вариант надстройки
     done_prefixes: ["overlays:"]
@@ -124,6 +147,7 @@ steps:
     title: Сверка бумаги с продом
     description: Читает бумажные книги с боевого хоста (только чтение) и пересчитывает их на данных q-lab.
     kind: data
+    lane: checks
     tokens: false
     items: книга
     state_keys: [paper]
@@ -134,6 +158,7 @@ steps:
     title: Детектор угасания
     description: Смотрит, где результаты работающих книг лежат среди окон их собственной истории на стенде.
     kind: code
+    lane: checks
     tokens: false
     items: книга
     state_keys: [decay]
@@ -145,6 +170,7 @@ steps:
     title: Распределение капитала
     description: Считает предложение, как разделить деньги между стратегиями; ничего не двигает.
     kind: code
+    lane: checks
     tokens: false
     state_keys: [allocation]
     depends_on:
@@ -155,6 +181,7 @@ steps:
     title: Второе мнение
     description: Агент-оценщик даёт второе мнение по прогонам списка, где исход изменился или на кону деньги.
     kind: agent
+    lane: agents
     tokens: true
     items: прогон
     done_prefixes: ["assess:"]
@@ -167,20 +194,23 @@ steps:
     title: Программист
     description: Агент-программист берёт очередь заявок руководителя и пишет блоки кода на отдельных ветках.
     kind: agent
+    lane: agents
     tokens: true
     items: заявка
     state_keys: [programmer]
     depends_on:
       - {step: assess, kind: budget, why: "Порядок трат: сначала здоровье работающих стратегий и второе мнение, потом новое (CLAUDE.md)."}
+      - {step: anomalies-investigate, kind: budget, why: "Порядок трат: разбор аномалий — здоровье результатов, он идёт до нового (на дорожке агентов шаги идут по готовности, и без этой связи программист мог бы встать раньше разбора)."}
 
   - id: director
     title: Руководитель исследований
     description: Агент-руководитель раз в несколько ночей расставляет приоритеты исследователю и генератору.
     kind: agent
+    lane: agents
     tokens: true
     items: запись руководителя
     done_prefixes: ["director:"]
-    state_keys: [director]
+    state_keys: [director, ideas_in_director]
     depends_on:
       - {step: programmer, kind: budget, why: "Решение владельца 2026-10-30: токены сначала программисту."}
 
@@ -188,10 +218,11 @@ steps:
     title: Исследователь
     description: Агент-исследователь по каждой стратегии пишет записку с экспериментами, а стенд их прогоняет.
     kind: agent
+    lane: agents
     tokens: true
     items: стратегия
     done_prefixes: ["research:"]
-    state_keys: [research]
+    state_keys: [research, ideas_in]
     depends_on:
       - {step: director, kind: budget, why: "Руководитель расставляет порядок стратегий для исследователя; он идёт первым."}
 
@@ -199,9 +230,11 @@ steps:
     title: Двойники экспериментов исследователя
     description: Для экспериментов, которые исследователь прогнал этой ночью, строит двойников и гонит их на истории.
     kind: code
+    lane: calc
     tokens: false
     items: эксперимент
     done_prefixes: ["twins:"]
+    state_keys: [twins]
     depends_on:
       - {step: research, kind: data, why: "Берёт эксперименты, записанные исследователем этой ночью."}
       - {step: twins, kind: exclusive, why: "Тот же код и тот же журнал двойников, что у шага «Двойники»: вместе они не идут."}
@@ -210,6 +243,7 @@ steps:
     title: Реализация карточек
     description: Агент-реализатор пишет блок и спек по карточкам из очереди, затем код гонит их на стенде.
     kind: agent
+    lane: agents
     tokens: true
     items: карточка
     done_prefixes: ["implement:"]
@@ -221,6 +255,7 @@ steps:
     title: Поиск
     description: Забирает новые статьи и события площадок (без токенов), затем агент-разведчик пишет черновик карточки.
     kind: agent
+    lane: agents
     tokens: true
     items: источник
     state_keys: [events, events_error, scout, publications]
@@ -231,6 +266,7 @@ steps:
     title: Разбор статей в каталог
     description: Агент читает статью целиком и вносит её механизм в каталог, если код и проверяющий согласны.
     kind: agent
+    lane: agents
     tokens: true
     items: статья
     state_keys: [catalogue]
@@ -241,6 +277,7 @@ steps:
     title: Карточки для входящих идей
     description: Агент-составитель превращает идею из входящих в карточку для реализатора.
     kind: agent
+    lane: agents
     tokens: true
     items: идея из входящих
     state_keys: [cards]
@@ -252,6 +289,7 @@ steps:
     title: Генератор идей
     description: Агент по каталогу механизмов пишет новые стратегии, код проверяет их, стенд прогоняет прошедшие.
     kind: agent
+    lane: agents
     tokens: true
     items: стратегия
     done_prefixes: ["generate:"]
@@ -265,6 +303,7 @@ steps:
     title: Вторая площадка для закрытых идей
     description: Для идей, закрытых только по Binance, запускает Hyperliquid, несколько штук за ночь.
     kind: code
+    lane: calc
     tokens: false
     items: закрытая идея
     done_prefixes: ["second_venue:"]
@@ -276,9 +315,11 @@ steps:
     title: Лестница оценки
     description: Собирает таблицу семи ступеней каждой открытой идеи для отчёта; чтение, без токенов.
     kind: code
+    lane: final
     tokens: false
     refresh: true
     state_keys: [ladder]
+    reads_all: "Лестница идёт после всех дорожек: читает исходы всех прогонов, когда они записаны."
     depends_on:
       - {step: recheck, kind: fresh, why: "Читает исходы всех прогонов, когда они все записаны."}
       - {step: waiting, kind: fresh, why: "То же."}
@@ -294,6 +335,7 @@ steps:
     title: Утренний отчёт
     description: Собирает отчёт ночи из состояния всех шагов; отчёт должен появиться, даже если шаги упали.
     kind: code
+    lane: final
     tokens: false
     refresh: true
     reads_all: "Читает записи всех шагов; упавший шаг попадает в отчёт строкой, а сам отчёт не блокируется."

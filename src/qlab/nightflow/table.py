@@ -24,6 +24,20 @@ PIPELINE = Path(__file__).resolve().parents[3] / "night" / "pipeline.yaml"
 EDGE_KINDS = ("data", "fresh", "exclusive", "budget")
 STEP_KINDS = ("data", "code", "agent")
 
+#: The lanes of the night (docs/PIPELINE.md, «Дорожки»): steps of one lane run one at a time, in
+#: the table's order among those that are ready; lanes run together. `final` is the ladder and
+#: the report, which wait for every other lane. A step with no lane (a test's table) is alone in a
+#: lane of its own, so the limit on the number of steps is then the only one.
+LANES = ("calc", "checks", "agents", "final")
+LANE_TITLES = {
+    "calc": ("Расчёты", "Всё, что гонит идеи через стенд и пишет испытания: по одному, чтобы одну "
+             "идею не посчитать дважды."),
+    "checks": ("Проверки", "Чтение боевого хоста и кэша панелей стенда; испытаний не пишут."),
+    "agents": ("Агенты", "Шаги, которые тратят токены: по одному, гард бюджета не рассчитан на "
+               "два сразу."),
+    "final": ("Итог", "Лестница и отчёт: после всех остальных дорожек."),
+}
+
 
 class TableError(ValueError):
     """The table is malformed: a duplicate id, an unknown parent, a parent below its child."""
@@ -49,6 +63,12 @@ class Step:
     state_keys: tuple[str, ...] = ()
     refresh: bool = False
     reads_all: str = ""
+    lane: str = ""
+
+    @property
+    def lane_key(self) -> str:
+        """The lane the scheduler keeps one step at a time in: the declared, else the step's own."""
+        return self.lane or self.id
 
     @property
     def hard_parents(self) -> tuple[str, ...]:
@@ -115,6 +135,19 @@ class Table:
         related = set(self.ancestors(step_id, kinds)) | set(self.descendants(step_id, kinds))
         return [s for s in self.ids if s != step_id and s not in related]
 
+    def lanes(self) -> dict[str, list[str]]:
+        """The steps of each declared lane, in the table's order; the lanes in `LANES` order."""
+        out: dict[str, list[str]] = {name: [] for name in LANES}
+        for step in self.steps:
+            if step.lane:
+                out.setdefault(step.lane, []).append(step.id)
+        return {name: ids for name, ids in out.items() if ids}
+
+    def ordered(self, a: str, b: str) -> bool:
+        """Whether one of the two steps is an ancestor of the other, along edges of any kind:
+        they can never run at the same time."""
+        return a in self.ancestors(b) or b in self.ancestors(a)
+
     def restart_set(self, step_id: str) -> list[str]:
         """What a restart of `step_id` runs: the step, everything that depends on it by `data`
         (its result is the input of those), and the steps that only read (`refresh`: the ladder
@@ -143,7 +176,7 @@ def parse(doc: dict) -> Table:
             kind=str(raw["kind"]), tokens=bool(raw["tokens"]), items=str(raw.get("items") or ""),
             depends_on=_edges(raw, above), done_prefixes=tuple(raw.get("done_prefixes") or ()),
             state_keys=tuple(raw.get("state_keys") or ()), refresh=bool(raw.get("refresh", False)),
-            reads_all=str(raw.get("reads_all") or ""))
+            reads_all=str(raw.get("reads_all") or ""), lane=str(raw.get("lane") or ""))
         steps.append(step)
     table = Table(steps)
     validate(table)
@@ -171,6 +204,38 @@ def validate(table: Table) -> None:
                 raise TableError(f"step {step.id!r}: the edge to {edge.step!r} has no reason")
         if len({e.step for e in step.depends_on}) != len(step.depends_on):
             raise TableError(f"step {step.id!r} names a parent twice")
+        if step.lane and step.lane not in LANES:
+            raise TableError(f"step {step.id!r} is in lane {step.lane!r}; one of {LANES}")
+    spenders = {s.lane for s in table.steps if s.tokens and s.lane}
+    if len(spenders) > 1:
+        raise TableError("steps that spend tokens must share one lane (the token guard is not "
+                         f"safe for two at once); they are in {sorted(spenders)}")
+    _validate_ownership(table)
+
+
+def _validate_ownership(table: Table) -> None:
+    """No two steps write one key of the night's state or one done-marker prefix at the same time
+    (`qlab.nightflow.statehub`): a key may have several owners only if every two of them are ordered
+    by the table (one is the other's ancestor), and a step may not name a key the state keeps for
+    the run itself."""
+    from qlab.nightflow.statehub import HUB_KEYS
+
+    keys: dict[str, list[str]] = {}
+    prefixes: dict[str, list[str]] = {}
+    for step in table.steps:
+        for key in step.state_keys:
+            if key in HUB_KEYS:
+                raise TableError(f"step {step.id!r} owns {key!r}, which the run itself keeps")
+            keys.setdefault(key, []).append(step.id)
+        for prefix in step.done_prefixes:
+            prefixes.setdefault(prefix, []).append(step.id)
+    for what, owners_of in (("state key", keys), ("done-marker prefix", prefixes)):
+        for name, owners in owners_of.items():
+            for i, a in enumerate(owners):
+                for b in owners[i + 1:]:
+                    if not table.ordered(a, b):
+                        raise TableError(f"steps {a!r} and {b!r} both own the {what} {name!r} "
+                                         "but nothing orders them: they could write it together")
 
 
 def load_table(path: Path | None = None) -> Table:

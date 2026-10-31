@@ -37,6 +37,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab import tree_writes
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.pipeline.sources import QLAB_ROOT
 
@@ -546,8 +547,9 @@ def _git(*args: str, check: bool = True) -> str:
 
 
 def _tracked_changes() -> set[str]:
-    return {line[3:].strip() for line in _git("status", "--porcelain").splitlines()
-            if line.strip()}
+    return set(tree_writes.without_code_writes(
+        [line[3:].strip() for line in _git("status", "--porcelain").splitlines()
+         if line.strip()]))
 
 
 def catalogue_dirty(catalogue: Path = CATALOGUE) -> bool:

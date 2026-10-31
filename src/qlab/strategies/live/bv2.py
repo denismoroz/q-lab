@@ -137,6 +137,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
 
+from qlab.boundedcache import BoundedCache
 from qlab.data.sources.base import SPOT_COLUMN_SUFFIX
 from qlab.harness.gaps import holdable_gaps
 from qlab.harness.panel import MarketPanel
@@ -696,8 +697,8 @@ class _Driver:
                              **done})
 
 
-_RUN_CACHE: dict[tuple, LiveBv2Run] = {}
 _RUN_CACHE_SIZE = 16
+_RUN_CACHE: BoundedCache[LiveBv2Run] = BoundedCache(_RUN_CACHE_SIZE)
 
 
 def _run_key(panel: MarketPanel, params: Mapping[str, object]) -> tuple:
@@ -775,11 +776,9 @@ class LiveBv2:
 
     def run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
         key = _run_key(panel, params)
-        if key not in _RUN_CACHE:
-            if len(_RUN_CACHE) >= _RUN_CACHE_SIZE:
-                _RUN_CACHE.pop(next(iter(_RUN_CACHE)))
-            _RUN_CACHE[key] = self._run(panel, params)
-        return _RUN_CACHE[key]
+        if (hit := _RUN_CACHE.get(key)) is not None:
+            return hit
+        return _RUN_CACHE.put(key, self._run(panel, params))
 
     def _run(self, panel: MarketPanel, params: Mapping[str, object]) -> LiveBv2Run:
         params = dict(params)

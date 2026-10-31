@@ -42,6 +42,7 @@ from pathlib import Path
 
 import yaml
 
+from qlab import tree_writes
 from qlab.pipeline.spec import StrategySpec
 from qlab.strategies.overlays import get, names
 from qlab.twin import PERIODS, RETUNE_DOC, first_choice, warmup_days
@@ -338,6 +339,7 @@ def write_variant(spec_dir: Path, base_id: str, spec: StrategySpec) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists() or target.read_text(encoding="utf-8") != text:
         target.write_text(text, encoding="utf-8")
+        tree_writes.note(target)
     return target
 
 

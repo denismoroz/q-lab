@@ -59,6 +59,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from qlab.boundedcache import BoundedCache
 from qlab.harness.costs import CostModel
 from qlab.harness.panel import MarketPanel
 from qlab.harness.run import run_backtest
@@ -72,8 +73,8 @@ _PERIODS = {"D": "D", "W": "W-SUN", "M": "M"}
 ONCE = "once"
 _OBJECTIVES = ("sharpe_net", "total_return_net")
 
-_CACHE: dict[tuple, RetuneRun] = {}
 _CACHE_SIZE = 8
+_CACHE: BoundedCache[RetuneRun] = BoundedCache(_CACHE_SIZE)
 
 
 @dataclass(frozen=True)
@@ -210,9 +211,9 @@ class Retune:
             # cache returned the unmasked book for a masked panel.
             int(pd.util.hash_pandas_object(panel.tradeable, index=False).sum()),
         )
-        if key in _CACHE:
-            self._last = _CACHE[key]
-            return self._last
+        if (hit := _CACHE.get(key)) is not None:
+            self._last = hit
+            return hit
 
         objective = str(params["objective"])
         if objective not in _OBJECTIVES:
@@ -300,9 +301,7 @@ class Retune:
                 sizes=pd.DataFrame(order_out, index=index, columns=panel.prices.columns),
                 skipped=pd.Series(skipped_out, index=index, name="skipped")),
         )
-        if len(_CACHE) >= _CACHE_SIZE:
-            _CACHE.pop(next(iter(_CACHE)))
-        _CACHE[key] = result
+        _CACHE.put(key, result)
         self._last = result
         return result
 
