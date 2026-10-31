@@ -37,6 +37,7 @@ IMPLEMENT_QUEUE = Path("night/implement_queue.yaml")
 STATE_DIR = Path("data/night")
 REPORT_DIR = Path("reports/night")
 PAPER_DIR = Path("data/paper")
+SCHEDULE = Path("night/schedule.yaml")
 PROD = "dis@10.8.0.5"
 PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's state
 
@@ -113,16 +114,58 @@ def stop_time(hhmm: str, now: datetime | None = None) -> datetime:
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
+class Deadline(datetime):
+    """A stop time that cuts only the night's code stages (`code_stages_cut`): past it they start
+    nothing new, while the agents' stages go on until the real stop time."""
+
+
+def code_stages_cut(stop_at: datetime | None, started: datetime | None = None,
+                    path: Path = SCHEDULE) -> datetime | None:
+    """The time after which the restamp, the venue-gap, the anomaly scan and the overlays start no
+    new idea (`night/schedule.yaml`, default 05:00 local), as the `stop_at` those stages are given.
+
+    The real stop time when it comes first, when the file says nothing, or when the run began after
+    the deadline (a run by hand in the day); a `Deadline` otherwise. A night without a stop time has
+    no deadline either."""
+    if stop_at is None:
+        return None
+    try:
+        hhmm = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+            "code_stages_deadline")
+    except (OSError, ValueError, yaml.YAMLError):
+        hhmm = None
+    if not hhmm:
+        return stop_at
+    started = started or datetime.now(UTC)
+    deadline = stop_time(str(hhmm), started)
+    if deadline >= stop_at or started >= deadline:
+        return stop_at
+    return Deadline(deadline.year, deadline.month, deadline.day, deadline.hour, deadline.minute,
+                    deadline.second, deadline.microsecond, tzinfo=deadline.tzinfo)
+
+
 def past_stop(stop_at: datetime | None, state: dict, stage: str) -> bool:
     """Whether the stop time has passed, checked before each piece of work so a
     started one always finishes. The first stage it cuts goes into the state
-    (`stopped_at`) for the morning report; what was cut runs on the next night
-    (the rechecks are redone every night anyway; unrun experiments carry over,
-    `carried_research`)."""
+    (`stopped_at`), with every stage it kept from starting afterwards (`cut`), for
+    the morning report; what was cut runs on the next night (the rechecks are
+    redone every night anyway; unrun experiments carry over, `carried_research`).
+
+    A `Deadline` (the code stages' own, `code_stages_cut`) is not a stop of the night: it is
+    written to `state["deadline"]` with the stages it deferred, and the night goes on."""
     if stop_at is None or datetime.now(UTC) < stop_at:
         return False
-    state.setdefault("stopped_at", {"time": datetime.now(UTC).isoformat(),
-                                    "stop_at": stop_at.isoformat(), "before": stage})
+    top = stage.split(":")[0]
+    if isinstance(stop_at, Deadline):
+        block = state.setdefault("deadline", {"at": stop_at.isoformat(), "deferred": []})
+        if top not in block["deferred"]:
+            block["deferred"].append(top)
+        return True
+    stopped = state.setdefault("stopped_at", {"time": datetime.now(UTC).isoformat(),
+                                              "stop_at": stop_at.isoformat(), "before": stage})
+    cut = stopped.setdefault("cut", [])
+    if top not in cut:
+        cut.append(top)
     return True
 
 
@@ -456,6 +499,16 @@ def write_report(day: date, state: dict) -> Path:
                   f"({stop['before']}). Начатое доделано, остальное — в следующую ночь: "
                   "перепроверки она делает заново, невыполненные эксперименты исследователя "
                   "переносятся.", ""]
+        if cut := stop.get("cut"):
+            lines += ["Из-за срока не начаты: " + ", ".join(
+                f"«{STOP_STAGES.get(name, name)}»" for name in cut) + ".", ""]
+    if deadline := state.get("deadline"):
+        at = datetime.fromisoformat(deadline["at"]).astimezone()
+        lines += [f"**После {at:%H:%M} кодовые этапы новых дел не начинали** (срок "
+                  "`night/schedule.yaml`): " + ", ".join(
+                      f"«{STOP_STAGES.get(name, name)}»" for name in deadline["deferred"])
+                  + ". Так программист, руководитель и исследователь получают своё время; начатое "
+                  "доделано, остальное ждёт следующей ночи.", ""]
     account = state.get("account") or {}
     if account.get("ok") is False:
         lines += ["**Агенты этой ночью не работали: Claude CLI вошёл не под тем аккаунтом.** "
@@ -929,7 +982,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     strategy that passed, `qlab.overlay_stage`) follows `twins`, which it comes right after.
     `second_venue` (default: with the twins; `qlab.second_venue`, docs/VENUE_SPLIT.md) runs the
     Hyperliquid side of the oldest ideas rejected on Binance before the venues were judged
-    independently, a few a night (night/second_venue.yaml). `venue_gap` (`qlab.venue_gap`) measures
+    independently, a few a night and within a time limit (night/second_venue.yaml); it stands
+    AFTER the agent stages, so that a night that runs short cuts it, not the agents. The restamp,
+    the venue gap, the anomalies and the overlays start nothing new after the deadline of
+    night/schedule.yaml (`code_stages_cut`), for the same reason. `venue_gap` (`qlab.venue_gap`) measures
     why the two venues of an open idea differ, for its page and the report: code only.
     `restamp` (`qlab.restamp`: the ideas whose latest run was measured under an older stand or
     rules version, run again, bounded) comes right after the twins and before the anomalies, which
@@ -944,8 +1000,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
     state = load_state(day)
+    code_cut = code_stages_cut(stop_at)  # the code stages' own, earlier, time (schedule.yaml)
     state.setdefault("results", [])
     state.pop("stopped_at", None)  # a resumed night gets its own stop time
+    state.pop("deadline", None)  # and its own deadline for the code stages
     state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
     state["account"] = account_state()  # the report says which account the agents ran under
     from qlab.budget.guard import limits_off
@@ -1005,36 +1063,29 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
                 stop_at=stop_at)
         save_state(day, state)
-    if (second_venue if second_venue is not None else run_twins) \
-            and not past_stop(stop_at, state, "second_venue"):
-        # Ideas rejected on Binance before the venues were judged independently get their
-        # Hyperliquid side, the oldest first, a few a night (qlab.second_venue). Code only.
-        guarded(day, state, "second_venue", second_venue_stage, day, end, state,
-                noise_trials=noise_trials, stop_at=stop_at)
-        save_state(day, state)
-    if restamp and not past_stop(stop_at, state, "restamp"):
+    if restamp and not past_stop(code_cut, state, "restamp"):
         # Results measured an older way are measured again (docs/RESTAMP.md). Code only. Before
         # the anomalies stage: it scans the runs this one has just made.
         guarded(day, state, "restamp", restamp_stage, day, end, state, noise_trials=noise_trials,
-                stop_at=stop_at)
+                stop_at=code_cut)
         save_state(day, state)
-    if venue_gap and not past_stop(stop_at, state, "venue_gap"):
+    if venue_gap and not past_stop(code_cut, state, "venue_gap"):
         # Why the two venues of an open idea differ: the profit on coins the other venue does not
         # list, measured on both runs and stored for the pages (qlab.venue_gap). Code only.
-        guarded(day, state, "venue_gap", venue_gap_stage, day, end, state, stop_at=stop_at)
+        guarded(day, state, "venue_gap", venue_gap_stage, day, end, state, stop_at=code_cut)
         save_state(day, state)
-    if anomalies and not past_stop(stop_at, state, "anomalies"):
+    if anomalies and not past_stop(code_cut, state, "anomalies"):
         # Too-good results (docs/ANOMALIES.md): flags by code on the passed runs, the
         # investigator agent on the flagged ones. Before the overlays: a base must be clean.
-        guarded(day, state, "anomalies", anomalies_stage, day, end, state, stop_at=stop_at)
+        guarded(day, state, "anomalies", anomalies_stage, day, end, state, stop_at=code_cut)
         save_state(day, state)
     if (overlays if overlays is not None else run_twins) \
-            and not past_stop(stop_at, state, "overlays"):
+            and not past_stop(code_cut, state, "overlays"):
         # Overlays on the strategies that passed (qlab.overlay_stage): when and how much to
         # hold, every variant a counted trial, compared with its base. Code only.
         guarded(day, state, "overlays", overlays_stage, day, end, state,
                 noise_trials=noise_trials,
-                stop_at=stop_at)
+                stop_at=code_cut)
         save_state(day, state)
     if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
         reconciled = guarded(day, state, "paper", paper_reconciliation, day)
@@ -1099,6 +1150,15 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         # generator is the most expensive part of it.
         guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
                 force=generate)
+    if (second_venue if second_venue is not None else run_twins) \
+            and not past_stop(stop_at, state, "second_venue"):
+        # Ideas rejected on Binance before the venues were judged independently get their
+        # Hyperliquid side, the oldest first, a few a night (qlab.second_venue). Code only, and
+        # AFTER the agents (2026-10-31: in front of them it ate the night): it has its own time
+        # limit and skips an idea whose data is too heavy to fetch in it.
+        guarded(day, state, "second_venue", second_venue_stage, day, end, state,
+                noise_trials=noise_trials, stop_at=stop_at)
+        save_state(day, state)
     stop_prefetch(prefetcher, state)
     if ladder is not False:
         # The ladder of every open idea as one table, read after every stage has written its

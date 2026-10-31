@@ -959,3 +959,76 @@ def test_the_graveyard_sweep_walks_the_whole_spec_tree_but_not_stages_or_variant
     found = night.graveyard_specs(specs)
 
     assert [p.relative_to(specs).as_posix() for p in found] == ["flat.yaml", "research/x/deep.yaml"]
+
+
+# ---- the code stages' deadline and the order ----------------------------------------------
+
+
+def test_the_code_stages_have_an_earlier_time_than_the_nights_stop(tmp_path) -> None:
+    sched = tmp_path / "schedule.yaml"
+    sched.write_text('code_stages_deadline: "05:00"\n', encoding="utf-8")
+    started = night.stop_time("03:20")
+    stop = night.stop_time("07:10")
+    cut = night.code_stages_cut(stop, started, sched)
+    assert isinstance(cut, night.Deadline) and cut.astimezone().strftime("%H:%M") == "05:00"
+    # a night without a stop time, a stop that comes first, a run begun after the deadline
+    assert night.code_stages_cut(None, started, sched) is None
+    assert night.code_stages_cut(night.stop_time("04:00"), started, sched) \
+        == night.stop_time("04:00")
+    after = night.code_stages_cut(stop, night.stop_time("09:00"), sched)
+    assert after == stop and not isinstance(after, night.Deadline)
+    assert night.code_stages_cut(stop, started, tmp_path / "none.yaml") == stop
+
+
+def test_a_deadline_defers_the_stage_without_stopping_the_night() -> None:
+    state: dict = {}
+    late = night.Deadline(2020, 1, 1, tzinfo=UTC)
+    assert night.past_stop(late, state, "restamp:some-idea")
+    assert night.past_stop(late, state, "anomalies:scan:7") and night.past_stop(
+        late, state, "restamp:another")
+    assert "stopped_at" not in state  # the night itself goes on
+    assert state["deadline"]["deferred"] == ["restamp", "anomalies"]
+
+
+def test_the_stop_line_names_every_stage_the_stop_kept_from_starting(tmp_path) -> None:
+    state: dict = {}
+    late = datetime.now(UTC) - timedelta(minutes=1)
+    for stage in ("programmer", "director", "research:x", "generate"):
+        assert night.past_stop(late, state, stage)
+    assert state["stopped_at"]["before"] == "programmer"
+    assert state["stopped_at"]["cut"] == ["programmer", "director", "research", "generate"]
+
+
+def test_the_report_says_what_the_deadline_and_the_stop_deferred(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    when = datetime(2026, 10, 31, 5, 0).astimezone()
+    state = {"done": {}, "results": [],
+             "deadline": {"at": when.isoformat(), "deferred": ["restamp", "overlays"]},
+             "stopped_at": {"time": when.isoformat(), "stop_at": when.isoformat(),
+                            "before": "programmer", "cut": ["programmer", "generate"]}}
+    text = night.write_report(date(2026, 10, 31), state).read_text()
+    assert "После 05:00 кодовые этапы новых дел не начинали" in text
+    assert "«пересчёт старых результатов», «надстройки»" in text
+    assert "Из-за срока не начаты: «программист», «генератор идей»." in text
+
+
+def test_the_queue_of_closed_ideas_runs_after_the_agent_stages(tmp_path, monkeypatch) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: []\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    for name in ("second_venue_stage", "restamp_stage", "programmer_stage", "generate_stage",
+                 "anomalies_stage", "overlays_stage", "director_stage", "implement_stage",
+                 "search_stage", "catalogue_stage", "cards_stage"):
+        monkeypatch.setattr(night, name, lambda *a, _n=name, **k: order.append(_n))
+    monkeypatch.setattr("qlab.twin_stage.twins_stage", lambda *a, **k: order.append("twins"))
+    monkeypatch.setattr("qlab.waiting.waiting_stage", lambda *a, **k: order.append("waiting"))
+    monkeypatch.setattr("qlab.venue_gap.venue_gap_stage", lambda *a, **k: None)
+    monkeypatch.setattr(night, "ladder_stage", lambda: [])
+    night.run(date(2026, 10, 3), graveyard=False, paper=False, assess=False, research=False,
+              detectors=False, generate=True, director=False)
+    assert order.index("restamp_stage") < order.index("programmer_stage")
+    assert order.index("generate_stage") < order.index("second_venue_stage")
+    assert order[-1] == "second_venue_stage"

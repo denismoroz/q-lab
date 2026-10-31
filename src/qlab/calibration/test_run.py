@@ -680,3 +680,60 @@ def test_start_noise_series_in_one_process_is_ready_on_return(session):
             reference=_reference_spec())
     assert all(isinstance(t, NoiseTrial) for t in handle._first)
     assert len(handle.result()) == 4
+
+
+def test_waiting_for_the_books_does_not_hold_the_callers_write_lock(tmp_path, monkeypatch):
+    """Night of 2026-10-31: a candidate that failed before asking for the noise bar had written
+    its error trial (an open write transaction) and then waited for the books; every book's
+    insert waited for that lock and failed with "database is locked". Waiting commits first."""
+    import sqlite3
+    import threading
+    import time
+
+    import qlab.calibration.run as run_module
+    from qlab.calibration.run import NOISE_WORKERS_ENV
+
+    db_module = _shared_registry(tmp_path, monkeypatch)
+    monkeypatch.setenv(NOISE_WORKERS_ENV, "2")
+    session = db_module.get_sessionmaker()()
+    future = run_module.Future()
+
+    def worker() -> None:
+        # A noise worker's insert, from its own connection, a moment after the caller started
+        # to wait, and with a short patience (the real one is a minute).
+        time.sleep(0.3)
+        conn = sqlite3.connect(str(tmp_path / "qlab.db"), timeout=1.5)
+        try:
+            conn.execute("INSERT INTO idea (id, title, status, source_type, asset_class, "
+                         "profile, created_at, updated_at) VALUES ('w', 'w', 'bench', "
+                         f"'{SourceType.INTERNAL.value}', '{AssetClass.CRYPTO_PERP.value}', "
+                         f"'{Profile.OTHER.value}', '2026-01-01', '2026-01-01')")
+            conn.commit()
+            future.set_result(None)
+        except Exception as exc:  # noqa: BLE001 - the future carries it to result()
+            future.set_exception(exc)
+        finally:
+            conn.close()
+
+    try:
+        repo.upsert_idea(session, id="candidate-error-trial", title="written, not committed",
+                         source_type=SourceType.INTERNAL, asset_class=AssetClass.CRYPTO_PERP,
+                         profile=Profile.OTHER)
+        session.flush()  # the write lock is held now
+        thread = threading.Thread(target=worker)
+        thread.start()
+        handle = run_module.NoiseRun(
+            series="dollar_neutral", n_trials=1, seed_offset=0, replace_unusable=False,
+            session=session, ruleset=_permissive_ruleset(), reference=_reference_spec(),
+            first=[future])
+        handle.result()  # raises OperationalError "database is locked" without the commit
+        thread.join()
+        with db_module.session_scope() as other:
+            assert other.get(Idea, "candidate-error-trial") is not None
+            assert other.get(Idea, "w") is not None
+    finally:
+        session.close()
+        run_module.shutdown_pool()
+        db_module.get_engine().dispose()
+        db_module._engine = None
+        db_module._SessionLocal = None

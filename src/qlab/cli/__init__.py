@@ -908,6 +908,10 @@ def restamp_run_cmd(
         None, "--max-ideas", help="At most this many ideas (default: the night's cap, none with "
         "--all or --idea)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
+    allow_heavy: bool = typer.Option(
+        False, "--allow-heavy",
+        help="Run an idea whose Hyperliquid hourly candles are not cached and take longer than "
+        "the night allows to fetch"),
 ) -> None:
     """The night's restamp stage by hand (src/qlab/restamp.py): every idea whose latest run was
     made under an older stand version or judged under older rules is run again on the stand (and
@@ -929,7 +933,8 @@ def restamp_run_cmd(
     state = night.load_state(day)
     state.pop("restamp", None)  # this call reports itself; the day's done-markers stay
     restamp.restamp_stage(day, end, state, noise_trials=noise_trials, only=set(idea) or None,
-                          no_cap=all_ideas, dry_run=dry_run, max_ideas=max_ideas)
+                          no_cap=all_ideas, dry_run=dry_run, max_ideas=max_ideas,
+                          allow_heavy=allow_heavy)
     for line in restamp.report_lines(state.get("restamp"), even_if_quiet=True) \
             or ["nothing is out of date"]:
         typer.echo(line)
@@ -969,10 +974,14 @@ def second_venue_count_cmd() -> None:
 @second_venue_app.command("run")
 def second_venue_run_cmd(
     idea: list[str] = typer.Option(  # noqa: B008
-        [], "--idea", help="Only these ideas (repeat the option)"),
+        [], "--idea", "--only", help="Only these ideas (repeat the option); no time limit"),
     max_new: int | None = typer.Option(
         None, "--max", help="At most this many (default: the config's per-night cap)"),
     noise_trials: int = typer.Option(200, "--noise-trials"),
+    allow_heavy: bool = typer.Option(
+        False, "--allow-heavy",
+        help="Run an idea whose hourly candles are not cached and take longer than the night "
+        "allows to fetch"),
 ) -> None:
     """The night's queue stage by hand: the Hyperliquid side of the oldest closed ideas. The state
     of a hand run is kept apart in data/restamp/runs/, never in a night's."""
@@ -986,7 +995,8 @@ def second_venue_run_cmd(
     state = night.load_state(day)
     state.pop("second_venue", None)
     second_venue.second_venue_stage(day, end, state, noise_trials=noise_trials,
-                                    only=list(idea) or None, max_new=max_new)
+                                    only=list(idea) or None, max_new=max_new,
+                                    allow_heavy=allow_heavy)
     for line in second_venue.report_lines(state.get("second_venue")):
         typer.echo(line)
     for name, text in (state.get("stage_errors") or {}).items():

@@ -168,3 +168,13 @@ def before_independent_venues(monkeypatch) -> None:
     the second venue is not run after it. The newest rules judge the two venues independently, so a
     test of the older behaviour asks for this fixture by name."""
     monkeypatch.setattr("qlab.pipeline.stage2.independent_venues", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_failures_ledger(monkeypatch, tmp_path_factory) -> None:
+    """The second stage's ledger of crashes (`qlab.pipeline.stage2.FAILURES`) is the owner's real
+    file; a test that makes a stage 2 crash writes a scratch one."""
+    import qlab.pipeline.stage2 as stage2
+
+    monkeypatch.setattr(stage2, "FAILURES",
+                        tmp_path_factory.mktemp("stage2-failures") / "failures.json")

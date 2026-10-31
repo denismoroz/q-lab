@@ -1,0 +1,14 @@
+# When the night's CODE stages stop starting new work, so that the agents always get their time
+# (qlab.night.code_stages_cut, docs/NIGHT.md).
+#
+# 2026-10-31: the stages after the twins (the queue of closed ideas, the restamp) spent three and
+# a half hours fetching candles, the stop time passed before the programmer, the director and the
+# researcher, and no agent ran. These stages are cheap in tokens and expensive in time, so after
+# this local time (HH:MM on this machine's clock) the restamp, the venue-gap, the anomaly scan
+# and the overlays start no new idea; a started idea always finishes. Whatever was not started
+# waits for the next night, and the morning report names it. The queue of closed ideas
+# (second_venue) runs after the agents and has its own time limit (night/second_venue.yaml).
+#
+# The deadline applies only to a night that started before it and has a stop time: a run begun
+# by hand in the day is not cut by a deadline that has already passed.
+code_stages_deadline: "05:00"

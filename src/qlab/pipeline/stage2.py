@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -44,6 +45,18 @@ from qlab.year_view import year_keys, years_line
 
 CONFIG = Path("night/stage2.yaml")
 SPEC_DIR = Path("specs/generated/stage2")
+FAILURES = Path("data/stage2/failures.json")
+"""The second stages that crashed and have not been decided since: parent id -> attempts so far,
+the error, whether the idea was given up on (`record_failure`)."""
+MAX_FAILED_ATTEMPTS = 2
+"""Consecutive crashes of an idea's second stage after which the Hyperliquid side is recorded as
+not run (a failure) and the idea takes Binance's verdict; one crash is not yet an answer."""
+PERMANENT_ERRORS = frozenset({
+    "ValueError", "KeyError", "LookupError", "TypeError", "AttributeError", "AssertionError",
+    "ImportError", "ModuleNotFoundError", "NotImplementedError", "ZeroDivisionError"})
+"""Exceptions that a second attempt on the same data and code would raise again: the reason is
+permanent, so the first crash already settles the Hyperliquid side as not run. A locked database,
+a dropped connection or a timeout is not in the list: it can pass."""
 COMPOSED_CODE_REF = "qlab.strategies.blocks:Composed"
 RESULT_METRICS = ("ann_return_net", "total_return_net", "sharpe_net", "max_dd",
                   "noise_return_percentile", "noise_power", "min_capital_usd", "forward_days",
@@ -276,8 +289,49 @@ class Translation:
     silently, because a book without one of its legs is another mechanism."""
 
 
+def strategy_sources(code_ref: str) -> tuple[str, ...] | None:
+    """The data sources the strategy declares (`valid_sources`) it can run on, or None when it
+    declares none. A code reference that cannot be resolved declares nothing here: the run
+    reports it on its own."""
+    from qlab.pipeline.evaluate import resolve_strategy
+
+    try:
+        declared = getattr(resolve_strategy(code_ref), "valid_sources", None)
+    except Exception:  # noqa: BLE001 - not this function's error to report
+        return None
+    return None if declared is None else tuple(declared)
+
+
+def coins_without_data(spec: StrategySpec, config: Stage2Config,
+                       venue_names: Collection[str]) -> dict[str, str]:
+    """The columns of the spec's instrument list that the venue lists but that have no candle in
+    the second stage's window ({column: reason}): a perpetual contract delisted before the window
+    began, a spot market with no candle in it.
+    They are a coin the venue does not list for this run (`translate(no_data=...)`), not a failure
+    of the run (night of 2026-10-31: MATIC, delisted on Hyperliquid in 2024, stopped
+    bv2-research-top10-pool's second stage with «no candle data»)."""
+    import pandas as pd
+
+    from qlab.data.sources.hyperliquid import delisted_without_candles, spot_without_candles
+
+    if config.venue != "hyperliquid" or not spec.data.instruments:
+        return {}
+    mapped = [found for name in spec.data.instruments
+              if (found := venue_name(name, venue_names)) is not None]
+    perps = list(dict.fromkeys(n for n in mapped if not n.endswith(SPOT_SUFFIX)))
+    spots = list(dict.fromkeys(spot_coin(n) for n in mapped if n.endswith(SPOT_SUFFIX)))
+    if not perps and not spots:
+        return {}
+    start = pd.Timestamp(max(spec.data.start, config.data_start), tz="UTC")
+    end = pd.Timestamp(spec.data.end, tz="UTC")
+    found = dict(delisted_without_candles(perps, start, end)) if perps else {}
+    found.update(spot_without_candles(spots, start, end) if spots else {})
+    return found
+
+
 def translate(spec: StrategySpec, config: Stage2Config, *,
-              venue_names: Collection[str] | None = None) -> Translation:
+              venue_names: Collection[str] | None = None,
+              no_data: Mapping[str, str] | None = None) -> Translation:
     """The stage 2 spec of a stage 1 spec.
 
     Kept exactly: the code, every parameter value (a deep copy, never an edit),
@@ -296,6 +350,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     dropped: list[str] = []
     data = spec.data
     instruments = data.instruments
+    no_data = dict(no_data or {})
+    if no_data and venue_names is not None:
+        # A contract with no candle in the window is a coin the venue does not list for this run,
+        # and so is its spot leg: the existing path drops it and the note says why.
+        gone = {*no_data, *(f"{name}{SPOT_SUFFIX}" for name in no_data)}
+        venue_names = [n for n in venue_names if n not in gone]
     if instruments is not None:
         if venue_names is None:
             raise ValueError("the spec names instruments: venue_names is needed to map them")
@@ -310,6 +370,11 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         unavailable = [absence_reason(n, config) for n in dict.fromkeys(required)
                        if venue_name(n, venue_names) is None]
         required = list(dict.fromkeys(mapped))  # an unmapped name stays: the run says it is absent
+    only_on = strategy_sources(spec.code_ref)
+    if only_on is not None and config.venue not in only_on:
+        problems.append(
+            f"the strategy {spec.code_ref} runs only on a panel of {', '.join(only_on)} "
+            f"(valid_sources), so it has no version on {config.venue}")
     if problems:
         return Translation(None, problems, dropped, unavailable)
 
@@ -346,6 +411,10 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     if dropped:
         notes.append(f"{len(dropped)} instrument(s) of stage 1 are not listed on {config.venue} "
                      f"and are not traded: {', '.join(dropped)}.")
+    if no_data:
+        notes.append("Of those, listed by the venue but with no candle in the window, so treated "
+                     "as not listed: " + "; ".join(f"{name} ({why})" for name, why in
+                                                   sorted(no_data.items())) + ".")
     if known_from is not None:
         notes.append(f"Judged from {known_from}, the day the instrument list was known "
                      "(instruments_chosen_at); the days before it are warm-up.")
@@ -619,6 +688,9 @@ class Stage2Result:
     most_coins: int | None = None
     full_share: float | None = None
     dropped: list = field(default_factory=list)
+    no_data: dict = field(default_factory=dict)
+    """Contracts the venue lists that have no candle in the window (delisted before it): a part of
+    `dropped`, with the reason each."""
     unavailable: list = field(default_factory=list)
     """Required columns the venue does not list, with the cited reason each (the run is
     not evaluable for them)."""
@@ -636,6 +708,9 @@ class Stage2Result:
     trial compared to, and the rules version that decided. None when the comparison
     with random books decided as before."""
     error: str | None = None
+    failure: dict | None = None
+    """The idea's crashes in a row when this run crashed (`record_failure`): attempts, whether it
+    is given up on."""
 
 
 def write_spec(spec: StrategySpec, parent_id: str, spec_dir: Path) -> Path:
@@ -737,8 +812,77 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
         result.status = "error"
         result.error = f"{type(exc).__name__}: {exc}"
         if not measure:
-            _settle_after_error(result, config)
+            _settle_after_error(result, config, closed_before=only_a_pass_moves)
     return result
+
+
+def load_failures(path: Path | None = None) -> dict:
+    try:
+        data = json.loads((path or FAILURES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_failures(data: dict, path: Path | None = None) -> None:
+    target = path or FAILURES
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True),
+                      encoding="utf-8")
+
+
+def is_permanent(error: str) -> bool:
+    """Whether a crash (`"TypeName: message"`) would happen again on the same data and code."""
+    return error.split(":", 1)[0].strip() in PERMANENT_ERRORS
+
+
+def record_failure(parent_id: str, error: str, *, today: date | None = None,
+                   path: Path | None = None) -> dict:
+    """Count one more crash of the idea's second stage and say whether it is given up on:
+    `MAX_FAILED_ATTEMPTS` crashes in a row, or a permanent reason. A decided run clears the count
+    (`clear_failure`), so the crashes are consecutive by construction."""
+    data = load_failures(path)
+    attempts = int((data.get(parent_id) or {}).get("attempts", 0)) + 1
+    permanent = is_permanent(error)
+    entry = {"attempts": attempts, "error": error[:400], "permanent": permanent,
+             "given_up": permanent or attempts >= MAX_FAILED_ATTEMPTS,
+             "day": (today or date.today()).isoformat()}
+    data[parent_id] = entry
+    _save_failures(data, path)
+    return entry
+
+
+def clear_failure(parent_id: str, *, path: Path | None = None) -> None:
+    data = load_failures(path)
+    if parent_id in data:
+        del data[parent_id]
+        _save_failures(data, path)
+
+
+def stays_closed(session, parent_id: str, stage1_trial_id: int | None, *,
+                 closed_before: bool = False) -> bool:
+    """Whether the idea is closed (rejected, retired, decayed) and that is not the very first
+    stage's doing a moment ago. A closed idea is revived by a pass only (owner: «воскрешение с
+    кладбища только на данных, которых не было»); a crash or a result that cannot decide yet never
+    reopens it. An idea that this flow's first stage has just rejected is another matter: the
+    second venue has not spoken yet, and it is judged by `combine_venues` as before.
+    `closed_before` says the caller knows the idea was closed before the flow began (the queue of
+    closed ideas)."""
+    from qlab.registry.lifecycle import CLOSED_STATUSES
+    from qlab.registry.models import Idea, StageTransition
+
+    parent = session.get(Idea, parent_id)
+    if parent is None or parent.status not in CLOSED_STATUSES:
+        return False
+    if closed_before:
+        return True
+    move = (session.query(StageTransition)
+            .filter(StageTransition.idea_id == parent_id,
+                    StageTransition.to_status == parent.status)
+            .order_by(StageTransition.id.desc()).first())
+    just_now = (move is not None and stage1_trial_id is not None
+                and move.trial_id == stage1_trial_id)
+    return not just_now
 
 
 def _id_taken(parent_id: str) -> bool:
@@ -749,21 +893,46 @@ def _id_taken(parent_id: str) -> bool:
         return child_id_taken(session, parent_id)
 
 
-def _settle_after_error(result: Stage2Result, config: Stage2Config) -> None:
-    """A stage 2 that crashed does not pass the idea: it waits (status bench)."""
+def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
+                        closed_before: bool = False) -> None:
+    """A stage 2 that crashed does not pass the idea, and does not reopen a closed one.
+
+    * An idea that was closed before this flow stays closed: only a pass revives it.
+    * An open idea (or one this flow's first stage has just rejected) waits, with the reason:
+      the venue has not spoken. After `MAX_FAILED_ATTEMPTS` crashes in a row, or at once when
+      the reason is permanent, the Hyperliquid side is recorded as not run (a failure) and the
+      idea takes Binance's verdict: a crash is no reason to wait for ever."""
     from qlab.registry.db import session_scope
     from qlab.rules.loader import load_latest
 
     split = load_latest().venue_split
     independent = split is not None and split.independent
     result.independent = independent
+    failure = record_failure(result.parent_id, result.error or "")
+    result.failure = failure
+    gave_up = bool(independent and failure["given_up"])
+    why = result.error or ""
+    if gave_up:
+        how = ("постоянная причина" if failure["permanent"]
+               else f"{failure['attempts']} попытки подряд")
+        why = f"Hyperliquid не проводился: сбой ({how}): {why}"
     # A crashed second stage has not spoken: for independent venues that is "error" (pending, tried
-    # again), never "no run" (the venue cannot judge), which would let a Binance reject stand.
-    combined = combine(result.stage1_route or "", "error" if independent else None, config=config,
-                       stage2_reason=result.error or "", best_of_venues=split is not None,
-                       independent=independent)
+    # again) until it is given up on, then "none" (the venue did not judge, Binance's verdict
+    # stands); never a pass.
+    combined = combine(result.stage1_route or "", ("none" if gave_up else "error")
+                       if independent else None, config=config, stage2_reason=why,
+                       best_of_venues=split is not None, independent=independent)
     try:
         with session_scope() as session:
+            if stays_closed(session, result.parent_id, result.stage1_trial_id,
+                            closed_before=closed_before):
+                from qlab.registry.models import Idea
+
+                result.combined_route = combined.route
+                result.combined_reason = (f"{combined.reason}; the idea stays closed: only a pass "
+                                          "revives a closed idea, a crash is not one")
+                result.parent_status = session.get(Idea, result.parent_id).status.value
+                return
             _settle(session, result, combined, rules_version=load_latest().version,
                     end=None, parent_id=result.parent_id, child_id=result.idea_id,
                     independent=independent)
@@ -784,8 +953,11 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
     if spec.data.instruments is not None or spec.required_instruments is not None:
         if venue_names is None:
             venue_names = venue_listing()
-    translation = translate(spec, config, venue_names=venue_names)
+    no_data = (coins_without_data(spec, config, venue_names)
+               if spec.data.instruments is not None else {})
+    translation = translate(spec, config, venue_names=venue_names, no_data=no_data)
     result.dropped = translation.dropped
+    result.no_data = no_data
     result.unavailable = translation.unavailable
     if translation.spec is None:
         result.status = "not-evaluable"
@@ -795,8 +967,11 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
     ruleset = load_latest()
 
     with session_scope() as session:
-        _ensure_child(session, child, spec.idea_id, measurement=measure)
+        # The data first, the child's registry row after: fetching Hyperliquid's hourly candles of
+        # every contract takes about an hour, and a write transaction opened before it (the new
+        # child idea) would hold SQLite's one write lock all that time.
         panel = resolve_panel(session, child)
+        _ensure_child(session, child, spec.idea_id, measurement=measure)
         window = None
         if spec.code_ref == COMPOSED_CODE_REF:
             window = book_window(panel, child.params)
@@ -851,6 +1026,15 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.trial_id = evaluation.trial_id
         result.route = str(evaluation.routing.route)
         result.reason = evaluation.routing.reason
+        gave_up = False
+        if result.route == "error":
+            # The stand caught the strategy's exception and wrote an error trial: a crash all the
+            # same, counted like one that left this function.
+            failure = record_failure(spec.idea_id, result.reason or "error")
+            result.failure = failure
+            gave_up = failure["given_up"]
+        else:
+            clear_failure(spec.idea_id)  # it answered: earlier crashes no longer count
         result.status = "not-evaluable" if result.route == "not-evaluable" else "evaluated"
         metrics = evaluation.metrics or {}
         result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
@@ -858,13 +1042,17 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         if not measure:
             independent = ruleset.venue_split is not None and ruleset.venue_split.independent
             result.independent = independent
-            combined = combine(result.stage1_route or "", result.route, config=config,
-                               stage2_reason=result.reason or "",
+            given_up = bool(gave_up and independent)
+            combined = combine(result.stage1_route or "", "none" if given_up else result.route,
+                               config=config,
+                               stage2_reason=(f"Hyperliquid не проводился: сбой: {result.reason}"
+                                              if given_up else result.reason or ""),
                                best_of_venues=ruleset.venue_split is not None,
                                independent=independent)
             if settle_note:
                 combined = Combined(combined.route, f"{settle_note}; {combined.reason}")
-            if only_a_pass_moves and combined.route not in PASSED:
+            if combined.route not in PASSED and (only_a_pass_moves or stays_closed(
+                    session, spec.idea_id, result.stage1_trial_id)):
                 from qlab.registry.models import Idea
 
                 result.combined_route = combined.route
@@ -953,6 +1141,10 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
     if stage2.get("dropped"):
         lines.append("монет первого этапа, которых нет на Hyperliquid, не торгуем: "
                      f"{len(stage2['dropped'])}")  # type: ignore[arg-type]
+    if stage2.get("no_data"):
+        lines.append("из них в списке площадки, но без свечей в окне (сняты с торгов раньше), "
+                     "поэтому считаются отсутствующими: "
+                     + ", ".join(sorted(stage2["no_data"])))  # type: ignore[arg-type]
     if stage2.get("combined_route") is not None:
         lines.append("итог по двум этапам: " + _combined_ru(stage1_route, stage2))
     return lines

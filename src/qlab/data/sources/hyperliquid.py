@@ -108,6 +108,43 @@ def fetch_meta(client: httpx.Client, dex: str | None = None) -> dict[str, dict]:
     }
 
 
+def delisted_without_candles(coins: Sequence[str], start: pd.Timestamp,
+                             end: pd.Timestamp) -> dict[str, str]:
+    """The delisted contracts among `coins` that have no daily candle in `[start, end]`, with the
+    reason in words: ``{coin: reason}``. A coin still listed is never asked about, and a delisted
+    one is asked with one daily request; the venue keeps delisted contracts in its listing (that
+    is what makes its universe survivor-free), so the listing alone cannot say that a contract
+    stopped trading before the window began (MATIC, delisted 2024-09-09)."""
+    found: dict[str, str] = {}
+    with httpx.Client() as client:
+        meta = fetch_meta(client)
+        for coin in coins:
+            if not meta.get(coin, {}).get("is_delisted"):
+                continue
+            if fetch_candles(client, coin, "1d", start, end).empty:
+                found[coin] = (f"delisted, with no daily candle between {start.date()} and "
+                               f"{end.date()}")
+    return found
+
+
+def spot_without_candles(coins: Sequence[str], start: pd.Timestamp,
+                         end: pd.Timestamp) -> dict[str, str]:
+    """The coins among `coins` whose USDC-quoted spot market has no daily candle in `[start, end]`,
+    as ``{"<COIN>-SPOT": reason}`` (the spot token exists in `spotMeta` but the pair returns
+    nothing for the window; WLD on 2026-10-31). A coin with no spot market at all is not here: it
+    has no spot column to begin with."""
+    found: dict[str, str] = {}
+    with httpx.Client() as client:
+        pairs = fetch_spot_meta(client, list(coins))
+        for coin in coins:
+            pair = pairs.get(coin)
+            if pair is not None and fetch_candles(client, pair, "1d", start, end).empty:
+                found[f"{coin}{SPOT_COLUMN_SUFFIX}"] = (
+                    f"the spot market {pair} has no daily candle between {start.date()} and "
+                    f"{end.date()}")
+    return found
+
+
 def describe_universe(
     as_of_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
     *,

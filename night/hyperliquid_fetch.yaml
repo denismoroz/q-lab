@@ -1,0 +1,16 @@
+# What fetching Hyperliquid's HOURLY candles costs, for the night's code stages that run an idea
+# on Hyperliquid (qlab.hl_fetch; the queue of closed ideas, qlab.second_venue, and the restamp
+# stage, qlab.restamp). A daily panel is quick and is not estimated. Candles are read one
+# contract (and one spot token) at a time and cached by the exact (instrument, start, end), so a
+# run whose window differs from every cached one fetches all of it again.
+#
+# Measured on the night of 2026-10-31 (src/qlab/second_venue.py, frab-binance-spot-allbinance):
+# the panel of every Hyperliquid contract and its spot tokens, hourly from 2026-03-08, took
+# 61 minutes (01:00 to 02:01 UTC), and the restamp of frab-binance-spot-allbinance-400 on the
+# window ending 2026-10-24 took 58 minutes (03:25 to 04:23 UTC); 840 raw files were written.
+
+# A spec without an instrument list takes the venue's whole listing.
+all_contracts_minutes: 60
+
+# A spec with an instrument list: 61 minutes / about 840 files = 4.4 seconds per instrument.
+seconds_per_instrument: 4.4

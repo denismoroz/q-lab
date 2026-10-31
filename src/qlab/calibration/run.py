@@ -265,6 +265,12 @@ class NoiseRun:
         return self._trials
 
     def _finish(self) -> list[NoiseTrial]:
+        # Waiting for the workers with a write transaction open is a deadlock: the candidate's
+        # trial (or anything else the caller wrote) holds SQLite's one write lock until commit,
+        # the workers wait for it to insert their trials, and after the busy timeout they fail
+        # with "database is locked" (night of 2026-10-31: a candidate that failed before asking
+        # for the bar had written its error trial, and every book failed on its insert).
+        _release_write_lock(self._session)
         trials = [f.result() if isinstance(f, Future) else f for f in self._first]
         if not self._replace_unusable:
             return trials
@@ -332,6 +338,7 @@ def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: Ru
     registry is shared, else in this process."""
     workers = min(noise_workers(), len(jobs))
     if workers > 1 and _shared_database(session):
+        _release_write_lock(session)
         futures = _submit_jobs(jobs, workers=workers, ruleset=ruleset,
                                reference=reference)
         return [f.result() for f in futures]
@@ -344,6 +351,14 @@ def _run_jobs(jobs: list[tuple[str, str, int]], *, session: Session, ruleset: Ru
             series=series_, generator=generator, seed=seed,
             evaluation=_evaluate_noise(spec, session, ruleset)))
     return trials
+
+
+def _release_write_lock(session: Session) -> None:
+    """Commit `session` when worker processes write the registry it writes to: a write lock it
+    holds while it waits for them stalls every one of their inserts. Nothing to do in one process
+    (tests, one worker, an in-memory registry), where the books use this very session."""
+    if noise_workers() > 1 and _shared_database(session):
+        session.commit()
 
 
 def noise_workers() -> int:

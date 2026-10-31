@@ -32,6 +32,7 @@ from qlab.registry.models import (
     StageTransition,
     Trial,
     TrialRoute,
+    TrialSource,
     TrialStatus,
     Verdict,
 )
@@ -165,9 +166,25 @@ def _set_status(idea_id: str, status: IdeaStatus) -> None:
         repo.set_status(session, idea_id=idea_id, new_status=status, reason="stage 1")
 
 
+def _stage1_rejects(idea_id: str = PARENT, *, version: int = 99) -> int:
+    """Stage 1 has just rejected the idea: a trial, and the move into `rejected` that it caused.
+    Returns the trial's id (what the second stage is given as `stage1_trial_id`)."""
+    with db_module.session_scope() as session:
+        spec = repo.add_spec(session, idea_id=idea_id, version=version, params={},
+                             data_requirements={"source": "binance"}, rebalance="1d",
+                             costs_model={}, code_ref="a:b")
+        trial = repo.add_trial(session, spec_id=spec.id, config_hash="h", code_sha="c", params={},
+                               status=TrialStatus.OK, metrics={}, route=TrialRoute.REJECT,
+                               route_reason="r", source=TrialSource.IMPORTED)
+        repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.REJECTED,
+                        reason="trial: reject", trial_id=trial.id)
+        return trial.id
+
+
 def _run(tmp_path: Path, route: str | None = "paper", **kw) -> stage2.Stage2Result:
     kw.setdefault("config", CONFIG)
-    return stage2.run_stage2(_spec(), stage1_route=route, stage1_trial_id=None, noise_trials=1,
+    kw.setdefault("stage1_trial_id", None)
+    return stage2.run_stage2(_spec(), stage1_route=route, noise_trials=1,
                              spec_dir=tmp_path / "stage2", **kw)
 
 
@@ -215,6 +232,46 @@ def test_translation_says_what_it_did_and_cites_the_new_costs() -> None:
     assert "costs" not in child.sources  # stage 1's cost sources are gone
     assert child.sources["signal"] == spec.sources["signal"]  # the parameters keep theirs
     assert source_problems(child) == []
+
+
+def test_a_contract_with_no_candle_in_the_window_is_a_coin_the_venue_does_not_list() -> None:
+    """Night of 2026-10-31: MATIC, delisted on Hyperliquid in 2024 but kept in its listing, stopped
+    bv2-research-top10-pool's second stage with «no candle data for 'MATIC'»."""
+    spec = _spec(data={"source": "binance", "interval": "1d", "start": FIRST_DAY,
+                       "end": LAST_DAY, "instruments": ["BTC", "MATIC", "MATIC-SPOT", "ETH"]})
+    names = {"BTC", "ETH", "MATIC", "MATIC-SPOT"}
+    result = stage2.translate(spec, CONFIG, venue_names=names,
+                              no_data={"MATIC": "delisted, with no daily candle between a and b"})
+    assert result.spec.data.instruments == ["BTC", "ETH"]
+    assert result.dropped == ["MATIC", "MATIC-SPOT"]
+    note = next(n for n in result.spec.differs_from_source if "no candle in the window" in n)
+    assert "treated as not listed" in note and "MATIC (delisted" in note
+
+
+def test_coins_without_data_asks_only_about_what_the_venue_lists(monkeypatch) -> None:
+    import qlab.data.sources.hyperliquid as hl
+
+    asked = []
+    monkeypatch.setattr(hl, "delisted_without_candles", lambda coins, start, end: (
+        asked.append(("perp", list(coins), start.date(), end.date())) or {"MATIC": "gone"}))
+    monkeypatch.setattr(hl, "spot_without_candles", lambda coins, start, end: (
+        asked.append(("spot", list(coins))) or {"WLD-SPOT": "empty"}))
+    spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                       "end": LAST_DAY,
+                       "instruments": ["BTC", "MATIC", "MATIC-SPOT", "LUNA2", "WLD-SPOT"]})
+    got = stage2.coins_without_data(spec, CONFIG, {"BTC", "MATIC", "BTC-SPOT", "WLD-SPOT"})
+    assert got == {"MATIC": "gone", "WLD-SPOT": "empty"}
+    assert asked == [("perp", ["BTC", "MATIC"], FIRST_DAY, LAST_DAY),  # stage 2's own window
+                     ("spot", ["WLD"])]
+    assert stage2.coins_without_data(_spec(), CONFIG, {"BTC"}) == {}  # no list: nothing to ask
+
+
+def test_a_strategy_that_runs_only_on_binance_has_no_second_stage() -> None:
+    spec = _spec(code_ref="qlab.strategies.live.frab_binance_spot:LiveFrabAllBinance")
+    result = stage2.translate(spec, CONFIG)
+    assert result.spec is None
+    assert "runs only on a panel of binance" in result.problems[0]
+    assert stage2.strategy_sources("qlab.strategies.blocks:Composed") is None
 
 
 def test_translation_maps_named_instruments_and_drops_what_the_venue_lacks() -> None:
@@ -1159,9 +1216,9 @@ def test_a_binance_reject_with_hyperliquid_undecided_leaves_the_idea_open(
     _stand_without_power(monkeypatch, None)
     confirming = CONFIRMING.model_copy(update={"venue_split": INDEPENDENT})
     monkeypatch.setattr("qlab.rules.loader.load_latest", lambda: confirming)
-    _set_status(PARENT, IdeaStatus.REJECTED)
+    trial_id = _stage1_rejects()  # Binance's stage 1 rejected it a moment ago
 
-    result = _run(tmp_path, "reject")
+    result = _run(tmp_path, "reject", stage1_trial_id=trial_id)
 
     # no Binance result that passed: Hyperliquid is judged by its own rules, and the weak noise bar
     # reads «рано судить», never a pass; no consistency check was even attempted
@@ -1201,17 +1258,72 @@ def test_a_closed_idea_stays_closed_when_hyperliquid_cannot_decide(
 def test_a_crashed_second_stage_has_not_spoken_so_a_binance_reject_does_not_stand(
         registry, tmp_path, monkeypatch) -> None:
     _stand(monkeypatch, _market(), PASSING_IND)
-    _set_status(PARENT, IdeaStatus.REJECTED)
+    trial_id = _stage1_rejects()  # Binance's stage 1 rejected it a moment ago
 
     def boom(*args, **kwargs):
         raise RuntimeError("data source down")
 
     monkeypatch.setattr("qlab.pipeline.stage2.book_window", boom)
-    result = _run(tmp_path, "reject")
+    result = _run(tmp_path, "reject", stage1_trial_id=trial_id)
 
     assert result.status == "error" and "data source down" in result.error
     assert result.combined_route == "needs-forward"  # pending, tried again; not a reject
-    assert _status(PARENT) == IdeaStatus.BENCH
+    assert _status(PARENT) == IdeaStatus.BENCH  # the idea was open until this very flow rejected it
+    assert result.failure["attempts"] == 1 and not result.failure["given_up"]
+
+
+def test_a_crash_never_reopens_a_closed_idea(registry, tmp_path, monkeypatch) -> None:
+    """Night of 2026-10-31: three rejected ideas went rejected -> bench on «Hyperliquid error:
+    OperationalError». The owner's rule: only a pass revives a closed idea."""
+    _stand(monkeypatch, _market(), PASSING_IND)
+    _set_status(PARENT, IdeaStatus.REJECTED)  # rejected on an earlier day, by an earlier trial
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("qlab.pipeline.stage2.book_window", boom)
+    for kw in ({}, {"only_a_pass_moves": True}):  # the restamp's call and the queue's
+        result = _run(tmp_path, "reject", **kw)
+        assert result.status == "error"
+        assert _status(PARENT) == IdeaStatus.REJECTED and result.parent_status == "rejected"
+        assert "the idea stays closed" in result.combined_reason
+    with db_module.session_scope() as session:
+        moves = session.query(StageTransition).filter(
+            StageTransition.idea_id == PARENT, StageTransition.to_status == IdeaStatus.BENCH)
+        assert moves.count() == 0
+
+
+def test_an_open_idea_takes_binances_reject_after_two_crashes_in_a_row(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), PASSING_IND)
+    monkeypatch.setattr("qlab.pipeline.stage2.book_window",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("connection reset")))
+    first = _stage1_rejects()
+    one = _run(tmp_path, "reject", stage1_trial_id=first)
+    assert one.failure == {**one.failure, "attempts": 1, "given_up": False}
+    assert _status(PARENT) == IdeaStatus.BENCH  # waits: the venue has not spoken
+    _set_status(PARENT, IdeaStatus.REJECTED)
+    second = _stage1_rejects(version=100)
+    two = _run(tmp_path, "reject", stage1_trial_id=second)
+    assert two.failure["attempts"] == 2 and two.failure["given_up"]
+    assert _status(PARENT) == IdeaStatus.REJECTED  # Hyperliquid did not run: Binance's reject
+    assert "Hyperliquid не проводился: сбой" in two.combined_reason
+
+
+def test_a_permanent_reason_gives_up_at_once_and_an_answer_clears_the_count(
+        registry, tmp_path, monkeypatch) -> None:
+    _stand(monkeypatch, _market(), PASSING_IND)
+    monkeypatch.setattr("qlab.pipeline.stage2.book_window",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("no candle data")))
+    result = _run(tmp_path, "reject", stage1_trial_id=_stage1_rejects())
+    assert result.failure["permanent"] and result.failure["given_up"]
+    assert _status(PARENT) == IdeaStatus.REJECTED
+    assert stage2.load_failures()[PARENT]["given_up"]
+
+    stage2.clear_failure(PARENT)
+    assert PARENT not in stage2.load_failures()
+    assert stage2.is_permanent("KeyError: 'x'") and not stage2.is_permanent(
+        "OperationalError: (sqlite3.OperationalError) database is locked")
 
 
 def test_a_later_binance_reject_does_not_close_an_idea_whose_hyperliquid_side_passed(

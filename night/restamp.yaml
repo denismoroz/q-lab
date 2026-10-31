@@ -29,3 +29,13 @@ max_attempts: 2
 passed_statuses: [live, paper, validated]
 # (`shelf` is the old route of runs recorded before rules 2026-10-29.3.)
 passed_routes: [paper, shelf, needs-infrastructure]
+
+# The stage's whole time on one night, in minutes, checked between ideas (a started idea always
+# finishes). 2026-10-31: one idea whose second stage had to fetch Hyperliquid's hourly candles of
+# every contract again (its window ended on another day than the cached one) took 58 minutes.
+# An idea whose Hyperliquid data is not cached and would take longer to fetch than this is not run
+# by the night: the report says «данные слишком тяжелы за ночь» and
+# `qlab restamp run --idea IDEA --allow-heavy` runs it by hand (night/hyperliquid_fetch.yaml).
+# The night's code stages after the twins also stop starting work at the deadline of
+# night/schedule.yaml, so the agents have their time.
+max_minutes_per_night: 60

@@ -28,7 +28,8 @@ from qlab.registry.models import (
 )
 
 TODAY = date(2026, 10, 31)
-CONFIG = second_venue.Config(enabled=True, max_per_night=2, retry_after_days=14)
+CONFIG = second_venue.Config(enabled=True, max_per_night=2, retry_after_days=14,
+                             max_minutes_per_night=30)
 
 
 @pytest.fixture()
@@ -182,7 +183,9 @@ def test_the_stage_runs_the_oldest_up_to_the_cap_and_a_pass_is_cited(
 
     monkeypatch.setattr(waiting, "rerun_stage2", fake)
     cfg = tmp_path / "second_venue.yaml"
-    cfg.write_text("enabled: true\nmax_per_night: 2\nretry_after_days: 14\n", encoding="utf-8")
+    cfg.write_text(
+        "enabled: true\nmax_per_night: 2\nretry_after_days: 14\n"
+        "max_minutes_per_night: 30\n", encoding="utf-8")
     state = {"done": {}}
 
     second_venue.second_venue_stage(
@@ -220,7 +223,9 @@ def test_a_crashed_run_is_tried_again_and_a_switched_off_queue_does_nothing(
 
     monkeypatch.setattr(waiting, "rerun_stage2", boom)
     cfg = tmp_path / "second_venue.yaml"
-    cfg.write_text("enabled: true\nmax_per_night: 1\nretry_after_days: 14\n", encoding="utf-8")
+    cfg.write_text(
+        "enabled: true\nmax_per_night: 1\nretry_after_days: 14\n"
+        "max_minutes_per_night: 30\n", encoding="utf-8")
     state = {"done": {}}
     second_venue.second_venue_stage(
         TODAY, TODAY, state, config_path=cfg, spec_dir=tmp_path / "specs",
@@ -230,10 +235,165 @@ def test_a_crashed_run_is_tried_again_and_a_switched_off_queue_does_nothing(
     assert "second_venue:old" not in state["done"]  # a failed one is tried again
 
     off = tmp_path / "off.yaml"
-    off.write_text("enabled: false\nmax_per_night: 4\nretry_after_days: 14\n", encoding="utf-8")
+    off.write_text(
+        "enabled: false\nmax_per_night: 4\nretry_after_days: 14\n"
+        "max_minutes_per_night: 30\n", encoding="utf-8")
     quiet = {"done": {}}
     second_venue.second_venue_stage(TODAY, TODAY, quiet, config_path=off)
     assert "second_venue" not in quiet
+
+
+def _stage_cfg(tmp_path, *, minutes: float = 30, per_night: int = 4) -> Path:
+    cfg = tmp_path / "second_venue.yaml"
+    cfg.write_text(f"enabled: true\nmax_per_night: {per_night}\nretry_after_days: 14\n"
+                   f"max_minutes_per_night: {minutes}\n", encoding="utf-8")
+    return cfg
+
+
+def _fake_rerun(monkeypatch, seen):
+    def fake(plan, end, *, stage1, noise_trials, config, **kw):
+        seen.append(plan.idea_id)
+        return {"idea": plan.idea_id, "step": "stage2", "action": "rerun",
+                "route_after": "reject", "trial": 5, "status": "rejected", "lines": []}
+
+    monkeypatch.setattr(waiting, "rerun_stage2", fake)
+
+
+def test_an_idea_with_heavy_data_is_named_not_run_and_takes_no_slot(
+        tmp_path, registry, monkeypatch) -> None:
+    """Night of 2026-10-31: four ideas of an hour each, no bound, and no agent ran."""
+    from qlab import hl_fetch
+
+    _world(tmp_path, registry)
+    seen: list[str] = []
+    _fake_rerun(monkeypatch, seen)
+    monkeypatch.setattr(second_venue, "_estimate", lambda cand, *a, **k: hl_fetch.Estimate(
+        60.0, False, "часовые свечи всех контрактов площадки, около 60 минут")
+        if cand.idea_id == "old" else hl_fetch.Estimate(0.0, True, "cached"))
+    state = {"done": {}}
+    kw = dict(config_path=_stage_cfg(tmp_path, per_night=2), spec_dir=tmp_path / "specs",
+              ledger_path=tmp_path / "ledger.json")
+
+    second_venue.second_venue_stage(TODAY, TODAY, state, **kw)
+
+    assert seen == ["stale", "middle"]  # the heavy one is passed over, two others fill the night
+    heavy = [e for e in state["second_venue"]["entries"] if e["outcome"] == "heavy"]
+    assert [e["idea"] for e in heavy] == ["old"]
+    assert "данные слишком тяжелы за ночь" in heavy[0]["why"]
+    text = "\n".join(second_venue.report_lines(state["second_venue"]))
+    assert "`old` (отвергнута 2026-10-02): не запускалась: данные слишком тяжелы за ночь" in text
+    ledger = second_venue.load_ledger(tmp_path / "ledger.json")
+    assert ledger["old"]["outcome"] == "heavy" and "old" not in {
+        i for i, e in ledger.items() if e["outcome"] in second_venue.FINAL_OUTCOMES}
+
+    # by hand: --allow-heavy runs it
+    seen.clear()
+    by_hand = {"done": {}}
+    second_venue.second_venue_stage(TODAY + timedelta(days=15), TODAY, by_hand, only=["old"],
+                                    allow_heavy=True, **kw)
+    assert seen == ["old"]
+
+
+def test_the_stage_stops_between_ideas_when_its_time_is_used(
+        tmp_path, registry, monkeypatch) -> None:
+    _world(tmp_path, registry)
+    seen: list[str] = []
+    clock = {"now": 0.0}
+
+    def fake(plan, end, *, stage1, noise_trials, config, **kw):
+        seen.append(plan.idea_id)
+        clock["now"] += 20 * 60  # every idea takes twenty minutes
+        return {"idea": plan.idea_id, "step": "stage2", "action": "rerun",
+                "route_after": "reject", "trial": 5, "status": "rejected", "lines": []}
+
+    monkeypatch.setattr(waiting, "rerun_stage2", fake)
+    monkeypatch.setattr(second_venue.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(second_venue, "_estimate", lambda *a, **k: None)
+    state = {"done": {}}
+
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, minutes=30),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+
+    assert seen == ["old", "stale"]  # the second one began at minute 20 and finished: 40 > 30
+    block = state["second_venue"]
+    assert block["time_up"] is True and block["waits_for_time"] == ["middle", "young"]
+    text = "\n".join(second_venue.report_lines(block))
+    assert "Время этапа вышло" in text and "`middle`, `young`" in text
+    assert "Этап занял 40 минут из 30 положенных на ночь." in text
+
+
+def test_an_idea_that_does_not_fit_what_is_left_of_the_time_waits_for_another_night(
+        tmp_path, registry, monkeypatch) -> None:
+    from qlab import hl_fetch
+
+    _world(tmp_path, registry)
+    seen: list[str] = []
+    clock = {"now": 0.0}
+    monkeypatch.setattr(second_venue, "_estimate", lambda cand, *a, **k: hl_fetch.Estimate(
+        20.0, False, "часовые свечи 280 инструментов, около 20 минут"))
+    monkeypatch.setattr(second_venue.time, "monotonic", lambda: clock["now"])
+
+    def fake(plan, end, **kw):
+        seen.append(plan.idea_id)
+        clock["now"] += 15 * 60  # the first idea fits (20 of 30 minutes) and takes 15
+        return {"idea": plan.idea_id, "action": "rerun", "route_after": "reject",
+                "trial": 1, "status": "rejected", "lines": []}
+
+    monkeypatch.setattr(waiting, "rerun_stage2", fake)
+    state = {"done": {}}
+
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, minutes=30),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+
+    assert seen == ["old"]  # 15 minutes are left, the next idea needs 20: not tonight
+    entries = state["second_venue"]["entries"]
+    assert [e["outcome"] for e in entries] == ["rejected", "deferred", "deferred", "deferred"]
+    assert "не уместилась в остаток времени этапа" in entries[1]["why"]
+    assert not set(state["done"]) & {"second_venue:stale", "second_venue:middle"}
+
+
+def test_a_crash_that_will_not_pass_ends_the_queue_for_the_idea_without_reopening_it(
+        tmp_path, registry, monkeypatch) -> None:
+    _world(tmp_path, registry)
+
+    def boom(*a, **kw):
+        raise ValueError("hyperliquid: no candle data for 'X'")  # a permanent reason
+
+    monkeypatch.setattr(waiting, "rerun_stage2", boom)
+    monkeypatch.setattr(second_venue, "_estimate", lambda *a, **k: None)
+    state = {"done": {}}
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, per_night=1),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+    entry = state["second_venue"]["entries"][0]
+    assert entry["outcome"] == "failed" and "no candle data" in entry["error"]
+    ledger = second_venue.load_ledger(tmp_path / "ledger.json")
+    assert ledger["old"]["outcome"] == "failed"
+    found, _ = _find(tmp_path, registry, ledger)
+    assert "old" not in [c.idea_id for c in found]  # not queued again
+    with registry.session_scope() as s:
+        assert s.get(Idea, "old").status == IdeaStatus.REJECTED  # and still closed
+
+
+def test_a_strategy_that_runs_only_on_binance_has_no_hyperliquid_side_to_queue(
+        tmp_path, registry) -> None:
+    _world(tmp_path, registry)
+    only_binance = StrategySpec.model_validate({
+        "idea_id": "old", "title": "old",
+        "code_ref": "qlab.strategies.live.frab_binance_spot:LiveFrabAllBinance",
+        "params": {}, "data": {"source": "binance", "interval": "1h", "start": "2026-01-01",
+                               "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+        "unexpressed_mechanisms": []})
+    (tmp_path / "specs" / "old.yaml").write_text(
+        yaml.safe_dump(only_binance.model_dump(mode="json", exclude_none=True)), encoding="utf-8")
+
+    found, refused = _find(tmp_path, registry)
+
+    assert "old" not in [c.idea_id for c in found]
+    assert "runs only on a panel of binance" in refused["old"]
 
 
 def test_the_config_has_no_defaults(tmp_path) -> None:

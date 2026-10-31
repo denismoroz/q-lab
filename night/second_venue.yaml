@@ -18,3 +18,12 @@ max_per_night: 4
 # power) is looked at again after this many days, on the data that arrived meanwhile. Same rules,
 # same spec: nothing is refitted.
 retry_after_days: 14
+
+# The stage's whole time on one night, in minutes, checked between ideas (a started idea always
+# finishes; a hand run of named ideas has no limit). 2026-10-31: the queue took four ideas of an
+# hour each, no limit, and the night's agents never started. The stage now also runs after the
+# agent stages (src/qlab/night.py), and an idea whose hourly candles are not cached and would take
+# longer than this to fetch is not run by the night at all (night/hyperliquid_fetch.yaml,
+# qlab.hl_fetch): it is reported «данные слишком тяжелы за ночь» and runs by hand,
+# `qlab second-venue run --idea IDEA --allow-heavy`.
+max_minutes_per_night: 30

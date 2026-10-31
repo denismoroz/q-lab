@@ -122,6 +122,8 @@ class Reason(StrEnum):
     NO_VERSION_ON_VENUE = "no_version_on_venue"
     # Added with independent venues (2026-10-30.2):
     SECOND_VENUE_QUEUED = "second_venue_queued"
+    # Added with the crash rules (2026-10-31):
+    STAGE2_FAILED = "stage2_failed"
 
 
 REASON_RU: dict[Reason, str] = {
@@ -143,6 +145,7 @@ REASON_RU: dict[Reason, str] = {
     Reason.TWIN_REFUSED_OTHER: "двойник не построен по другой причине (слова кода в подробностях)",
     Reason.NO_VERSION_ON_VENUE: "нет версии на этой площадке",
     Reason.SECOND_VENUE_QUEUED: "вторая площадка не проводилась: стоит в очереди закрытых идей",
+    Reason.STAGE2_FAILED: "не проводился: сбой",
 }
 
 STEP_KEYS = ("description", "binance", "hyperliquid", "money", "readings", "paper", "owner")
@@ -484,6 +487,9 @@ class Ledgers:
     spec_stems: frozenset[str] = frozenset()
     """File names (without `.yaml`) found under `specs/`: by convention a spec carries its
     idea's id, so an idea with a spec file and no run is queued, not missing."""
+    stage2_failures: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    """`data/stage2/failures.json`: ideas whose second stage crashed, with the attempts so far and
+    whether the idea was given up on (the Hyperliquid side then stays «не проводился: сбой»)."""
     root: Path | None = None
     """Where the stored comparisons and exports are looked for (None: the working directory)."""
 
@@ -558,6 +564,7 @@ def load_ledgers(root: Path = Path(".")) -> Ledgers:
         overlays=_json(root / "data" / "overlays" / "ledger.json"),
         restamp=_json(root / "data" / "restamp" / "ledger.json"),
         implement=_json(root / "data" / "implement" / "ledger.json"),
+        stage2_failures=_json(root / "data" / "stage2" / "failures.json"),
         queue=queue, deferred_twins=deferred, money=money, paper_books=held, spec_stems=stems,
         stage1_survives=frozenset(stage2.get("stage1_survives") or DEFAULT_STAGE1_SURVIVES),
         independent=_independent(),
@@ -769,6 +776,15 @@ def _step1(session: Session, idea: Idea, own: _Run | None, ledgers: Ledgers) -> 
 
 def _no_second_stage(session: Session, idea: Idea, own: _Run, ledgers: Ledgers) -> Step:
     """Step 3 of a Binance idea whose second stage does not exist."""
+    failed = ledgers.stage2_failures.get(idea.id) or {}
+    if failed.get("given_up"):
+        # The second stage crashed for good (twice in a row, or for a reason that does not pass):
+        # a crash is no verdict, so the Hyperliquid step is «не проводился: сбой» and the idea
+        # stands on Binance's verdict (night of 2026-10-31).
+        return _not_run(3, Reason.STAGE2_FAILED,
+                        f"прогон на Hyperliquid упал ({failed.get('attempts')} раз подряд"
+                        + ("; причина постоянная" if failed.get("permanent") else "")
+                        + f"): {_short(str(failed.get('error')), 220)}")
     if idea.status in CLOSED_STATUSES:
         if ledgers.independent and idea.status == IdeaStatus.REJECTED and own.route == "reject":
             # Rejected on Binance before the venues were judged independently: Hyperliquid is

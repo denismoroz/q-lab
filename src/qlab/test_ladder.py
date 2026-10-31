@@ -695,6 +695,23 @@ def test_a_rejected_binance_idea_whose_hyperliquid_side_is_owed_is_queued(sessio
         Reason.CLOSED_BEFORE
 
 
+def test_a_second_stage_that_crashed_for_good_reads_not_run_because_of_a_failure(
+        session) -> None:
+    idea(session, "crash", IdeaStatus.REJECTED)
+    run(session, "crash", TrialRoute.REJECT, "binance")
+    gave_up = {"crash": {"attempts": 2, "given_up": True, "permanent": False,
+                         "error": "OperationalError: database is locked"}}
+
+    step = lad.build_ladder(session, "crash", Ledgers(independent=True, stage2_failures=gave_up)
+                            ).steps[2]
+    assert step.reason == Reason.STAGE2_FAILED and step.reason_ru == "не проводился: сбой"
+    assert "2 раз подряд" in step.detail and "database is locked" in step.detail
+    # one crash is not yet an answer: the queue keeps it
+    once = {"crash": {"attempts": 1, "given_up": False, "error": "x"}}
+    assert lad.build_ladder(session, "crash", Ledgers(independent=True, stage2_failures=once)
+                            ).steps[2].reason == Reason.SECOND_VENUE_QUEUED
+
+
 def test_independent_venues_do_not_wait_for_a_surviving_first_stage(session) -> None:
     idea(session, "rej-open", IdeaStatus.BENCH)  # Binance rejected, Hyperliquid not run yet
     run(session, "rej-open", TrialRoute.REJECT, "binance")

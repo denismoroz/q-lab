@@ -174,6 +174,7 @@ def world(tmp_path, registry, monkeypatch):
     config = tmp_path / "restamp.yaml"
     config.write_text(yaml.safe_dump({
         "enabled": True, "max_ideas_per_night": 4, "slow_idea_minutes": 30, "max_attempts": 2,
+        "max_minutes_per_night": 60,
         "passed_statuses": ["live", "paper", "validated"],
         "passed_routes": ["paper", "shelf", "needs-infrastructure"]}), encoding="utf-8")
     watch = tmp_path / "watch.yaml"
@@ -447,6 +448,46 @@ def test_nothing_starts_after_the_stop_time(world) -> None:
     _stage(world, state=state, stop_at=datetime.now(UTC) - timedelta(minutes=1))
     assert not state["restamp"]["entries"] and not world.calls
     assert state["stopped_at"]["before"].startswith("restamp:")
+
+
+def test_the_stage_stops_between_ideas_when_its_time_is_used(world, monkeypatch) -> None:
+    """Night of 2026-10-31: one idea took an hour and nothing bounded the stage in time."""
+    world.config.write_text(world.config.read_text().replace(
+        "max_minutes_per_night: 60", "max_minutes_per_night: 1"), encoding="utf-8")
+    clock = iter([0.0, 0.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0])
+    monkeypatch.setattr(restamp.time, "monotonic", lambda: next(clock, 200.0))
+    state = _stage(world, no_cap=True)
+    assert len(state["restamp"]["entries"]) == 1  # the one that started finished
+    assert state["restamp"]["time_up"] is True and state["restamp"]["deferred"]
+    assert "Время этапа (1 минут на ночь) вышло" in "\n".join(
+        restamp.report_lines(state["restamp"]))
+
+
+def test_an_idea_whose_hyperliquid_data_is_too_heavy_is_named_and_not_run(
+        world, monkeypatch) -> None:
+    from qlab import hl_fetch
+
+    monkeypatch.setattr(hl_fetch, "estimate", lambda spec, session, cost: hl_fetch.Estimate(
+        61.0, False, "часовые свечи всех контрактов площадки, около 60 минут"))
+    state = _stage(world, only={"parent"})
+    block = state["restamp"]
+    assert not block["entries"] and not world.calls
+    assert "данные слишком тяжелы за ночь" in block["heavy"]["parent"]
+    assert "--allow-heavy" in "\n".join(restamp.report_lines(block))
+
+    by_hand = _stage(world, only={"parent"}, allow_heavy=True)  # --allow-heavy
+    assert _ids(by_hand) == ["parent"]
+    cached = _stage(world, only={"parent"}, state={"done": {}})
+    assert cached["restamp"]["heavy"]  # the estimate still says heavy: the night stays away
+
+
+def test_a_cached_snapshot_is_never_heavy(world, monkeypatch) -> None:
+    from qlab import hl_fetch
+
+    monkeypatch.setattr(hl_fetch, "estimate", lambda spec, session, cost: hl_fetch.Estimate(
+        0.0, True, "a snapshot answers the request"))
+    state = _stage(world, only={"parent"})
+    assert _ids(state) == ["parent"] and not state["restamp"]["heavy"]
 
 
 def test_a_slow_idea_is_reported_as_slow(world, monkeypatch) -> None:
@@ -783,6 +824,7 @@ def _real_stage(world, day, end, state, **kw):
     kw.pop("noise_trials", None)
     return _ORIGINAL(day, end, state, noise_trials=1, config_path=world.config,
                      spec_dir=world.specs, ledger_path=world.ledger, watch_config=world.watch,
+                     fetch_config=Path(__file__).parents[2] / "night" / "hyperliquid_fetch.yaml",
                      **kw)
 
 

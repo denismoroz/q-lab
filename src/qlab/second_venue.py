@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -40,8 +41,10 @@ SPEC_DIR = Path("specs")
 FIRST_RULES = "2026-10-30.2"
 """The first rules version that judges the two venues independently."""
 SECTION_TITLE = "Вторая площадка для закрытых идей"
-FINAL_OUTCOMES = ("revived", "rejected", "not-evaluable")
-"""Ledger outcomes after which an idea is not queued again."""
+FINAL_OUTCOMES = ("revived", "rejected", "not-evaluable", "failed")
+"""Ledger outcomes after which an idea is not queued again. `failed`: the run crashed twice in a
+row, or for a reason that does not pass (`qlab.pipeline.stage2.record_failure`); the Hyperliquid
+side is «не проводился: сбой» and the idea stays closed."""
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class Config:
     enabled: bool
     max_per_night: int
     retry_after_days: int
+    max_minutes_per_night: float
 
 
 def load_config(path: Path = CONFIG) -> Config:
@@ -57,11 +61,12 @@ def load_config(path: Path = CONFIG) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     try:
         config = Config(bool(raw["enabled"]), int(raw["max_per_night"]),
-                        int(raw["retry_after_days"]))
+                        int(raw["retry_after_days"]), float(raw["max_minutes_per_night"]))
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
-    if config.max_per_night < 0 or config.retry_after_days < 1:
-        raise ValueError(f"{path}: max_per_night must be >= 0 and retry_after_days >= 1")
+    if config.max_per_night < 0 or config.retry_after_days < 1 or config.max_minutes_per_night <= 0:
+        raise ValueError(f"{path}: max_per_night must be >= 0, retry_after_days >= 1 and "
+                         "max_minutes_per_night > 0")
     return config
 
 
@@ -186,6 +191,8 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
         if last is not None and entry.get("day"):
             # A result that could not decide waits `retry_after_days` for data to arrive; a run
             # that crashed or was skipped is tried again the next night.
+            # (a heavy idea waits for a hand run with its data cached; a look every
+            # `retry_after_days` keeps it on the report without taking a slot every night)
             wait = 1 if last in ("error", "skipped") else config.retry_after_days
             try:
                 due = date.fromisoformat(entry["day"]) + timedelta(days=wait)
@@ -193,15 +200,15 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
                 due = today
             if due > today:
                 continue
-        if spec.data.instruments is not None or spec.required_instruments is not None:
-            if names is None:
-                refused[idea.id] = "в реестре нет снимка Hyperliquid со списком монет"
-                continue
-            translation = stage2.translate(spec, stage2_config, venue_names=names)
-            if translation.spec is None or translation.unavailable:
-                refused[idea.id] = ("Hyperliquid не может выразить спек: "
-                                    + "; ".join([*translation.problems, *translation.unavailable]))
-                continue
+        if names is None and (spec.data.instruments is not None
+                              or spec.required_instruments is not None):
+            refused[idea.id] = "в реестре нет снимка Hyperliquid со списком монет"
+            continue
+        translation = stage2.translate(spec, stage2_config, venue_names=names)
+        if translation.spec is None or translation.unavailable:
+            refused[idea.id] = ("Hyperliquid не может выразить спек: "
+                                + "; ".join([*translation.problems, *translation.unavailable]))
+            continue
         found.append(Candidate(idea.id, path, trial.id, _rejected_on(session, idea),
                                entry.get("outcome"), entry.get("day")))
     found.sort(key=lambda c: (c.rejected_on, c.idea_id))
@@ -222,15 +229,42 @@ def settle_note(c: Candidate) -> str:
             "rejection did not see")
 
 
+def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None, cost):
+    """The fetch estimate for the Hyperliquid run of `cand` (`qlab.hl_fetch`); None when it cannot
+    be made (the run itself then reports whatever is wrong)."""
+    from qlab import hl_fetch, night
+    from qlab.pipeline import stage2
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.db import session_scope
+
+    try:
+        spec = night.with_end(load_spec(cand.spec_path), end)
+        translation = stage2.translate(spec, stage2_config, venue_names=names)
+        if translation.spec is None:
+            return None
+        with session_scope() as session:
+            return hl_fetch.estimate(translation.spec, session, cost)
+    except Exception:  # noqa: BLE001 - an estimate is advice; the run reports its own errors
+        return None
+
+
 def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
                        stop_at: datetime | None = None, config_path: Path = CONFIG,
                        spec_dir: Path = SPEC_DIR, ledger_path: Path = LEDGER,
                        only: list[str] | None = None, max_new: int | None = None,
-                       dry_run: bool = False) -> None:
+                       dry_run: bool = False, allow_heavy: bool = False,
+                       fetch_config: Path | None = None) -> None:
     """Run the Hyperliquid side of the oldest rejected ideas that never had one; write what
     happened to `state["second_venue"]` for the morning report. `only` names ideas (by hand);
-    `dry_run` runs nothing and only counts."""
-    from qlab import night, waiting
+    `dry_run` runs nothing and only counts.
+
+    Bounded three ways: `max_per_night` ideas; `max_minutes_per_night` for the whole stage, checked
+    between ideas (a started idea always finishes); and the data: an idea whose hourly candles are
+    not cached and would take longer to fetch than the whole stage may (`qlab.hl_fetch`) is not
+    run by the night, it is reported «данные слишком тяжелы за ночь» and `allow_heavy` (by hand,
+    `qlab second-venue run --only IDEA --allow-heavy`) runs it. A hand run of named ideas has no
+    time limit."""
+    from qlab import hl_fetch, night, waiting
     from qlab.pipeline import stage2
     from qlab.registry.db import session_scope
 
@@ -251,13 +285,21 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
         candidates, refused = find_candidates(
             session, waiting.spec_files(spec_dir), ledger=ledger, today=day, config=config,
             stage2_config=stage2_config)
+        names = _listing_names(session)
     if only:
         candidates = [c for c in candidates if c.idea_id in only]
     block.update(counts(candidates, config))
     block["refused"] = refused
+    block["heavy_waiting"] = sorted(i for i, e in ledger.items()
+                                    if (e or {}).get("outcome") == "heavy")
+    block["limit_minutes"] = config.max_minutes_per_night
     cap = max_new if max_new is not None else config.max_per_night
+    cost = hl_fetch.load_config(fetch_config) if fetch_config else hl_fetch.load_config()
     done = state.setdefault("done", {})
+    started = time.monotonic()
+    limit_seconds = None if only else config.max_minutes_per_night * 60
     handled = 0
+    waits: list[str] = []
     for cand in candidates:
         key = f"second_venue:{cand.idea_id}"
         if key in done or dry_run:
@@ -266,25 +308,55 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
             break
         if night.past_stop(stop_at, state, key):
             break
+        spent = time.monotonic() - started
+        if limit_seconds is not None and spent >= limit_seconds:
+            block["time_up"] = True
+            waits = [c.idea_id for c in candidates[candidates.index(cand):]
+                     if f"second_venue:{c.idea_id}" not in done]
+            break
+        entry = {"idea": cand.idea_id, "rejected_on": cand.rejected_on.isoformat(),
+                 "stage1_trial": cand.stage1_trial}
+        est = _estimate(cand, end, stage2_config, names, cost)
+        heavy = None if est is None or allow_heavy else hl_fetch.heavy_reason(
+            est, config.max_minutes_per_night)
+        if heavy is not None:
+            # Not run, and no slot of the night used: the next idea may be quick.
+            entry.update(outcome="heavy", why=heavy, action="heavy", lines=[])
+            ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": "heavy", "trial": None}
+            block["entries"].append(entry)
+            save_ledger(ledger, ledger_path)
+            night.save_state(day, state)
+            continue
+        if (limit_seconds is not None and est is not None and not est.cached
+                and est.minutes * 60 > limit_seconds - spent):
+            # Fits the stage's whole limit, not what is left of it tonight: another night.
+            entry.update(outcome="deferred", action="deferred", lines=[],
+                         why=f"не уместилась в остаток времени этапа: {est.why}, осталось "
+                             f"{(limit_seconds - spent) / 60:.0f} минут из "
+                             f"{config.max_minutes_per_night:g}")
+            block["entries"].append(entry)
+            continue
         handled += 1
         plan = waiting.Plan(cand.idea_id, "stage2", cand.spec_path.as_posix(), "reject", True,
                             "вторая площадка не проводилась")
-        entry = {"idea": cand.idea_id, "rejected_on": cand.rejected_on.isoformat(),
-                 "stage1_trial": cand.stage1_trial}
         try:
             result = waiting.rerun_stage2(
                 plan, end, stage1=None, noise_trials=noise_trials, config=stage2_config,
                 settle_note=settle_note(cand), only_a_pass_moves=True)
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             result = {"action": "error", "error": f"{type(exc).__name__}: {exc}"}
+            stage2.record_failure(cand.idea_id, result["error"], today=day)
         entry.update(
             action=result.get("action"), route=result.get("route_after"),
             trial=result.get("trial"), status=result.get("status"), error=result.get("error"),
-            why=result.get("why"), lines=result.get("lines") or [])
+            why=result.get("why"), lines=result.get("lines") or [],
+            seconds=round(time.monotonic() - started - spent, 1))
         word = outcome_of({
             "error": result.get("error"), "route": result.get("route_after"),
             "parent_status": result.get("status"),
             "skipped": result.get("why") if result.get("action") == "wait" else None})
+        if word == "error" and (stage2.load_failures().get(cand.idea_id) or {}).get("given_up"):
+            word = "failed"  # a crash that will not pass: the side is «не проводился: сбой»
         entry["outcome"] = word
         ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": word,
                                 "trial": result.get("trial")}
@@ -294,6 +366,9 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
         save_ledger(ledger, ledger_path)
         night.save_state(day, state)
     block["owed_after"] = max(0, len(candidates) - handled)
+    block["minutes_spent"] = round((time.monotonic() - started) / 60, 1)
+    if waits:
+        block["waits_for_time"] = waits
     if not dry_run:
         night.save_state(day, state)
 
@@ -319,12 +394,30 @@ def report_lines(block: dict | None) -> list[str]:
              "rejected": "отвергнута и на Hyperliquid",
              "undecided": "рано судить: закрыта, посмотрим снова через "
                           "`retry_after_days`", "not-evaluable": "проверить нечем",
-             "error": "прогон упал, повторится", "skipped": "не проводилась", "passed": "прошла"}
+             "error": "прогон упал, повторится", "skipped": "не проводилась", "passed": "прошла",
+             "failed": "не проводился: сбой, идея остаётся закрытой (причина ниже)",
+             "heavy": "не запускалась: данные слишком тяжелы за ночь",
+             "deferred": "не запускалась: не уместилась в остаток времени этапа"}
     for e in block.get("entries") or []:
         lines.append(f"- `{e['idea']}` (отвергнута {e['rejected_on']}): "
                      f"{words.get(e.get('outcome'), e.get('outcome'))}"
                      + (f"; статус «{e['status']}»" if e.get("status") else ""))
+        if e.get("outcome") in ("heavy", "deferred") and e.get("why"):
+            lines.append(f"  - {e['why']}")
+        if e.get("outcome") in ("error", "failed") and e.get("error"):
+            lines.append(f"  - {str(e['error'])[:300]}")
         lines += [f"  - {x}" for x in e.get("lines") or []]
+    if block.get("minutes_spent") is not None and block.get("limit_minutes"):
+        lines.append(f"Этап занял {block['minutes_spent']:g} минут из "
+                     f"{block['limit_minutes']:g} положенных на ночь.")
+    if block.get("time_up"):
+        lines.append("Время этапа вышло: остальные идеи очереди, в порядке очереди, ждут "
+                     "следующей ночи: " + ", ".join(f"`{i}`" for i in block.get("waits_for_time")
+                                                    or []))
+    if block.get("heavy_waiting"):
+        lines.append("Ждут ручного запуска (данные слишком тяжелы за ночь; "
+                     "`qlab second-venue run --idea ИДЕЯ --allow-heavy`): "
+                     + ", ".join(f"`{i}`" for i in block["heavy_waiting"]))
     return lines
 
 

@@ -512,6 +512,10 @@ class LiveFrabAllBinance(LiveFrabBinanceSpot):
     times 8760 is the annualised rate, which is the signal frab's engine reads."""
 
     name = "frab-all-binance"
+    valid_sources = ("binance",)
+    """The data sources whose panel this strategy can run on (`_check_panel`): the book trades
+    Binance's spot and futures, so a Hyperliquid panel is refused at the first bar. The
+    second stage reads it and does not build a Hyperliquid twin of this strategy."""
 
     def _check_panel(self, panel: MarketPanel) -> None:
         if (panel.meta.get("venue") != "binance" or panel.meta.get("spot_source") is not None
