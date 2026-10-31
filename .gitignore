@@ -81,3 +81,11 @@ data/venue_gap/
 
 # the queue of closed ideas whose Hyperliquid side was never run: its ledger (docs/VENUE_SPLIT.md)
 data/second_venue/
+
+# the second stage's ledger of crashes (qlab.pipeline.stage2): run state, rebuilt by the night
+data/stage2/
+
+# the night's run lock and the marker of a start waiting for the recorder (docs/PIPELINE.md); data/night/ above
+# already covers them, listed so that moving the state folder does not commit them
+data/night/run.lock
+data/night/run.starting

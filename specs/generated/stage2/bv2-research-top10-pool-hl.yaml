@@ -1,0 +1,312 @@
+# Stage 2 of bv2-research-top10-pool (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: bv2-research-top10-pool-hl
+title: 'Bv2 на 10 самых ликвидных монетах, общий залог, запас 1.5, список каждый месяц по прошлому обороту
+  (эксперимент исследователя 30.10) (второй этап: hyperliquid)'
+code_ref: qlab.strategies.live.bv2:LiveBv2
+params:
+  universe:
+    rule: top_liquid
+    n: 10
+    rebalance: monthly
+    by: spot_dollar_volume
+    window_days: 30
+    candidates:
+    - BNB
+    - BTC
+    - ETH
+    - SOL
+    - XRP
+    - DOGE
+    - SUI
+    - TRX
+    - ADA
+    - ZEC
+    - WIF
+    - ARB
+    - LTC
+    - MATIC
+    - AVAX
+    - LINK
+    - WLD
+    - BOME
+    - ENA
+    - TRUMP
+    - NEAR
+    - NOT
+    - ORDI
+    - PAXG
+    - BCH
+    - ASTER
+    - TAO
+    - OP
+    - PEOPLE
+    - NEIRO
+    - TON
+    - XLM
+    - TRB
+    - FET
+    - HIFI
+    - SEI
+    - DEXE
+    - EDU
+    - GAS
+    - PENGU
+    - RNDR
+    - UNI
+    - XPL
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 12
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage:
+    BTC: 3.0
+    ETH: 2.0
+    SOL: 1.5
+    AVAX: 1.5
+  default_leverage: 1.5
+  maint_margin_rate:
+    BTC: 0.0125
+    ETH: 0.02
+    SOL: 0.025
+    AVAX: 0.05
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.5
+  rebalance_at_im_share: 0.5
+  mode: paper
+  shared_margin: true
+data:
+  source: hyperliquid
+  interval: 1h
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-10-30'
+  instruments:
+  - ADA
+  - ARB
+  - ASTER
+  - AVAX
+  - AVAX-SPOT
+  - BCH
+  - BNB
+  - BOME
+  - BTC
+  - BTC-SPOT
+  - DOGE
+  - ENA
+  - ENA-SPOT
+  - ETH
+  - ETH-SPOT
+  - FET
+  - GAS
+  - LINK
+  - LTC
+  - NEAR
+  - kNEIRO
+  - NOT
+  - OP
+  - ORDI
+  - PAXG
+  - PENGU
+  - PEOPLE
+  - SEI
+  - SOL
+  - SOL-SPOT
+  - SUI
+  - TAO
+  - TON
+  - TRB
+  - TRUMP
+  - TRUMP-SPOT
+  - TRX
+  - UNI
+  - WIF
+  - WLD
+  - XLM
+  - XPL
+  - XPL-SPOT
+  - XRP
+  - ZEC
+  - ZEC-SPOT
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+unexpressed_mechanisms: []
+differs_from_source:
+- 'the perp is Binance''s, not Hyperliquid''s: Hyperliquid listed fewer coins early, so a coin can be
+  held here on a date it could not yet be hedged there'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (bv2-research-top10-pool) on hyperliquid''s own perpetual contracts listed at each bar; nothing
+  was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- '40 instrument(s) of stage 1 are not listed on hyperliquid and are not traded: ADA-SPOT, ARB-SPOT, ASTER-SPOT,
+  BCH-SPOT, BNB-SPOT, BOME-SPOT, DEXE, DEXE-SPOT, DOGE-SPOT, EDU, EDU-SPOT, FET-SPOT, GAS-SPOT, HIFI,
+  HIFI-SPOT, LINK-SPOT, LTC-SPOT, MATIC, MATIC-SPOT, NEAR-SPOT, NEIRO-SPOT, NOT-SPOT, OP-SPOT, ORDI-SPOT,
+  PAXG-SPOT, PENGU-SPOT, PEOPLE-SPOT, RNDR, RNDR-SPOT, SEI-SPOT, SUI-SPOT, TAO-SPOT, TON-SPOT, TRB-SPOT,
+  TRX-SPOT, UNI-SPOT, WIF-SPOT, WLD-SPOT, XLM-SPOT, XRP-SPOT.'
+- 'Of those, listed by the venue but with no candle in the window, so treated as not listed: MATIC (delisted,
+  with no daily candle between 2025-01-01 and 2026-10-30); RNDR (delisted, with no daily candle between
+  2025-01-01 and 2026-10-30); WLD-SPOT (the spot market @224 has no daily candle between 2025-01-01 and
+  2026-10-30).'
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
+- 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
+  AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
+  at 21.3% of the window: the lab''s price-parity check (src/qlab/data/snapshot.py spot_is_another_asset)
+  keeps only the bars where it is 1:1).'
+- 'BTC-SPOT is hyperliquid''s UBTC/USDC spot token (docs/TASKS.md line 635 (spotMeta read 2026-09-22):
+  BTC is UBTC (@142), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13: UBTC, UETH, USOL are 1:1 with the perp, deep books, safe).'
+- 'ENA-SPOT is the hyperliquid spot token resolved from the live listing, not one of the lab''s verified
+  tokens (src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named ENA or UENA in the
+  live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+  spot_is_another_asset)).'
+- 'ETH-SPOT is hyperliquid''s UETH/USDC spot token (docs/TASKS.md line 636 (spotMeta read 2026-09-22):
+  ETH is UETH (@151), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13).'
+- 'SOL-SPOT is hyperliquid''s USOL/USDC spot token (docs/TASKS.md line 637 (spotMeta read 2026-09-22):
+  SOL is USOL (@156), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13).'
+- 'TRUMP-SPOT is the hyperliquid spot token resolved from the live listing, not one of the lab''s verified
+  tokens (src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named TRUMP or UTRUMP in
+  the live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+  spot_is_another_asset)).'
+- 'XPL-SPOT is the hyperliquid spot token resolved from the live listing, not one of the lab''s verified
+  tokens (src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named XPL or UXPL in the
+  live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+  spot_is_another_asset)).'
+- 'ZEC-SPOT is the hyperliquid spot token resolved from the live listing, not one of the lab''s verified
+  tokens (src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named ZEC or UZEC in the
+  live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+  spot_is_another_asset)).'
+noise_universe: held
+measure_hedge_timing: false
+params_fixed_at: '2025-08-02'
+params_fit_from: '2023-06-01'
+params_fixed_evidence: 'Inherited from stage 1 (bv2-research-top10-pool): declared by the researcher on
+  2026-10-30: fix designed on the data before 2025-08-02; ten coins chosen monthly by trailing spot volume
+  spread each coin''s whipsaw over the book, and one margin pool removes the partial hedges of separate
+  pools, so the book''s falls should be no deeper than a separate-pool ten-coin book while it keeps the
+  protection on falling days. The design rests on the «выбор» (2023-06 .. 2025-05) columns of docs/BV2_MARGIN.md:
+  pool 1.5 drawdown -7.9% against -8.9%, 0 partial hedges against 20, and of docs/BV2_BASKETS.md, where
+  the ten-coin book is worse than the four production coins before the cut (+25.0% and -8.9% against +36.3%
+  and -6.4%), so the experiment answers the owner''s question and is not expected to beat them. Headroom
+  1.5 is b2_cold''s, the owner''s cold-wallet book. Disclosed: the researcher has read the «вперёд» columns
+  of both documents, which overlap this spec''s forward stretch; they were not used to choose the fix
+  or a number. The candidate list keeps a small look-ahead (coins at least 4 of 175 weeks in the top ten
+  over the whole window, docs/BV2_BASKETS.md); a list built by code is idea-0007.
+
+  '
+sources:
+  strategy_capital_usd: 'the spec''s own parameter capital_usd = 257: seed/prod_params/2026-10-02-b2_cold.json
+    (frab.db strategies.params_json, read-only export)'
+  capital_usd: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  spot_share: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  hedge_threshold: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  sticky_exit_hours: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  ratchet_threshold: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_enabled: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  carry_fraction: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_entry_apr: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  carry_exit_hours: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  slippage: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  min_order_usd: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  margin_enabled: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  short_leverage: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  default_leverage: funding-rate-arbitrage/research/strategy_b_v2/REPORT.md, «Плечо 1.5×; для BTC/ETH/SOL/AVAX
+    — как в тесте»
+  maint_margin_rate: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  default_maint_margin_rate: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json,
+    read-only export)
+  margin_buffer: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  hedge_margin_headroom: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  rebalance_at_im_share: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only
+    export)
+  mode: seed/prod_params/2026-10-02-b2_cold.json (frab.db strategies.params_json, read-only export)
+  universe.rule: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «взять 10 самых ликвидных
+    монет на рынке»'
+  universe.n: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «10 самых ликвидных»'
+  universe.by: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «самых ликвидных монет
+    на рынке»'
+  universe.rebalance: 'funding-rate-arbitrage/src/frab/strategy/b2/retune.py: the first bar of every UTC
+    calendar month, the cadence frab''s own Bv2 re-tune uses; the other periods are no source exists for
+    this number: a declared sensitivity grid, docs/BV2_MARGIN.md'
+  universe.window_days: 'no source exists for this number: a declared sensitivity grid, docs/BV2_MARGIN.md'
+  universe.candidates: 'docs/BV2_BASKETS.md, «Откуда список кандидатов»: scripts/research/bv2_candidates.py'
+  shared_margin: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas, «один пул залога на
+    все монеты» (docs/BV2_MARGIN.md)'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+  data.spot_legs.AVAX: 'docs/TASKS.md line 638 (spotMeta read 2026-09-22): AVAX is UAVAX (@306), bridge_safe
+    in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+    lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its
+    bars at 21.3% of the window: the lab''s price-parity check (src/qlab/data/snapshot.py spot_is_another_asset)
+    keeps only the bars where it is 1:1'
+  data.spot_legs.BTC: 'docs/TASKS.md line 635 (spotMeta read 2026-09-22): BTC is UBTC (@142), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13: UBTC,
+    UETH, USOL are 1:1 with the perp, deep books, safe'
+  data.spot_legs.ENA: 'src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named ENA
+    or UENA in the live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+    spot_is_another_asset)'
+  data.spot_legs.ETH: 'docs/TASKS.md line 636 (spotMeta read 2026-09-22): ETH is UETH (@151), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+  data.spot_legs.SOL: 'docs/TASKS.md line 637 (spotMeta read 2026-09-22): SOL is USOL (@156), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+  data.spot_legs.TRUMP: 'src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named TRUMP
+    or UTRUMP in the live spotMeta; kept only on bars where its price is within frab''s 3% of the perp
+    (src/qlab/data/snapshot.py spot_is_another_asset)'
+  data.spot_legs.XPL: 'src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named XPL
+    or UXPL in the live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+    spot_is_another_asset)'
+  data.spot_legs.ZEC: 'src/qlab/data/sources/hyperliquid.py fetch_spot_meta: the spot token named ZEC
+    or UZEC in the live spotMeta; kept only on bars where its price is within frab''s 3% of the perp (src/qlab/data/snapshot.py
+    spot_is_another_asset)'
+strategy_capital_usd: 257.0
+regime_claim:
+  bull: earns
+  bear: beats_market
+review_answers: {}
+selects_causally: false
