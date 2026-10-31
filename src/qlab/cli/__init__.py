@@ -862,6 +862,12 @@ def night_run_cmd(
                          "command": " ".join(sys.argv)}):
         typer.echo(refusal() or "Another run holds the night's lock.", err=True)
         raise typer.Exit(EXIT_BUSY)
+    import signal
+
+    def stop_the_night(signum, frame):  # a kill is a stop of the night, written down as one
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, stop_the_night)
     try:
         journal = SafeJournal(Journal())
         journal.sweep_interrupted()  # rows left `running` by a process that died
