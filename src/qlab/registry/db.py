@@ -9,6 +9,8 @@ connection, so it is turned on explicitly on every new DBAPI connection.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -43,10 +45,42 @@ def _enable_foreign_keys(dbapi_connection: object, _connection_record: object) -
     cursor.close()
 
 
+#: A file named here gets one line for every write transaction that held SQLite's one write lock
+#: for `TRACE_MIN_SECONDS` or more (the thread, the seconds, the first statement). Off by default;
+#: the proof of the lanes turns it on (docs/PIPELINE.md): a transaction that holds the lock across
+#: a fetch or an agent call makes every other writer wait out its busy timeout.
+TRACE_ENV = "QLAB_DB_TRACE"
+TRACE_MIN_SECONDS = 1.0
+_TRACE_LOCK = threading.Lock()
+
+
+def _trace_write_locks(engine: Engine) -> None:
+    path = os.environ.get(TRACE_ENV)
+    if not path:
+        return
+
+    def before(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if statement.lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "REPLAC") \
+                and "write_since" not in conn.info:
+            conn.info["write_since"] = (time.monotonic(), threading.current_thread().name,
+                                        " ".join(statement.split())[:90])
+
+    def done(conn):  # noqa: ANN001
+        started = conn.info.pop("write_since", None)
+        if started and (held := time.monotonic() - started[0]) >= TRACE_MIN_SECONDS:
+            with _TRACE_LOCK, open(path, "a", encoding="utf-8") as out:
+                out.write(f"{held:.2f}\t{os.getpid()}\t{started[1]}\t{started[2]}\n")
+
+    event.listen(engine, "before_cursor_execute", before)
+    event.listen(engine, "commit", done)
+    event.listen(engine, "rollback", done)
+
+
 def make_engine(url: str | None = None, **kwargs: object) -> Engine:
     """Create a SQLite engine with foreign-key enforcement turned on."""
     engine = create_engine(url or get_database_url(), **kwargs)
     event.listen(engine, "connect", _enable_foreign_keys)
+    _trace_write_locks(engine)
     return engine
 
 

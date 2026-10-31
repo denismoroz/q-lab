@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from qlab.nightflow import current
 from qlab.nightflow.plan import BLOCKED, OFF, OUTSIDE, blocking_parent
 from qlab.nightflow.table import Step, Table
 
@@ -334,7 +335,8 @@ class Runner:
         started = time.monotonic()
         result, error = "ok", None
         try:
-            impl.run(sctx)
+            with current.running(step.id, step.lane):
+                impl.run(sctx)
             if (save := getattr(sctx, "save", None)) is not None:
                 save()  # the saved state is what the item tracker reads
             if impl.inspect is not None and (swallowed := impl.inspect(sctx)):

@@ -708,3 +708,83 @@ def test_the_noise_pool_is_made_once_by_threads_asking_together(monkeypatch) -> 
     made[0]._broken = True
     run_module.discard_broken_pool()
     assert run_module._POOL is None
+
+
+# ---------------------------------------------------------------------------------- the token guard
+
+
+def test_an_agent_call_from_a_step_of_another_lane_is_refused(jr, tmp_path) -> None:
+    from qlab.budget import ExplicitNoBudget
+    from qlab.budget.agent import run_agent
+    from qlab.nightflow import current
+
+    seen: dict[str, str] = {}
+
+    def trying(ctx):
+        try:
+            run_agent(ExplicitNoBudget("test"), "hi", session=None, agent="x", model="m",
+                      max_turns=1)
+        except current.AgentOutsideItsLane as exc:
+            seen["refused"] = str(exc)
+            raise
+
+    steps = [_step("calc_one", lane="calc"), _step("agent_one", lane="agents", tokens=True,
+                                                    kind="agent")]
+    table = parse({"steps": steps})
+    hub, _, _ = _hub(tmp_path, steps)
+    run_id = jr.start_run(date(2026, 10, 31), trigger="hand", steps_off=[], only=None,
+                          restart=None, concurrency=3, pid=1)
+    out = Runner(table, {"calc_one": StepImpl(trying, "calc_one"),
+                         "agent_one": StepImpl(lambda ctx: None, "agent_one")},
+                 Probe(hub), journal=jr, run_id=run_id, concurrency=3,
+                 log=lambda t: None).execute()
+    assert out["calc_one"] == "failed" and "may not call an agent" in seen["refused"]
+    assert current.current() is None  # a thread that runs no step is not restricted
+
+
+def test_agent_calls_are_taken_one_at_a_time(monkeypatch) -> None:
+    import qlab.budget.agent as agent
+
+    inside, peak = [0], [0]
+    lock = threading.Lock()
+
+    def fake(*args, **kwargs):
+        with lock:
+            inside[0] += 1
+            peak[0] = max(peak[0], inside[0])
+        time.sleep(0.05)
+        with lock:
+            inside[0] -= 1
+        return "done"
+
+    monkeypatch.setattr(agent, "_run_agent", fake)
+    threads = [threading.Thread(target=lambda: agent.run_agent(
+        None, "p", session=None, agent="a", model="m", max_turns=1)) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 1
+
+
+def test_the_write_lock_trace_names_a_transaction_that_holds_the_lock_long(
+        tmp_path, monkeypatch) -> None:
+    from sqlalchemy import text
+
+    from qlab.registry import db as db_module
+
+    trace = tmp_path / "trace.tsv"
+    monkeypatch.setenv(db_module.TRACE_ENV, str(trace))
+    monkeypatch.setattr(db_module, "TRACE_MIN_SECONDS", 0.2)
+    engine = db_module.make_engine(f"sqlite+pysqlite:///{tmp_path / 'trace.db'}")
+    with engine.connect() as conn:
+        conn.execute(text("create table t (x integer)"))
+        conn.commit()
+        conn.execute(text("insert into t values (1)"))
+        time.sleep(0.4)
+        conn.commit()
+        conn.execute(text("insert into t values (2)"))
+        conn.commit()  # held for no time: not written
+    engine.dispose()
+    lines = trace.read_text().splitlines()
+    assert len(lines) == 1 and "insert into t" in lines[0] and float(lines[0].split("\t")[0]) >= 0.3

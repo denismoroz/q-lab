@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -139,7 +140,33 @@ def open_candidate(session, idea_id: str | None, stage: Stage) -> CandidateBudge
     return night.stage(stage, candidates=1).candidate(idea_id)
 
 
+_AGENT_CALL = threading.Lock()
+
+
 def run_agent(
+    budget: CandidateBudget | ExplicitNoBudget,
+    prompt: str,
+    *,
+    session: Session,
+    agent: str,
+    model: str,
+    max_turns: int,
+    cwd: Path | None = None,
+    extra_args: tuple[str, ...] = (),
+) -> AgentResult:
+    """One agent call through the token guard. Only a step of the agents' lane may make it while
+    the night runs in lanes (`qlab.nightflow.current`), and calls are taken one at a time: the
+    guard reads the windows, shares out what is left and records the spend call by call, and is
+    not safe for two at once."""
+    from qlab.nightflow import current
+
+    current.require_agents_lane()
+    with _AGENT_CALL:
+        return _run_agent(budget, prompt, session=session, agent=agent, model=model,
+                          max_turns=max_turns, cwd=cwd, extra_args=extra_args)
+
+
+def _run_agent(
     budget: CandidateBudget | ExplicitNoBudget,
     prompt: str,
     *,

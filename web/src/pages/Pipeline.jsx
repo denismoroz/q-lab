@@ -34,6 +34,7 @@ const EDGE = {
   exclusive: { text: 'не вместе: оба пишут испытания одних идей', stroke: '#c2410c', dash: '2 3' },
   budget: { text: 'порядок трат токенов, данных не передаёт', stroke: '#cbd5e1', dash: '1 4' },
 }
+const LANE_TITLE = { calc: 'Расчёты', checks: 'Проверки', agents: 'Агенты', final: 'Итог' }
 const TRIGGER = { schedule: 'по расписанию', button: 'кнопкой', hand: 'вручную' }
 
 const BOX_W = 176
@@ -203,6 +204,78 @@ function Legend() {
   )
 }
 
+const LANE_COLOR = { calc: 'border-sky-300', checks: 'border-violet-300', agents: 'border-amber-300', final: 'border-slate-300' }
+
+// The lanes of the night (docs/PIPELINE.md, «Дорожки»): steps of one lane go one at a time, the lanes
+// go together. Each step is a bar on its lane at the time it ran (or is running); a step that has not
+// started yet waits at the end of its lane. Copied from the journal's start and end times.
+function Lanes({ lanes, steps, states, running, onSelect, selected }) {
+  const byId = Object.fromEntries(steps.map((s) => [s.id, s]))
+  const ran = steps.filter((s) => states[s.id]?.started_at && states[s.id].duration_s !== 0)
+  const now = Date.now()
+  const starts = ran.map((s) => new Date(states[s.id].started_at).getTime())
+  const ends = ran.map((s) => (states[s.id].finished_at ? new Date(states[s.id].finished_at).getTime() : now))
+  if (!starts.length) {
+    return <p className="text-sm text-slate-500">В последнем запуске ещё нет шагов с временем.</p>
+  }
+  const t0 = Math.min(...starts)
+  const t1 = Math.max(...ends, t0 + 1000)
+  const span = t1 - t0
+  const pct = (t) => `${(((t - t0) / span) * 100).toFixed(2)}%`
+  const sumSeconds = ran.reduce((n, s) => n + (states[s.id].duration_s ?? (now - new Date(states[s.id].started_at)) / 1000), 0)
+  const wall = span / 1000
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-slate-600">
+        Время идёт слева направо ({duration(wall)} от первого шага до последнего). Сумма времён шагов — {duration(sumSeconds)}: во сколько раз
+        она больше стены, во столько дорожки сработали вместе ({(sumSeconds / Math.max(wall, 1)).toFixed(1)}×).
+        {running ? ' Запуск идёт: незаконченные шаги тянутся до «сейчас».' : ''}
+      </p>
+      {lanes.map((lane) => (
+        <div key={lane.id} className={`rounded border-l-4 bg-white px-2 py-1 ${LANE_COLOR[lane.id] ?? 'border-slate-300'}`}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-sm font-semibold text-slate-800">{lane.title}</span>
+            <span className="text-[11px] text-slate-500">{lane.about}</span>
+          </div>
+          <div className="relative mt-1 h-7 rounded bg-slate-50">
+            {lane.steps
+              .filter((id) => states[id]?.started_at && states[id].duration_s !== 0)
+              .map((id) => {
+                const st = states[id]
+                const a = new Date(st.started_at).getTime()
+                const b = st.finished_at ? new Date(st.finished_at).getTime() : now
+                const style = STATE[st.state] ?? STATE.pending
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onSelect(id === selected ? null : id)}
+                    title={`${byId[id].title}: ${style.text}, ${duration(st.duration_s ?? (b - a) / 1000)}`}
+                    className={`absolute top-0.5 h-6 overflow-hidden whitespace-nowrap rounded border px-1 text-left text-[10px] leading-6 ${style.box} ${style.ink} ${
+                      id === selected ? 'ring-2 ring-sky-600' : ''
+                    }`}
+                    style={{ left: pct(a), width: `max(${(((b - a) / span) * 100).toFixed(2)}%, 6px)` }}
+                  >
+                    {byId[id].title}
+                  </button>
+                )
+              })}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-slate-500">
+            {lane.steps
+              .filter((id) => !states[id] || states[id].duration_s === 0 || !states[id].started_at)
+              .map((id) => (
+                <button key={id} type="button" onClick={() => onSelect(id)} className="rounded border border-slate-200 bg-white px-1">
+                  {byId[id].title}: {STATE[states[id]?.state ?? 'pending'].text}
+                </button>
+              ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function TimeTable({ steps, states, onSelect }) {
   const rows = steps
     .map((s) => {
@@ -327,6 +400,7 @@ function StepDetail({ stepId, steps, onSelect, onRestart, busy }) {
                 <p className="text-sm text-slate-700">{d.description}</p>
                 <p className="mt-1 text-xs text-slate-500">
                   {KIND[d.kind]}{d.tokens ? ' · тратит токены' : ' · токены не тратит'}
+                  {d.lane ? ` · дорожка: ${LANE_TITLE[d.lane] ?? d.lane}` : ''}
                   {d.item_kind ? ` · из чего состоит: ${d.item_kind}` : ''}
                 </p>
               </div>
@@ -391,6 +465,11 @@ function StepDetail({ stepId, steps, onSelect, onRestart, busy }) {
               <p className="text-sm text-slate-700">
                 {d.can_run_with.length ? d.can_run_with.map((id) => titles[id]).join(', ') : 'Ничего: он связан со всеми.'}
               </p>
+              {d.can_run_with_in_lanes?.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  Из них идут вместе с ним на самом деле (другие дорожки): {d.can_run_with_in_lanes.map((id) => titles[id]).join(', ')}.
+                </p>
+              )}
               {d.can_run_with_without_budget.length > d.can_run_with.length && (
                 <p className="text-xs text-slate-500">
                   Если не держать порядок трат токенов: ещё {d.can_run_with_without_budget.filter((id) => !d.can_run_with.includes(id)).map((id) => titles[id]).join(', ')}.
@@ -695,7 +774,7 @@ export default function Pipeline() {
           const byId = Object.fromEntries(steps.map((s) => [s.id, s]))
           const failed = steps.filter((s) => states[s.id]?.state === 'failed')
           const blocked = steps.filter((s) => states[s.id]?.state === 'blocked')
-          const now = steps.find((s) => states[s.id]?.state === 'running')
+          const nowRunning = steps.filter((s) => states[s.id]?.state === 'running')
           const elapsed = run && running ? (Date.now() - new Date(run.started_at)) / 1000 : null
           return (
             <>
@@ -721,7 +800,7 @@ export default function Pipeline() {
                           начат {when(run.started_at)}
                           {run.finished_at ? `, закончен ${when(run.finished_at)}` : ''}
                           {elapsed != null ? `, идёт ${duration(elapsed)}` : ''}
-                          {now ? `, сейчас: «${now.title}»` : ''}
+                          {nowRunning.length ? `, сейчас: ${nowRunning.map((s) => `«${s.title}»`).join(', ')}` : ''}
                         </div>
                         {(failed.length > 0 || blocked.length > 0) && (
                           <div className="text-xs">
@@ -753,6 +832,22 @@ export default function Pipeline() {
                 </div>
                 {notice && <p className="mt-3 rounded border border-sky-200 bg-sky-50 p-2 text-xs text-sky-900">{notice}</p>}
               </Panel>
+
+              {query.data.lanes?.length > 0 && (
+                <Panel
+                  title="Дорожки"
+                  subtitle="Шаги одной дорожки идут по одному, дорожки идут вместе: долгий шаг одной не задерживает другую. Нажмите на шаг: описание, зависимости, статистика, история."
+                >
+                  <Lanes
+                    lanes={query.data.lanes}
+                    steps={steps}
+                    states={states}
+                    running={running}
+                    onSelect={setSelected}
+                    selected={selected}
+                  />
+                </Panel>
+              )}
 
               <Panel
                 title="Дерево шагов"
