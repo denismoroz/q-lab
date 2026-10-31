@@ -165,6 +165,21 @@ def register(app: FastAPI) -> None:
             body["journal_ready"] = False
         return body
 
+    @app.get("/api/pipeline/step-runs/{step_run_id}/items")
+    def pipeline_step_run_items(step_run_id: int, session: SessionDep) -> dict[str, Any]:
+        """The items of one earlier run of a step (an attempt of the day that is not the latest):
+        the step's page shows only its latest run's items, the history opens the others."""
+        from qlab.registry.models import PipelineStepRun
+
+        try:
+            row = session.get(PipelineStepRun, step_run_id)
+            if row is None:
+                raise HTTPException(404, f"Нет записи запуска {step_run_id}")
+            return {"step_run": journal.step_state(row).to_json(),
+                    "items": journal.step_items(session, step_run_id), "journal_ready": True}
+        except OperationalError:
+            return {"step_run": None, "items": [], "journal_ready": False}
+
     @app.get("/api/pipeline/runs")
     def pipeline_runs(session: SessionDep, limit: int = 20) -> dict[str, Any]:
         from qlab.registry.models import PipelineRun

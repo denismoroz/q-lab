@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import {
   fetchPipeline,
   fetchPipelineRuns,
   fetchPipelineStep,
+  fetchPipelineStepRunItems,
   previewPipeline,
   restartStep,
   runPipeline,
@@ -259,6 +260,44 @@ function TimeTable({ steps, states, onSelect }) {
   )
 }
 
+function ItemsTable({ items }) {
+  return (
+    <table className="w-full text-xs">
+      <tbody>
+        {items.map((it, i) => (
+          <tr key={i} className="border-t border-slate-100 align-top">
+            <td className="py-1 pr-3 font-mono break-all">{it.name}</td>
+            <td className="py-1 pr-3 text-right tabular-nums">{duration(it.duration_s)}</td>
+            <td className={`py-1 pr-3 ${it.outcome === 'failed' ? 'text-rose-800' : 'text-emerald-800'}`}>
+              {it.outcome === 'failed' ? 'ошибка' : 'сделано'}
+            </td>
+            <td className="py-1 text-slate-500 break-words">{it.detail}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// The items of an earlier run of the step (an attempt of the same day): the step's page shows
+// the latest run's items only, so the history opens the others, each with its own items.
+function RunItems({ stepRunId }) {
+  const query = useQuery({
+    queryKey: ['pipeline-step-run-items', stepRunId],
+    queryFn: () => fetchPipelineStepRunItems(stepRunId),
+  })
+  return (
+    <QueryState query={query}>
+      {query.data &&
+        (query.data.items.length === 0 ? (
+          <p className="text-xs text-slate-500">В этом запуске записанных частей нет.</p>
+        ) : (
+          <ItemsTable items={query.data.items} />
+        ))}
+    </QueryState>
+  )
+}
+
 function StepDetail({ stepId, steps, onSelect, onRestart, busy }) {
   const query = useQuery({
     queryKey: ['pipeline-step', stepId],
@@ -266,6 +305,7 @@ function StepDetail({ stepId, steps, onSelect, onRestart, busy }) {
     refetchInterval: busy ? 3000 : 20000,
   })
   const titles = Object.fromEntries(steps.map((s) => [s.id, s.title]))
+  const [openRun, setOpenRun] = useState(null)
   return (
     <QueryState query={query}>
       {query.data && (() => {
@@ -387,38 +427,41 @@ function StepDetail({ stepId, steps, onSelect, onRestart, busy }) {
                 <h4 className="mb-1 text-xs font-semibold uppercase text-slate-500">
                   Из чего состоит последний запуск ({d.items.length})
                 </h4>
-                <table className="w-full text-xs">
-                  <tbody>
-                    {d.items.map((it, i) => (
-                      <tr key={i} className="border-t border-slate-100 align-top">
-                        <td className="py-1 pr-3 font-mono break-all">{it.name}</td>
-                        <td className="py-1 pr-3 text-right tabular-nums">{duration(it.duration_s)}</td>
-                        <td className={`py-1 pr-3 ${it.outcome === 'failed' ? 'text-rose-800' : 'text-emerald-800'}`}>
-                          {it.outcome === 'failed' ? 'ошибка' : 'сделано'}
-                        </td>
-                        <td className="py-1 text-slate-500 break-words">{it.detail}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <ItemsTable items={d.items} />
               </div>
             )}
 
             <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase text-slate-500">История запусков</h4>
+              <h4 className="mb-1 text-xs font-semibold uppercase text-slate-500">
+                История запусков <span className="font-normal normal-case">(строка открывает части того запуска)</span>
+              </h4>
               {d.history.length === 0 && <p className="text-sm text-slate-500">Записей нет.</p>}
               <table className="w-full text-xs">
                 <tbody>
                   {d.history.map((h) => (
-                    <tr key={h.step_run_id} className="border-t border-slate-100 align-top">
-                      <td className="py-1 pr-3 tabular-nums">{h.night_date}</td>
-                      <td className="py-1 pr-3 text-slate-500">{TRIGGER[h.trigger] ?? h.trigger}</td>
-                      <td className="py-1 pr-3"><StateBadge state={h.state} /></td>
-                      <td className="py-1 pr-3 text-right tabular-nums">{h.approximate ? '≈ ' : ''}{duration(h.duration_s)}</td>
-                      <td className="py-1 pr-3 text-right tabular-nums text-slate-500">{h.items_done ? `${h.items_done} шт.` : ''}</td>
-                      <td className="py-1 pr-3 text-right tabular-nums text-slate-500">{h.tokens ? tokens(h.tokens) : ''}</td>
-                      <td className="py-1 break-words text-rose-800">{h.error ?? (h.blocked_by ? `заблокирован шагом «${titles[h.blocked_by] ?? h.blocked_by}»` : '')}</td>
-                    </tr>
+                    <Fragment key={h.step_run_id}>
+                      <tr
+                        className="cursor-pointer border-t border-slate-100 align-top hover:bg-slate-50"
+                        onClick={() => setOpenRun(openRun === h.step_run_id ? null : h.step_run_id)}
+                        title="Показать, из чего состоял этот запуск"
+                      >
+                        <td className="py-1 pr-3 tabular-nums">{h.night_date}</td>
+                        <td className="py-1 pr-3 text-slate-500">{when(h.started_at)} · {TRIGGER[h.trigger] ?? h.trigger}</td>
+                        <td className="py-1 pr-3"><StateBadge state={h.state} /></td>
+                        <td className="py-1 pr-3 text-right tabular-nums">{h.approximate ? '≈ ' : ''}{duration(h.duration_s)}</td>
+                        <td className="py-1 pr-3 text-right tabular-nums text-slate-500">
+                          {h.items_done ? `${h.items_done} шт.` : ''}
+                          {h.items_failed > 0 && <b className="text-rose-700"> · {h.items_failed} с ошибкой</b>}
+                        </td>
+                        <td className="py-1 pr-3 text-right tabular-nums text-slate-500">{h.tokens ? tokens(h.tokens) : ''}</td>
+                        <td className="py-1 break-words text-rose-800">{h.error ?? (h.blocked_by ? `заблокирован шагом «${titles[h.blocked_by] ?? h.blocked_by}»` : '')}</td>
+                      </tr>
+                      {openRun === h.step_run_id && (
+                        <tr className="bg-slate-50">
+                          <td colSpan={7} className="px-2 py-2"><RunItems stepRunId={h.step_run_id} /></td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

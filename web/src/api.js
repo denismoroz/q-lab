@@ -60,6 +60,8 @@ async function postJson(url, body) {
 export const fetchPipeline = () => getJson('/api/pipeline')
 export const fetchPipelineStep = (stepId) =>
   getJson(`/api/pipeline/steps/${encodeURIComponent(stepId)}`)
+export const fetchPipelineStepRunItems = (stepRunId) =>
+  getJson(`/api/pipeline/step-runs/${encodeURIComponent(stepRunId)}/items`)
 export const fetchPipelineRuns = () => getJson('/api/pipeline/runs?limit=20')
 export const previewPipeline = ({ off = [], restart = null }) =>
   postJson('/api/pipeline/preview', { off, restart })

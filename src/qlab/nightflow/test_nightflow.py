@@ -21,7 +21,13 @@ from sqlalchemy.pool import StaticPool
 import qlab.night as night
 from qlab.nightflow import backfill, control, journal
 from qlab.nightflow.plan import make_plan
-from qlab.nightflow.runner import ItemTracker, Runner, StepImpl, failed_items
+from qlab.nightflow.runner import (
+    ItemTracker,
+    Runner,
+    StepImpl,
+    failed_items,
+    new_failed_items,
+)
 from qlab.nightflow.table import TableError, load_table, parse
 from qlab.registry.models import Base, PipelineItem, PipelineRun, PipelineStepRun, TokenSpend
 
@@ -303,6 +309,64 @@ def test_failed_items_are_found_in_the_step_state() -> None:
     state = {"results": [{"name": "a.yaml", "error": None}, {"name": "b.yaml", "error": "Boom: x"}],
              "other": [{"name": "c", "error": "not mine"}]}
     assert failed_items(step, state) == [("b.yaml", "Boom: x")]
+
+
+def _stage_step() -> object:
+    return parse({"steps": [{"id": "w", "title": "W", "description": "d", "kind": "code",
+                             "tokens": False, "done_prefixes": ["w:"],
+                             "state_keys": ["w"]}]}).by_id["w"]
+
+
+def test_a_failure_nested_in_an_entry_is_one_row_with_the_entrys_name() -> None:
+    """The restamp entry has an error and a stage-2 brief with the same error and no name: one
+    failure, named after the idea; a failure with no name anywhere takes the state key."""
+    state = {"w": {"entries": [
+        {"idea": "x", "error": "Boom", "stage2": {"action": "error", "error": "Boom"}},
+        {"idea": "y", "action": "restamped", "stage2": {"error": "Inner"}}],
+        "notes": [{"error": "Nameless"}]}}
+    assert failed_items(_stage_step(), state) == [("x", "Boom"), ("y", "Inner"),
+                                                  ("w", "Nameless")]
+    assert all(name != "?" for name, _ in failed_items(_stage_step(), state))
+
+
+def test_only_failures_new_since_the_step_began_are_new() -> None:
+    from collections import Counter
+
+    step = _stage_step()
+    morning = {"w": {"entries": [{"idea": "a", "error": "Locked"}]}}
+    before = Counter(failed_items(step, morning))
+    evening = {"w": {"entries": [{"idea": "a", "error": "Locked"}, {"idea": "b", "error": "New"},
+                                 {"idea": "a", "error": "Locked"}]}}
+    # `a` failed once in the morning and once again now: the second one is this run's
+    assert new_failed_items(step, evening, before) == [("b", "New"), ("a", "Locked")]
+    assert new_failed_items(step, morning, before) == []
+
+
+def test_the_runner_leaves_the_days_earlier_failures_to_the_earlier_runs(jr, factory) -> None:
+    """A stage started again the same day finds the morning's entries in its block: the evening's
+    journal row counts its own done items and its own failures, not the morning's."""
+    table = parse({"steps": [{"id": "w", "title": "W", "description": "d", "kind": "code",
+                              "tokens": False, "done_prefixes": ["w:"], "state_keys": ["w"]}]})
+    ctx = Ctx()
+    ctx.state["w"] = {"entries": [{"idea": "morning", "error": "Locked",
+                                   "stage2": {"error": "Locked"}}]}
+
+    def run(c):
+        c.state["w"]["entries"].append({"idea": "evening", "action": "restamped"})
+        c.state["done"]["w:evening"] = datetime.now(UTC).isoformat()
+        c.save()
+        c.state["w"]["entries"].append({"idea": "late", "error": "Fresh"})
+
+    ctx.save = lambda: tracker.observe(ctx.state)
+    tracker = ItemTracker(table, jr)
+    run_id = jr.start_run(date(2026, 10, 31), trigger="button", steps_off=[], only=None,
+                          restart=None, concurrency=1, pid=1)
+    Runner(table, {"w": StepImpl(run, "w")}, ctx, journal=jr, run_id=run_id, tracker=tracker,
+           log=lambda t: None).execute()
+    row = _states(factory, run_id)["w"]
+    assert (row.items_done, row.items_failed) == (1, 1)
+    names = {(i["name"], i["outcome"]) for i in journal.step_items(factory(), row.id)}
+    assert names == {("evening", "ok"), ("late", "failed")}
 
 
 # ---------------------------------------------------------------------------------- the night
@@ -656,6 +720,9 @@ def test_the_page_reads_steps_states_stats_and_history(api, factory) -> None:
     assert one["history"][0]["error"] == "Boom: x" and one["items"][0]["name"] == "item-1"
     assert one["stats"]["last_error"] == "Boom: x" and one["neighbour_states"]["detectors"] == "ok"
     assert api.get("/api/pipeline/steps/nope").status_code == 404
+    old = api.get(f"/api/pipeline/step-runs/{one['history'][0]['step_run_id']}/items").json()
+    assert old["items"][0]["name"] == "item-1" and old["step_run"]["step"] == "recheck"
+    assert api.get("/api/pipeline/step-runs/99999/items").status_code == 404
     runs = api.get("/api/pipeline/runs").json()["runs"]
     assert runs[0]["trigger"] == "schedule" and runs[0]["state"] == "ok"
 

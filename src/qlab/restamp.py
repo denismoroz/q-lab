@@ -58,6 +58,8 @@ from typing import Any
 
 import yaml
 
+from qlab import attempts
+
 CONFIG = Path("night/restamp.yaml")
 LEDGER = Path("data/restamp/ledger.json")
 WATCHLIST = Path("night/watchlist.yaml")
@@ -378,7 +380,7 @@ def restamp_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
         return
     block = state.setdefault("restamp", {"entries": [], "skipped": {}, "deferred": [],
                                          "notes": []})
-    block.update(deferred=[], skipped={}, stand=STAND_VERSION)
+    block.update(deferred=[], skipped={}, stand=STAND_VERSION, attempt_at=attempts.now_iso())
     try:
         stage2_config = stage2.load_config()
     except (OSError, ValueError) as exc:  # a broken config switches the second stage off here
@@ -518,6 +520,7 @@ class _Run:
             entry.update(action="error", error=f"{type(exc).__name__}: {exc}")
         elapsed = time.monotonic() - started
         entry["seconds"] = round(elapsed, 1)
+        entry["at"] = attempts.now_iso()
         entry["slow"] = elapsed > self.cfg.slow_idea_minutes * 60
         with session_scope() as session:
             entry["after"] = {"idea": run_view(session, item.idea_id),
@@ -732,7 +735,8 @@ def report_lines(block: Mapping | None, *, even_if_quiet: bool = False) -> list[
     closed would be named every morning); a hand run asks for the whole picture."""
     if not block:
         return []
-    entries = block.get("entries") or []
+    # One entry per idea, the last: the night's state keeps the day's earlier attempts too.
+    entries = attempts.latest_per_idea(block.get("entries") or [])
     if not (entries or block.get("deferred") or block.get("notes") or block.get("heavy")
             or (even_if_quiet and block.get("skipped"))):
         return []
@@ -764,7 +768,10 @@ def report_lines(block: Mapping | None, *, even_if_quiet: bool = False) -> list[
         lines.append(f"- {idea}: не пересчитана — {why}")
     lines.append("")
     for e in entries:
-        lines += entry_lines(e)
+        mine = entry_lines(e)
+        if mine:
+            mine[0] += attempts.earlier_attempt_note(e, block.get("attempt_at"))
+        lines += mine
     return lines
 
 

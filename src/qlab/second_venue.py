@@ -35,6 +35,8 @@ from pathlib import Path
 
 import yaml
 
+from qlab import attempts
+
 CONFIG = Path("night/second_venue.yaml")
 LEDGER = Path("data/second_venue/ledger.json")
 SPEC_DIR = Path("specs")
@@ -272,6 +274,7 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
     if not config.enabled:
         return
     block = state.setdefault("second_venue", {"entries": [], "owed": 0, "nights": None})
+    block["attempt_at"] = attempts.now_iso()
     try:
         stage2_config = stage2.load_config()
     except (OSError, ValueError) as exc:
@@ -315,7 +318,7 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
                      if f"second_venue:{c.idea_id}" not in done]
             break
         entry = {"idea": cand.idea_id, "rejected_on": cand.rejected_on.isoformat(),
-                 "stage1_trial": cand.stage1_trial}
+                 "stage1_trial": cand.stage1_trial, "at": attempts.now_iso()}
         est = _estimate(cand, end, stage2_config, names, cost)
         heavy = None if est is None or allow_heavy else hl_fetch.heavy_reason(
             est, config.max_minutes_per_night)
@@ -398,17 +401,18 @@ def report_lines(block: dict | None) -> list[str]:
              "failed": "не проводился: сбой, идея остаётся закрытой (причина ниже)",
              "heavy": "не запускалась: данные слишком тяжелы за ночь",
              "deferred": "не запускалась: не уместилась в остаток времени этапа"}
-    for e in block.get("entries") or []:
+    for e in attempts.latest_per_idea(block.get("entries") or []):
         lines.append(f"- `{e['idea']}` (отвергнута {e['rejected_on']}): "
                      f"{words.get(e.get('outcome'), e.get('outcome'))}"
-                     + (f"; статус «{e['status']}»" if e.get("status") else ""))
+                     + (f"; статус «{e['status']}»" if e.get("status") else "")
+                     + attempts.earlier_attempt_note(e, block.get("attempt_at")))
         if e.get("outcome") in ("heavy", "deferred") and e.get("why"):
             lines.append(f"  - {e['why']}")
         if e.get("outcome") in ("error", "failed") and e.get("error"):
             lines.append(f"  - {str(e['error'])[:300]}")
         lines += [f"  - {x}" for x in e.get("lines") or []]
     if block.get("minutes_spent") is not None and block.get("limit_minutes"):
-        lines.append(f"Этап занял {block['minutes_spent']:g} минут из "
+        lines.append(f"Последний запуск этапа занял {block['minutes_spent']:g} минут из "
                      f"{block['limit_minutes']:g} положенных на ночь.")
     if block.get("time_up"):
         lines.append("Время этапа вышло: остальные идеи очереди, в порядке очереди, ждут "

@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import Counter
 from collections.abc import Callable, Collection
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -58,27 +59,51 @@ def describe_error(exc: BaseException) -> str:
 
 def failed_items(step: Step, state: dict) -> list[tuple[str, str]]:
     """Items that ended in an error, found generically: every dict under the step's state keys
-    that carries an `error` text (or an `action` of `error`)."""
+    that carries an `error` text (or an `action` of `error`).
+
+    A failure is named after its own dict, or after the nearest dict around it that has a name
+    (a stage's brief inside an idea's entry), or after the state key it was found under; a row
+    with no name is never made. A dict that is reported is not searched further: the failure
+    inside it is the same one."""
     found: list[tuple[str, str]] = []
 
-    def walk(node: Any) -> None:
+    def walk(node: Any, inherited: str) -> None:
         if len(found) >= 50:
             return
         if isinstance(node, dict):
+            name = next((str(node[k]) for k in NAME_KEYS if node.get(k) is not None), inherited)
             text = node.get("error") or (node.get("why") if node.get("action") == "error" else None)
             if isinstance(text, str) and text:
-                name = next((str(node[k]) for k in NAME_KEYS if node.get(k) is not None), "?")
                 found.append((name, text[:300]))
+                return
             for value in node.values():
                 if isinstance(value, dict | list):
-                    walk(value)
+                    walk(value, name)
         elif isinstance(node, list):
             for value in node:
-                walk(value)
+                walk(value, inherited)
 
     for key in step.state_keys:
-        walk(state.get(key))
+        walk(state.get(key), key)
     return found
+
+
+def new_failed_items(step: Step, state: dict, before: Counter) -> list[tuple[str, str]]:
+    """The failures in the step's state that were not there when this run of the step began.
+
+    The night's state file keeps the whole day: a stage that is started again the same day (the
+    button after an interrupted night) finds the earlier attempts' entries in its block. Those
+    belong to the earlier attempts' step rows; counting them again would show a crash of the
+    morning in the evening's run. The comparison is by (name, text) with multiplicity, so the
+    same failure happening again in this run is still new."""
+    left = Counter(before)
+    fresh: list[tuple[str, str]] = []
+    for item in failed_items(step, state):
+        if left[item] > 0:
+            left[item] -= 1
+        else:
+            fresh.append(item)
+    return fresh
 
 
 class ItemTracker:
@@ -98,6 +123,7 @@ class ItemTracker:
         self.table = table
         self.journal = journal
         self._active: dict[str, dict[str, Any]] = {}
+        self._failed_before: dict[str, Counter] = {}
         self._lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._writer: threading.Thread | None = None
@@ -133,6 +159,12 @@ class ItemTracker:
             self._active[step.id] = {
                 "step": step, "run": step_run_id, "seen": set(state.get("done") or {}),
                 "last": datetime.now(UTC)}
+            self._failed_before[step.id] = Counter(failed_items(step, state))
+
+    def failed_before(self, step_id: str) -> Counter:
+        """The failures the step's state already held when its current run began."""
+        with self._lock:
+            return Counter(self._failed_before.get(step_id, ()))
 
     def end(self, step_id: str, state: dict) -> None:
         self.observe(state)
@@ -265,7 +297,9 @@ class Runner:
         if impl.finals is not None:
             extra = impl.finals(self.ctx)
         else:
-            extra = [(name, "failed", text) for name, text in failed_items(step, state)]
+            found = (new_failed_items(step, state, self.tracker.failed_before(step.id))
+                     if self.tracker is not None else failed_items(step, state))
+            extra = [(name, "failed", text) for name, text in found]
         for name, outcome, text in extra:
             self.journal.add_item(step_run_id, name, outcome, detail=text)
         with self._lock:

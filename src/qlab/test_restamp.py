@@ -868,3 +868,19 @@ def test_the_switch_to_the_strategys_money_is_a_reason_to_run_again() -> None:
     assert restamp.stale_reasons(
         {"stand": "2026-10-29.1", "rules": "2026-10-28.2", "noise_short": False}, "2026-10-29.1",
         "2026-10-29.1") == []
+
+
+def test_the_report_names_an_idea_once_and_marks_an_entry_of_an_earlier_attempt() -> None:
+    def failed(at: str) -> dict:
+        return {"idea": "frab", "action": "error", "error": "Locked", "at": at, "reasons": [],
+                "steps": ["idea"]}
+
+    block = {"attempt_at": "2026-10-31T08:53:00+00:00", "stand": "s", "rules": "r",
+             "entries": [failed("2026-10-31T04:21:31+00:00"), failed("2026-10-31T04:40:00+00:00"),
+                         {"idea": "top10", "action": "restamped", "seconds": 4787.0,
+                          "at": "2026-10-31T10:13:03+00:00", "steps": ["idea"], "reasons": [],
+                          "before": {}, "after": {}}]}
+    text = "\n".join(restamp.report_lines(block))
+    assert text.count("**frab**") == 1 and "сбоев: 1" in text and "Пересчитано: 1" in text
+    assert "(прошлый запуск этапа этой ночью, 04:40 UTC)" in text
+    assert text.count("прошлый запуск") == 1  # top10 is this attempt's own

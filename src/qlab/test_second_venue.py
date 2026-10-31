@@ -320,7 +320,7 @@ def test_the_stage_stops_between_ideas_when_its_time_is_used(
     assert block["time_up"] is True and block["waits_for_time"] == ["middle", "young"]
     text = "\n".join(second_venue.report_lines(block))
     assert "Время этапа вышло" in text and "`middle`, `young`" in text
-    assert "Этап занял 40 минут из 30 положенных на ночь." in text
+    assert "Последний запуск этапа занял 40 минут из 30 положенных на ночь." in text
 
 
 def test_an_idea_that_does_not_fit_what_is_left_of_the_time_waits_for_another_night(
@@ -419,3 +419,23 @@ def test_the_shipped_night_does_not_run_the_queue_in_tests(monkeypatch) -> None:
     assert night.second_venue_stage(1) is None
     assert night.venue_gap_stage(1) is None
     assert Verdict.__tablename__ == "verdict"
+
+
+def test_the_report_shows_an_idea_once_with_its_last_entry_and_marks_an_earlier_attempt() -> None:
+    """The night's state keeps the day's earlier attempts: the report names an idea once (its
+    last entry), and an entry from before the stage's current attempt says so."""
+    block = {
+        "attempt_at": "2026-10-31T08:53:00+00:00", "owed": 2, "nights": 1, "max_per_night": 4,
+        "entries": [
+            {"idea": "a", "rejected_on": "2026-10-25", "outcome": "error", "error": "Locked",
+             "at": "2026-10-31T02:01:55+00:00", "lines": []},
+            {"idea": "b", "rejected_on": "2026-10-25", "outcome": "error", "error": "Locked",
+             "at": "2026-10-31T03:20:38+00:00", "lines": []},
+            {"idea": "a", "rejected_on": "2026-10-25", "outcome": "rejected",
+             "at": "2026-10-31T11:23:40+00:00", "lines": []}]}
+    text = "\n".join(second_venue.report_lines(block))
+    assert text.count("`a` (отвергнута") == 1 and "отвергнута и на Hyperliquid" in text
+    assert "прогон упал, повторится" in text  # b, which only the morning attempt touched
+    assert ("`b` (отвергнута 2026-10-25): прогон упал, повторится "
+            "(прошлый запуск этапа этой ночью, 03:20 UTC)") in text
+    assert "(прошлый запуск этапа этой ночью, 11:23 UTC)" not in text  # a is this attempt's
