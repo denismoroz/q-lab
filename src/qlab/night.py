@@ -1799,15 +1799,21 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
     night's first agent budget and time; the requests that give the generator a new block go
     first. The stage may spend `night_share` of what the night has left when it starts, divided
     among the night's requests (the planner, the writer and the reviewer of one request share
-    its part), and takes no new request after the stop time. Nothing is merged: a passed
-    request waits for the owner's `qlab code merge`; one the planner stopped with an open
-    question waits for `qlab code answer`. Resumable: an attempt done tonight is not repeated."""
+    its part), and takes no new request after the stop time. A request is a LOOP (owner,
+    2026-10-31): the writer, code's checks and the reviewer repeat in one worktree until the
+    checks pass and the reviewer accepts, at most `max_iterations` times; the iterations share the
+    request's part of the allowance, and when it runs out the request stops where it is, its
+    worktree and remarks kept, and the next night goes on from there. Nothing is merged: an
+    accepted request waits for the owner's `qlab code merge`; one the planner stopped with an open
+    question waits for `qlab code answer`, one that used its iterations for `qlab code retry`.
+    Resumable: a request done tonight is not repeated."""
     from dataclasses import asdict
 
     from qlab.agents import programmer as prog
     from qlab.budget import (
         BudgetExhausted,
         CandidateBudget,
+        CandidateExhausted,
         NightBudget,
         NightExhausted,
         Stage,
@@ -1829,11 +1835,11 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
                      source=f"research director, directions of {directions.date}", day=day)
     prog.save_queue(queue)
     done = {e["id"] for e in entry["entries"]}
-    max_attempts = int(cfg.get("max_attempts", 3))
+    max_iterations = int(cfg.get("max_iterations", prog.DEFAULT_MAX_ITERATIONS))
     per_night = int(cfg.get("per_night", 1))
     share = float(cfg.get("night_share") or 1.0)
     for _ in range(per_night - len(done)):
-        req = prog.next_request(queue, max_attempts, skip=done)
+        req = prog.next_request(queue, max_iterations, skip=done)
         if req is None:
             break
         if past_stop(stop_at, state, "programmer"):
@@ -1847,19 +1853,24 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
                 entry.setdefault("allowance", int(night_budget.tokens_left() * share))
                 spent = sum(e.get("tokens", 0) for e in entry["entries"])
                 cap = max(0, entry["allowance"] - spent) // max(1, per_night - len(done))
-                prog.run_request(req, cfg, session=session, budget=CandidateBudget(
-                    night=night_budget, stage=Stage.IMPLEMENT, idea_id=None, cap_tokens=cap))
+                prog.run_request(
+                    req, cfg, session=session, budget=CandidateBudget(
+                        night=night_budget, stage=Stage.IMPLEMENT, idea_id=None, cap_tokens=cap),
+                    checkpoint=lambda _r: prog.save_queue(queue))
+        except CandidateExhausted as stop:
+            # This request's share of the stage's allowance is spent: the loop stops where it is
+            # (its worktree and remarks are kept) and the next night goes on from there. The other
+            # request of the night has its own share.
+            req.stopped = (f"доля ночного бюджета на этот запрос израсходована после "
+                           f"{req.iterations} итераций ({stop}); рабочая копия сохранена, "
+                           "продолжит в следующую ночь")
         except (NightExhausted, BudgetExhausted) as stop:
             entry["stopped"] = str(stop)
             prog.save_queue(queue)
             save_state(day, state)
             return
         except Exception as exc:  # noqa: BLE001 - a report line, the night goes on
-            req.problems.append(f"{type(exc).__name__}: {exc}")
-            req.status = "failed"
-        if req.status == "failed" and req.attempts >= max_attempts:
-            req.status = "blocked"
-            req.problems.append(f"{max_attempts} attempts failed: the owner decides")
+            prog.environment_stop(req, exc)
         entry["entries"].append(asdict(req))
         done.add(req.id)
         prog.save_queue(queue)

@@ -37,10 +37,24 @@ nobody answered blocks the request BEFORE a writing token is spent; the writer f
    `fix_rounds` passes, and only then is the attempt failed. A retry (the next attempt) EDITS
    the earlier attempt's worktree and branch, like the carder's retry, instead of starting
    from scratch -- a fresh start would break what was right;
-5. a reviewer agent reads the request and the diff; a gap it names blocks the request;
-6. a change that passes is committed on its branch and waits: `qlab code merge <id>` -- the
+5. a reviewer agent reads the request and the diff; what it names goes back to the writer;
+6. a change that passes both is committed on its branch and waits: `qlab code merge <id>` -- the
    owner's command -- merges it into the base branch and pushes; `qlab code reject <id>` drops
    it. Nothing here merges or pushes.
+
+The loop (owner, 2026-10-31: «цикл программист/проверяющий - продолжать пока не заработает
+задача. но не более 7 итераций. программист должен иметь цель сделать работающий код»): steps 2
+to 5 repeat in the SAME worktree -- the writer's pass, code's checks, the reviewer -- until the
+checks pass and the reviewer accepts, at most `max_iterations` (7) times for a request, over as
+many nights as its share of the stage's allowance takes. Before, a reviewer's remark ended the
+request as `blocked` for the owner: two requests that had written working code stopped on an empty
+leftover file, a reformatted import and a family missing from a list, at 5.3M tokens. One
+iteration is one writer pass plus its checks and, when they pass, its review. What does not count:
+an iteration the environment ended (a setup or git step failed), and the planner's stop for an
+unanswered behaviour question, which comes before any writing. The same failure three times in a
+row stops the loop early (`blocked`); seven iterations without acceptance end it as `failed`, with
+the last remarks, for the owner. A stop of the budget in the middle keeps the worktree and the
+remarks, and the next night goes on from there.
 
 The agent's spending goes through the budget guard (`qlab.budget.run_agent`)."""
 
@@ -53,6 +67,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -71,10 +86,12 @@ TOOLS = "Read,Glob,Grep,Write,Edit"
 REVIEW_TOOLS = "Read,Glob,Grep"
 BRANCH_PREFIX = "agent/"
 STATUSES = ("queued", "ready", "failed", "blocked", "merged", "rejected")
-"""queued: waits for a night; ready: passed, waits for the owner's merge; failed: a guard or a
-test failed even after the fix passes (tried again until max_attempts); blocked: the reviewer
-named a gap, or the attempts ran out -- the owner decides; merged / rejected: the owner's
-decision."""
+"""queued: waits for a night (also one the budget or the environment stopped in the middle of its
+loop); ready: the checks passed and the reviewer accepted, waits for the owner's merge; failed:
+`max_iterations` iterations without acceptance (the last remarks are kept; `qlab code retry`);
+blocked: an open behaviour question, the same failure three times, or three stops by the
+environment -- the owner decides; merged / rejected: the owner's decision."""
+DEFAULT_MAX_ITERATIONS = 7
 _TEST = re.compile(r"(^|/)(tests?/|test_[^/]*\.py$)")
 
 
@@ -125,6 +142,11 @@ class Request:
     failures: list[dict] = field(default_factory=list)  # {"attempt", "plan", "sig"} per failure
     env_failures: list[str] = field(default_factory=list)  # tests that fail on the base too
     env_stops: int = 0  # attempts the environment (not the work) ended
+    iterations: int = 0  # writer passes that went through checks and review (the loop's count)
+    remarks: list[str] = field(default_factory=list)  # what the next writer pass must address
+    history: list[dict] = field(default_factory=list)  # {"n", "result", "remarks"} per iteration
+    replan: bool = False  # the owner asked for another try: the planner revises its plan first
+    stopped: str | None = None  # why the last session stopped before the loop ended (budget)
 
 
 def load_queue(path: Path = QUEUE) -> list[Request]:
@@ -178,19 +200,24 @@ def request_kind(req: Request) -> str:
     return "mechanism" if _MECHANISM.search(text) else "other"
 
 
-def runnable(queue: list[Request], max_attempts: int, skip: set[str] = frozenset()
+def _started(req: Request) -> bool:
+    """Work in progress: a worktree with remarks still to address."""
+    return bool(req.worktree) and bool(req.remarks or req.review or req.problems)
+
+
+def runnable(queue: list[Request], max_iterations: int, skip: set[str] = frozenset()
              ) -> list[Request]:
-    """The requests a night may take, in the order it takes them: the ones that give the
-    generator a new block first, then queue order (a request that failed before is not behind a
-    fresh one of its kind: queue order is age)."""
-    todo = [r for r in queue if r.status in ("queued", "failed") and r.attempts < max_attempts
+    """The requests a night may take, in the order it takes them: the ones already begun (their
+    loop goes on in the worktree they have), then the ones that give the generator a new block,
+    then queue order, which is age."""
+    todo = [r for r in queue if r.status == "queued" and r.iterations < max_iterations
             and r.id not in skip]
-    return sorted(todo, key=lambda r: request_kind(r) != "mechanism")  # stable: queue order
+    return sorted(todo, key=lambda r: (not _started(r), request_kind(r) != "mechanism"))
 
 
-def next_request(queue: list[Request], max_attempts: int, skip: set[str] = frozenset()
+def next_request(queue: list[Request], max_iterations: int, skip: set[str] = frozenset()
                  ) -> Request | None:
-    todo = runnable(queue, max_attempts, skip)
+    todo = runnable(queue, max_iterations, skip)
     return todo[0] if todo else None
 
 
@@ -488,6 +515,15 @@ and that does not exist yet. You work in a separate copy of the repository `{rep
 (your working directory), on the branch {branch}; nothing you write reaches the main branch
 unless the owner merges it.
 
+YOUR GOAL is code that WORKS: it does what the request asks, and your own tests prove it by
+exercising the new behaviour with numbers you worked out by hand -- not code that merely gets past
+the checks. After you finish, code runs the whole test command and a reviewer reads the diff. If
+either has a remark, it comes back to you in this same working directory and you go on from what
+is there, until the checks pass and the reviewer accepts ({rounds}). So do not leave a remark for
+the next round that you can see now: a leftover or empty file, a line reformatted without a
+reason, a name missing from a list that names every family are all things to fix before you
+finish, and they are quick.
+
 The request ({source}):
   what: {what}
   why: {why}{strategy}{answers}
@@ -607,8 +643,13 @@ Check, reading the code around the change as needed:
 4. Anything that could reach order placement, an engine, the exchange or stored state in a way
    the old code would read differently?
 
-Reply with lines only: `GAP: <what is wrong, where>` for every problem you are sure of, then a
-last line `VERDICT: OK` if there is none or `VERDICT: GAP` if there is any."""
+Your remarks go straight back to the writer, who fixes them in this same working directory and
+sends the work to you again, so say exactly what to change and where. Name a gap only when
+something is wrong or missing (a wrong behaviour, a missing test, a leftover file, an unrelated
+change, an entry missing from a list that must name every member); a taste in style is not one.
+
+Reply with lines only: `GAP: <what is wrong, where, and what to do>` for every problem you are
+sure of, then a last line `VERDICT: OK` if there is none or `VERDICT: GAP` if there is any."""
 
 
 RETRY_NOTE = """
@@ -617,6 +658,16 @@ now; the files it changed: {files}. Do NOT write it again from scratch: read wha
 everything that is right, and fix exactly what is named below.
 {header}
 {problems}
+"""
+
+ROUND_NOTE = """
+This is round {n} of at most {limit}. The work of the earlier rounds is in your working directory;
+the files changed so far: {files}. Do NOT write it again from scratch: read what is there, keep
+everything that is right, and fix exactly what is named below -- every remark, the small ones too,
+because the work is accepted only when the checks pass and the reviewer has no remark left.
+{reverted}
+Remarks, numbered:
+{remarks}
 """
 
 FIX_NOTE = """
@@ -646,6 +697,15 @@ def continuation(kind: str, problems: list[str], files: list[str], *,
               "The previous attempt was cut short before it finished, with no problem recorded: "
               "finish it, run the tests, and make them pass.")
     return RETRY_NOTE.format(files=shown, header=header, problems=_numbered(problems))
+
+
+def round_note(n: int, limit: int, remarks: list[str], files: list[str], *,
+               reverted: tuple[str, ...] | list[str] = ()) -> str:
+    """The prompt's note for round `n` of the loop, when earlier rounds left remarks."""
+    note = ("Files outside what you may change were found and deleted or restored by code: "
+            + ", ".join(reverted) + ".") if reverted else ""
+    return ROUND_NOTE.format(n=n, limit=limit, files=", ".join(files) if files else "none",
+                             reverted=note, remarks=_numbered(remarks))
 
 
 def review_lines(text: str) -> tuple[bool, list[str]]:
@@ -730,8 +790,9 @@ def failure_signature(problems: list[str]) -> str:
 
 
 def identical_failures(req: Request) -> int:
-    """How many of the latest failures have the same signature."""
-    if not req.failures:
+    """How many of the latest failures have the same signature. The owner's `retry` leaves a
+    marker (no signature) that ends the count: an owner's second wish starts it again."""
+    if not req.failures or req.failures[-1]["sig"] is None:
         return 0
     last, n = req.failures[-1]["sig"], 0
     for entry in reversed(req.failures):
@@ -798,7 +859,7 @@ def plan_request(req: Request, config: dict, worktree: Path, *, budget, session,
     return True
 
 
-def _environment_stop(req: Request, exc: Exception, limit: int = 3) -> Request:
+def environment_stop(req: Request, exc: Exception, limit: int = 3) -> Request:
     """An attempt the environment ended does not count; three in a row wait for the owner."""
     req.attempts = max(0, req.attempts - 1)
     req.env_stops += 1
@@ -810,35 +871,50 @@ def _environment_stop(req: Request, exc: Exception, limit: int = 3) -> Request:
 
 
 def run_request(req: Request, config: dict, *, budget: CandidateBudget | ExplicitNoBudget,
-                session, worktrees: Path = WORKTREES, plans: Path = PLANS) -> Request:
-    """One attempt at one request: worktree (a retry's brought onto the base's tip and made
-    ready), the planner (when `planner_model` is set: a plan, or an open question that stops the
-    request before a writing token is spent), the writer agent (which runs the tests itself as it
-    works), code's checks -- a failed check sends the same worktree back to the writer for a fix
-    pass, up to `fix_rounds` times -- then review and commit. From the second attempt the earlier
-    attempt's worktree is edited, not recreated, and the planner revises its plan by why the
-    attempt failed. Every agent call goes through the budget guard; a stop (BudgetExhausted) in
-    the middle leaves the worktree and the request as they are, and the next night continues in
-    them. An attempt the environment ended (EnvironmentFailure) is not counted."""
+                session, worktrees: Path = WORKTREES, plans: Path = PLANS,
+                checkpoint: Callable[[Request], None] | None = None) -> Request:
+    """One session at one request: the loop of the writer, code's checks and the reviewer in one
+    worktree until the checks pass and the reviewer accepts, `max_iterations` times at most.
+
+    The worktree of an earlier session is edited, not recreated (brought onto the base's tip and
+    made ready first); the planner (when `planner_model` is set) writes the plan once -- or an
+    open question stops the request before a writing token is spent -- and revises it only when
+    the owner asked for another try (`retry`). Every agent call goes through the budget guard; a
+    stop (BudgetExhausted) in the middle leaves the worktree, the remarks and the count of
+    finished iterations as they are, and the next night continues in them. A session the
+    environment ended (EnvironmentFailure) does not count. `checkpoint(req)` is called after every
+    finished iteration, so a crash cannot lose them."""
     try:
         return _attempt(req, config, budget=budget, session=session, worktrees=worktrees,
-                        plans=plans)
+                        plans=plans, checkpoint=checkpoint)
     except EnvironmentFailure as exc:
-        return _environment_stop(req, exc)
+        return environment_stop(req, exc)
 
 
-def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, plans: Path
-             ) -> Request:
+def iteration_signature(problems: list[str], gaps: list[str]) -> str:
+    """What an unaccepted iteration failed ON: the checks' problems, else the reviewer's gaps."""
+    if problems:
+        return failure_signature(problems)
+    return failure_signature([f"reviewer: {g}" for g in gaps])
+
+
+def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, plans: Path,
+             checkpoint: Callable[[Request], None] | None) -> Request:
     repo_cfg = config["repos"][req.repo]
     repo_path = _abs(Path(repo_cfg["path"]))
     base = repo_cfg.get("base", "main")
-    earlier = [*req.problems, *(f"reviewer: {g}" for g in req.review)]
-    interrupted = bool(req.plan) and req.status == "queued" and req.attempts > 0
+    limit = int(config.get("max_iterations", DEFAULT_MAX_ITERATIONS))
+    # What the first writer pass of this session must address: the remarks of the last finished
+    # iteration (kept in `remarks`, so a stop in the middle of an iteration loses none), or, for
+    # a request that was ended the old way, its problems and the reviewer's gaps.
+    earlier = list(req.remarks) or [
+        *(p for p in req.problems if not p.startswith("environment:")),
+        *(f"reviewer: {g}" for g in req.review)]
     req.attempts += 1
-    req.problems, req.review, req.reply, req.fix_passes = [], [], None, 0
+    req.reply, req.fix_passes, req.stopped = None, 0, None
     req.env_failures, req.plan_tokens = [], 0
-    # An earlier attempt's worktree is edited, not recreated -- also when the count was reset
-    # (the owner's answer, or an attempt the environment ended): the work in it is kept.
+    # An earlier session's worktree is edited, not recreated -- also when the count was reset
+    # (the owner's answer, or a session the environment ended): the work in it is kept.
     worktree = reuse_worktree(repo_path, req, root=worktrees)
     continuing = worktree is not None
     if worktree is not None:
@@ -863,25 +939,28 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
     test_command = list(repo_cfg["test_command"])
     tools = tools_pattern(test_command)
     model, max_turns = config.get("model", "sonnet"), int(config.get("max_turns", 60))
-    if config.get("planner_model") and not interrupted and not plan_request(
-            req, config, worktree, budget=budget, session=session,
-            earlier=earlier,
-            files=changed_paths(worktree) if continuing else [], plans=plans):
-        if req.status == "blocked":
-            req.attempts = max(0, req.attempts - 1)  # nothing was written: not a failed attempt
-            if not continuing:  # no work in it worth keeping
-                drop_worktree(req, config, delete_branch=True)
-                req.worktree = req.branch = None
-        return req
+    if config.get("planner_model") and (not req.plan or req.replan):
+        if not plan_request(
+                req, config, worktree, budget=budget, session=session,
+                earlier=earlier if req.replan else [],
+                files=changed_paths(worktree) if continuing else [], plans=plans):
+            if req.status == "blocked":
+                req.attempts = max(0, req.attempts - 1)  # nothing was written: not an attempt
+                if not continuing:  # no work in it worth keeping
+                    drop_worktree(req, config, delete_branch=True)
+                    req.worktree = req.branch = None
+            return req
+        req.replan = False
+    req.remarks = earlier
     plan_block = PLAN_BLOCK.format(plan=req.plan) if req.plan else ""
 
-    def call(note: str) -> int:
-        """One agent call in the worktree; the agent's reply and the spend are recorded."""
+    def call(note: str, n: int) -> int:
+        """One writer pass in the worktree; the agent's reply and the spend are recorded."""
         prompt = INSTRUCTIONS.format(
             repo=req.repo, worktree=worktree, branch=req.branch, source=req.source,
             what=req.what, why=req.why,
             strategy=f"\n  strategy: {req.strategy}" if req.strategy else "",
-            answers=_answers(req), plan=plan_block,
+            answers=_answers(req), plan=plan_block, rounds=f"round {n} of at most {limit}",
             allowed=", ".join(allowed), repo_rule=FRAB_RULE if req.repo == "frab" else "",
             tests=" ".join(test_command), prefix=tests_prefix(test_command), previous=note)
         result = run_agent(budget, prompt, session=session, agent="programmer", model=model,
@@ -890,46 +969,62 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
         req.tokens = getattr(budget, "spent_tokens", 0)
         return result.exit_code
 
-    note = (continuation("retry", ["\n".join(e.splitlines()[:20]) for e in earlier],
-                         changed_paths(worktree)) if continuing else "")
-    exit_code = call(note)
+    reverted: list[str] = []
     while True:
+        n = req.iterations + 1
+        note = (round_note(n, limit, req.remarks, changed_paths(worktree), reverted=reverted)
+                if req.remarks else "")
+        exit_code = call(note, n)
         check = check_worktree(worktree, repo_cfg, config, worktrees)
         req.env_failures = check.env_failed
+        reverted = check.reverted
         stopped = ([f"the agent stopped before finishing (exit {exit_code})"]
                    if exit_code != 0 else [])
-        req.problems = stopped + check.problems
-        if not req.problems:
-            break
-        if req.fix_passes >= int(config.get("fix_rounds", 3)):
-            req.status = "failed"
-            req.failures.append({"attempt": req.attempts, "plan": req.plan_hash,
-                                 "sig": failure_signature(req.problems)})
-            if identical_failures(req) >= 3:
-                req.status = "blocked"
-                req.problems.append("the same failure three times: the owner decides")
+        problems = stopped + check.problems
+        gaps: list[str] = []
+        if not problems:
+            diff, req.diffstat = diff_text(worktree)
+            review = run_agent(
+                budget, REVIEW.format(repo=req.repo, branch=req.branch, what=req.what,
+                                      why=req.why, diff=diff[:60_000]),
+                session=session, agent="programmer-review",
+                model=config.get("reviewer_model", "sonnet"), max_turns=20, cwd=worktree,
+                extra_args=("--allowedTools", REVIEW_TOOLS, "--disallowedTools", "Bash,Write,Edit"))
+            req.tokens = getattr(budget, "spent_tokens", 0)
+            accepted, gaps = review_lines(review.text or "")
+            if accepted:
+                req.iterations, req.env_stops = n, 0
+                req.history.append({"n": n, "result": "accepted", "remarks": 0})
+                req.problems, req.review, req.remarks = [], [], []
+                _git(worktree, "commit", "-q", "-m",
+                     f"{req.what[:60]} (programmer agent, request {req.id})\n\n"
+                     f"Why: {req.why}\nSource: {req.source}\n\n{req.reply[:800]}")
+                req.commit = _git(worktree, "rev-parse", "HEAD").strip()
+                req.status = "ready"
+                if checkpoint is not None:
+                    checkpoint(req)
+                return req
+        # Not accepted: the remarks go back to the writer for the next round, in the same worktree.
+        req.iterations, req.env_stops = n, 0
+        req.fix_passes += 1 if problems else 0
+        req.problems, req.review = problems, gaps
+        req.remarks = (stopped + check.detail) if problems else [f"reviewer: {g}" for g in gaps]
+        req.history.append({"n": n, "result": "checks" if problems else "review",
+                            "remarks": len(problems) or len(gaps)})
+        req.failures.append({"attempt": req.attempts, "iteration": n, "plan": req.plan_hash,
+                             "sig": iteration_signature(problems, gaps)})
+        if checkpoint is not None:
+            checkpoint(req)
+        if identical_failures(req) >= 3:
+            req.status = "blocked"
+            req.problems.append("the same failure three times: the owner decides")
             return req
-        req.fix_passes += 1
-        exit_code = call(continuation("fix", stopped + check.detail, changed_paths(worktree),
-                                      reverted=check.reverted))
-    diff, req.diffstat = diff_text(worktree)
-    review = run_agent(budget, REVIEW.format(repo=req.repo, branch=req.branch, what=req.what,
-                                             why=req.why, diff=diff[:60_000]),
-                       session=session, agent="programmer-review",
-                       model=config.get("reviewer_model", "sonnet"), max_turns=20, cwd=worktree,
-                       extra_args=("--allowedTools", REVIEW_TOOLS,
-                                   "--disallowedTools", "Bash,Write,Edit"))
-    req.tokens = getattr(budget, "spent_tokens", 0)
-    ok, req.review = review_lines(review.text or "")
-    if not ok:
-        req.status = "blocked"
-        return req
-    _git(worktree, "commit", "-q", "-m",
-         f"{req.what[:60]} (programmer agent, request {req.id})\n\n"
-         f"Why: {req.why}\nSource: {req.source}\n\n{req.reply[:800]}")
-    req.commit = _git(worktree, "rev-parse", "HEAD").strip()
-    req.status = "ready"
-    return req
+        if req.iterations >= limit:
+            req.status = "failed"
+            req.problems = [f"{limit} iterations without the checks passing and the reviewer "
+                            "accepting: the last remarks follow; the owner decides "
+                            f"(`qlab code retry {req.id}`)", *req.problems]
+            return req
 
 
 # --------------------------------------------------------------------------
@@ -992,7 +1087,8 @@ def reject(req: Request, config: dict, reason: str) -> None:
 
 
 _STATUS_RU = {"queued": "в очереди", "ready": "готово, ждёт вашего слияния",
-              "failed": "не вышло", "blocked": "остановлено, решает владелец",
+              "failed": "не вышло за предел итераций, решает владелец",
+              "blocked": "остановлено, решает владелец",
               "merged": "слито", "rejected": "отклонено"}
 
 
@@ -1012,7 +1108,38 @@ def answer(req: Request, text: str) -> None:
     req.answers.append(f"{datetime.now(UTC).date().isoformat()}: {text.strip()}")
     req.questions, req.plan, req.plan_file, req.plan_hash = [], None, None, None
     req.failures, req.problems, req.attempts, req.env_stops = [], [], 0, 0
+    req.iterations, req.remarks, req.replan = 0, [], False
     req.status = "queued"
+
+
+def retry(req: Request, text: str | None = None) -> None:
+    """THE OWNER'S WISH for another try at a request the loop gave up on (`failed`: the iterations
+    ran out; `blocked` by the same failure three times or by the environment): a clean count of
+    iterations, the worktree and the work in it kept, the planner revises its plan by the last
+    remarks, and the owner's text (when given) is the first thing the writer is told. A request
+    waiting for an answer to a question is answered with `answer`, not retried."""
+    if req.status not in ("failed", "blocked") or req.questions:
+        raise ValueError(f"request {req.id} is {req.status}"
+                         + (" and waits for an answer" if req.questions else "")
+                         + ": there is nothing to retry")
+    last = [*(p for p in req.problems if not p.startswith("environment:")),
+            *(f"reviewer: {g}" for g in req.review)]
+    req.remarks = [*([f"the owner: {text.strip()}"] if text and text.strip() else []),
+                   *(req.remarks or last)]
+    req.iterations, req.env_stops, req.replan = 0, 0, True
+    req.failures.append({"retry": True, "sig": None})
+    req.status = "queued"
+
+
+_RESULT_RU = {"checks": "проверки кодом не прошли", "review": "замечания проверяющего",
+              "accepted": "принято"}
+
+
+def _iterations_ru(history: list[dict]) -> str:
+    """`1 проверки кодом не прошли (2) → 2 принято`: how each finished iteration ended."""
+    return " → ".join(
+        f"{h['n']} {_RESULT_RU.get(h['result'], h['result'])}"
+        + (f" ({h['remarks']})" if h.get("remarks") else "") for h in history)
 
 
 def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
@@ -1021,7 +1148,10 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
              "основную ветку ничего не попадает без владельца (`qlab code merge <id>`). Два "
              "уровня: планировщик (Opus) читает запрос и код и пишет план, исполнитель (Sonnet) "
              "пишет по плану; вопрос о поведении стратегии, на который никто не ответил, "
-             "останавливает запрос до того, как потрачены токены на код.", ""]
+             "останавливает запрос до того, как потрачены токены на код. Дальше цикл: писатель, "
+             "проверка кодом, проверяющий; замечания возвращаются писателю в ту же рабочую "
+             "копию, пока проверки не пройдут и проверяющий не примет, но не больше 7 итераций "
+             "на запрос.", ""]
     for e in entries:
         lines.append(f"- **{e['id']}** ({e['repo']}): {e['what']} — "
                      f"{_STATUS_RU.get(e['status'], e['status'])}; {e.get('tokens', 0):,} "
@@ -1032,9 +1162,11 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
             if e.get("plan"):
                 lines.append(f"    - суть плана: {_plan_gist(e['plan'])}")
         lines += [f"    - вопрос владельцу: {q}" for q in e.get("questions") or []]
-        if e.get("fix_passes"):
-            lines.append(f"    - исправлений по ходу работы (после проверки кодом): "
-                         f"{e['fix_passes']}")
+        if e.get("history"):
+            lines.append("    - итерации (писатель, проверка кодом, проверяющий): "
+                         + _iterations_ru(e["history"]) + f"; всего {e.get('iterations', 0)}")
+        if e.get("stopped"):
+            lines.append(f"    - {e['stopped']}")
         if e.get("env_failures"):
             lines.append(f"    - упавших тестов, которые падают и на чистой основной ветке "
                          f"(это среда, а не работа агента; исправлений на них не тратилось): "
@@ -1044,14 +1176,23 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
         if e.get("status") == "ready":
             lines.append(f"    - ветка `{e['branch']}`; изменения: "
                          f"{(e.get('diffstat') or '').strip().splitlines()[-1:]}")
-    waiting = [r for r in queue if r.status in ("ready", "blocked")]
+    waiting = [r for r in queue if r.status in ("ready", "blocked", "failed")]
     if waiting:
         lines += ["", "Ждут вашего решения:"]
         for r in waiting:
             lines.append(f"- {r.id} ({r.repo}): {r.what} — {_STATUS_RU[r.status]}")
             lines += [f"    - вопрос: {q} (ответ: `qlab code answer {r.id} --text \"...\"`)"
                       for q in r.questions]
-    queued = [r for r in queue if r.status in ("queued", "failed")]
+            if r.status == "failed":
+                lines += [f"    - последнее замечание: {p.splitlines()[0]}" for p in r.problems[1:]]
+                lines += [f"    - последнее замечание проверяющего: {g}" for g in r.review]
+                lines.append(f"    - ещё одна попытка: `qlab code retry {r.id}` (можно с "
+                             "`--text \"...\"`: это скажут писателю первым)")
+    started = [r for r in queue if r.status == "queued" and _started(r)]
+    if started:
+        lines += ["", "Начатые, продолжатся первыми в той же рабочей копии:"]
+        lines += [f"- {r.id} ({r.repo}): {r.what}; итераций {r.iterations}" for r in started]
+    queued = [r for r in queue if r.status == "queued"]
     if queued:
         first = sum(1 for r in queued if request_kind(r) == "mechanism")
         lines.append(f"В очереди: {len(queued)} (из них даёт генератору новый блок: {first}; "
@@ -1059,9 +1200,10 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
     return lines
 
 
-__all__ = ["CONFIG", "PLANS", "QUEUE", "EnvironmentFailure", "Request", "answer", "changed_paths",
-           "diff_text", "drop_worktree", "enqueue", "failure_signature", "judge_tests",
-           "load_config", "load_queue", "make_worktree", "merge", "next_request", "parse_plan",
-           "path_problems", "plan_request", "reject", "report_lines", "request_kind",
-           "reuse_worktree", "review_lines", "run_request", "run_tests", "runnable", "save_queue",
-           "sync_worktree", "tests_prefix", "tools_pattern"]
+__all__ = ["CONFIG", "DEFAULT_MAX_ITERATIONS", "PLANS", "QUEUE", "EnvironmentFailure", "Request",
+           "answer", "changed_paths", "diff_text", "drop_worktree", "enqueue", "environment_stop",
+           "failure_signature", "iteration_signature", "judge_tests", "load_config", "load_queue",
+           "make_worktree", "merge", "next_request", "parse_plan", "path_problems", "plan_request",
+           "reject", "report_lines", "request_kind", "retry", "reuse_worktree", "review_lines",
+           "round_note", "run_request", "run_tests", "runnable", "save_queue", "sync_worktree",
+           "tests_prefix", "tools_pattern"]

@@ -32,14 +32,24 @@ per_night: 2         # one after another: the tests and the budget guard's sessi
 night_share: 0.5
 # Owner, 2026-10-28: «добавь в инструкцию доводить тесты до конца - если ошибка в них и в
 # коде - не останавливаться после пары попыток». The first real request (2026-10-26-1) stopped
-# after two attempts on the agent's OWN wrong test (its comment said the 30-day return was -5%,
-# the prices it built gave 0%) because the agent could not run anything and each retry began
-# from scratch. So: the agent runs the repository's test command itself (and nothing else in
-# the shell); a failed check by code sends the same worktree back for up to `fix_rounds` fix
-# passes inside one attempt; a retry edits the earlier attempt's worktree instead of
-# recreating it; a request that failed `max_attempts` times waits for the owner.
-max_attempts: 3
-fix_rounds: 3
+# after two attempts on the agent's OWN wrong test because the agent could not run anything and
+# each retry began from scratch. So: the agent runs the repository's test command itself (and
+# nothing else in the shell), and a retry edits the earlier work's worktree instead of
+# recreating it.
+#
+# Owner, 2026-10-31: «цикл программист/проверяющий - продолжать пока не заработает задача. но не
+# более 7 итераций. программист должен иметь цель сделать работающий код». Before, a reviewer's
+# remark ended a request as `blocked` for the owner: 2026-10-28-1 and 2026-10-28-2 had written
+# working code and stopped on an empty leftover file, a reformatted import and a family missing
+# from a list, 5.3M tokens. Now the writer, code's checks and the reviewer repeat in the SAME
+# worktree until the checks pass and the reviewer accepts: at most this many iterations for a
+# request, one iteration being one writer pass plus its checks and, when they pass, its review.
+# An iteration the environment ended does not count; the same failure three times in a row stops
+# the loop early (`blocked`); after the last iteration the request is `failed`, with the last
+# remarks, for the owner (`qlab code retry`). The iterations share the request's part of the
+# stage's allowance (`night_share`); when it runs out the request stops where it is, worktree
+# and remarks kept, and the next night goes on.
+max_iterations: 7
 # What a worktree lacks that the tests read (2026-10-30, request 2026-10-28-1: 34 tests failed
 # in its worktree and none because of its work). Worktrees live in data/programmer/worktrees, so
 # the sibling repository the tests cite as `<checkout>/../funding-rate-arbitrage` is looked for

@@ -67,7 +67,7 @@ def _stage_world(tmp_path, monkeypatch, texts, **config):
         def tokens_left(self) -> int:
             return 1_000_000
 
-    def fake_run_request(req, cfg, *, budget, session):
+    def fake_run_request(req, cfg, *, budget, session, checkpoint=None):
         seen.append({"id": req.id, "cap": budget.cap_tokens})
         req.attempts += 1
         req.status, req.tokens = "ready", 100_000
@@ -120,7 +120,7 @@ def test_a_budget_stop_keeps_the_request_for_the_next_night(tmp_path, monkeypatc
 
     cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Блок сигнала: x", "Add a flag"])
 
-    def stopped(req, cfg, *, budget, session):
+    def stopped(req, cfg, *, budget, session, checkpoint=None):
         raise NightExhausted("the night's budget is spent")
 
     monkeypatch.setattr(prog, "run_request", stopped)
@@ -134,6 +134,59 @@ def test_the_programmer_config_is_two_levels_two_a_night_with_a_ready_environmen
     cfg = prog.load_config()
     assert cfg["planner_model"] == "opus" and cfg["model"] == "sonnet"
     assert cfg["per_night"] == 2 and 0 < cfg["night_share"] <= 1
-    assert cfg["max_attempts"] == 3
+    assert cfg["max_iterations"] == 7  # the writer/reviewer loop (owner, 2026-10-31)
     assert Path(cfg["siblings"]["funding-rate-arbitrage"]).name == "funding-rate-arbitrage"
     assert cfg["repos"]["qlab"]["prepare"] == [["uv", "run", "qlab", "init-db"]]
+
+
+def test_a_request_whose_share_runs_out_stops_where_it_is_and_the_other_one_goes_on(
+        tmp_path, monkeypatch) -> None:
+    """The writer/reviewer loop of a request shares the stage's allowance. When its own part is
+    spent it stops cleanly (worktree and remarks kept, queued for the next night) and the night's
+    other request still gets its part; only the night's own ceiling stops the whole stage."""
+    from qlab.budget import CandidateExhausted
+
+    cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Блок сигнала: x", "Add a flag"])
+    checkpoints: list[str] = []
+
+    def run(req, cfg, *, budget, session, checkpoint=None):
+        seen.append({"id": req.id, "cap": budget.cap_tokens})
+        checkpoint(req)  # the stage saves the queue after every finished iteration
+        checkpoints.append(req.id)
+        if req.id == "2026-10-30-1":
+            req.iterations = 3
+            raise CandidateExhausted("used 250,000 of 250,000 tokens")
+        req.attempts += 1
+        req.status, req.tokens = "ready", 50_000
+        return req
+
+    monkeypatch.setattr(prog, "run_request", run)
+    state: dict = {"done": {}}
+    real_programmer_stage(DAY, state, config=cfg)
+    assert [s["id"] for s in seen] == ["2026-10-30-1", "2026-10-30-2"]  # both got a part
+    first, second = state["programmer"]["entries"]
+    assert first["status"] == "queued" and first["iterations"] == 3
+    assert "после 3 итераций" in first["stopped"]
+    assert "продолжит в следующую ночь" in first["stopped"]
+    assert second["status"] == "ready" and "stopped" not in state["programmer"]
+    assert [r.status for r in held["queue"]] == ["queued", "ready"]
+    assert checkpoints == ["2026-10-30-1", "2026-10-30-2"]
+    # the report says where the loop is and that it goes on first next night
+    text = "\n".join(prog.report_lines([first], held["queue"]))
+    assert "доля ночного бюджета на этот запрос израсходована" in text
+
+
+def test_an_unexpected_crash_is_not_a_failed_attempt_and_the_request_waits_for_the_next_night(
+        tmp_path, monkeypatch) -> None:
+    cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Add a flag"])
+
+    def crash(req, cfg, *, budget, session, checkpoint=None):
+        req.attempts += 1
+        raise OSError("disk full")
+
+    monkeypatch.setattr(prog, "run_request", crash)
+    state: dict = {"done": {}}
+    real_programmer_stage(DAY, state, config=cfg)
+    (request,) = held["queue"]
+    assert request.status == "queued" and request.attempts == 0 and request.env_stops == 1
+    assert "OSError: disk full" in request.problems[0]

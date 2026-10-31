@@ -1591,7 +1591,7 @@ def code_list() -> None:
     from qlab.agents import programmer as prog
 
     for r in prog.load_queue():
-        typer.echo(f"{r.id}  {r.repo:5s} {r.status:8s} attempts {r.attempts}  "
+        typer.echo(f"{r.id}  {r.repo:5s} {r.status:8s} iterations {r.iterations}  "
                    f"{prog.request_kind(r):9s} {r.what}" + (f"  [{r.branch}]" if r.branch else ""))
         if r.plan_file:
             typer.echo(f"    plan: {r.plan_file} ({r.plan_tokens:,} planner tokens)")
@@ -1618,6 +1618,22 @@ def code_answer(request_id: str = typer.Argument(...),
         raise typer.Exit(code=1) from exc
     prog.save_queue(queue)
     typer.echo(f"{req.id}: queued with your answer")
+
+
+@code_app.command("retry")
+def code_retry(request_id: str = typer.Argument(...),
+               text: str | None = typer.Option(None, "--text", help="Said to the writer first")
+               ) -> None:
+    """THE OWNER'S WISH for another try at a request that used its iterations (or was stopped by
+    the same failure three times): a clean count, the worktree and its work kept, a revised plan."""
+    prog, queue, req = _code_request(request_id)
+    try:
+        prog.retry(req, text)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: queued for another try (the planner revises its plan first)")
 
 
 @code_app.command("request")
@@ -1652,11 +1668,14 @@ def code_run(request_id: str = typer.Argument(..., help="The request to attempt 
 
     prog, queue, req = _code_request(request_id)
     config = prog.load_config()
-    with session_scope() as session:
-        prog.run_request(req, config, budget=open_candidate(session, None, Stage.IMPLEMENT),
-                         session=session)
-    prog.save_queue(queue)
-    typer.echo(f"{req.id}: {req.status}; {req.tokens:,} tokens; branch {req.branch}")
+    try:
+        with session_scope() as session:
+            prog.run_request(req, config, budget=open_candidate(session, None, Stage.IMPLEMENT),
+                             session=session, checkpoint=lambda _r: prog.save_queue(queue))
+    finally:
+        prog.save_queue(queue)  # a stop of the budget keeps the loop where it is
+    typer.echo(f"{req.id}: {req.status}; iterations {req.iterations}; {req.tokens:,} tokens; "
+               f"branch {req.branch}")
     for problem in req.problems + [f"review: {g}" for g in req.review]:
         typer.echo(f"  {problem}")
 

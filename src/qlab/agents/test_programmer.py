@@ -110,6 +110,7 @@ def test_a_passing_change_waits_on_its_branch_and_merges_only_on_the_owners_comm
                      worktrees=tmp_path / "wt")
     assert req.status == "ready", req.problems
     assert calls == ["programmer", "programmer-review"]
+    assert req.iterations == 1 and req.history == [{"n": 1, "result": "accepted", "remarks": 0}]
     assert req.branch == f"agent/{req.id}" and req.commit
     assert "window" not in (repo / "pkg" / "strategy" / "signal.py").read_text()  # main untouched
     head = prog.merge(req, _config(repo))
@@ -125,8 +126,8 @@ def test_a_change_outside_the_allowed_paths_fails(repo, tmp_path, monkeypatch):
 
     _agent(monkeypatch, outside)
     req = _request([])
-    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("test"), session=None,
-                     worktrees=tmp_path / "wt")
+    prog.run_request(req, _config(repo, max_iterations=1), budget=ExplicitNoBudget("test"),
+                     session=None, worktrees=tmp_path / "wt")
     assert req.status == "failed"
     assert any("README.md is outside" in p for p in req.problems)
 
@@ -137,27 +138,34 @@ def test_a_change_without_a_test_or_with_a_failing_one_fails(repo, tmp_path, mon
 
     _agent(monkeypatch, no_test)
     req = _request([])
-    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("test"), session=None,
+    one = _config(repo, max_iterations=1)
+    prog.run_request(req, one, budget=ExplicitNoBudget("test"), session=None,
                      worktrees=tmp_path / "wt")
     assert req.status == "failed" and any("no test" in p for p in req.problems)
+    prog.retry(req)
 
     def breaks_default(wt: Path) -> None:
         (wt / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 7\n")
         (wt / "pkg" / "strategy" / "tests" / "test_new.py").write_text("def test_x():\n    pass\n")
 
     _agent(monkeypatch, breaks_default)
-    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("test"), session=None,
+    prog.run_request(req, one, budget=ExplicitNoBudget("test"), session=None,
                      worktrees=tmp_path / "wt")
     assert req.status == "failed" and any("the tests failed" in p for p in req.problems)
     assert req.attempts == 2
 
 
-def test_a_gap_the_reviewer_names_blocks_the_request(repo, tmp_path, monkeypatch):
-    _agent(monkeypatch, _good_change, review="GAP: the default path changed\nVERDICT: GAP")
+def test_a_gap_the_reviewer_names_goes_back_to_the_writer_not_to_the_owner(
+        repo, tmp_path, monkeypatch):
+    """Before 2026-10-31 a remark ended the request as `blocked`; now it is the next round's
+    input. The same remark three times in a row is the loop's early stop."""
+    calls = _agent(monkeypatch, _good_change, review="GAP: the default path changed\nVERDICT: GAP")
     req = _request([])
     prog.run_request(req, _config(repo), budget=ExplicitNoBudget("test"), session=None,
                      worktrees=tmp_path / "wt")
     assert req.status == "blocked" and req.review == ["the default path changed"]
+    assert req.iterations == 3 and calls.count("programmer") == 3  # not 7: the same remark
+    assert "the same failure three times" in req.problems[-1]
     assert req.commit is None
     prog.reject(req, _config(repo), "not now")
     assert req.status == "rejected" and req.branch not in _git(repo, "branch")
@@ -224,14 +232,15 @@ def test_a_retry_is_told_why_the_last_attempt_failed(repo, tmp_path, monkeypatch
         (wt / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 14\nX = 1\n")
 
     calls = _agent(monkeypatch, no_test)
-    cfg = _config(repo, fix_rounds=0)
+    cfg = _config(repo, max_iterations=1)
     req = _request([])
     prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
+    prog.retry(req)
     prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
-    assert "previous attempt" not in calls.prompts[0]
-    assert "previous attempt" in calls.prompts[1]
+    assert "This is round" not in calls.prompts[0]
+    assert "This is round 1 of at most 1" in calls.prompts[1]
     assert "no test among the changes" in calls.prompts[1]
 
 
@@ -257,17 +266,17 @@ def test_the_shell_pattern_is_the_test_commands_prefix():
     assert prog.tests_prefix(["python", "-m", "pytest", "-q", "pkg"]) == "python -m pytest"
 
 
-def test_the_repositories_config_allows_three_attempts_and_three_fix_rounds():
+def test_the_repositories_config_allows_seven_iterations_of_the_loop():
     config = prog.load_config()
-    assert config["max_attempts"] == 3 and config["fix_rounds"] == 3
+    assert config["max_iterations"] == 7
     for name, repo_cfg in config["repos"].items():
         assert prog.tests_prefix(repo_cfg["test_command"]) == "uv run pytest", name
     queue: list = []
     req = _request(queue)
-    req.attempts = 2
-    assert prog.next_request(queue, config["max_attempts"]) is req  # the third attempt is allowed
-    req.attempts = 3
-    assert prog.next_request(queue, config["max_attempts"]) is None
+    req.iterations = 6
+    assert prog.next_request(queue, config["max_iterations"]) is req  # the seventh is allowed
+    req.iterations = 7
+    assert prog.next_request(queue, config["max_iterations"]) is None
 
 
 def _wrong_then_right(wt: Path, n: int) -> None:
@@ -289,15 +298,17 @@ def test_a_failing_code_run_sends_the_same_worktree_back_for_a_fix_pass(
     assert req.status == "ready", req.problems
     assert calls == ["programmer", "programmer", "programmer-review"]
     assert req.attempts == 1 and req.fix_passes == 1 and req.problems == []
+    assert req.iterations == 2 and [h["result"] for h in req.history] == ["checks", "accepted"]
     assert calls.cwds[0] == calls.cwds[1]  # one worktree for both passes
     fix = calls.prompts[1]
-    assert "did NOT pass" in fix and "the tests failed" in fix and "14 == 15" in fix
-    assert "1. " in fix  # the problems are numbered
+    assert "round 2 of at most 7" in fix and "the tests failed" in fix and "14 == 15" in fix
+    assert "1. " in fix  # the remarks are numbered
     written = Path(req.worktree) / "pkg/strategy/tests/test_window_setting.py"
     assert "15" not in written.read_text()
 
 
-def test_fix_rounds_are_bounded_and_then_the_attempt_fails(repo, tmp_path, monkeypatch):
+def test_the_iterations_are_bounded_and_then_the_request_fails_with_the_last_remarks(
+        repo, tmp_path, monkeypatch):
     def always_wrong(wt: Path) -> None:
         _good_change(wt)
         (wt / "pkg" / "strategy" / "tests" / "test_window_setting.py").write_text(
@@ -306,14 +317,13 @@ def test_fix_rounds_are_bounded_and_then_the_attempt_fails(repo, tmp_path, monke
 
     calls = _agent(monkeypatch, always_wrong)
     req = _request([])
-    prog.run_request(req, _config(repo, fix_rounds=2), budget=ExplicitNoBudget("t"),
+    prog.run_request(req, _config(repo, max_iterations=2), budget=ExplicitNoBudget("t"),
                      session=None, worktrees=tmp_path / "wt")
-    assert req.status == "failed" and req.attempts == 1 and req.fix_passes == 2
-    assert calls == ["programmer"] * 3  # the first pass and two fix passes, no review
-    assert any("the tests failed" in p for p in req.problems)
-    prog.run_request(req, _config(repo, fix_rounds=0), budget=ExplicitNoBudget("t"),
-                     session=None, worktrees=tmp_path / "wt")
-    assert calls.count("programmer") == 4 and req.fix_passes == 0  # fix_rounds 0: no fix pass
+    assert req.status == "failed" and req.attempts == 1 and req.iterations == 2
+    assert calls == ["programmer"] * 2  # no review while the checks fail
+    assert "2 iterations without" in req.problems[0] and f"qlab code retry {req.id}" in \
+        req.problems[0]
+    assert any("the tests failed" in p for p in req.problems[1:])  # the last remarks
 
 
 def test_a_retry_edits_the_earlier_worktree_instead_of_recreating_it(
@@ -324,7 +334,7 @@ def test_a_retry_edits_the_earlier_worktree_instead_of_recreating_it(
         _wrong_then_right(wt, n)
 
     calls = _agent(monkeypatch, first_wrong_then_right)
-    cfg = _config(repo, fix_rounds=0)
+    cfg = _config(repo, max_iterations=1)
     req = _request([])
     prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
@@ -332,6 +342,7 @@ def test_a_retry_edits_the_earlier_worktree_instead_of_recreating_it(
     first_worktree, first_branch = req.worktree, req.branch
     marker = Path(first_worktree) / "pkg" / "strategy" / "marker.py"
     marker.write_text("KEPT = True\n")  # work of the earlier attempt a fresh start would lose
+    prog.retry(req)
     prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
     assert req.status == "ready", req.problems
@@ -339,8 +350,8 @@ def test_a_retry_edits_the_earlier_worktree_instead_of_recreating_it(
     assert calls.cwds[0] == calls.cwds[1]
     assert marker.is_file()
     retry = calls.prompts[1]
-    assert "CONTINUATION" in retry and "marker.py" in retry and "the tests failed" in retry
-    assert "from scratch again now" not in retry
+    assert "Do NOT write it again from scratch" in retry and "marker.py" in retry
+    assert "the tests failed" in retry
 
 
 def test_a_retry_without_an_earlier_worktree_starts_fresh(repo, tmp_path, monkeypatch):
@@ -351,7 +362,8 @@ def test_a_retry_without_an_earlier_worktree_starts_fresh(repo, tmp_path, monkey
     prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
                      worktrees=tmp_path / "wt")
     assert req.status == "ready", req.problems
-    assert "CONTINUATION" not in calls.prompts[0]
+    assert "files changed so far: none" in calls.prompts[0]  # nothing of the earlier work is there
+    assert "something" in calls.prompts[0]
 
 
 def test_a_stray_file_is_undone_by_code_and_reported(repo, tmp_path, monkeypatch):
@@ -387,8 +399,10 @@ def test_a_budget_stop_mid_attempt_leaves_the_worktree_for_the_next_night(
     with pytest.raises(BudgetExhausted):
         prog.run_request(req, _config(repo), budget=ExplicitNoBudget("t"), session=None,
                          worktrees=tmp_path / "wt")
-    assert req.status == "queued" and req.attempts == 1 and req.fix_passes == 1
+    # the first iteration finished (its checks failed), the second was stopped before it began
+    assert req.status == "queued" and req.attempts == 1 and req.iterations == 1
     assert any("the tests failed" in p for p in req.problems)  # saved for the next night
+    assert any("the tests failed" in r for r in req.remarks)  # ... as the next round's input
     assert (Path(req.worktree) / "pkg/strategy/tests/test_window_setting.py").is_file()
 
 
@@ -509,10 +523,11 @@ def test_a_verdict_blocked_without_a_question_still_stops_and_says_so(
 def test_a_retry_makes_the_planner_read_why_the_last_attempt_failed(repo, tmp_path, monkeypatch):
     revised = PLAN.replace("add window(days=None)", "REVISED add window(days=None)")
     calls = _two_levels(monkeypatch, _wrong_then_right, plans=(PLAN, revised))
-    cfg = _two_level_config(repo, fix_rounds=0)
+    cfg = _two_level_config(repo, max_iterations=1)
     req = _request([])
     _run(req, cfg, tmp_path)
     assert req.status == "failed" and len(req.failures) == 1
+    prog.retry(req)  # the owner asks for another try: the planner revises its plan
     _run(req, cfg, tmp_path)
     assert req.status == "ready", req.problems
     assert calls == ["programmer-plan", "programmer", "programmer-plan", "programmer",
@@ -532,32 +547,31 @@ def test_the_same_plan_after_the_same_failure_is_not_tried_again(repo, tmp_path,
             "    assert window() == 15\n")
 
     calls = _two_levels(monkeypatch, always_wrong)  # the planner repeats itself
-    cfg = _two_level_config(repo, fix_rounds=0)
+    cfg = _two_level_config(repo, max_iterations=1)
     req = _request([])
     _run(req, cfg, tmp_path)
     assert req.status == "failed"
+    prog.retry(req)
     _run(req, cfg, tmp_path)
     assert req.status == "blocked" and calls.count("programmer") == 1  # no second writing
     assert "same plan after the same failure" in req.problems[0]
     assert req.attempts == 1  # the blocked re-attempt wrote nothing: it does not count
 
 
-def test_a_third_identical_failure_blocks_even_with_new_plans(repo, tmp_path, monkeypatch):
+def test_a_third_identical_failure_ends_the_loop_early(repo, tmp_path, monkeypatch):
     def always_wrong(wt: Path) -> None:
         _good_change(wt)
         (wt / "pkg" / "strategy" / "tests" / "test_window_setting.py").write_text(
             "from pkg.strategy.signal import window\n\n\ndef test_default():\n"
             "    assert window() == 15\n")
 
-    plans = tuple(PLAN + f"\nattempt {n} wording" for n in range(5))
-    calls = _two_levels(monkeypatch, always_wrong, plans=plans)
-    cfg = _two_level_config(repo, fix_rounds=0, max_attempts=9)
+    calls = _two_levels(monkeypatch, always_wrong)
     req = _request([])
-    for _ in range(3):
-        _run(req, cfg, tmp_path)
-    assert calls.count("programmer") == 3 and len({f["plan"] for f in req.failures}) == 3
-    assert len({f["sig"] for f in req.failures}) == 1
+    _run(req, _two_level_config(repo), tmp_path)  # up to 7 iterations, but not these three times
+    assert calls.count("programmer") == 3 and calls.count("programmer-plan") == 1
+    assert len({f["sig"] for f in req.failures}) == 1 and len(req.failures) == 3
     assert req.status == "blocked" and "same failure three times" in req.problems[-1]
+    assert req.iterations == 3
 
 
 def test_failures_with_different_tests_are_not_identical(repo):
@@ -620,7 +634,7 @@ def test_a_failure_that_cannot_be_read_is_never_excused(repo, tmp_path, monkeypa
 
     _two_levels(monkeypatch, break_collection)
     req = _request([])
-    _run(req, _two_level_config(repo, fix_rounds=0), tmp_path)
+    _run(req, _two_level_config(repo, max_iterations=1), tmp_path)
     assert req.status == "failed" and req.env_failures == []
 
 
@@ -664,11 +678,12 @@ def test_a_failing_prepare_command_is_the_environments_and_does_not_count(
 
 def test_a_worktree_behind_the_base_is_brought_onto_its_tip_with_the_work_kept(
         repo, tmp_path, monkeypatch):
-    cfg = _two_level_config(repo, fix_rounds=0)
+    cfg = _two_level_config(repo, max_iterations=1)
     calls = _two_levels(monkeypatch, _wrong_then_right, plans=(PLAN, PLAN + "\nrevised"))
     req = _request([])
     _run(req, cfg, tmp_path)
     assert req.status == "failed"
+    prog.retry(req)
     work = Path(req.worktree)
     before = _git(work, "rev-parse", "HEAD").strip()
     (repo / "pkg" / "strategy" / "data.txt").write_text("committed after the worktree was cut\n")
@@ -687,11 +702,12 @@ def test_work_that_does_not_apply_to_the_new_base_starts_fresh_and_keeps_a_patch
     def edits_signal(wt: Path, n: int) -> None:
         _wrong_then_right(wt, n)
 
-    cfg = _two_level_config(repo, fix_rounds=0)
+    cfg = _two_level_config(repo, max_iterations=1)
     _two_levels(monkeypatch, edits_signal, plans=(PLAN, PLAN + "\nrevised"))
     req = _request([])
     _run(req, cfg, tmp_path)
     assert req.status == "failed"
+    prog.retry(req)
     (repo / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 21\n\n\ndef window(d=None):\n"
                                                          "    return d or WINDOW\n")
     (repo / "pkg" / "strategy" / "tests" / "test_signal.py").write_text(
@@ -730,14 +746,14 @@ def test_requests_that_give_the_generator_a_new_block_go_first():
     assert prog.next_request(q, 3, skip={order[0]}).id == order[1]
 
 
-def test_a_failed_new_block_request_is_retried_before_older_requests_of_another_kind():
+def test_a_new_block_request_with_iterations_behind_it_still_goes_before_older_ones():
     q: list = []
     other = prog.enqueue(q, repo="demo", what="Show a count in the director's file", why="y",
                          source="owner", day=date(2026, 10, 26))
     block = prog.enqueue(q, repo="demo", what="Блок сигнала: положение ставки", why="y",
                          source="owner", day=date(2026, 10, 28))
-    block.status, block.attempts = "failed", 1
-    assert prog.next_request(q, 3) is block and prog.runnable(q, 3)[1] is other
+    block.iterations = 2
+    assert prog.next_request(q, 7) is block and prog.runnable(q, 7)[1] is other
 
 
 def test_the_report_shows_the_plan_the_question_and_what_waits(repo, tmp_path, monkeypatch):
@@ -756,3 +772,220 @@ def test_the_report_shows_the_plan_the_question_and_what_waits(repo, tmp_path, m
     prog.enqueue(queue, repo="demo", what="Блок сигнала: x", why="y", source="owner",
                  day=date(2026, 10, 27))  # another, queued
     assert "из них даёт генератору новый блок: 1" in "\n".join(prog.report_lines([], queue))
+
+
+# ---- the loop: writer, checks, reviewer, back to the writer (owner, 2026-10-31) ---------------
+
+
+def _reviewer_says(monkeypatch, write, verdicts, plans=(PLAN,)):
+    """A fake whose reviewer answers from `verdicts` in turn (the last one repeats): a string is
+    its whole reply."""
+    calls = _two_levels(monkeypatch, write, plans=plans)
+    inner = prog.run_agent
+    turn = {"n": 0}
+
+    def fake(budget, prompt, **kw):
+        if kw["agent"] == "programmer-review":
+            calls.append("programmer-review")
+            reply = verdicts[min(turn["n"], len(verdicts) - 1)]
+            turn["n"] += 1
+            return SimpleNamespace(text=reply, exit_code=0)
+        return inner(budget, prompt, **kw)
+
+    monkeypatch.setattr(prog, "run_agent", fake)
+    return calls
+
+
+def test_the_writer_is_told_its_goal_is_working_code_and_which_round_it_is(
+        repo, tmp_path, monkeypatch):
+    calls = _agent(monkeypatch, _good_change)
+    _run(_request([]), _config(repo), tmp_path)
+    first = calls.prompts[0]
+    assert "YOUR GOAL is code that WORKS" in first and "not code that merely gets past" in first
+    assert "round 1 of at most 7" in first
+
+
+def test_a_remark_goes_back_to_the_writer_and_the_second_round_is_accepted(
+        repo, tmp_path, monkeypatch):
+    def with_leftover(wt: Path, n: int) -> None:
+        _good_change(wt)
+        if n == 0:  # the trifle that stopped two requests: an empty leftover file
+            (wt / "pkg" / "strategy" / "tests" / "test_band.py").write_text('"""leftover"""\n')
+        else:
+            (wt / "pkg" / "strategy" / "tests" / "test_band.py").unlink()
+
+    calls = _reviewer_says(monkeypatch, with_leftover, [
+        "GAP: pkg/strategy/tests/test_band.py is an empty leftover: remove it\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    done = []
+    prog.run_request(req, _two_level_config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt", plans=tmp_path / "plans",
+                     checkpoint=lambda r: done.append((r.iterations, r.status)))
+    assert req.status == "ready", req.problems
+    assert calls == ["programmer-plan", "programmer", "programmer-review", "programmer",
+                     "programmer-review"]  # one plan, two rounds, two reviews
+    assert req.iterations == 2 and [h["result"] for h in req.history] == ["review", "accepted"]
+    assert calls.cwds[0] == calls.cwds[1]  # the same worktree
+    second = calls.prompts[1]
+    assert "round 2 of at most 7" in second
+    assert "reviewer: pkg/strategy/tests/test_band.py" in second
+    assert "every remark, the small ones too" in second
+    assert not (Path(req.worktree) / "pkg/strategy/tests/test_band.py").exists()
+    assert req.commit and req.review == [] and req.remarks == []
+    assert done == [(1, "queued"), (2, "ready")]  # saved after every finished iteration
+
+
+def test_seven_refusals_end_the_loop_as_failed_with_the_last_remarks(repo, tmp_path, monkeypatch):
+    # distinct remarks: each differs in words, not just in digits, or the early stop would fire
+    words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"]
+    replies = [f"GAP: the {w} list misses a family\nVERDICT: GAP" for w in words]
+    calls = _reviewer_says(monkeypatch, _good_change, replies)
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "failed" and req.iterations == 7
+    assert calls.count("programmer") == 7 and calls.count("programmer-review") == 7
+    assert calls.count("programmer-plan") == 1  # the plan is written once
+    assert req.review == ["the golf list misses a family"]  # the last remark is the one shown
+    assert req.problems[0].startswith("7 iterations without")
+    assert "qlab code retry" in req.problems[0]
+    assert "round 7 of at most 7" in calls.prompts[6]
+    assert req.commit is None
+    # the owner sees it in the report, with the last remark and the way to another try
+    from dataclasses import asdict
+
+    text = "\n".join(prog.report_lines([asdict(req)], [req]))
+    assert "Ждут вашего решения" in text and "the golf list misses a family" in text
+    assert f"qlab code retry {req.id}" in text and "итерации (писатель" in text
+
+
+def test_the_same_remark_three_times_stops_the_loop_early(repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, ["GAP: the same thing\nVERDICT: GAP"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "blocked" and req.iterations == 3 and calls.count("programmer") == 3
+    assert "same failure three times" in req.problems[-1]
+
+
+def test_an_iteration_the_environment_ended_does_not_count_and_the_loop_goes_on(
+        repo, tmp_path, monkeypatch):
+    """The second round's tests cannot be judged (the base checkout could not be made ready):
+    that round is not one of the seven, and the next session goes on with the same remarks."""
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: add the second assertion\nVERDICT: GAP", "VERDICT: OK"])
+    real = prog.judge_tests
+    seen = {"n": 0}
+
+    def judge(*a, **kw):
+        seen["n"] += 1
+        if seen["n"] == 2:
+            raise prog.EnvironmentFailure("git worktree add failed in _base-repo")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(prog, "judge_tests", judge)
+    req = _request([])
+    cfg = _two_level_config(repo)
+    _run(req, cfg, tmp_path)
+    assert req.status == "queued" and req.iterations == 1  # round 2 did not count
+    assert req.env_stops == 1 and req.attempts == 0 and req.problems[0].startswith("environment:")
+    assert req.remarks == ["reviewer: add the second assertion"]  # kept for the next session
+    _run(req, cfg, tmp_path)
+    assert req.status == "ready", req.problems
+    assert req.iterations == 2 and req.env_stops == 0
+    assert "add the second assertion" in calls.prompts[-1]
+    assert "environment" not in calls.prompts[-1]
+
+
+def test_the_budget_stops_the_loop_where_it_is_and_the_next_night_resumes_it(
+        repo, tmp_path, monkeypatch):
+    from qlab.budget import CandidateExhausted
+
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: wire the setting into the list\nVERDICT: GAP", "VERDICT: OK"])
+    inner = prog.run_agent
+    writes = {"n": 0}
+
+    def limited(budget, prompt, **kw):
+        if kw["agent"] == "programmer":
+            writes["n"] += 1
+            if writes["n"] == 2:  # the request's share is spent before the second round begins
+                raise CandidateExhausted("used 250,000 of 250,000 tokens")
+        return inner(budget, prompt, **kw)
+
+    monkeypatch.setattr(prog, "run_agent", limited)
+    req = _request([])
+    cfg = _two_level_config(repo)
+    with pytest.raises(CandidateExhausted):
+        _run(req, cfg, tmp_path)
+    assert req.status == "queued" and req.iterations == 1
+    assert req.remarks == ["reviewer: wire the setting into the list"]
+    worktree = Path(req.worktree)
+    assert (worktree / "pkg/strategy/tests/test_window_setting.py").is_file()  # work kept
+    # the next night: no new plan, the same worktree, the remark is the first thing said
+    plans_before = calls.count("programmer-plan")
+    monkeypatch.setattr(prog, "run_agent", inner)
+    _run(req, cfg, tmp_path)
+    assert req.status == "ready", req.problems
+    assert calls.count("programmer-plan") == plans_before == 1
+    assert Path(req.worktree) == worktree and req.iterations == 2
+    assert "wire the setting into the list" in calls.prompts[-1]
+    assert "round 2 of at most 7" in calls.prompts[-1]
+
+
+def test_a_request_the_old_way_ended_on_reviewer_remarks_continues_from_its_worktree(
+        repo, tmp_path, monkeypatch):
+    """2026-10-28-1 and -2 were `blocked` with the reviewer's gaps in `review`: reset to queued,
+    their plan and code kept, the gaps are the first round's input."""
+    calls = _agent(monkeypatch, _good_change)
+    first = _request([])
+    prog.run_request(first, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert first.status == "ready"
+    legacy = prog.Request(**{**first.__dict__, "status": "queued", "iterations": 0,
+                             "history": [], "commit": None, "remarks": [],
+                             "review": ["`pkg/strategy/signal.py` reflows an import: revert it"]})
+    marker = Path(legacy.worktree) / "pkg" / "strategy" / "tests" / "test_kept.py"
+    marker.write_text("def test_kept():\n    assert True\n")  # the code the request already has
+    assert prog.runnable([prog.Request(id="x", repo="demo", what="Блок сигнала: x", why="y",
+                                       source="owner", created="t"), legacy], 7)[0] is legacy
+    prog.run_request(legacy, _config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt")
+    assert legacy.status == "ready", legacy.problems
+    assert "reflows an import" in calls.prompts[-1] and "test_kept.py" in calls.prompts[-1]
+    assert marker.is_file() and legacy.iterations == 1
+
+
+def test_the_owner_can_ask_for_another_try_at_a_request_that_used_its_iterations(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(
+        monkeypatch, _good_change, [f"GAP: the {w} list\nVERDICT: GAP" for w in "abcdefg"]
+        + ["VERDICT: OK"], plans=(PLAN, PLAN + "\nrevised by the last remarks"))
+    req = _request([])
+    cfg = _two_level_config(repo)
+    _run(req, cfg, tmp_path)
+    assert req.status == "failed" and req.iterations == 7
+    worktree = req.worktree
+    prog.retry(req, "also list the new family in docs/BLOCKS.md")
+    assert req.status == "queued" and req.iterations == 0 and req.replan
+    assert req.remarks[0] == "the owner: also list the new family in docs/BLOCKS.md"
+    _run(req, cfg, tmp_path)
+    assert req.status == "ready", req.problems
+    assert req.worktree == worktree and req.iterations == 1 and not req.replan
+    assert calls.count("programmer-plan") == 2  # revised once, by the last remarks
+    assert "also list the new family" in calls.prompts[-1]
+    with pytest.raises(ValueError, match="nothing to retry"):
+        prog.retry(req)  # a ready request has nothing to retry
+    asking = _request([])
+    asking.status, asking.questions = "blocked", ["one window or both?"]
+    with pytest.raises(ValueError, match="waits for an answer"):
+        prog.retry(asking)
+
+
+def test_a_begun_request_goes_before_a_new_block_request():
+    q: list = []
+    block = prog.enqueue(q, repo="demo", what="Блок сигнала: положение ставки", why="y",
+                         source="owner", day=date(2026, 10, 30))
+    begun = prog.enqueue(q, repo="demo", what="Make the liquidity mask use 24h", why="y",
+                         source="owner", day=date(2026, 10, 28))
+    begun.worktree, begun.remarks, begun.iterations = "/w", ["reviewer: x"], 1
+    assert [r.id for r in prog.runnable(q, 7)] == [begun.id, block.id]
