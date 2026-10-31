@@ -26,6 +26,7 @@ from collections.abc import Collection
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from qlab.nightflow.journal import pid_alive
 from qlab.nightflow.plan import make_plan
 from qlab.nightflow.table import Table
 
@@ -104,18 +105,6 @@ def lock_holder(path: Path | None = None) -> dict | None:
         os.close(fd)
 
 
-def _alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def refusal() -> str | None:
     """Why a run cannot start now, in plain words; None when it can."""
     holder = lock_holder()
@@ -132,7 +121,7 @@ def refusal() -> str | None:
     except (OSError, ValueError):
         return None
     age = time.time() - float(starting.get("at", 0))
-    if _alive(starting.get("pid")) and age < 3600:
+    if pid_alive(starting.get("pid")) and age < 3600:
         return ("Запуск принят и ждёт своей очереди (скрипт ночи ждёт, пока допишет суточный "
                 "рекордер). Второй запуск не нужен.")
     return None

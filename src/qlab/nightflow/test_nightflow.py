@@ -441,6 +441,20 @@ def test_tokens_of_a_step_are_those_spent_between_its_start_and_its_end(jr, fact
     assert factory().get(PipelineStepRun, step_run).tokens == 1150
 
 
+def test_a_new_runner_marks_only_the_rows_of_dead_processes_interrupted(jr, factory) -> None:
+    dead = jr.start_run(date(2026, 10, 31), trigger="hand", steps_off=[], only=None, restart=None,
+                        concurrency=1, pid=2_000_000_000)  # no such process
+    jr.start_step(dead, "recheck")
+    alive = jr.start_run(date(2026, 10, 31), trigger="hand", steps_off=[], only=None,
+                         restart=None, concurrency=1, pid=os.getpid())
+    jr.start_step(alive, "waiting")
+    assert jr.sweep_interrupted() == 1
+    session = factory()
+    assert session.get(PipelineRun, dead).state == "interrupted"
+    assert session.query(PipelineStepRun).filter_by(run_id=dead).one().state == "interrupted"
+    assert session.get(PipelineRun, alive).state == "running"
+
+
 def test_a_journal_that_fails_never_fails_the_night(tmp_path, monkeypatch, capsys) -> None:
     _night_env(tmp_path, monkeypatch)
     monkeypatch.setattr(night, "research_stage", lambda *a, **kw: None)
@@ -660,6 +674,51 @@ def test_a_run_row_with_nobody_holding_the_lock_reads_as_interrupted(api, factor
     body = api.get("/api/pipeline").json()
     assert body["run"]["state"] == "interrupted" and body["states"]["recheck"]["state"] == \
         "interrupted"
+
+
+def test_while_a_run_goes_the_steps_it_has_not_reached_are_pending(api, factory) -> None:
+    _seed(factory)  # an earlier run of the night: recheck failed, assess blocked
+    session = factory()
+    run = PipelineRun(night_date=date(2026, 10, 31), trigger="button", state="running",
+                      started_at=datetime(2026, 10, 31, 9, 0, tzinfo=UTC), concurrency=1,
+                      steps_off=[], approximate=False)
+    session.add(run)
+    session.flush()
+    session.add(PipelineStepRun(run_id=run.id, step_id="detectors", state="running",
+                                started_at=datetime(2026, 10, 31, 9, 1, tzinfo=UTC),
+                                items_done=0, items_failed=0, approximate=False))
+    session.commit()
+    lock = control.RunLock()
+    assert lock.acquire({"trigger": "button"})
+    try:
+        body = api.get("/api/pipeline").json()
+    finally:
+        lock.release()
+    assert body["states"]["detectors"]["state"] == "running"
+    assert "recheck" not in body["states"] and "assess" not in body["states"]  # not reached yet
+    # a restart covers only its own steps; the others keep what the night said
+    session = factory()
+    session.get(PipelineRun, run.id).only = ["recheck", "report"]
+    session.commit()
+    assert lock.acquire({"trigger": "button"})
+    try:
+        body = api.get("/api/pipeline").json()
+    finally:
+        lock.release()
+    assert "recheck" not in body["states"] and body["states"]["detectors"]["state"] == "running"
+
+
+def test_the_page_still_lists_the_steps_before_the_migration(api, factory) -> None:
+    from sqlalchemy import text
+
+    session = factory()
+    for table in ("pipeline_item", "pipeline_step_run", "pipeline_run"):
+        session.execute(text(f"DROP TABLE {table}"))
+    session.commit()
+    body = api.get("/api/pipeline").json()
+    assert body["journal_ready"] is False and len(body["steps"]) == 25 and body["run"] is None
+    assert api.get("/api/pipeline/runs").json() == {"runs": [], "journal_ready": False}
+    assert api.get("/api/pipeline/steps/recheck").json()["journal_ready"] is False
 
 
 def test_the_press_of_a_button_answers_only_the_local_console(api, factory, monkeypatch) -> None:

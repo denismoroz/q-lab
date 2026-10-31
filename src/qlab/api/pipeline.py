@@ -89,13 +89,21 @@ def _alive() -> bool:
     return control.lock_holder() is not None
 
 
-def _states(session: Session, night_date, alive: bool) -> dict[str, dict]:
+def _states(session: Session, run, alive: bool, table: Table) -> dict[str, dict]:
+    """Each step's latest row in the run's night. While the run is going, the steps it covers
+    that it has not reached yet are `pending`, not what an earlier run of the night said: a page
+    that showed yesterday's green under a running night could not tell what had run."""
     out = {}
-    for step_id, state in journal.night_states(session, night_date).items():
+    for step_id, state in journal.night_states(session, run.night_date).items():
         item = state.to_json()
         if item["state"] == "running" and not alive:
             item["state"] = "interrupted"
         out[step_id] = item
+    if alive and run.state == "running":
+        covered = set(run.only) if run.only else set(table.ids)
+        for step_id in covered:
+            if step_id in out and out[step_id]["run_id"] != run.id:
+                del out[step_id]
     return out
 
 
@@ -116,7 +124,7 @@ def register(app: FastAPI) -> None:
             run = journal.latest_run(session)
             if run is not None:
                 body["run"] = journal.run_json(run, alive=alive)
-                body["states"] = _states(session, run.night_date, alive)
+                body["states"] = _states(session, run, alive, table)
             for step in body["steps"]:
                 stats = journal.step_stats(session, step["id"])
                 step["stats"] = {k: stats[k] for k in (
@@ -142,7 +150,7 @@ def register(app: FastAPI) -> None:
             alive = _alive()
             run = journal.latest_run(session)
             if run is not None:
-                state = _states(session, run.night_date, alive).get(step_id)
+                state = _states(session, run, alive, table).get(step_id)
                 body["state"] = state
                 if state and state["step_run_id"]:
                     body["items"] = journal.step_items(session, state["step_run_id"])
@@ -151,7 +159,7 @@ def register(app: FastAPI) -> None:
             body["stats_approximate"] = journal.step_stats(session, step_id, approximate=True)
             neighbours = {n["step"] for n in body["depends_on"] + body["children"]}
             if run is not None:
-                every = _states(session, run.night_date, alive)
+                every = _states(session, run, alive, table)
                 body["neighbour_states"] = {n: every.get(n, {}).get("state") for n in neighbours}
         except OperationalError:
             body["journal_ready"] = False

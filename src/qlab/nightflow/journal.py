@@ -10,11 +10,12 @@ Reading is in the second half: the states the page paints, a step's history, its
 
 from __future__ import annotations
 
+import os
 import statistics
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -29,6 +30,19 @@ TERMINAL_STATES = ("ok", "failed", "blocked", "off", "skipped", "cut", "interrup
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def pid_alive(pid: int | None) -> bool:
+    """Whether a process with this id exists (any user's: we may not signal it)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -78,10 +92,13 @@ class Journal:
                 run.note = note
 
     def sweep_interrupted(self) -> int:
-        """Rows left `running` by a process that died. Called when a runner holds the lock, so
-        any other running row belongs to a process that is gone."""
+        """Rows left `running` by a process that died. Called when a runner holds the lock, so a
+        running row belongs to a process that is gone; a process that still lives (a second
+        journal on another lock, as in a test) is left alone."""
         with self._scope() as session:
-            runs = session.query(PipelineRun).filter(PipelineRun.state == "running").all()
+            old = _now() - timedelta(days=1)  # no run lasts a day: a reused process id is no excuse
+            runs = [r for r in session.query(PipelineRun).filter(PipelineRun.state == "running")
+                    if not pid_alive(r.pid) or _aware(r.started_at) < old]
             for run in runs:
                 run.state, run.finished_at = "interrupted", run.finished_at or _now()
                 for row in session.query(PipelineStepRun).filter(
