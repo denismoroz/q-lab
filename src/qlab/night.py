@@ -1267,6 +1267,19 @@ def _step_report(ctx: NightContext) -> None:
         raise
 
 
+def _stage_note(name: str, ctx: NightContext) -> str | None:
+    """What a code stage left undone tonight and why (too heavy, past its time), for the pipeline
+    page. A note that cannot be made is no note: it never fails the step."""
+    try:
+        if name == "restamp":
+            from qlab.restamp import page_note
+        else:
+            from qlab.second_venue import page_note
+        return page_note(ctx.state.get(name))
+    except Exception:  # noqa: BLE001 - a note is advice for the page
+        return None
+
+
 def night_steps() -> dict[str, StepImpl]:
     """How each step of `night/pipeline.yaml` is run. The key is the step's id; `error_name` is
     the stage's name in the state's `stage_errors` and in the stop line of the report."""
@@ -1283,7 +1296,8 @@ def night_steps() -> dict[str, StepImpl]:
         "twins": StepImpl(_step_twins, "twins", skip_reason=lambda c: None if c.run_twins
                           else "выключен флагом команды", is_cut=cut("stop_at", "twins")),
         "restamp": StepImpl(_step_restamp, "restamp", skip_reason=flag("restamp"),
-                            is_cut=cut("code_cut", "restamp")),
+                            is_cut=cut("code_cut", "restamp"),
+                            note=lambda c: _stage_note("restamp", c)),
         "venue_gap": StepImpl(_step_venue_gap, "venue_gap", skip_reason=flag("venue_gap"),
                               is_cut=cut("code_cut", "venue_gap")),
         "anomalies": StepImpl(_step_anomalies, "anomalies", skip_reason=flag("anomalies"),
@@ -1338,7 +1352,8 @@ def night_steps() -> dict[str, StepImpl]:
         "second_venue": StepImpl(
             _step_second_venue, "second_venue", skip_reason=lambda c: None if c.flags[
                 "second_venue"] else "выключен флагом команды",
-            is_cut=cut("stop_at", "second_venue")),
+            is_cut=cut("stop_at", "second_venue"),
+            note=lambda c: _stage_note("second_venue", c)),
         "ladder": StepImpl(_step_ladder, "ladder", skip_reason=flag("ladder")),
         "report": StepImpl(_step_report, "report"),
     }

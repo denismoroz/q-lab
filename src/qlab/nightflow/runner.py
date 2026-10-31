@@ -41,7 +41,8 @@ class StepImpl:
     night's stop time has passed (it records the cut in the state for the report). `inspect(ctx)`
     returns an error text for a step that swallowed its own failure into the state, or None.
     `finals(ctx)` lists the items the done-markers cannot show, as (name, outcome, text); without
-    it the items found in the step's state with an error text are listed as failed."""
+    it the items found in the step's state with an error text are listed as failed. `note(ctx)`
+    is a line for the step's row, shown on the page (what was left undone and why), or None."""
 
     run: Callable[[Any], None]
     error_name: str
@@ -49,6 +50,7 @@ class StepImpl:
     is_cut: Callable[[Any], bool] | None = None
     inspect: Callable[[Any], str | None] | None = None
     finals: Callable[[Any], list[tuple[str, str, str]]] | None = None
+    note: Callable[[Any], str | None] | None = None
 
 
 def describe_error(exc: BaseException) -> str:
@@ -104,6 +106,31 @@ def new_failed_items(step: Step, state: dict, before: Counter) -> list[tuple[str
         else:
             fresh.append(item)
     return fresh
+
+
+def item_seconds(step: Step, state: dict, name: str) -> float | None:
+    """The seconds a stage recorded for the item `name` in its own entry (`seconds`), the last
+    entry winning. The time between two done-markers includes whatever the stage did in between;
+    the stage's own figure is what the item took."""
+    found: float | None = None
+
+    def walk(node: Any) -> None:
+        nonlocal found
+        if isinstance(node, dict):
+            if any(str(node.get(k)) == name for k in NAME_KEYS if node.get(k) is not None):
+                seconds = node.get("seconds")
+                if isinstance(seconds, int | float) and not isinstance(seconds, bool):
+                    found = float(seconds)
+            for value in node.values():
+                if isinstance(value, dict | list):
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    for key in step.state_keys:
+        walk(state.get(key))
+    return found
 
 
 class ItemTracker:
@@ -196,6 +223,9 @@ class ItemTracker:
                 name = key.split(":", 1)[1] if ":" in key else key
                 spent = max(0.0, (moment - slot["last"]).total_seconds())
                 slot["last"] = max(moment, slot["last"])
+                exact = item_seconds(step, state, name)
+                if exact is not None:
+                    spent = exact
                 self._put(slot["run"], name, "ok", duration_s=round(spent, 2), finished_at=moment)
 
 
@@ -301,12 +331,15 @@ class Runner:
                      if self.tracker is not None else failed_items(step, state))
             extra = [(name, "failed", text) for name, text in found]
         for name, outcome, text in extra:
-            self.journal.add_item(step_run_id, name, outcome, detail=text)
+            self.journal.add_item(step_run_id, name, outcome, detail=text,
+                                  duration_s=item_seconds(step, state, name))
+        note = impl.note(self.ctx) if impl.note is not None else None
         with self._lock:
             self.outcome[step.id] = result
             if error:
                 self.errors[step.id] = error
-            self.journal.finish_step(step_run_id, result, error=error, tokens=step.tokens)
+            self.journal.finish_step(step_run_id, result, error=error, note=note,
+                                     tokens=step.tokens)
         if result == "failed" and error and self.on_failure is not None:
             self.on_failure(step.id, error)
 

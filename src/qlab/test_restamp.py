@@ -454,11 +454,18 @@ def test_the_stage_stops_between_ideas_when_its_time_is_used(world, monkeypatch)
     """Night of 2026-10-31: one idea took an hour and nothing bounded the stage in time."""
     world.config.write_text(world.config.read_text().replace(
         "max_minutes_per_night: 60", "max_minutes_per_night: 1"), encoding="utf-8")
-    clock = iter([0.0, 0.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0])
-    monkeypatch.setattr(restamp.time, "monotonic", lambda: next(clock, 200.0))
+    # the first idea takes 200 seconds of a 60-second stage: the clock jumps when it has run
+    monkeypatch.setattr(restamp.time, "monotonic", lambda: 200.0 if world.calls else 0.0)
     state = _stage(world, no_cap=True)
     assert len(state["restamp"]["entries"]) == 1  # the one that started finished
     assert state["restamp"]["time_up"] is True and state["restamp"]["deferred"]
+    # ... and it is named as the one that took the stage past its limit
+    assert state["restamp"]["overran"]["idea"] == state["restamp"]["entries"][0]["idea"]
+    assert state["restamp"]["overran"]["limit_minutes"] == 1
+    text = "\n".join(restamp.report_lines(state["restamp"]))
+    assert "шла" in text and "остальное отложено до следующей ночи" in text
+    assert "--allow-heavy" in text and "остальное отложено" in (restamp.page_note(
+        state["restamp"]) or "")
     assert "Время этапа (1 минут на ночь) вышло" in "\n".join(
         restamp.report_lines(state["restamp"]))
 
@@ -884,3 +891,37 @@ def test_the_report_names_an_idea_once_and_marks_an_entry_of_an_earlier_attempt(
     assert text.count("**frab**") == 1 and "сбоев: 1" in text and "Пересчитано: 1" in text
     assert "(прошлый запуск этапа этой ночью, 04:40 UTC)" in text
     assert text.count("прошлый запуск") == 1  # top10 is this attempt's own
+
+
+def test_an_idea_that_took_longer_than_the_stage_last_time_is_not_started_by_the_night(
+        world, monkeypatch) -> None:
+    """The fetch of bv2-research-top10-pool was priced at six minutes (and was in the cache); the
+    idea took 80 minutes. What it took last time is now part of the estimate."""
+    restamp.save_ledger({"old-pass": {"status": "done", "seconds": 4800.0, "stand": "x",
+                                      "rules": "x", "day": "2026-10-30"}}, world.ledger)
+    state = _stage(world, only={"old-pass"})
+    block = state["restamp"]
+    assert not block["entries"] and not world.calls
+    why = block["heavy"]["old-pass"]
+    assert "данные слишком тяжелы за ночь" in why and "оценка 80 минут" in why
+    assert "в прошлый раз идея заняла 80 минут" in why
+    note = restamp.page_note(block)
+    assert "old-pass" in note and "--allow-heavy" in note
+
+    # by hand it runs, and the ledger now says how long it took this time
+    by_hand = _stage(world, only={"old-pass"}, allow_heavy=True)
+    assert _ids(by_hand) == ["old-pass"]
+    seconds = restamp.load_ledger(world.ledger)["old-pass"]["seconds"]
+    assert seconds == by_hand["restamp"]["entries"][0]["seconds"] < 60
+    again = _stage(world, only={"old-pass"})  # fast now: the night may take it
+    assert "old-pass" not in again["restamp"]["heavy"]
+
+
+def test_the_journal_is_read_when_the_ledger_has_no_time(world, monkeypatch) -> None:
+    import qlab.nightflow.journal as journal
+
+    monkeypatch.setattr(
+        journal, "last_item_seconds",
+        lambda session, step, name: 4793.7 if (step, name) == ("restamp", "old-pass") else None)
+    state = _stage(world, only={"old-pass"})
+    assert "оценка 80 минут" in state["restamp"]["heavy"]["old-pass"]

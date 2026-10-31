@@ -311,6 +311,36 @@ def test_failed_items_are_found_in_the_step_state() -> None:
     assert failed_items(step, state) == [("b.yaml", "Boom: x")]
 
 
+def test_an_item_takes_the_seconds_its_stage_recorded_and_the_step_row_a_note(jr, factory) -> None:
+    """The time between two done-markers includes whatever the stage did in between; the stage's
+    own `seconds` of an entry is what the item took, and is what a later estimate reads. A stage
+    can also leave a line for its row (what it did not start, and why)."""
+    table = parse({"steps": [{"id": "w", "title": "W", "description": "d", "kind": "code",
+                              "tokens": False, "done_prefixes": ["w:"], "state_keys": ["w"]}]})
+    ctx = Ctx()
+    tracker = ItemTracker(table, jr)
+    ctx.save = lambda: tracker.observe(ctx.state)
+
+    def run(c):
+        now = datetime.now(UTC)
+        c.state["w"] = {"entries": [{"idea": "slow", "seconds": 4787.0},
+                                    {"idea": "broken", "error": "Boom", "seconds": 3651.2}]}
+        c.state["done"]["w:slow"] = now.isoformat()
+        c.save()
+
+    run_id = jr.start_run(date(2026, 10, 31), trigger="button", steps_off=[], only=None,
+                          restart=None, concurrency=1, pid=1)
+    Runner(table, {"w": StepImpl(run, "w", note=lambda c: "не начато: тяжёлая идея")}, ctx,
+           journal=jr, run_id=run_id, tracker=tracker, log=lambda t: None).execute()
+    row = _states(factory, run_id)["w"]
+    assert row.note == "не начато: тяжёлая идея"
+    items = {i["name"]: i for i in journal.step_items(factory(), row.id)}
+    assert items["slow"]["duration_s"] == 4787.0 and items["broken"]["duration_s"] == 3651.2
+    assert journal.last_item_seconds(factory(), "w", "slow") == 4787.0
+    assert journal.last_item_seconds(factory(), "w", "broken") == 3651.2  # failed ones too
+    assert journal.last_item_seconds(factory(), "w", "never") is None
+
+
 def _stage_step() -> object:
     return parse({"steps": [{"id": "w", "title": "W", "description": "d", "kind": "code",
                              "tokens": False, "done_prefixes": ["w:"],

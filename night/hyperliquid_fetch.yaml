@@ -1,16 +1,44 @@
-# What fetching Hyperliquid's HOURLY candles costs, for the night's code stages that run an idea
-# on Hyperliquid (qlab.hl_fetch; the queue of closed ideas, qlab.second_venue, and the restamp
-# stage, qlab.restamp). A daily panel is quick and is not estimated. Candles are read one
-# contract (and one spot token) at a time and cached by the exact (instrument, start, end), so a
-# run whose window differs from every cached one fetches all of it again.
+# What fetching HOURLY candles costs, for the night's code stages that run an idea
+# (qlab.hl_fetch; the queue of closed ideas, qlab.second_venue, and the restamp stage,
+# qlab.restamp). A daily panel is quick and is not estimated.
 #
-# Measured on the night of 2026-10-31 (src/qlab/second_venue.py, frab-binance-spot-allbinance):
-# the panel of every Hyperliquid contract and its spot tokens, hourly from 2026-03-08, took
-# 61 minutes (01:00 to 02:01 UTC), and the restamp of frab-binance-spot-allbinance-400 on the
-# window ending 2026-10-24 took 58 minutes (03:25 to 04:23 UTC); 840 raw files were written.
+# The estimate counts REQUESTS. A column is a perpetual or a spot market; the number of requests it
+# needs follows from the venue's page sizes, the window and the raw cache (a column cached for
+# exactly this window costs nothing, one cached from the same start to an earlier end costs only the
+# gap, anything else is fetched whole); this file holds what a request costs and how big a venue's
+# whole listing is. docs/HL_FETCH.md has the arithmetic.
+#
+# MEASURED on 2026-10-31 from the modification times of data/raw/hyperliquid/1h (files are written
+# one column at a time, in order, so the gap between two files is that column's fetch):
+#
+#   window 2026-03-08 .. 2026-10-30, 196 perpetuals whole: 18.4 s each (60.3 minutes for 211 columns)
+#       = 14 requests (candles 2: a full page of 5000 asks for one more; funding 12 pages of 500)
+#       -> 1.31 s per request
+#   window 2026-03-08 .. 2026-10-24, 195 perpetuals whole: 16.6 s each (54.3 minutes for 210 columns)
+#       = 14 requests -> 1.19 s per request
+#   the same windows, 15 spot markets whole: 2.6 and 2.8 s each = 2 requests -> 1.3 and 1.4 s
+#   window 2025-01-01 .. 2026-10-30, 223 perpetuals EXTENDED from an entry cached to an earlier
+#       end: 1.9 s each (7.4 minutes for 238 columns) = 2 requests (one of candles, one of funding)
+#       -> 0.95 s per request; 15 spot markets extended: 1.4 s each = 1 request
+#
+# The old figure here, 4.4 seconds per instrument, was 61 minutes divided by 840 FILES; a column is
+# two files (frame and metadata), and a whole perpetual is 18 seconds, not 4.4 -- and a column
+# already in the cache is 0, not 4.4.
+hl_seconds_per_request: 1.3
 
-# A spec without an instrument list takes the venue's whole listing.
-all_contracts_minutes: 60
+# Binance, from data/raw/binance/1h, 2026-10-25, one fetch worker (the rate is divided by
+# QLAB_FETCH_WORKERS at estimate time): 800 columns whole for 2026-03-08 .. 2026-10-24 took 37.4
+# minutes. A perpetual of 5520 hours is 4 pages of klines (1500) and 1 of funding (one settlement
+# per eight hours, 1000 a page) = 5 requests, a spot market is 6 pages (1000): 394 x 5 + 406 x 6 =
+# 4406 requests in 2244 s = 0.51 s per request (the 0.5 s politeness delay of the fetcher plus
+# 10 ms). Entries extended by a day or two (the nightly case) are 1 to 2 requests per column:
+# 178 spot columns 2025-01-01 .. 2026-10-27 took 3.4 minutes = 1.15 s each.
+binance_seconds_per_request: 0.51
 
-# A spec with an instrument list: 61 minutes / about 840 files = 4.4 seconds per instrument.
-seconds_per_instrument: 4.4
+# A spec without an instrument list takes a venue's whole listing. The size is taken from the raw
+# cache (the columns it has seen) when it is larger; these are the sizes of 2026-10-31 and keep the
+# estimate honest when the cache is empty.
+hl_listing_perps: 223
+hl_listing_spots: 15
+binance_listing_perps: 400
+binance_listing_spots: 400

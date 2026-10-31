@@ -231,9 +231,11 @@ def settle_note(c: Candidate) -> str:
             "rejection did not see")
 
 
-def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None, cost):
-    """The fetch estimate for the Hyperliquid run of `cand` (`qlab.hl_fetch`); None when it cannot
-    be made (the run itself then reports whatever is wrong)."""
+def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None, cost,
+              last_seconds: float | None = None):
+    """The estimate for the Hyperliquid run of `cand` (`qlab.hl_fetch`): the data to fetch, or the
+    time the idea took last time when that is longer; None when neither can be made (the run
+    itself then reports whatever is wrong)."""
     from qlab import hl_fetch, night
     from qlab.pipeline import stage2
     from qlab.pipeline.spec import load_spec
@@ -243,11 +245,12 @@ def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None
         spec = night.with_end(load_spec(cand.spec_path), end)
         translation = stage2.translate(spec, stage2_config, venue_names=names)
         if translation.spec is None:
-            return None
+            return None if last_seconds is None else hl_fetch.total([], last_seconds)
         with session_scope() as session:
-            return hl_fetch.estimate(translation.spec, session, cost)
+            fetch = hl_fetch.estimate(translation.spec, session, cost)
+        return hl_fetch.total([fetch], last_seconds)
     except Exception:  # noqa: BLE001 - an estimate is advice; the run reports its own errors
-        return None
+        return None if last_seconds is None else hl_fetch.total([], last_seconds)
 
 
 def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
@@ -275,6 +278,8 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
         return
     block = state.setdefault("second_venue", {"entries": [], "owed": 0, "nights": None})
     block["attempt_at"] = attempts.now_iso()
+    for stale in ("time_up", "overran", "waits_for_time"):  # facts of an earlier attempt
+        block.pop(stale, None)
     try:
         stage2_config = stage2.load_config()
     except (OSError, ValueError) as exc:
@@ -319,13 +324,15 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
             break
         entry = {"idea": cand.idea_id, "rejected_on": cand.rejected_on.isoformat(),
                  "stage1_trial": cand.stage1_trial, "at": attempts.now_iso()}
-        est = _estimate(cand, end, stage2_config, names, cost)
+        last = hl_fetch.last_seconds(ledger.get(cand.idea_id), "second_venue", cand.idea_id)
+        est = _estimate(cand, end, stage2_config, names, cost, last)
         heavy = None if est is None or allow_heavy else hl_fetch.heavy_reason(
             est, config.max_minutes_per_night)
         if heavy is not None:
             # Not run, and no slot of the night used: the next idea may be quick.
             entry.update(outcome="heavy", why=heavy, action="heavy", lines=[])
-            ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": "heavy", "trial": None}
+            ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": "heavy", "trial": None,
+                                    "seconds": (ledger.get(cand.idea_id) or {}).get("seconds")}
             block["entries"].append(entry)
             save_ledger(ledger, ledger_path)
             night.save_state(day, state)
@@ -362,8 +369,14 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
             word = "failed"  # a crash that will not pass: the side is «не проводился: сбой»
         entry["outcome"] = word
         ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": word,
-                                "trial": result.get("trial")}
+                                "trial": result.get("trial"), "seconds": entry["seconds"]}
         block["entries"].append(entry)
+        if limit_seconds is not None and time.monotonic() - started > limit_seconds:
+            # One idea took the stage past its whole limit. It is not cut; the rest of the queue
+            # waits for another night (the check at the top of the loop), the page says why, and
+            # the ledger holds how long it took, so the night will not start it again.
+            block["overran"] = {"idea": cand.idea_id, "minutes": round(entry["seconds"] / 60, 1),
+                                "limit_minutes": config.max_minutes_per_night}
         if word != "error":
             done[key] = datetime.now(UTC).isoformat()
         save_ledger(ledger, ledger_path)
@@ -418,6 +431,11 @@ def report_lines(block: dict | None) -> list[str]:
         lines.append("Время этапа вышло: остальные идеи очереди, в порядке очереди, ждут "
                      "следующей ночи: " + ", ".join(f"`{i}`" for i in block.get("waits_for_time")
                                                     or []))
+    if block.get("overran"):
+        from qlab.restamp import overran_line
+
+        lines.append(overran_line(block["overran"],
+                                  "qlab second-venue run --only {idea} --allow-heavy"))
     if block.get("heavy_waiting"):
         lines.append("Ждут ручного запуска (данные слишком тяжелы за ночь; "
                      "`qlab second-venue run --idea ИДЕЯ --allow-heavy`): "
@@ -425,6 +443,29 @@ def report_lines(block: dict | None) -> list[str]:
     return lines
 
 
+def page_note(block: dict | None) -> str | None:
+    """What the stage left undone tonight and why, for the step's row on the pipeline page."""
+    if not block:
+        return None
+    parts = []
+    if block.get("overran"):
+        from qlab.restamp import overran_line
+
+        parts.append(overran_line(block["overran"],
+                                  "qlab second-venue run --only {idea} --allow-heavy"))
+    elif block.get("time_up") and block.get("waits_for_time"):
+        parts.append("Время этапа вышло, ждут следующей ночи: "
+                     + ", ".join(block["waits_for_time"]) + ".")
+    heavy = [e["idea"] for e in block.get("entries") or [] if e.get("outcome") == "heavy"]
+    deferred = [e["idea"] for e in block.get("entries") or [] if e.get("outcome") == "deferred"]
+    if heavy:
+        parts.append("Не начато, слишком тяжело для ночи: " + "; ".join(
+            f"{i} (вручную: qlab second-venue run --only {i} --allow-heavy)" for i in heavy) + ".")
+    if deferred:
+        parts.append(f"Не уместились в остаток времени: {', '.join(deferred)}.")
+    return " ".join(parts) or None
+
+
 __all__ = ["Candidate", "Config", "FIRST_RULES", "SECTION_TITLE", "counts", "find_candidates",
-           "load_config", "load_ledger", "outcome_of", "report_lines", "second_venue_stage",
-           "settle_note"]
+           "load_config", "load_ledger", "outcome_of", "page_note", "report_lines",
+           "second_venue_stage", "settle_note"]

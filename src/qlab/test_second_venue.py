@@ -439,3 +439,64 @@ def test_the_report_shows_an_idea_once_with_its_last_entry_and_marks_an_earlier_
     assert ("`b` (отвергнута 2026-10-25): прогон упал, повторится "
             "(прошлый запуск этапа этой ночью, 03:20 UTC)") in text
     assert "(прошлый запуск этапа этой ночью, 11:23 UTC)" not in text  # a is this attempt's
+
+
+def test_an_idea_that_overruns_the_stage_defers_the_rest_and_says_so_on_the_page(
+        tmp_path, registry, monkeypatch) -> None:
+    """One idea took 40 minutes of a 30-minute stage. It is not cut; the queue waits, the block
+    names the idea, and the ledger holds how long it took so the night will not start it again."""
+    _world(tmp_path, registry)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(second_venue.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(second_venue, "_estimate", lambda *a, **k: None)
+
+    def fake(plan, end, **kw):
+        clock["now"] += 40 * 60
+        return {"idea": plan.idea_id, "action": "rerun", "route_after": "reject", "trial": 1,
+                "status": "rejected", "lines": []}
+
+    monkeypatch.setattr(waiting, "rerun_stage2", fake)
+    state = {"done": {}}
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, minutes=30),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+
+    block = state["second_venue"]
+    assert block["overran"] == {"idea": "old", "minutes": 40.0, "limit_minutes": 30.0}
+    assert block["time_up"] is True and block["waits_for_time"]
+    note = second_venue.page_note(block)
+    assert "Идея old шла 40 минут" in note and "qlab second-venue run --only old" in note
+    assert "Идея old шла 40 минут" in "\n".join(second_venue.report_lines(block))
+    assert second_venue.load_ledger(tmp_path / "ledger.json")["old"]["seconds"] == 2400.0
+
+    # a later attempt the same day starts from a clean slate: the old facts do not stay
+    clock["now"] = 0.0
+    monkeypatch.setattr(waiting, "rerun_stage2", lambda plan, end, **kw: {
+        "idea": plan.idea_id, "action": "rerun", "route_after": "reject", "trial": 2,
+        "status": "rejected", "lines": []})
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, minutes=30),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+    assert "overran" not in state["second_venue"]
+
+
+def test_the_last_time_of_an_idea_keeps_it_from_the_night_when_it_exceeds_the_stage(
+        tmp_path, registry, monkeypatch) -> None:
+    from qlab import hl_fetch
+
+    _world(tmp_path, registry)
+    seen: list[str] = []
+    _fake_rerun(monkeypatch, seen)
+    second_venue.save_ledger({"old": {"day": "2026-10-20", "outcome": "error",
+                                      "trial": 1, "seconds": 4800.0}}, tmp_path / "ledger.json")
+    monkeypatch.setattr(second_venue, "_estimate", lambda cand, end, cfg, names, cost, last=None:
+                        hl_fetch.total([], last) if last else None)
+    state = {"done": {}}
+    second_venue.second_venue_stage(
+        TODAY, TODAY, state, config_path=_stage_cfg(tmp_path, per_night=2),
+        spec_dir=tmp_path / "specs", ledger_path=tmp_path / "ledger.json")
+    heavy = [e for e in state["second_venue"]["entries"] if e["outcome"] == "heavy"]
+    assert [e["idea"] for e in heavy] == ["old"] and "оценка 80 минут" in heavy[0]["why"]
+    assert "old" not in seen
+    ledger = second_venue.load_ledger(tmp_path / "ledger.json")
+    assert ledger["old"]["seconds"] == 4800.0  # the heavy mark does not forget how long it took

@@ -341,6 +341,17 @@ def step_stats(session: Session, step_id: str, *, approximate: bool = False) -> 
     }
 
 
+def last_item_seconds(session: Session, step_id: str, name: str) -> float | None:
+    """How long the latest finished item `name` of step `step_id` took, from the journal: what a
+    stage reads to estimate the same piece of work the next time. None when it was never done."""
+    row = (session.query(PipelineItem.duration_s)
+           .join(PipelineStepRun, PipelineStepRun.id == PipelineItem.step_run_id)
+           .filter(PipelineStepRun.step_id == step_id, PipelineItem.name == name,
+                   PipelineItem.duration_s.isnot(None), PipelineItem.duration_s > 0)
+           .order_by(PipelineItem.id.desc()).first())
+    return float(row[0]) if row else None
+
+
 def last_finished(session: Session, step_id: str) -> StepState | None:
     row = (session.query(PipelineStepRun).filter(
         PipelineStepRun.step_id == step_id, PipelineStepRun.state.in_(("ok", "failed")))

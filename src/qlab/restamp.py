@@ -409,6 +409,7 @@ def restamp_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
     block["limit_minutes"] = cfg.max_minutes_per_night
     block["heavy"] = {}
     block.pop("time_up", None)
+    block.pop("overran", None)
     from qlab import hl_fetch
 
     cost = hl_fetch.load_config(fetch_config) if fetch_config else hl_fetch.load_config()
@@ -438,6 +439,12 @@ def restamp_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
             continue
         entry = run.handle(item)
         block["entries"].append(entry)
+        if limit_seconds is not None and time.monotonic() - started > limit_seconds:
+            # One idea took the stage past its whole limit. It is not cut (it has written its
+            # trials); the rest of the stage waits for another night, and the page says why. The
+            # ledger now holds how long the idea took, so the night will not start it again.
+            block["overran"] = {"idea": item.idea_id, "minutes": round(
+                (entry.get("seconds") or 0) / 60, 1), "limit_minutes": cfg.max_minutes_per_night}
         if entry["action"] != "error":
             done[f"{label}:{item.idea_id}"] = datetime.now(UTC).isoformat()
         night.save_state(day, state)
@@ -470,16 +477,17 @@ class _Run:
     rules: str | None
 
     def heavy(self, item: Item, cost, *, spent: float, limit_minutes: float) -> str | None:
-        """Why the idea's Hyperliquid data is too heavy to fetch tonight, or None (cached, quick,
-        or an idea with no second stage). Asked before anything is run, so an idea is never
-        half recomputed."""
+        """Why the idea is too heavy to run tonight, or None. Asked before anything is run, so an
+        idea is never half recomputed. The estimate is the larger of the data to fetch (the first
+        stage's and the second stage's, by what the raw cache holds, `qlab.hl_fetch`) and the time
+        the idea took the last time it was recomputed (the ledger, else the journal): the fetch
+        cannot see the computing, and the computing of one idea took 80 minutes on cached data."""
         from qlab import hl_fetch, night
         from qlab.pipeline import stage2
         from qlab.pipeline.spec import load_spec
         from qlab.registry.db import session_scope
 
-        if self.stage2_config is None or not (item.child_id or "stage2" in item.steps):
-            return None
+        estimates: list[hl_fetch.Estimate] = []
         try:
             with session_scope() as session:
                 own = run_view(session, item.idea_id)
@@ -487,17 +495,23 @@ class _Run:
                 # The same day `recompute` will run to.
                 own_end = _date(((own if "idea" in item.steps else child or own) or {}).get("end"))
                 spec = night.with_end(load_spec(item.spec_path), own_end)
-                names = (stage2.venue_listing()
-                         if spec.data.instruments is not None
-                         or spec.required_instruments is not None else None)
-                translation = stage2.translate(spec, self.stage2_config, venue_names=names)
-                if translation.spec is None:
-                    return None
-                est = hl_fetch.estimate(translation.spec, session, cost)
+                if "idea" in item.steps:
+                    estimates.append(hl_fetch.estimate(spec, session, cost))
+                if self.stage2_config is not None and (item.child_id or "stage2" in item.steps):
+                    names = (stage2.venue_listing()
+                             if spec.data.instruments is not None
+                             or spec.required_instruments is not None else None)
+                    translation = stage2.translate(spec, self.stage2_config, venue_names=names)
+                    if translation.spec is not None:
+                        estimates.append(hl_fetch.estimate(translation.spec, session, cost))
         except Exception:  # noqa: BLE001 - an estimate is advice; the run reports its own errors
+            pass
+        last = hl_fetch.last_seconds(self.ledger.get(item.idea_id), "restamp", item.idea_id)
+        if not estimates and last is None:
             return None
+        est = hl_fetch.total(estimates, last)
         reason = hl_fetch.heavy_reason(est, limit_minutes)
-        if reason is None and not est.cached and est.minutes * 60 > limit_minutes * 60 - spent:
+        if reason is None and est.minutes * 60 > limit_minutes * 60 - spent:
             return (f"{hl_fetch.HEAVY_RU}: не уместится в остаток времени этапа ({est.why}); "
                     "ночью не запускается")
         return reason
@@ -621,10 +635,12 @@ class _Run:
                         else 0) + 1
             self.ledger[item.idea_id] = {
                 "status": "error", "attempts": attempts, "error": entry.get("error"),
-                "stand": self.stand, "rules": self.rules, "day": self.day.isoformat()}
+                "stand": self.stand, "rules": self.rules, "day": self.day.isoformat(),
+                "seconds": entry.get("seconds")}
         else:
             self.ledger[item.idea_id] = {"status": "done", "stand": self.stand,
-                                         "rules": self.rules, "day": self.day.isoformat()}
+                                         "rules": self.rules, "day": self.day.isoformat(),
+                                         "seconds": entry.get("seconds")}
         save_ledger(self.ledger, self.ledger_path)
 
 
@@ -760,6 +776,8 @@ def report_lines(block: Mapping | None, *, even_if_quiet: bool = False) -> list[
     if block.get("time_up"):
         lines.append(f"Время этапа ({block.get('limit_minutes'):g} минут на ночь) вышло: остальные "
                      "ждут следующей ночи.")
+    if block.get("overran"):
+        lines.append(overran_line(block["overran"], "qlab restamp run --idea {idea} --allow-heavy"))
     for idea, why in (block.get("heavy") or {}).items():
         lines.append(f"- {idea}: не запущена — {why}. Вручную: "
                      f"`qlab restamp run --idea {idea} --allow-heavy`")
@@ -775,6 +793,30 @@ def report_lines(block: Mapping | None, *, even_if_quiet: bool = False) -> list[
     return lines
 
 
+def overran_line(over: Mapping, hand: str) -> str:
+    """The report's and the page's words for one idea that took a stage past its whole limit."""
+    return (f"Идея {over['idea']} шла {over['minutes']:g} минут, и этап вышел за свой предел "
+            f"({over['limit_minutes']:g} минут на ночь): её не прервали, остальное отложено до "
+            "следующей ночи. Сколько она шла, записано: пока она не станет быстрее, ночь её не "
+            f"начнёт, вручную: `{hand.format(idea=over['idea'])}`.")
+
+
+def page_note(block: Mapping | None) -> str | None:
+    """What the stage left undone tonight and why, for the step's row on the pipeline page."""
+    if not block:
+        return None
+    parts = []
+    if block.get("overran"):
+        parts.append(overran_line(block["overran"], "qlab restamp run --idea {idea} --allow-heavy"))
+    if block.get("time_up") and block.get("deferred"):
+        parts.append(f"Время этапа вышло, ждут следующей ночи: {', '.join(block['deferred'])}.")
+    if block.get("heavy"):
+        parts.append("Не начато, слишком тяжело для ночи: " + "; ".join(
+            f"{idea} (вручную: qlab restamp run --idea {idea} --allow-heavy)"
+            for idea in block["heavy"]) + ".")
+    return " ".join(parts) or None
+
+
 def _moved_route(e: Mapping) -> bool:
     b, a = (e.get("before") or {}), (e.get("after") or {})
     return any(b.get(k) and a.get(k) and b[k]["route"] != a[k]["route"]
@@ -787,5 +829,5 @@ def _moved_status(e: Mapping) -> bool:
 
 
 __all__ = ["CONFIG", "Config", "Item", "SECTION_TITLE", "entry_lines", "find_items", "load_config",
-           "load_ledger", "noise_books_short", "report_lines", "restamp_stage", "rules_changed",
-           "run_view", "stale_reasons"]
+           "load_ledger", "noise_books_short", "overran_line", "page_note", "report_lines",
+           "restamp_stage", "rules_changed", "run_view", "stale_reasons"]
