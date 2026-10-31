@@ -11,4 +11,9 @@
 #
 # The deadline applies only to a night that started before it and has a stop time: a run begun
 # by hand in the day is not cut by a deadline that has already passed.
-code_stages_deadline: "05:00"
+#
+# OFF by default (owner, 2026-10-31: «отключаем 7.10 пока. я хочу понять и видеть что так долго
+# отрабатывает»: the night's stop time is off too, and he wants to see what takes so long). To turn
+# it on, write the time here, e.g. code_stages_deadline: "05:00"; it needs a stop time of the night
+# to apply to (QLAB_STOP_AT in ops/night.sh).
+code_stages_deadline: null

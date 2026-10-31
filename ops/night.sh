@@ -5,13 +5,14 @@
 # after the recorder (03:05). Resumes a stopped night where it left off.
 #
 # Owner, 2026-10-26: the night must not run into the working day and must be over
-# before 08:00 Minsk. It cannot start earlier: the night reads the last closed
-# daily candle, and that closes at 00:00 UTC (03:00 Minsk). Nothing new starts
-# after STOP_AT; a started piece of work finishes (the longest seen was a bv2 run
-# on Binance hourly data, ~46 min, before the snapshot-matching fix and the noise
-# worker pool of 2026-10-26 made it ~30 s), the rest goes to the next night.
-# A night run by hand after a lost one names its own stop: QLAB_STOP_AT=23:00 ops/night.sh.
-STOP_AT="${QLAB_STOP_AT:-07:10}"
+# before 08:00 Minsk (stop time 07:10). It cannot start earlier: the night reads the last closed
+# daily candle, and that closes at 00:00 UTC (03:00 Minsk).
+# Owner, 2026-10-31: «отключаем 7.10 пока. я хочу понять и видеть что так долго отрабатывает».
+# So there is NO stop time now: the night runs to the end and the report shows how long each stage
+# took. To bring the stop back, set it: QLAB_STOP_AT=07:10 ops/night.sh (nothing new starts after
+# it; a started piece of work finishes, the rest goes to the next night). A night run by hand names
+# its own stop the same way: QLAB_STOP_AT=23:00 ops/night.sh.
+STOP_AT="${QLAB_STOP_AT:-}"
 # Binance instruments fetched two at a time (docs/NIGHT_SPEED.md; owner 2026-10-29: «да, включай 2
 # потока»): its funding limit is 500 requests per 5 min and one thread makes about 30 a minute.
 # Hyperliquid stays one at a time whatever this says. Back to 1 if the log shows 429 refusals.
@@ -30,7 +31,11 @@ mkdir -p data/night/logs
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
   # The night reads what the recorder writes: wait for it if it is still running.
   while pgrep -f ops/record-daily.sh > /dev/null; do sleep 30; done
-  uv run qlab night run --stop-at "$STOP_AT"
+  if [[ -n "$STOP_AT" ]]; then
+    uv run qlab night run --stop-at "$STOP_AT"
+  else
+    uv run qlab night run
+  fi
   rc=$?
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $rc)"
 } >> "$LOG" 2>&1

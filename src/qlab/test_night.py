@@ -1032,3 +1032,18 @@ def test_the_queue_of_closed_ideas_runs_after_the_agent_stages(tmp_path, monkeyp
     assert order.index("restamp_stage") < order.index("programmer_stage")
     assert order.index("generate_stage") < order.index("second_venue_stage")
     assert order[-1] == "second_venue_stage"
+
+
+def test_the_shipped_night_has_no_stop_time_and_no_code_deadline() -> None:
+    """Owner, 2026-10-31: «отключаем 7.10 пока»: the stop is optional (QLAB_STOP_AT) and the code
+    stages' deadline is off in the shipped file."""
+    from pathlib import Path
+
+    root = Path(__file__).parents[2]
+    stop = night.stop_time("07:10")
+    assert night.code_stages_cut(stop, night.stop_time("03:20"), root / "night" / "schedule.yaml") \
+        == stop
+    script = (root / "ops" / "night.sh").read_text(encoding="utf-8")
+    assert 'STOP_AT="${QLAB_STOP_AT:-}"' in script and "отключаем 7.10 пока" in script
+    assert 'uv run qlab night run --stop-at "$STOP_AT"' in script
+    assert "\n    uv run qlab night run\n" in script  # without a stop: no --stop-at at all
