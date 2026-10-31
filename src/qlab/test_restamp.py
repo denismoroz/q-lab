@@ -748,7 +748,8 @@ def test_the_stage_runs_after_the_twins_and_before_the_anomalies_and_the_overlay
     order: list[str] = []
     _night_env(tmp_path, monkeypatch, order)
     report = _run_night(paper=True)
-    assert order == ["waiting", "twins", "restamp", "anomalies", "overlays", "paper"]
+    # the anomaly stage is called by two steps (the code part, then the agent part)
+    assert order == ["waiting", "twins", "restamp", "anomalies", "anomalies", "overlays", "paper"]
     text = report.read_text(encoding="utf-8")
     assert f"## {restamp.SECTION_TITLE}" in text and "x-idea" in text
 
