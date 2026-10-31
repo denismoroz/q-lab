@@ -5,10 +5,12 @@ import IdeaDetail from './pages/IdeaDetail.jsx'
 import Cards from './pages/Cards.jsx'
 import Trials from './pages/Trials.jsx'
 import Agents from './pages/Agents.jsx'
+import Pipeline from './pages/Pipeline.jsx'
 
 const NAV = [
   { to: '/funnel', text: 'Воронка' },
   { to: '/agents', text: 'Агенты' },
+  { to: '/pipeline', text: 'Пайплайн' },
   { to: '/ideas', text: 'Реестр и кладбище' },
   { to: '/cards', text: 'Карточки кандидатов' },
   { to: '/trials', text: 'Прогоны' },
@@ -21,7 +23,7 @@ export default function App() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-baseline gap-x-6 gap-y-2 px-4 py-3">
           <span className="text-base font-semibold">q-lab</span>
           <span className="text-xs text-slate-500">
-            только чтение — консоль ничего не меняет в реестре
+            только чтение; кроме страницы «Пайплайн», где можно запустить ночь
           </span>
           <nav className="flex flex-wrap gap-1">
             {NAV.map((item) => (
@@ -48,6 +50,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/funnel" replace />} />
           <Route path="/funnel" element={<Funnel />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/ideas" element={<Registry />} />
           <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
           <Route path="/cards" element={<Cards />} />

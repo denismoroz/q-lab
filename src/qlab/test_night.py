@@ -1045,5 +1045,5 @@ def test_the_shipped_night_has_no_stop_time_and_no_code_deadline() -> None:
         == stop
     script = (root / "ops" / "night.sh").read_text(encoding="utf-8")
     assert 'STOP_AT="${QLAB_STOP_AT:-}"' in script and "отключаем 7.10 пока" in script
-    assert 'uv run qlab night run --stop-at "$STOP_AT"' in script
-    assert "\n    uv run qlab night run\n" in script  # without a stop: no --stop-at at all
+    assert 'uv run qlab night run --stop-at "$STOP_AT" "$@"' in script
+    assert '\n    uv run qlab night run "$@"\n' in script  # without a stop: no --stop-at at all

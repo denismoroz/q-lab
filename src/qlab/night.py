@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import json
 import subprocess
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -29,6 +30,7 @@ from pathlib import Path
 import yaml
 
 from qlab.capital_text import CAP_NUMBERS, headline
+from qlab.nightflow.runner import StepImpl
 from qlab.pipeline.spec import StrategySpec, load_spec
 from qlab.year_view import year_keys, years_line
 
@@ -49,7 +51,8 @@ STOP_STAGES = {"detectors": "определители режима",
                "venue_gap": "почему площадки расходятся",
                "twins-research": "двойники экспериментов исследователя",
                "restamp": "пересчёт старых результатов",
-               "anomalies": "аномалии", "overlays": "надстройки",
+               "anomalies": "аномалии", "anomalies-investigate": "разбор аномалий агентом",
+               "overlays": "надстройки", "ladder": "лестница оценки", "report": "утренний отчёт",
                "paper": "сверка бумаги", "decay": "детектор угасания",
                "allocation": "распределение капитала", "assess": "второе мнение",
                "director": "руководитель исследований", "research": "исследователь",
@@ -98,11 +101,21 @@ def load_state(day: date) -> dict:
     return json.loads(path.read_text()) if path.is_file() else {"done": {}}
 
 
+#: Called with the state after every save: the journal's item tracker watches the done-markers
+#: this way (`qlab.nightflow.runner.ItemTracker`), so the stages did not have to change.
+STATE_OBSERVERS: list = []
+
+
 def save_state(day: date, state: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     tmp = _state_path(day).with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=1, default=str))
     tmp.replace(_state_path(day))
+    for observer in list(STATE_OBSERVERS):
+        try:
+            observer(state)
+        except Exception:  # noqa: BLE001 - the journal must never fail a save of the night
+            pass
 
 
 def stop_time(hhmm: str, now: datetime | None = None) -> datetime:
@@ -961,6 +974,419 @@ def _token_lines(day: date) -> str:
             + ", ".join(f"{k} {v:,}" for k, v in by.items()) + week)
 
 
+@dataclass
+class NightContext:
+    """What a step of the night works with: the night's day and data end, its saved `state`, the
+    stop times, and the flags `run` was called with (docs/PIPELINE.md). One object is shared by
+    every step; with one step at a time nothing needs a lock."""
+
+    day: date
+    end: date
+    state: dict
+    noise_trials: int
+    stop_at: datetime | None
+    code_cut: datetime | None
+    sweep: bool
+    flags: dict
+    run_twins: bool
+    research_on: bool | None = None
+    prefetcher: object = None
+    report_path: Path | None = None
+
+    def save(self) -> None:
+        save_state(self.day, self.state)
+
+    def finish_prefetch(self) -> None:
+        """Stop the background fetch once (the stages that needed its data are done)."""
+        prefetcher, self.prefetcher = self.prefetcher, None
+        stop_prefetch(prefetcher, self.state)
+
+    def wants_research(self) -> bool:
+        """Whether the researcher's branch of the night is on tonight: asked for, or due."""
+        if self.research_on is None:
+            asked = self.flags["research"]
+            self.research_on = bool(asked if asked is not None else research_due(
+                self.day, load_research_plan(), sweep=self.sweep))
+        return self.research_on
+
+
+def _watch_specs() -> list[str]:
+    return yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
+
+
+def _flag(name: str):
+    """`skip_reason` of a step an old command-line flag switches off."""
+    return lambda ctx: None if ctx.flags[name] else "выключен флагом команды"
+
+
+def _flag_and_not_in_state(name: str, key: str, done: str):
+    def reason(ctx: NightContext) -> str | None:
+        if not ctx.flags[name]:
+            return "выключен флагом команды"
+        return done if key in ctx.state else None
+    return reason
+
+
+def _cut_by(stop: str, name: str):
+    """`is_cut` of a step that the night's stop time (`stop`: stop_at or code_cut) keeps from
+    starting."""
+    return lambda ctx: past_stop(getattr(ctx, stop), ctx.state, name)
+
+
+def _step_detectors(ctx: NightContext) -> None:
+    # Before the watch list: strategies on it read these files (docs/REGIME_DETECT.md); a failed
+    # build keeps yesterday's file.
+    from qlab.detector_builds import CONFIG, build_all
+
+    ctx.state["detectors"] = build_all(ctx.end) if CONFIG.is_file() else []
+
+
+def _detector_items(ctx: NightContext) -> list[tuple[str, str, str]]:
+    return [(b["name"], "ok" if b["ok"] else "failed", b["note"])
+            for b in ctx.state.get("detectors") or []]
+
+
+def _detectors_all_failed(ctx: NightContext) -> str | None:
+    built = ctx.state.get("detectors") or []
+    if built and not any(b["ok"] for b in built):
+        return "ни один определитель не собран: " + "; ".join(b["note"] for b in built)[:300]
+    return None
+
+
+def _step_recheck(ctx: NightContext) -> None:
+    state, watch = ctx.state, _watch_specs()
+    state["unwatched_bench"] = unwatched_bench(watch)
+    queue = [("watch", Path(p)) for p in watch]
+    if ctx.sweep:
+        queue += [("graveyard", p) for p in graveyard_specs() if str(p) not in watch]
+    for kind, path in queue:
+        key = f"{kind}:{path}"
+        if key in state["done"]:
+            continue
+        if past_stop(ctx.stop_at, state, "recheck"):
+            break
+        try:
+            spec = load_spec(path)
+        except Exception as exc:  # noqa: BLE001 - one broken spec file is its own row
+            result = ItemResult(kind=kind, name=str(path), error=f"{type(exc).__name__}: {exc}")
+        else:
+            result = evaluate_item(kind, spec, end=ctx.end, noise_trials=ctx.noise_trials)
+        state["results"] = [r for r in state["results"]
+                            if not (r["kind"] == kind and r["name"] == result.name)]
+        state["results"].append(asdict(result))
+        if result.error is None:  # a failed item is tried again on the next run
+            state["done"][key] = datetime.now(UTC).isoformat()
+        ctx.save()
+
+
+def _step_waiting(ctx: NightContext) -> None:
+    # Recheck too: ideas waiting for data that are not on the watch list (qlab.waiting).
+    from qlab.waiting import followed_ideas, waiting_stage
+
+    watch = _watch_specs()
+    try:
+        waiting_stage(ctx.day, ctx.end, ctx.state, watch=watch, noise_trials=ctx.noise_trials)
+    finally:
+        followed = followed_ideas(ctx.state.get("waiting"))
+        ctx.state["unwatched_bench"] = [i for i in ctx.state.get("unwatched_bench", [])
+                                        if i not in followed]
+
+
+def _step_twins(ctx: NightContext) -> None:
+    # Ideas that wait for forward data get an answer from the history that exists: their causal
+    # twin on Binance, then the second stage (qlab.twin_stage). Code only.
+    from qlab.twin_stage import twins_stage
+
+    twins_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at)
+
+
+def _step_restamp(ctx: NightContext) -> None:
+    # Results measured an older way are measured again (docs/RESTAMP.md). Code only.
+    restamp_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.code_cut)
+
+
+def _step_venue_gap(ctx: NightContext) -> None:
+    # Why the two venues of an open idea differ (qlab.venue_gap). Code only.
+    venue_gap_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut)
+
+
+def _step_anomalies(ctx: NightContext) -> None:
+    # Too-good results (docs/ANOMALIES.md): the code part, flags on the passed runs.
+    anomalies_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut, agent=False)
+
+
+def _step_anomalies_investigate(ctx: NightContext) -> None:
+    # The investigator agent on the flagged runs, bounded and guarded.
+    anomalies_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut, code=False)
+
+
+def _anomaly_failures(part: str):
+    def failures(ctx: NightContext) -> list[tuple[str, str, str]]:
+        block = ctx.state.get("anomalies") or {}
+        return [(str(e.get("idea") or e.get("trial")), "failed", str(e["error"])[:300])
+                for e in block.get(part) or [] if e.get("error")]
+    return failures
+
+
+def _step_overlays(ctx: NightContext) -> None:
+    # Overlays on the strategies that passed (qlab.overlay_stage). Code only.
+    overlays_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.code_cut)
+
+
+def _step_paper(ctx: NightContext) -> None:
+    ctx.state["paper"] = paper_reconciliation(ctx.day)
+
+
+def _paper_swallowed(ctx: NightContext) -> str | None:
+    lines = ctx.state.get("paper") or []
+    return lines[0] if lines and lines[0].startswith("export from the production host failed") \
+        else None
+
+
+def _step_decay(ctx: NightContext) -> None:
+    # After the watch list: the stand's panels are cached by then.
+    decay_stage(ctx.day, ctx.end, ctx.state)
+
+
+def _decay_swallowed(ctx: NightContext) -> str | None:
+    found = ctx.state.get("decay") or {}
+    if not found.get("results"):
+        return next((ln for ln in found.get("lines") or [] if "не посчитано" in ln), None)
+    return None
+
+
+def _step_allocation(ctx: NightContext) -> None:
+    # The capital split is a proposal for the owner (qlab.pool_allocation); it moves nothing.
+    from qlab.pool_allocation import night_stage
+
+    night_stage(ctx.day, ctx.end, ctx.state)
+
+
+def _allocation_swallowed(ctx: NightContext) -> str | None:
+    found = ctx.state.get("allocation") or {}
+    if found.get("proposal") is None:
+        return next((ln for ln in found.get("lines") or [] if "не посчитано" in ln), None)
+    return None
+
+
+def _step_assess(ctx: NightContext) -> None:
+    assess_stage(ctx.day, ctx.state)
+
+
+def _step_programmer(ctx: NightContext) -> None:
+    # Before the director and the researcher (owner, 2026-10-30: «переноси токены на
+    # программиста»).
+    programmer_stage(ctx.day, ctx.state, stop_at=ctx.stop_at)
+
+
+def _step_director(ctx: NightContext) -> None:
+    # Before the researcher and the generator it steers.
+    director_stage(ctx.day, ctx.state, force=ctx.flags["director"])
+
+
+def _step_research(ctx: NightContext) -> None:
+    research_stage(ctx.day, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at)
+
+
+def _research_skip(ctx: NightContext) -> str | None:
+    return None if ctx.wants_research() else "не по расписанию: исследователь сегодня не запрошен"
+
+
+def _twins_research_skip(ctx: NightContext) -> str | None:
+    if not ctx.wants_research():
+        return "не по расписанию: исследователь сегодня не работает"
+    return None if ctx.run_twins else "выключен флагом команды"
+
+
+def _step_twins_research(ctx: NightContext) -> None:
+    # The experiments the researcher has just run get their twins the same night.
+    from qlab.twin_stage import twins_stage
+
+    twins_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at,
+                label="twins-research")
+
+
+def _step_implement(ctx: NightContext) -> None:
+    implement_stage(ctx.day, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at)
+
+
+def _step_search(ctx: NightContext) -> None:
+    search_stage(ctx.day, ctx.state)
+
+
+def _step_catalogue(ctx: NightContext) -> None:
+    # Before the generator: a mechanism catalogued tonight can be built tonight.
+    catalogue_stage(ctx.day, ctx.state)
+
+
+def _step_cards(ctx: NightContext) -> None:
+    # After the implement stage on purpose: a card written tonight is implemented on the NEXT
+    # night's implement stage, and tonight's search budget pays for the card.
+    cards_stage(ctx.day, ctx.state)
+
+
+def _step_generate(ctx: NightContext) -> None:
+    # Last of the agents: the search for new ideas is what the budget cuts first, and the
+    # generator is the most expensive part of it.
+    generate_stage(ctx.day, ctx.state, noise_trials=ctx.noise_trials, force=ctx.flags["generate"])
+
+
+def _generate_skip(ctx: NightContext) -> str | None:
+    generate, search = ctx.flags["generate"], ctx.flags["search"]
+    return None if generate is True or (search and generate is None) else "выключен флагом команды"
+
+
+def _step_second_venue(ctx: NightContext) -> None:
+    # Ideas rejected on Binance before the venues were judged independently get their Hyperliquid
+    # side (qlab.second_venue). Code only, AFTER the agents, with its own time limit.
+    second_venue_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials,
+                       stop_at=ctx.stop_at)
+
+
+def _step_ladder(ctx: NightContext) -> None:
+    # The ladder of every open idea as one table, read after every stage has written its runs
+    # (qlab.ladder, docs/LADDER.md); a reading, so it costs no token.
+    ctx.finish_prefetch()
+    lines = ladder_stage()
+    if lines:
+        ctx.state["ladder"] = lines
+
+
+def _step_report(ctx: NightContext) -> None:
+    ctx.finish_prefetch()
+    ctx.save()  # with the stop line, if the stop time cut the night
+    try:
+        ctx.report_path = write_report(ctx.day, ctx.state)
+    except Exception as exc:  # noqa: BLE001 - a report must exist in the morning
+        path = REPORT_DIR / f"{ctx.day.isoformat()}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# Ночной прогон {ctx.day.isoformat()}\n\nОтчёт не собрался: "
+                        f"{type(exc).__name__}: {exc}. Состояние ночи цело: "
+                        f"`{_state_path(ctx.day)}`.\n", encoding="utf-8")
+        ctx.report_path = path
+        raise
+
+
+def night_steps() -> dict[str, StepImpl]:
+    """How each step of `night/pipeline.yaml` is run. The key is the step's id; `error_name` is
+    the stage's name in the state's `stage_errors` and in the stop line of the report."""
+    flag, cut = _flag, _cut_by
+    return {
+        "detectors": StepImpl(
+            _step_detectors, "detectors",
+            skip_reason=_flag_and_not_in_state("detectors", "detectors",
+                                               "уже собраны этой ночью (по состоянию ночи)"),
+            inspect=_detectors_all_failed, finals=_detector_items),
+        "recheck": StepImpl(_step_recheck, "recheck"),
+        "waiting": StepImpl(_step_waiting, "waiting", skip_reason=flag("waiting"),
+                            is_cut=cut("stop_at", "waiting")),
+        "twins": StepImpl(_step_twins, "twins", skip_reason=lambda c: None if c.run_twins
+                          else "выключен флагом команды", is_cut=cut("stop_at", "twins")),
+        "restamp": StepImpl(_step_restamp, "restamp", skip_reason=flag("restamp"),
+                            is_cut=cut("code_cut", "restamp")),
+        "venue_gap": StepImpl(_step_venue_gap, "venue_gap", skip_reason=flag("venue_gap"),
+                              is_cut=cut("code_cut", "venue_gap")),
+        "anomalies": StepImpl(_step_anomalies, "anomalies", skip_reason=flag("anomalies"),
+                              is_cut=cut("code_cut", "anomalies"),
+                              finals=_anomaly_failures("scans")),
+        "anomalies-investigate": StepImpl(
+            _step_anomalies_investigate, "anomalies-investigate", skip_reason=flag("anomalies"),
+            is_cut=cut("code_cut", "anomalies"), finals=_anomaly_failures("investigations")),
+        "overlays": StepImpl(_step_overlays, "overlays", skip_reason=lambda c: None if c.flags[
+            "overlays"] else "выключен флагом команды", is_cut=cut("code_cut", "overlays")),
+        "paper": StepImpl(
+            _step_paper, "paper",
+            skip_reason=_flag_and_not_in_state("paper", "paper",
+                                               "уже сверено этой ночью (по состоянию ночи)"),
+            is_cut=cut("stop_at", "paper"), inspect=_paper_swallowed),
+        "decay": StepImpl(
+            _step_decay, "decay",
+            skip_reason=_flag_and_not_in_state("decay", "decay",
+                                               "уже посчитано этой ночью (по состоянию ночи)"),
+            is_cut=cut("stop_at", "decay"), inspect=_decay_swallowed),
+        "allocation": StepImpl(
+            _step_allocation, "allocation",
+            skip_reason=lambda c: ("нет результата детектора угасания этой ночи"
+                                   if "decay" not in c.state else
+                                   "уже посчитано этой ночью (по состоянию ночи)"
+                                   if "allocation" in c.state else None),
+            is_cut=cut("stop_at", "allocation"), inspect=_allocation_swallowed),
+        "assess": StepImpl(_step_assess, "assess", skip_reason=flag("assess"),
+                           is_cut=cut("stop_at", "assess")),
+        "programmer": StepImpl(_step_programmer, "programmer", skip_reason=flag("programmer"),
+                               is_cut=cut("stop_at", "programmer")),
+        "director": StepImpl(_step_director, "director", skip_reason=flag("director_on"),
+                             is_cut=cut("stop_at", "director")),
+        "research": StepImpl(_step_research, "research", skip_reason=_research_skip),
+        "twins-research": StepImpl(_step_twins_research, "twins-research",
+                                   skip_reason=_twins_research_skip,
+                                   is_cut=cut("stop_at", "twins-research")),
+        "implement": StepImpl(_step_implement, "implement", skip_reason=flag("implement"),
+                              is_cut=cut("stop_at", "implement")),
+        "search": StepImpl(_step_search, "search", skip_reason=flag("search"),
+                           is_cut=cut("stop_at", "search")),
+        "catalogue": StepImpl(
+            _step_catalogue, "catalogue",
+            skip_reason=lambda c: None if c.flags["search"] and c.flags["catalogue"]
+            else "выключен флагом команды", is_cut=cut("stop_at", "catalogue")),
+        "cards": StepImpl(
+            _step_cards, "cards",
+            skip_reason=lambda c: None if c.flags["search"] and c.flags["cards"]
+            else "выключен флагом команды", is_cut=cut("stop_at", "cards")),
+        "generate": StepImpl(_step_generate, "generate", skip_reason=_generate_skip,
+                             is_cut=cut("stop_at", "generate")),
+        "second_venue": StepImpl(
+            _step_second_venue, "second_venue", skip_reason=lambda c: None if c.flags[
+                "second_venue"] else "выключен флагом команды",
+            is_cut=cut("stop_at", "second_venue")),
+        "ladder": StepImpl(_step_ladder, "ladder", skip_reason=flag("ladder")),
+        "report": StepImpl(_step_report, "report"),
+    }
+
+
+def schedule_skips(day: date) -> dict[str, str]:
+    """Steps that have nothing to do on `day` by their own cadence (the researcher, the director,
+    the generator), for the console's preview. A reading; any failure to read a config means
+    "no answer", never a guess."""
+    out: dict[str, str] = {}
+    try:
+        if not research_due(day, load_research_plan(), sweep=day.weekday() == 6):
+            out["research"] = "по расписанию исследователь сегодня не работает"
+            out["twins-research"] = out["research"]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from qlab.directions import load_config
+
+        cfg = load_config(DIRECTOR)
+        if cfg is None or not director_due(day, cfg):
+            out["director"] = "по расписанию руководитель сегодня не работает"
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        plan = yaml.safe_load(GENERATE.read_text(encoding="utf-8")) or {}
+        if not generate_due(day, plan):
+            out["generate"] = "по расписанию генератор сегодня не работает"
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def reset_steps(state: dict, table, step_ids: Collection[str]) -> None:
+    """Forget what the night's state says these steps did, so that a restart does the work again
+    instead of skipping what is marked done (the markers and the blocks named in the table)."""
+    for step_id in step_ids:
+        step = table.by_id[step_id]
+        for key in step.state_keys:
+            state.pop(key, None)
+        if step.done_prefixes:
+            state["done"] = {k: v for k, v in state.get("done", {}).items()
+                             if not k.startswith(step.done_prefixes)}
+        if step.id == "recheck":
+            state["results"] = []
+        state.get("stage_errors", {}).pop(step_id, None)
+
+
 def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool = True,
         implement: bool = True, search: bool = True, detectors: bool = True,
         assess: bool = True, research: bool | None = None, generate: bool | None = None,
@@ -969,7 +1395,10 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True, ladder: bool | None = None,
-        second_venue: bool | None = None, venue_gap: bool = True) -> Path:
+        second_venue: bool | None = None, venue_gap: bool = True,
+        journal=None, trigger: str = "hand", off: Collection[str] = (),
+        only: Collection[str] | None = None, restart: str | None = None,
+        concurrency: int = 1, command: str | None = None) -> Path:
     """The night's recheck stage; returns the report path. `graveyard`
     defaults to Sundays (weekly). `decay` (the decay detector, qlab.decay)
     follows `paper` unless given: it reads the paper books' export. `director`
@@ -995,7 +1424,24 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     (`qlab.overlay_stage.anomaly_refusal`).
     `ladder` (default on; `qlab.ladder`) puts one table of every open idea's seven steps into the
     report, read last, after every stage has written its runs: no token, no verdict.
-    Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped."""
+    Nothing new starts after `stop_at` (`past_stop`); the report says where the night stopped.
+
+    The night is a table of steps (`night/pipeline.yaml`, docs/PIPELINE.md) that `nightflow.Runner`
+    goes through in the table's order. A step that fails is a journal row and a line of the report;
+    only the steps that depend on its output are blocked, the rest run. The flags above switch a
+    step off the old way (nothing else is touched). `off` switches steps off the new way: the steps
+    that depend on one of them by `data` are blocked unless it was done earlier the same night.
+    `only` limits the run to the named steps (a restart), `restart` names the step restarted. The
+    `journal` (`nightflow.journal`) records the run; without one nothing is recorded.
+    `concurrency` is how many steps may run together (1: the table's order)."""
+    import os
+
+    from qlab.nightflow.journal import NullJournal
+    from qlab.nightflow.plan import make_plan
+    from qlab.nightflow.runner import ItemTracker, Runner
+    from qlab.nightflow.table import load_table
+
+    journal = journal if journal is not None else NullJournal()
     day = day or datetime.now(UTC).date()
     end = last_closed_day(datetime.combine(day, datetime.min.time(), tzinfo=UTC)
                           + timedelta(hours=12))
@@ -1004,178 +1450,70 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
     state.setdefault("results", [])
     state.pop("stopped_at", None)  # a resumed night gets its own stop time
     state.pop("deadline", None)  # and its own deadline for the code stages
-    state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
+    table = load_table()
+    impls = night_steps()
+    done_today = journal.done_today(day)
+    plan = make_plan(table, off=off, only=only, done_today=done_today)
+    running = [p.step for p in plan if p.action != "outside"]
+    if only is None:
+        state.pop("stage_errors", None)  # and its own failures: a stage that failed is tried again
+    else:
+        for step_id in running:  # a partial run forgets only the failures of the steps it redoes
+            state.get("stage_errors", {}).pop(impls[step_id].error_name, None)
+    if restart:
+        reset_steps(state, table, [restart, *table.descendants(restart, ("data",))])
     state["account"] = account_state()  # the report says which account the agents ran under
     from qlab.budget.guard import limits_off
 
     state["limits_off"] = limits_off()  # the report says so when the guard's ceilings were off
+    run_twins = twins if twins is not None else waiting
+    director_on = director if director is not None else research is not False
+    ctx = NightContext(
+        day=day, end=end, state=state, noise_trials=noise_trials, stop_at=stop_at,
+        code_cut=code_cut, run_twins=run_twins,
+        sweep=graveyard if graveyard is not None else day.weekday() == 6,
+        flags={"graveyard": graveyard, "paper": paper, "implement": implement, "search": search,
+               "detectors": detectors, "assess": assess, "research": research,
+               "generate": generate, "decay": decay if decay is not None else paper,
+               "director": director, "director_on": director_on, "waiting": waiting,
+               "overlays": overlays if overlays is not None else run_twins,
+               "anomalies": anomalies, "restamp": restamp, "programmer": programmer,
+               "catalogue": catalogue, "cards": cards, "ladder": ladder is not False,
+               "second_venue": second_venue if second_venue is not None else run_twins,
+               "venue_gap": venue_gap})
     # The data of the watch list is fetched in the background while the stages in front compute
     # (qlab.prefetch, docs/NIGHT_SPEED.md); the stages that need it wait for it, never fetch twice.
-    prefetcher = start_prefetch(end, state)
-    if detectors and "detectors" not in state:
-        # Before the watch list: strategies on it read these files
-        # (docs/REGIME_DETECT.md); a failed build keeps yesterday's file.
-        from qlab.detector_builds import CONFIG, build_all
+    if "recheck" in running and WATCHLIST.is_file():
+        ctx.prefetcher = start_prefetch(end, state)
+    run_id = journal.start_run(day, trigger=trigger, steps_off=list(off), only=(
+        list(only) if only is not None else None), restart=restart, concurrency=concurrency,
+        pid=os.getpid(), command=command)
+    tracker = ItemTracker(table, journal)
 
-        built = guarded(day, state, "detectors", build_all, end) if CONFIG.is_file() else []
-        if built is not None:
-            state["detectors"] = built
+    def note_failure(step_id: str, error: str) -> None:
+        state.setdefault("stage_errors", {})[impls[step_id].error_name] = error
         save_state(day, state)
-    watch = yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
-    state["unwatched_bench"] = unwatched_bench(watch)
-    sweep = graveyard if graveyard is not None else day.weekday() == 6
-    queue = [("watch", Path(p)) for p in watch]
-    if sweep:
-        queue += [("graveyard", p) for p in graveyard_specs() if str(p) not in watch]
-    for kind, path in queue:
-        key = f"{kind}:{path}"
-        if key in state["done"]:
-            continue
-        if past_stop(stop_at, state, "recheck"):
-            break
-        try:
-            spec = load_spec(path)
-        except Exception as exc:  # noqa: BLE001 - one broken spec file is its own row
-            result = ItemResult(kind=kind, name=str(path), error=f"{type(exc).__name__}: {exc}")
-        else:
-            result = evaluate_item(kind, spec, end=end, noise_trials=noise_trials)
-        state["results"] = [r for r in state["results"]
-                            if not (r["kind"] == kind and r["name"] == result.name)]
-        state["results"].append(asdict(result))
-        if result.error is None:  # a failed item is tried again on the next run
-            state["done"][key] = datetime.now(UTC).isoformat()
-        save_state(day, state)
-    if waiting and not past_stop(stop_at, state, "waiting"):
-        # Recheck too: ideas waiting for data that are not on the watch list (qlab.waiting).
-        from qlab.waiting import followed_ideas, waiting_stage
 
-        guarded(day, state, "waiting", waiting_stage, day, end, state, watch=watch,
-                noise_trials=noise_trials)
-        followed = followed_ideas(state.get("waiting"))
-        state["unwatched_bench"] = [i for i in state["unwatched_bench"] if i not in followed]
-        save_state(day, state)
-    run_twins = twins if twins is not None else waiting
-    if run_twins and not past_stop(stop_at, state, "twins"):
-        # Ideas that wait for forward data get an answer from the history that exists: their
-        # causal twin on Binance, then the second stage (qlab.twin_stage). Code only.
-        from qlab.twin_stage import twins_stage
-
-        guarded(day, state, "twins", twins_stage, day, end, state, noise_trials=noise_trials,
-                stop_at=stop_at)
-        save_state(day, state)
-    if restamp and not past_stop(code_cut, state, "restamp"):
-        # Results measured an older way are measured again (docs/RESTAMP.md). Code only. Before
-        # the anomalies stage: it scans the runs this one has just made.
-        guarded(day, state, "restamp", restamp_stage, day, end, state, noise_trials=noise_trials,
-                stop_at=code_cut)
-        save_state(day, state)
-    if venue_gap and not past_stop(code_cut, state, "venue_gap"):
-        # Why the two venues of an open idea differ: the profit on coins the other venue does not
-        # list, measured on both runs and stored for the pages (qlab.venue_gap). Code only.
-        guarded(day, state, "venue_gap", venue_gap_stage, day, end, state, stop_at=code_cut)
-        save_state(day, state)
-    if anomalies and not past_stop(code_cut, state, "anomalies"):
-        # Too-good results (docs/ANOMALIES.md): flags by code on the passed runs, the
-        # investigator agent on the flagged ones. Before the overlays: a base must be clean.
-        guarded(day, state, "anomalies", anomalies_stage, day, end, state, stop_at=code_cut)
-        save_state(day, state)
-    if (overlays if overlays is not None else run_twins) \
-            and not past_stop(code_cut, state, "overlays"):
-        # Overlays on the strategies that passed (qlab.overlay_stage): when and how much to
-        # hold, every variant a counted trial, compared with its base. Code only.
-        guarded(day, state, "overlays", overlays_stage, day, end, state,
-                noise_trials=noise_trials,
-                stop_at=code_cut)
-        save_state(day, state)
-    if paper and "paper" not in state and not past_stop(stop_at, state, "paper"):
-        reconciled = guarded(day, state, "paper", paper_reconciliation, day)
-        if reconciled is not None:
-            state["paper"] = reconciled
-        save_state(day, state)
-    if (decay if decay is not None else paper) and "decay" not in state \
-            and not past_stop(stop_at, state, "decay"):
-        # After the watch list: the stand's panels are cached by then.
-        guarded(day, state, "decay", decay_stage, day, end, state)
-        save_state(day, state)
-    if "decay" in state and "allocation" not in state \
-            and not past_stop(stop_at, state, "allocation"):
-        # The capital split is a proposal for the owner (qlab.pool_allocation): it reads the
-        # decay results and the paper rule's states and moves nothing.
-        from qlab.pool_allocation import night_stage
-
-        guarded(day, state, "allocation", night_stage, day, end, state)
-        save_state(day, state)
-    if assess and not past_stop(stop_at, state, "assess"):
-        guarded(day, state, "assess", assess_stage, day, state)
-    if programmer and not past_stop(stop_at, state, "programmer"):
-        # The programmer comes BEFORE the director and the researcher (owner, 2026-10-30:
-        # «переноси токены на программиста»): new mechanisms wait for the building blocks in its
-        # queue, while the researchers' variants of the same five strategies had the night's
-        # first tokens. Behind the rechecks and their second opinions, which come first.
-        guarded(day, state, "programmer", programmer_stage, day, state, stop_at=stop_at)
-    if (director if director is not None else research is not False) \
-            and not past_stop(stop_at, state, "director"):
-        # Before the researcher and the generator it steers; in the implement stage's
-        # budget, and skipped (not the rechecks) when that budget is short.
-        guarded(day, state, "director", director_stage, day, state, force=director)
-    if research if research is not None else research_due(day, load_research_plan(), sweep=sweep):
-        guarded(day, state, "research", research_stage, day, state, noise_trials=noise_trials,
-                stop_at=stop_at)
-        if run_twins and not past_stop(stop_at, state, "twins-research"):
-            # The experiments the researcher has just run get their twins the same night.
-            from qlab.twin_stage import twins_stage
-
-            guarded(day, state, "twins-research", twins_stage, day, end, state,
-                    noise_trials=noise_trials,
-                    stop_at=stop_at, label="twins-research")
-            save_state(day, state)
-    if implement and not past_stop(stop_at, state, "implement"):
-        guarded(day, state, "implement", implement_stage, day, state,
-                noise_trials=noise_trials,
-                stop_at=stop_at)
-    if search and not past_stop(stop_at, state, "search"):
-        guarded(day, state, "search", search_stage, day, state)
-    if search and catalogue and not past_stop(stop_at, state, "catalogue"):
-        # Before the generator: a mechanism catalogued tonight can be built tonight.
-        guarded(day, state, "catalogue", catalogue_stage, day, state)
-    if search and cards and not past_stop(stop_at, state, "cards"):
-        # After the implement stage on purpose: a card written tonight is implemented on the
-        # NEXT night's implement stage, at the top of the cut order, and tonight's search budget
-        # (the share cut first) pays for the card, not the stages in front of it. Before the
-        # generator: the card is the more valuable of the two.
-        guarded(day, state, "cards", cards_stage, day, state)
-    if (generate is True or (search and generate is None)) \
-            and not past_stop(stop_at, state, "generate"):
-        # Last: the search for new ideas is what the budget cuts first, and the
-        # generator is the most expensive part of it.
-        guarded(day, state, "generate", generate_stage, day, state, noise_trials=noise_trials,
-                force=generate)
-    if (second_venue if second_venue is not None else run_twins) \
-            and not past_stop(stop_at, state, "second_venue"):
-        # Ideas rejected on Binance before the venues were judged independently get their
-        # Hyperliquid side, the oldest first, a few a night (qlab.second_venue). Code only, and
-        # AFTER the agents (2026-10-31: in front of them it ate the night): it has its own time
-        # limit and skips an idea whose data is too heavy to fetch in it.
-        guarded(day, state, "second_venue", second_venue_stage, day, end, state,
-                noise_trials=noise_trials, stop_at=stop_at)
-        save_state(day, state)
-    stop_prefetch(prefetcher, state)
-    if ladder is not False:
-        # The ladder of every open idea as one table, read after every stage has written its
-        # runs (qlab.ladder, docs/LADDER.md); a reading, so it is last and costs no token.
-        lines_ = guarded(day, state, "ladder", ladder_stage)
-        if lines_:
-            state["ladder"] = lines_
-    save_state(day, state)  # with the stop line, if the stop time cut the night
+    STATE_OBSERVERS.append(tracker.observe)
+    outcome = "ok"
     try:
-        return write_report(day, state)
-    except Exception as exc:  # noqa: BLE001 - a report must exist in the morning
-        path = REPORT_DIR / f"{day.isoformat()}.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"# Ночной прогон {day.isoformat()}\n\nОтчёт не собрался: "
-                        f"{type(exc).__name__}: {exc}. Состояние ночи цело: "
-                        f"`{_state_path(day)}`.\n", encoding="utf-8")
-        return path
+        runner = Runner(table, impls, ctx, journal=journal, run_id=run_id, off=off, only=only,
+                        done_today=done_today, concurrency=concurrency, tracker=tracker,
+                        on_failure=note_failure)
+        results = runner.execute()
+        if any(v in ("failed", "interrupted") for v in results.values()):
+            outcome = "failed"
+    except BaseException:
+        outcome = "interrupted"
+        raise
+    finally:
+        STATE_OBSERVERS.remove(tracker.observe)
+        try:
+            ctx.finish_prefetch()
+            save_state(day, state)
+        finally:
+            journal.finish_run(run_id, outcome)
+    return ctx.report_path or REPORT_DIR / f"{day.isoformat()}.md"
 
 
 def start_prefetch(end: date, state: dict):

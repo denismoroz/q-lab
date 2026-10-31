@@ -634,12 +634,13 @@ def test_the_anomaly_stage_runs_before_the_overlays_so_a_base_is_scanned_first(
     _night_env(tmp_path, monkeypatch, order)
 
     def fake_anomalies(day, end, state, **kw):
-        order.append("anomalies")
+        # two steps of the night call it (docs/PIPELINE.md): the code part, then the agent part
+        order.append("anomalies:code" if kw.get("agent") is False else "anomalies:agent")
         state["anomalies"] = {"scanned": []}
 
     monkeypatch.setattr(night, "anomalies_stage", fake_anomalies)
     _run_night(paper=False, research=False)
-    assert order == ["waiting", "twins", "anomalies", "overlays"]
+    assert order == ["waiting", "twins", "anomalies:code", "anomalies:agent", "overlays"]
     order.clear()
     monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state2")
     _run_night(paper=False, research=False, anomalies=False)

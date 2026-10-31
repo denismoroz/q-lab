@@ -161,11 +161,12 @@ def anomalies_stage(day: date, end: date, state: dict, *, stop_at: datetime | No
                     max_investigations: int | None = None, config_path: Path = CONFIG,
                     ledger_path: Path = LEDGER, queue_path: Path | None = None,
                     budget_factory: Callable[[Any], Any] | None = None, agent: bool = True,
-                    label: str = "anomalies", dry_run: bool = False) -> None:
+                    label: str = "anomalies", dry_run: bool = False, code: bool = True) -> None:
     """Scan tonight's runs and investigate the flagged ones; write what happened to
     `state["anomalies"]` for the morning report (`qlab.anomalies.report.report_lines`).
 
-    `only` names the ideas to handle; `agent=False` runs the code part only; `dry_run` writes
+    `only` names the ideas to handle; `agent=False` runs the code part only and `code=False` the
+    agent part only (the night runs them as two steps, docs/PIPELINE.md); `dry_run` writes
     and runs nothing and only lists what would be done. `budget_factory(session)` returns the
     `NightBudget` (default: a fresh probe); `end` is the night's data end, kept for the
     signature of the night's stages."""
@@ -177,13 +178,14 @@ def anomalies_stage(day: date, end: date, state: dict, *, stop_at: datetime | No
     if cfg is None or not cfg.enabled:
         return
     block = state.setdefault("anomalies", {"scans": [], "investigations": [], "notes": []})
-    block["deferred"] = []
+    if code:
+        block["deferred"] = []
     done = state.setdefault("done", {})
 
     # 1. The code part.
     cap = max_scans if max_scans is not None else cfg.scan.max_scans_per_night
     with session_scope() as session:
-        candidates = scan_candidates(session, cfg, only=only)
+        candidates = scan_candidates(session, cfg, only=only) if code else []
     made = 0
     for trial_id, idea_id in candidates:
         if f"{label}:scan:{trial_id}" in done:

@@ -12,6 +12,8 @@
 # took. To bring the stop back, set it: QLAB_STOP_AT=07:10 ops/night.sh (nothing new starts after
 # it; a started piece of work finishes, the rest goes to the next night). A night run by hand names
 # its own stop the same way: QLAB_STOP_AT=23:00 ops/night.sh.
+# Owner, 2026-10-31: the night is a table of steps (night/pipeline.yaml, docs/PIPELINE.md). The console's
+# "Пайплайн" page starts this same script on a process of its own (QLAB_TRIGGER=button).
 STOP_AT="${QLAB_STOP_AT:-}"
 # Binance instruments fetched two at a time (docs/NIGHT_SPEED.md; owner 2026-10-29: «да, включай 2
 # потока»): its funding limit is 500 requests per 5 min and one thread makes about 30 a minute.
@@ -31,10 +33,12 @@ mkdir -p data/night/logs
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
   # The night reads what the recorder writes: wait for it if it is still running.
   while pgrep -f ops/record-daily.sh > /dev/null; do sleep 30; done
+  # Arguments go through to `qlab night run` (the console's button passes --off / --restart; one run
+  # at a time: the run takes a lock, and a second start ends at once with exit 75).
   if [[ -n "$STOP_AT" ]]; then
-    uv run qlab night run --stop-at "$STOP_AT"
+    uv run qlab night run --stop-at "$STOP_AT" "$@"
   else
-    uv run qlab night run
+    uv run qlab night run "$@"
   fi
   rc=$?
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) end (exit $rc)"

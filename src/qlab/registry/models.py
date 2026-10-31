@@ -755,3 +755,72 @@ class Publication(Base):
     handed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scout_note: Mapped[str | None] = mapped_column(String, nullable=True)
     draft: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PipelineRun(Base):
+    """`pipeline_run` -- one go through the night's steps (`qlab.nightflow`, docs/PIPELINE.md).
+    `night_date` is the night the run belongs to (the key of `data/night/<date>.json`); a night
+    may have several runs (the schedule's, a restart by hand or by the console's button).
+    `trigger` is schedule / button / hand. `steps_off` are the steps the owner switched off,
+    `only` the steps a partial run was limited to (a restart), null for a whole night. `state`:
+    running / ok / failed (some step failed) / interrupted (the process died or was stopped).
+    `approximate` marks a run rebuilt from the night's saved state, with times read from the
+    done-markers rather than measured."""
+
+    __tablename__ = "pipeline_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    night_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    trigger: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    steps_off: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    only: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    restart: Mapped[str | None] = mapped_column(String, nullable=True)
+    command: Mapped[str | None] = mapped_column(String, nullable=True)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    approximate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PipelineStepRun(Base):
+    """`pipeline_step_run` -- one step inside one run, written when the step starts and again when
+    it ends. `state`: running / ok / failed / blocked (a `data` parent failed or was switched off;
+    `blocked_by` names it) / off (switched off by the owner) / skipped (not due tonight, or
+    switched off by a flag of the old command line) / cut (the night's stop time came first) /
+    interrupted. `tokens` are those spent between its start and its end (`token_spend`)."""
+
+    __tablename__ = "pipeline_step_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("pipeline_run.id"), nullable=False, index=True)
+    step_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    items_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    items_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    approximate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class PipelineItem(Base):
+    """`pipeline_item` -- one piece of work inside a step run (a watch-list spec, a waiting idea,
+    an overlay variant): its name, how long it took and how it ended (ok / failed)."""
+
+    __tablename__ = "pipeline_item"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    step_run_id: Mapped[int] = mapped_column(
+        ForeignKey("pipeline_step_run.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail: Mapped[str | None] = mapped_column(String, nullable=True)

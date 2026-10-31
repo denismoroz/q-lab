@@ -1,0 +1,299 @@
+# The night's steps, in one table (src/qlab/nightflow, docs/PIPELINE.md).
+#
+# Owner, 2026-10-31: «разбиваем весь процесс на шаги. в qlab я хочу видеть весь пайплайн по шагам.
+# не зависимые шаги должны выполняться по любому. если какой-то шаг - падает - это не должно
+# останавливать весь процесс.»
+#
+# The ORDER of the list is the order the night runs the steps one after another (concurrency 1).
+# A step may name as a parent only a step above it, so the list is always a valid order.
+#
+# `depends_on` names the real dependencies, each with a kind and the reason in plain Russian
+# (the console shows the reason):
+#   data       -- the step reads what the parent wrote tonight and is wrong without it. A failed or
+#                 switched-off parent (not done earlier the same day) BLOCKS the step; nothing else does.
+#   fresh      -- the step reads what the parent wrote, but yesterday's answer is a true one: it waits
+#                 for the parent only so that its reading is fresh. A failed parent does not block it.
+#   exclusive  -- both write the same kind of thing (trials of one idea): they must not overlap,
+#                 or one idea would be run twice and counted twice in the deflation.
+#   budget     -- only the order in which the night spends the token budget (CLAUDE.md: the cut goes
+#                 from the end). No data passes; a failed parent does not block the step.
+# `reads_all` is shorthand for a `fresh` edge to every step above (the morning report).
+#
+# `done_prefixes` / `state_keys`: what a RESTART of the step clears in the night's state file, so
+# that the step does its work again instead of skipping what is marked done.
+# `refresh`: a step that is added to every partial run (a restart), because it only reads.
+steps:
+  - id: detectors
+    title: Определители режима
+    description: Пересобирает файлы определителей режима рынка на данных до вчерашнего дня.
+    kind: data
+    tokens: false
+    items: определитель
+    state_keys: [detectors]
+
+  - id: recheck
+    title: Список наблюдения
+    description: Пересчитывает каждую стратегию из списка наблюдения на свежих данных (по воскресеньям — ещё кладбище по режимам).
+    kind: code
+    tokens: false
+    items: стратегия из списка наблюдения (кладбище по воскресеньям)
+    done_prefixes: ["watch:", "graveyard:"]
+    state_keys: [results, unwatched_bench]
+    depends_on:
+      - {step: detectors, kind: data, why: "Стратегии списка читают файлы определителей режима, собранные первым шагом."}
+
+  - id: waiting
+    title: Ждущие идеи
+    description: Пересчитывает идеи, которые ждут данных и не стоят в списке наблюдения, и их вторую ступень.
+    kind: code
+    tokens: false
+    items: ждущая идея и её ступень
+    done_prefixes: ["waiting:"]
+    state_keys: [waiting, waiting_notes]
+    depends_on:
+      - {step: detectors, kind: data, why: "Ждущие идеи читают те же файлы определителей режима."}
+
+  - id: twins
+    title: Двойники и вторая ступень
+    description: Для идей без проверки вперёд строит двойника, который выбирает числа только по прошлому, и гонит его на истории.
+    kind: code
+    tokens: false
+    items: идея, для которой строится двойник
+    done_prefixes: ["twins:"]
+    state_keys: [twins]
+    depends_on:
+      - {step: recheck, kind: fresh, why: "Кого считать «ждущим проверки вперёд», видно по последним исходам, а их обновляет пересчёт списка."}
+      - {step: waiting, kind: fresh, why: "Двойники берутся из тех же ждущих идей; свежий исход ждущей идеи меняет, нужен ли двойник."}
+
+  - id: restamp
+    title: Пересчёт старых результатов
+    description: Заново считает идеи, чей последний результат измерен старой версией стенда или правил.
+    kind: code
+    tokens: false
+    items: идея
+    done_prefixes: ["restamp:"]
+    state_keys: [restamp]
+    depends_on:
+      - {step: recheck, kind: exclusive, why: "Идея, пересчитанная сегодня, уже измерена новой версией; параллельно её посчитали бы дважды, и дефляция учла бы оба раза."}
+      - {step: waiting, kind: exclusive, why: "То же: ждущая идея не должна считаться дважды за ночь."}
+      - {step: twins, kind: exclusive, why: "То же для двойников: они пишут испытания тех же идей."}
+
+  - id: venue_gap
+    title: Почему площадки расходятся
+    description: Для идеи, прошедшей на одной площадке и не прошедшей на другой, измеряет, из-за чего они разошлись (только чтение).
+    kind: code
+    tokens: false
+    items: идея
+    state_keys: [venue_gap]
+    depends_on:
+      - {step: restamp, kind: fresh, why: "Читает два последних испытания идеи; после пересчёта они свежие."}
+
+  - id: anomalies
+    title: Аномалии — проверка кодом
+    description: Проверяет семью признаков «слишком хорошо» на прошедших прогонах; решает код, токены не тратятся.
+    kind: code
+    tokens: false
+    items: прогон
+    done_prefixes: ["anomalies:scan:"]
+    state_keys: [anomalies]
+    depends_on:
+      - {step: restamp, kind: fresh, why: "Проверяет прогоны, которые сделали предыдущие шаги этой ночью."}
+
+  - id: anomalies-investigate
+    title: Аномалии — разбор агентом
+    description: Агент-следователь разбирает прогоны, на которых сработал признак (в пределах бюджета токенов).
+    kind: agent
+    tokens: true
+    items: прогон с сработавшим признаком
+    done_prefixes: ["anomalies:inv:"]
+    depends_on:
+      - {step: anomalies, kind: data, why: "Разбирает ровно те прогоны, на которых проверка кодом подняла признак."}
+
+  - id: overlays
+    title: Надстройки
+    description: Для стратегий, прошедших первую ступень, прогоняет надстройки и пары надстроек и сравнивает с базой.
+    kind: code
+    tokens: false
+    items: вариант надстройки
+    done_prefixes: ["overlays:"]
+    state_keys: [overlays]
+    depends_on:
+      - {step: anomalies, kind: data, why: "Базой берётся только прогон, который проверен на аномалии и чистый; без проверки базу выбрать нельзя."}
+
+  - id: paper
+    title: Сверка бумаги с продом
+    description: Читает бумажные книги с боевого хоста (только чтение) и пересчитывает их на данных q-lab.
+    kind: data
+    tokens: false
+    items: книга
+    state_keys: [paper]
+    depends_on:
+      - {step: recheck, kind: fresh, why: "Сравнивает бумагу с проверкой вперёд на стенде за тот же отрезок; проверка вперёд обновляется пересчётом списка."}
+
+  - id: decay
+    title: Детектор угасания
+    description: Смотрит, где результаты работающих книг лежат среди окон их собственной истории на стенде.
+    kind: code
+    tokens: false
+    items: книга
+    state_keys: [decay]
+    depends_on:
+      - {step: paper, kind: data, why: "Строит ряды боевых книг из выгрузки, которую сделала сверка бумаги этой ночью."}
+      - {step: recheck, kind: fresh, why: "Читает кэш панелей стенда, который докачивается пересчётом списка."}
+
+  - id: allocation
+    title: Распределение капитала
+    description: Считает предложение, как разделить деньги между стратегиями; ничего не двигает.
+    kind: code
+    tokens: false
+    state_keys: [allocation]
+    depends_on:
+      - {step: decay, kind: data, why: "Показывает рядом с каждой стратегией результат детектора угасания этой ночи."}
+      - {step: paper, kind: fresh, why: "Правило бумаги читает строки сверки этой ночи."}
+
+  - id: assess
+    title: Второе мнение
+    description: Агент-оценщик даёт второе мнение по прогонам списка, где исход изменился или на кону деньги.
+    kind: agent
+    tokens: true
+    items: прогон
+    done_prefixes: ["assess:"]
+    state_keys: [assessed]
+    depends_on:
+      - {step: recheck, kind: data, why: "Оценивает исходы, которые пересчёт списка записал этой ночью."}
+      - {step: paper, kind: fresh, why: "В справку оценщику кладутся строки сверки бумаги."}
+
+  - id: programmer
+    title: Программист
+    description: Агент-программист берёт очередь заявок руководителя и пишет блоки кода на отдельных ветках.
+    kind: agent
+    tokens: true
+    items: заявка
+    state_keys: [programmer]
+    depends_on:
+      - {step: assess, kind: budget, why: "Порядок трат: сначала здоровье работающих стратегий и второе мнение, потом новое (CLAUDE.md)."}
+
+  - id: director
+    title: Руководитель исследований
+    description: Агент-руководитель раз в несколько ночей расставляет приоритеты исследователю и генератору.
+    kind: agent
+    tokens: true
+    items: запись руководителя
+    done_prefixes: ["director:"]
+    state_keys: [director]
+    depends_on:
+      - {step: programmer, kind: budget, why: "Решение владельца 2026-10-30: токены сначала программисту."}
+
+  - id: research
+    title: Исследователь
+    description: Агент-исследователь по каждой стратегии пишет записку с экспериментами, а стенд их прогоняет.
+    kind: agent
+    tokens: true
+    items: стратегия
+    done_prefixes: ["research:"]
+    state_keys: [research]
+    depends_on:
+      - {step: director, kind: budget, why: "Руководитель расставляет порядок стратегий для исследователя; он идёт первым."}
+
+  - id: twins-research
+    title: Двойники экспериментов исследователя
+    description: Для экспериментов, которые исследователь прогнал этой ночью, строит двойников и гонит их на истории.
+    kind: code
+    tokens: false
+    items: эксперимент
+    done_prefixes: ["twins:"]
+    depends_on:
+      - {step: research, kind: data, why: "Берёт эксперименты, записанные исследователем этой ночью."}
+      - {step: twins, kind: exclusive, why: "Тот же код и тот же журнал двойников, что у шага «Двойники»: вместе они не идут."}
+
+  - id: implement
+    title: Реализация карточек
+    description: Агент-реализатор пишет блок и спек по карточкам из очереди, затем код гонит их на стенде.
+    kind: agent
+    tokens: true
+    items: карточка
+    done_prefixes: ["implement:"]
+    state_keys: [implemented]
+    depends_on:
+      - {step: research, kind: budget, why: "Порядок трат: реализация идёт после исследователя, до поиска нового."}
+
+  - id: search
+    title: Поиск
+    description: Забирает новые статьи и события площадок (без токенов), затем агент-разведчик пишет черновик карточки.
+    kind: agent
+    tokens: true
+    items: источник
+    state_keys: [events, events_error, scout, publications]
+    depends_on:
+      - {step: implement, kind: budget, why: "Поиск нового урезается первым, поэтому стоит после всего обязательного."}
+
+  - id: catalogue
+    title: Разбор статей в каталог
+    description: Агент читает статью целиком и вносит её механизм в каталог, если код и проверяющий согласны.
+    kind: agent
+    tokens: true
+    items: статья
+    state_keys: [catalogue]
+    depends_on:
+      - {step: search, kind: fresh, why: "Берёт статьи из ленты, которую пополнил поиск этой ночью."}
+
+  - id: cards
+    title: Карточки для входящих идей
+    description: Агент-составитель превращает идею из входящих в карточку для реализатора.
+    kind: agent
+    tokens: true
+    items: идея из входящих
+    state_keys: [cards]
+    depends_on:
+      - {step: research, kind: fresh, why: "В ящик идей попадают идеи из записки исследователя."}
+      - {step: catalogue, kind: budget, why: "Порядок трат внутри поиска: каталог, потом карточки, потом генератор."}
+
+  - id: generate
+    title: Генератор идей
+    description: Агент по каталогу механизмов пишет новые стратегии, код проверяет их, стенд прогоняет прошедшие.
+    kind: agent
+    tokens: true
+    items: стратегия
+    done_prefixes: ["generate:"]
+    state_keys: [generate]
+    depends_on:
+      - {step: catalogue, kind: fresh, why: "Механизм, разобранный этой ночью, можно построить этой же ночью."}
+      - {step: cards, kind: budget, why: "Генератор — самая дорогая часть поиска, он последний."}
+      - {step: director, kind: fresh, why: "Читает приоритеты руководителя."}
+
+  - id: second_venue
+    title: Вторая площадка для закрытых идей
+    description: Для идей, закрытых только по Binance, запускает Hyperliquid, несколько штук за ночь.
+    kind: code
+    tokens: false
+    items: закрытая идея
+    done_prefixes: ["second_venue:"]
+    state_keys: [second_venue]
+    depends_on:
+      - {step: restamp, kind: fresh, why: "Выбирает идеи по их последнему исходу, а его обновляют шаги пересчёта."}
+
+  - id: ladder
+    title: Лестница оценки
+    description: Собирает таблицу семи ступеней каждой открытой идеи для отчёта; чтение, без токенов.
+    kind: code
+    tokens: false
+    refresh: true
+    state_keys: [ladder]
+    depends_on:
+      - {step: recheck, kind: fresh, why: "Читает исходы всех прогонов, когда они все записаны."}
+      - {step: waiting, kind: fresh, why: "То же."}
+      - {step: twins, kind: fresh, why: "То же."}
+      - {step: restamp, kind: fresh, why: "То же."}
+      - {step: overlays, kind: fresh, why: "То же."}
+      - {step: twins-research, kind: fresh, why: "То же."}
+      - {step: implement, kind: fresh, why: "То же."}
+      - {step: generate, kind: fresh, why: "То же."}
+      - {step: second_venue, kind: fresh, why: "То же."}
+
+  - id: report
+    title: Утренний отчёт
+    description: Собирает отчёт ночи из состояния всех шагов; отчёт должен появиться, даже если шаги упали.
+    kind: code
+    tokens: false
+    refresh: true
+    reads_all: "Читает записи всех шагов; упавший шаг попадает в отчёт строкой, а сам отчёт не блокируется."

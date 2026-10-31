@@ -438,11 +438,22 @@ def test_missing_card_is_404(client, cards_dir):
 # --------------------------------------------------------------------------
 
 
-def test_every_route_is_a_get(client):
+#: The console's one way to change anything: start a night (docs/PIPELINE.md). The routes start a
+#: process and write no registry row themselves; each is closed to anything but the local console.
+START_ROUTES = {"/api/pipeline/preview", "/api/pipeline/run", "/api/pipeline/restart"}
+
+
+def test_every_route_is_a_get_except_the_local_run_buttons(client):
+    from qlab.api.pipeline import local_only
+
     app = client.app
     for route in app.routes:
         methods = getattr(route, "methods", set())
-        assert methods <= {"GET", "HEAD"}, f"{route.path} exposes {methods}"
+        if route.path in START_ROUTES:
+            assert methods == {"POST"}, f"{route.path} exposes {methods}"
+            assert local_only in [d.call for d in route.dependant.dependencies], route.path
+        else:
+            assert methods <= {"GET", "HEAD"}, f"{route.path} exposes {methods}"
 
 
 

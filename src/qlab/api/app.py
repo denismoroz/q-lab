@@ -1,7 +1,9 @@
 """Read-only HTTP API over the registry, for the owner's console.
 
 **Read-only by construction**: every route is a GET, and there is no
-repository write call anywhere in this package. The registry's integrity
+repository write call anywhere in this package. The one exception is the pipeline page's three POST
+routes (`qlab.api.pipeline`, docs/PIPELINE.md): they start a night on a process of its own and write
+nothing themselves, and they answer only to the local console. The registry's integrity
 rules (docs/REGISTRY.md) are enforced on the write path — a UI that could
 write would be a second, unpoliced way into the tables.
 
@@ -79,13 +81,17 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(DEV_ORIGINS),
-        allow_methods=["GET"],
+        allow_methods=["GET"],  # no POST for another origin: only the proxied console may press
         allow_headers=["*"],
     )
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    from qlab.api import pipeline as pipeline_routes
+
+    pipeline_routes.register(app)
 
     @app.get("/api/allocation")
     def allocation() -> dict[str, Any]:

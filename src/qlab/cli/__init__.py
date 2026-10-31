@@ -818,23 +818,91 @@ def night_run_cmd(
         None, "--stop-at",
         help="HH:MM on this machine's clock: nothing new starts after it, the rest goes to "
         "the next night (ops/night.sh passes it)"),
+    off: list[str] = typer.Option(  # noqa: B008
+        [], "--off", help="Switch a step off (repeat the option; ids: `qlab night steps`). The "
+        "steps that depend on it by data are blocked unless it was done earlier the same night"),
+    only: list[str] = typer.Option(  # noqa: B008
+        [], "--only", help="Run only these steps (repeat the option)"),
+    restart: str | None = typer.Option(
+        None, "--restart", help="Restart this step and every step that depends on it by data: "
+        "their done-markers in the night's state are cleared and they run again"),
+    trigger: str | None = typer.Option(
+        None, "--trigger", help="schedule / button / hand, for the journal (default: the "
+        "QLAB_TRIGGER environment variable, else schedule under launchd, else hand)"),
+    concurrency: int = typer.Option(
+        1, "--concurrency", min=1, help="How many steps may run together. Keep 1: the stages "
+        "share the night's state and the registry (docs/PIPELINE.md)"),
 ) -> None:
     """Re-evaluate the watch list on data extended to the last closed day,
     sweep the graveyard by regime on Sundays, reconcile paper, write the
-    morning report. Spends no tokens; resumes where a stopped run left off."""
+    morning report. The night is a table of steps (night/pipeline.yaml): a step that fails
+    blocks only the steps that depend on its output. Resumes where a stopped run left off;
+    one run at a time (a lock that launchd's night, the console's button and a hand all take)."""
+    import os
+    import sys
     from datetime import date as _date
 
     from qlab.night import run, stop_time
+    from qlab.nightflow.control import EXIT_BUSY, RunLock, refusal
+    from qlab.nightflow.journal import Journal, SafeJournal
+    from qlab.nightflow.table import load_table
 
-    path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
-               implement=implement, search=search, detectors=detectors, assess=assess,
-               research=research, generate=generate, decay=decay,
-               director=director, waiting=waiting, twins=twins, overlays=overlays,
-               anomalies=anomalies, restamp=restamp,
-               programmer=programmer,
-               catalogue=catalogue, cards=cards,
-               noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None)
+    table = load_table()
+    unknown = (set(off) | set(only) | ({restart} if restart else set())) - set(table.ids)
+    if unknown:
+        raise typer.BadParameter(f"unknown steps: {', '.join(sorted(unknown))} "
+                                 f"(see `qlab night steps`)")
+    if restart and only:
+        raise typer.BadParameter("--restart names its own steps; do not combine it with --only")
+    chosen = trigger or os.environ.get("QLAB_TRIGGER") or (
+        "schedule" if os.environ.get("XPC_SERVICE_NAME") == "com.qlab.night" else "hand")
+    steps_only = table.restart_set(restart) if restart else (list(only) or None)
+    lock = RunLock()
+    if not lock.acquire({"trigger": chosen, "token": os.environ.get("QLAB_RUN_TOKEN"),
+                         "command": " ".join(sys.argv)}):
+        typer.echo(refusal() or "Another run holds the night's lock.", err=True)
+        raise typer.Exit(EXIT_BUSY)
+    try:
+        journal = SafeJournal(Journal())
+        journal.sweep_interrupted()  # rows left `running` by a process that died
+        path = run(_date.fromisoformat(day) if day else None, graveyard=graveyard, paper=paper,
+                   implement=implement, search=search, detectors=detectors, assess=assess,
+                   research=research, generate=generate, decay=decay,
+                   director=director, waiting=waiting, twins=twins, overlays=overlays,
+                   anomalies=anomalies, restamp=restamp,
+                   programmer=programmer,
+                   catalogue=catalogue, cards=cards,
+                   noise_trials=noise_trials, stop_at=stop_time(stop_at) if stop_at else None,
+                   journal=journal, trigger=chosen, off=off, only=steps_only, restart=restart,
+                   concurrency=concurrency, command=" ".join(sys.argv[1:]))
+    finally:
+        lock.release()
     typer.echo(f"report: {path}")
+
+
+@night_app.command("steps")
+def night_steps_cmd() -> None:
+    """The night's steps with their dependencies (night/pipeline.yaml)."""
+    from qlab.nightflow.table import load_table
+
+    table = load_table()
+    waves = table.layers()
+    for step in table.steps:
+        parents = ", ".join(f"{e.step} ({e.kind})" for e in step.depends_on) or "-"
+        typer.echo(f"{step.id:<22} {step.kind:<5} {'tokens' if step.tokens else '      '} "
+                   f"wave {waves[step.id]:<2} after: {parents}")
+
+
+@night_app.command("backfill")
+def night_backfill_cmd() -> None:
+    """Rebuild the journal's history from the nights' saved state (approximate times; marked as
+    such). Idempotent: a night that already has a rebuilt run is skipped."""
+    from qlab.nightflow.backfill import backfill
+    from qlab.registry.db import session_scope
+
+    with session_scope() as session:
+        made = backfill(session)
+    typer.echo(f"journal: {len(made)} nights rebuilt ({', '.join(made) or 'none new'})")
 
 
 twins_app = typer.Typer(help="Causal twins and the second stage (docs/NIGHT.md).",

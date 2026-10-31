@@ -1,8 +1,8 @@
 // Fetch helpers for the read-only registry API.
 //
-// Every call here is a GET. The UI has no write path by design: the
-// registry's integrity rules are enforced where rows are written, and a
-// console that could write would be a second, unpoliced way into the tables.
+// Every call here is a GET, except the three on the pipeline page (below) that start a night. The UI
+// has no write path into the registry by design: the registry's integrity rules are enforced where
+// rows are written, and a console that could write would be a second, unpoliced way into the tables.
 
 async function getJson(url) {
   const response = await fetch(url)
@@ -35,3 +35,34 @@ export const fetchTrials = ({ limit, offset, noise = false }) =>
 
 export const fetchCards = () => getJson('/api/cards')
 export const fetchCard = (ideaId) => getJson(`/api/cards/${encodeURIComponent(ideaId)}`)
+
+// The pipeline page (docs/PIPELINE.md). The three POSTs start a night on its own process; they carry the
+// console's header, which the API requires and which a page on another site cannot send.
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Qlab-Console': '1' },
+    body: JSON.stringify(body),
+  })
+  const text = await response.text()
+  let data = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = null
+  }
+  if (!response.ok) {
+    throw new Error(data?.detail ?? `${response.status} ${response.statusText}: ${text}`)
+  }
+  return data
+}
+
+export const fetchPipeline = () => getJson('/api/pipeline')
+export const fetchPipelineStep = (stepId) =>
+  getJson(`/api/pipeline/steps/${encodeURIComponent(stepId)}`)
+export const fetchPipelineRuns = () => getJson('/api/pipeline/runs?limit=20')
+export const previewPipeline = ({ off = [], restart = null }) =>
+  postJson('/api/pipeline/preview', { off, restart })
+export const runPipeline = ({ off = [] }) => postJson('/api/pipeline/run', { off })
+export const restartStep = ({ step, off = [] }) =>
+  postJson('/api/pipeline/restart', { step, off })
