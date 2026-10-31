@@ -448,6 +448,8 @@ class Runner:
                     threads[step.id] = threading.Thread(
                         target=work, args=(step,), name=f"step-{step.id}", daemon=True)
                     threads[step.id].start()
+                if started_something:
+                    continue  # a step recorded as not run may have made others ready: look again
                 if busy:
                     try:
                         step_id, exc = ended.get(timeout=1.0)
@@ -457,7 +459,7 @@ class Runner:
                     threads.pop(step_id).join()
                     if exc is not None:
                         raise exc  # a stop of the night (BaseException) comes out here
-                elif pending and not started_something:
+                elif pending:
                     raise RuntimeError("the step table has a cycle")
         except BaseException as exc:
             self._stopping.set()

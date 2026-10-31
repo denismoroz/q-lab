@@ -788,3 +788,111 @@ def test_the_write_lock_trace_names_a_transaction_that_holds_the_lock_long(
     engine.dispose()
     lines = trace.read_text().splitlines()
     assert len(lines) == 1 and "insert into t" in lines[0] and float(lines[0].split("\t")[0]) >= 0.3
+
+
+# ---------------------------------------------------------------------------------- a whole night
+
+
+def _night_spec():
+    from qlab.pipeline.spec import StrategySpec
+
+    return StrategySpec.model_validate({
+        "idea_id": "x", "title": "x", "code_ref": "a:b", "params": {},
+        "data": {"source": "hyperliquid", "interval": "1d", "start": "2025-01-01",
+                 "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+        "unexpressed_mechanisms": []})
+
+
+def _quiet_night(tmp_path, monkeypatch, names):
+    from qlab.night import ItemResult
+
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: [" + ", ".join(names) + "]\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    monkeypatch.setattr(night, "load_spec",
+                        lambda p: _night_spec().model_copy(update={"idea_id": str(p)}))
+    calls: list[str] = []
+
+    def fake_eval(kind, spec, **kw):
+        calls.append(spec.idea_id)
+        return ItemResult(kind=kind, name=spec.idea_id, route="needs-forward",
+                          metrics={"ann_return_net": 0.05, "sharpe_net": 1.0})
+
+    monkeypatch.setattr(night, "evaluate_item", fake_eval)
+    return calls
+
+
+FLAGS = dict(graveyard=False, paper=False, implement=False, search=False, detectors=False,
+             assess=False, research=False, waiting=False)
+
+
+def test_a_whole_night_in_lanes_gives_the_same_state_and_report_as_one_after_another(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("QLAB_STATE_STRICT", "1")
+    seen = {}
+    for label, concurrency in (("one", 1), ("lanes", 3)):
+        folder = tmp_path / label
+        folder.mkdir()
+        calls = _quiet_night(folder, monkeypatch, ["a.yaml", "b.yaml", "c.yaml"])
+        report = night.run(date(2026, 10, 3), concurrency=concurrency, **FLAGS)
+        state = json.loads((folder / "state" / "2026-10-03.json").read_text())
+        seen[label] = (calls, state, report.read_text(encoding="utf-8"))
+    one, lanes = seen["one"], seen["lanes"]
+    assert one[0] == lanes[0] == ["a.yaml", "b.yaml", "c.yaml"]
+    assert [r["name"] for r in one[1]["results"]] == [r["name"] for r in lanes[1]["results"]]
+    assert sorted(one[1]["done"]) == sorted(lanes[1]["done"])
+    assert "a.yaml" in lanes[2] and "c.yaml" in lanes[2]
+
+
+def test_a_stopped_night_in_lanes_resumes_where_it_left_off(tmp_path, monkeypatch) -> None:
+    from qlab.night import ItemResult
+
+    monkeypatch.setenv("QLAB_STATE_STRICT", "1")
+    calls = _quiet_night(tmp_path, monkeypatch, ["a.yaml", "b.yaml"])
+
+    def stopping(kind, spec, **kw):
+        calls.append(spec.idea_id)
+        if spec.idea_id == "b.yaml" and calls.count("b.yaml") == 1:
+            raise KeyboardInterrupt  # the night is stopped mid-run
+        return ItemResult(kind=kind, name=spec.idea_id, route="needs-forward",
+                          metrics={"ann_return_net": 0.05, "sharpe_net": 1.0})
+
+    monkeypatch.setattr(night, "evaluate_item", stopping)
+    day = date(2026, 10, 3)
+    with pytest.raises(KeyboardInterrupt):
+        night.run(day, concurrency=3, **FLAGS)
+    saved = json.loads((tmp_path / "state" / "2026-10-03.json").read_text())
+    assert "watch:a.yaml" in saved["done"] and "watch:b.yaml" not in saved["done"]
+    report = night.run(day, concurrency=3, **FLAGS)
+    assert calls == ["a.yaml", "b.yaml", "b.yaml"]  # a was not redone
+    assert "b.yaml" in report.read_text(encoding="utf-8")
+
+
+def test_a_skipped_step_makes_the_next_one_ready_without_waiting_for_another_lane(
+        jr, tmp_path) -> None:
+    steps = [_step("long", lane="agents", keys=["long"]),
+             _step("skipme", lane="calc", keys=["skipme"]),
+             _step("after", [("skipme", "fresh")], lane="calc", keys=["after"])]
+    table = parse({"steps": steps})
+    hub, _, _ = _hub(tmp_path, steps)
+    clock = Clock()
+
+    def make(step_id, seconds):
+        def run(ctx):
+            clock.enter(step_id)
+            time.sleep(seconds)
+            clock.leave(step_id)
+        return StepImpl(run, step_id,
+                        skip_reason=(lambda c: "не сегодня") if step_id == "skipme" else None)
+
+    impls = {"long": make("long", 0.8), "skipme": make("skipme", 0), "after": make("after", 0.05)}
+    run_id = jr.start_run(date(2026, 10, 31), trigger="hand", steps_off=[], only=None,
+                          restart=None, concurrency=3, pid=1)
+    out = Runner(table, impls, Probe(hub), journal=jr, run_id=run_id, concurrency=3,
+                 log=lambda t: None).execute()
+    assert out == {"long": "ok", "skipme": "skipped", "after": "ok"}
+    assert clock.span("after")[1] < clock.span("long")[1]

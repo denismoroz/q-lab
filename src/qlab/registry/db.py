@@ -91,18 +91,24 @@ _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 
 
+_INIT_LOCK = threading.Lock()
+
+
 def get_engine() -> Engine:
     global _engine
-    if _engine is None:
-        _engine = make_engine()
-    return _engine
+    with _INIT_LOCK:  # steps running together must not each make an engine on first use
+        if _engine is None:
+            _engine = make_engine()
+        return _engine
 
 
 def get_sessionmaker() -> sessionmaker[Session]:
     global _SessionLocal
-    if _SessionLocal is None:
-        _SessionLocal = sessionmaker(bind=get_engine(), expire_on_commit=False)
-    return _SessionLocal
+    engine = get_engine()
+    with _INIT_LOCK:
+        if _SessionLocal is None:
+            _SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+        return _SessionLocal
 
 
 @contextmanager

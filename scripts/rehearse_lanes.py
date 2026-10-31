@@ -11,6 +11,9 @@ leave every trial exactly as the same steps one after another do.
     # the trials, verdicts and spec rows added to a registry after a baseline: identical or not
     python scripts/rehearse_lanes.py compare BASE.db RUN_A.db RUN_B.db
 
+    # the two runs' night states (data/night/<day>.json), key by key, without times and durations
+    python scripts/rehearse_lanes.py states A.json B.json
+
     # when the steps of the latest run started and ended, and which of them overlapped
     python scripts/rehearse_lanes.py timeline RUN.db
 
@@ -123,6 +126,39 @@ def _compare(argv: list[str]) -> int:
     return 0 if same else 1
 
 
+#: Keys whose values are moments or durations of the run, not results.
+VOLATILE = {"seconds", "at", "attempt_at", "time", "finished_at", "started_at", "prefetch",
+            "slept", "stopped_at", "deadline", "account", "tokens", "elapsed", "minutes",
+            "stage_errors", "trial_id", "trial", "trials", "previous_trial"}
+
+
+def _strip(value):
+    if isinstance(value, dict):
+        return {k: _strip(v) for k, v in value.items() if k not in VOLATILE}
+    if isinstance(value, list):
+        return [_strip(v) for v in value]
+    if isinstance(value, float):
+        return float(f"{value:.9g}")
+    return value
+
+
+def _states(argv: list[str]) -> int:
+    a, b = (json.load(open(path)) for path in argv)
+    same = True
+    for key in sorted(set(a) | set(b)):
+        if key.startswith("rehearsal_"):
+            continue
+        x, y = _strip(a.get(key)), _strip(b.get(key))
+        if key == "done":
+            x, y = sorted(a.get(key, {})), sorted(b.get(key, {}))
+        flag = "same" if x == y else "DIFFERENT"
+        same = same and x == y
+        print(f"  {key:<22} {flag}" + ("" if x == y else
+              f"  (A {len(json.dumps(x))} chars, B {len(json.dumps(y))} chars)"))
+    print("STATES IDENTICAL" if same else "STATES DIFFER")
+    return 0 if same else 1
+
+
 def _aware(text: str) -> datetime:
     return datetime.fromisoformat(text)
 
@@ -156,10 +192,11 @@ def _timeline(argv: list[str]) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) < 2 or sys.argv[1] not in ("run", "compare", "timeline"):
+    commands = {"run": _run, "compare": _compare, "timeline": _timeline, "states": _states}
+    if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2
-    return {"run": _run, "compare": _compare, "timeline": _timeline}[sys.argv[1]](sys.argv[2:])
+    return commands[sys.argv[1]](sys.argv[2:])
 
 
 if __name__ == "__main__":
