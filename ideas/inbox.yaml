@@ -44,38 +44,31 @@ ideas:
   text: 'Каждый день сверять живые сделки FRAB с тем, что стенд насчитал бы за те же часы на тех же монетах,
     и показывать, на чём они расходятся: цена исполнения, комиссии, плата за финансирование, время входа
     и выхода'
-  status: new
+  status: needs-owner
   card: null
-  notes: из записки docs/research/director-2026-10-28.md
-  attempts: 1
-  problems:
-  - 'reviewer: bad-question: The question asks the owner to approve a routing that is already settled.
-    The draft itself says the director put this work first on the FRAB researcher''s list in the 2026-10-30
-    memo. `docs/research/frab-2026-10-30.md` ranks it high and calls it "код, без испытаний" (code, no
-    trials), and `frab-2026-10-29.md` says the same. The owner need not answer it. If the idea is not
-    a strategy the stand can judge, the draft can say that and name where the work was handed (a closed
-    or handed-over outcome, not a question). The question also offers three branches at once: hand it
-    to the researcher, order a separate report from the implementer, or order new per-trade reconciliation
-    code as its own task. It is not one specific question.'
-  review_blocks:
-  - kind: bad-question
-    ref: new
-    text: 'The question asks the owner to approve a routing that is already settled. The draft itself
-      says the director put this work first on the FRAB researcher''s list in the 2026-10-30 memo. `docs/research/frab-2026-10-30.md`
-      ranks it high and calls it "код, без испытаний" (code, no trials), and `frab-2026-10-29.md` says
-      the same. The owner need not answer it. If the idea is not a strategy the stand can judge, the draft
-      can say that and name where the work was handed (a closed or handed-over outcome, not a question).
-      The question also offers three branches at once: hand it to the researcher, order a separate report
-      from the implementer, or order new per-trade reconciliation code as its own task. It is not one
-      specific question.'
+  notes: 'вопрос владельцу: Эта идея не стратегия, а ежедневная сверка: живые сделки FRAB против того,
+    что насчитал бы стенд (так мы называем программу q-lab, которая проигрывает стратегию на истории цен)
+    за те же часы. Сверять надо четыре вещи: цену исполнения, комиссии, плату за финансирование и время
+    входа и выхода. Стенд не может вынести по ней вердикт: у неё нет правила входа и выхода, нет сетки
+    вариантов и нет блока кода, который нужно построить. Эта работа уже передана исследователю FRAB: директор
+    поставил её ему в записке 2026-10-30 (docs/research/frab-2026-10-30.md оценивает её как «код, без
+    испытаний»), поэтому карточка стратегии не нужна. Что уже есть в q-lab: файл paper_check.py (программа,
+    которая сверяет бумажные книги, то есть учебные сделки без настоящих денег, со стендом за одно окно)
+    и файл paper_replay.py (он проигрывает эти книги заново). В docs/FRAB_LIVE.md описана сверка с таблицей
+    живых позиций frab: там учтены комиссии (за вход и выход вместе, то есть за полный круг сделки) и
+    плата за финансирование по часам, то есть суммы за окно, а не каждая сделка отдельно. Единственное,
+    что остаётся решить вам: нужна ли сверка именно по каждой сделке отдельно (цена исполнения и время
+    входа и выхода каждой сделки) как отдельная задача на код, не как карточка?'
+  attempts: 2
+  problems: []
+  review_blocks: []
   review_notes:
-  - Neither `paper_check.py`/`paper_replay.py` nor `docs/FRAB_LIVE.md` is named as the thing that does
-    or does not already cover all four parts (execution price, fees, funding, entry/exit time). The question
-    never says which parts are missing, so the owner cannot tell what they would be ordering.
-  - '"Идея закрывается как «передана исследователю»" (the idea is closed as "handed to the researcher")
-    is shown to the owner as a choice, but closing is the system''s step, not the owner''s.'
-  - Terms such as "стенд", "реализатор" and "paper_check.py" are used without a plain-words explanation
-    at first use. The SCHEMA rules for owner-facing text ask for one.
+  - 'Строки 8–9 draft: в записке 2026-10-30 сверка по часам стоит третьей строкой таблицы, а не первой.
+    Лучше написать «в порядке разбора» или «по указанию директора», а не «первой задачей».'
+  - В списке из четырёх вещей «время входа и выхода» стоит одним пунктом, а в последнем вопросе вынесено
+    в «по каждой сделке». Это согласовано, но слово «круга» (строка 13) читателю не объяснено.
+  - 'Прошлая претензия (prev:1) снята: маршрут теперь описан как решённый («уже передана исследователю»),
+    а остаётся один конкретный вопрос — нужна ли сверка по каждой сделке отдельно как задача на код.'
 - id: idea-0003
   date: '2026-10-28'
   source: agent:researcher
@@ -85,7 +78,12 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-10-28.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'carder.readings_ru 2 uses «шорт» (cards/SCHEMA.md: no English trading words in Russian letters)'
+  - 'vs_tried qlab-signal-search-review-gaps difference_ru uses «хедж» (cards/SCHEMA.md: no English trading
+    words in Russian letters)'
+  review_blocks: []
 - id: idea-0004
   date: '2026-10-28'
   source: agent:researcher
@@ -266,4 +264,25 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/xsmom-2026-10-30.md
+  attempts: 0
+- id: idea-0022
+  date: '2026-10-31'
+  source: agent:researcher
+  text: 'Отрез для разбора просадок считать от первого часа, где стратегия реально торгует, а не от начала
+    окна данных: у FRAB окно начинается в январе 2025, часовые цены с марта 2026, и часть до отреза выходит
+    почти пустой, поэтому разбирать нечего уже третью ночь; то же касается других стратегий на Hyperliquid'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-31.md
+  attempts: 0
+- id: idea-0023
+  date: '2026-10-31'
+  source: agent:researcher
+  text: 'Стенд FRAB должен знать принудительное закрытие по залогу: у живого FRAB доливки нет, при общем
+    росте цен сторож залога закрывает самую слабую позицию, а стенд держит позицию при любом росте; нужно
+    считать залог счёта каждый час теми же порогами и показывать, сколько таких закрытий было и сколько
+    они стоили'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-10-31.md
   attempts: 0

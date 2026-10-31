@@ -58,7 +58,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-09-20'
+  end: '2026-10-30'
   instruments:
   - AVAX
   - AVAX-SPOT
@@ -79,10 +79,17 @@ differs_from_source:
 - 'Causal twin of bv2-research-shared-pool: the numbers it trades are chosen by code, every month, from
   returns realised before the choice (the base bv2-binance against its experiment (shared_margin)); the
   data is Binance''s history, a proxy for binance''s market, with the original''s costs and minimum leg.'
+- 'The twin trades only 8 named columns (AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, SOL, SOL-SPOT),
+  the data.instruments of bv2-research-shared-pool, not the whole market: the list was chosen by 2025-06-01
+  and would know which coins survived if applied to the history before it (survivorship), so the twin
+  is judged only from 2025-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08 are warm-up
+  for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
 - 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
   stage 1 (bv2-research-shared-pool-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
+  it are warm-up.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
   AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
   lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its bars
@@ -121,7 +128,16 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-research-shared-pool-causal)
   and the numbers of bv2-research-shared-pool (shared_margin). What this does not prove: the experiment''s
   own data was already Binance''s: 2023-04-28 .. 2025-06-01 may have been seen when its numbers were chosen,
   so that stretch is in-sample for the grid and the twin adds only the days before 2023-04-28 (the spec''s
-  own date for its numbers: 2025-06-01).'
+  own date for its numbers: 2025-06-01). The instrument list is not point-in-time before 2025-06-01. The
+  twin trades only the 8 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, SOL, SOL-SPOT (data.instruments
+  of bv2-research-shared-pool) (hourly candles of every Binance perpetual take hours; these take about
+  3 minutes). A list chosen by hand and applied to history from 2019-09-08 knows which coins existed and
+  survived, which the days before it was chosen did not; a coin Binance listed later has no candles before
+  its listing day and enters then. The earliest documented day the list existed is 2025-06-01 (params_fixed_at
+  of bv2-research-shared-pool), so the twin is judged only from that day (`judged_from` = `instruments_chosen_at`
+  = 2025-06-01): the history before it is warm-up for the code''s monthly choice (more data to choose
+  with), not judged, and from that day the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
+judged_from: '2025-06-01'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
@@ -176,6 +192,12 @@ sources:
   grid.variant.experiment.shared_margin: 'owner 2026-10-25: night/research.yaml strategies.bv2.owner_ideas,
     «можно ли трюк с FRAB с плечем и страховкой использовать на Bv2?»; docs/BV2_MARGIN.md, direction 1
     «Один пул залога на все монеты», handed to the researcher by the owner: «давай»'
+  data.instruments: 'specs/research/bv2/bv2-research-shared-pool.yaml: data.instruments of bv2-research-shared-pool,
+    the coins its book trades'
+  instruments_chosen_at: 'specs/research/bv2/bv2-research-shared-pool.yaml: params_fixed_at = 2025-06-01
+    of bv2-research-shared-pool, the earliest documented day the list of bv2-research-shared-pool existed'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2025-06-01); the days before are warm-up'
   score_costs.taker_fee_bps: 'derived: (7.0 + 3.5) / 2; spot taker 0.00070 and perp taker 0.00035 in funding-rate-arbitrage/src/frab/constants.py,
     both legs move by the same amount'
   score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
@@ -188,7 +210,10 @@ sources:
   regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'
-  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0, 0.045%
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
     (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
     a book of a few thousand dollars trades at the base tier'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
@@ -211,3 +236,4 @@ regime_claim:
   bear: beats_market
 review_answers: {}
 selects_causally: true
+instruments_chosen_at: '2025-06-01'

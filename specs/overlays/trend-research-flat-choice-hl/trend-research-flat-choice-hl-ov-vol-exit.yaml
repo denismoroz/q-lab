@@ -1,0 +1,266 @@
+# Overlay variant of trend-research-flat-choice-hl (qlab overlays, src/qlab/overlay_variants.py):
+# the same strategy with a chain of overlays on its weights (docs/OVERLAYS.md).
+# Written by code, not by hand.
+idea_id: trend-research-flat-choice-hl-ov-vol-exit
+title: 'Trend как на проде (монеты и сроки выбирает код раз в неделю): торговать ли в боковике, решает
+  код раз в месяц только по прошлому: надстройки — уменьшать размер, когда собственные результаты стали
+  неспокойнее обычного + постепенный выход из позиции'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.overlays:Overlaid
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+      base_params:
+        inner_code_ref: qlab.strategies.retune:Retune
+        inner_params:
+          inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+          base_params:
+            coins: null
+            capital_usd: 3000.0
+            lookbacks:
+            - 30
+            - 60
+            - 90
+            - 120
+            vol_window: 30
+            vol_target_daily: 0.02
+            leverage_cap: 3.0
+            risk_scale: 0.2
+            book_vol_target_ann: 0.14
+            book_vol_window_days: 60
+            book_vol_min_days: 20
+            book_vol_scale_min: 0.25
+            book_vol_scale_max: 2.0
+            book_vol_prior_ann: 0.3
+            min_history_days: 151
+            top_k_requires_history: true
+          grid:
+            universe:
+              cap:
+                top_k_by_market_cap: 25
+                exclude_tags:
+                - stablecoin
+              volume:
+                top_k_by_volume: 25
+            lookbacks:
+              ens:
+                lookbacks:
+                - 30
+                - 60
+                - 90
+                - 120
+              l30:
+                lookbacks:
+                - 30
+              l60:
+                lookbacks:
+                - 60
+              l90:
+                lookbacks:
+                - 90
+              l120:
+                lookbacks:
+                - 120
+          refit_every: W
+          window: expanding
+          objective: sharpe_net
+          score_costs:
+            taker_fee_bps: 3.5
+            slippage_bps: 0.9
+      grid:
+        gate:
+          always:
+            trade_in:
+            - bull
+            - flat
+            - bear
+          skip_flat:
+            trade_in:
+            - bull
+            - bear
+      refit_every: M
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 3.5
+        slippage_bps: 0.9
+    overlays: []
+    costs:
+      taker_fee_bps: 3.5
+      slippage_bps: 0.9
+  grid:
+    overlay:
+      vol_target:d30-max1+gradual_exit:k2-d3:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 2
+            over_days: 3
+      vol_target:d30-max1+gradual_exit:k2-d7:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 2
+            over_days: 7
+      vol_target:d30-max1+gradual_exit:k3-d3:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 3
+            over_days: 3
+      vol_target:d30-max1+gradual_exit:k3-d7:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 3
+            over_days: 7
+      vol_target:d90-max1+gradual_exit:k2-d3:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 2
+            over_days: 3
+      vol_target:d90-max1+gradual_exit:k2-d7:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 2
+            over_days: 7
+      vol_target:d90-max1+gradual_exit:k3-d3:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 3
+            over_days: 3
+      vol_target:d90-max1+gradual_exit:k3-d7:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: gradual_exit
+          params:
+            tranches: 3
+            over_days: 7
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-10-30'
+costs:
+  taker_fee_bps: 3.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Overlay variant of trend-research-flat-choice-hl (qlab.overlay_variants, docs/OVERLAYS.md): the same
+  strategy with vol_target, gradual_exit applied to its target weights; the strategy''s own numbers are
+  untouched. The numbers of the overlays are chosen by code every month from the past only.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2026-03-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  base can first trade on 2025-08-01; the longest warm-up of the overlay family (vol_target, gradual_exit)
+  is 180 days, so the overlay can first act on 2026-01-28; a candidate is eligible only after one whole
+  month re-tuning period, so the first re-tuning after 2026-01-28 is 2026-02-01 and the first choice is
+  made at the one after it, 2026-03-01. The family is declared whole in docs/OVERLAYS.md before any run:
+  8 candidates, none chosen by looking at the data it is judged on. What this does not prove: the family
+  itself (which overlays and which settings are offered) was written by people who had seen the market.'
+sources:
+  strategy_capital_usd: 'the spec''s own parameter base_params.inner_params.base_params.capital_usd =
+    3000: specs/trend-retune-weekly.yaml params, unchanged; their own sources are listed there'
+  base_params.inner_params.inner_code_ref: src/qlab/strategies/regime_gate.py (existing wrapper; default
+    detector direction_terciles)
+  base_params.inner_params.base_params: specs/trend-retune-weekly.yaml params, unchanged; their own sources
+    are listed there
+  base_params.inner_params.grid.gate.always: 'specs/trend-retune-weekly.yaml: the production book, every
+    regime traded'
+  base_params.inner_params.grid.gate.skip_flat: 'data/research/trend-2026-10-26.md, drawdown evidence
+    before the cut: flat -1.3% over 182 days (trend-retune-weekly, before 2026-02-24); flat -4.9% over
+    291 days, worst fall -13.4% (trend-live, before 2026-09-14); bull and bear are where the source says
+    trend earns (funding-rate-arbitrage/research/trend_following/FINDINGS.md: «2021 +65%», «2022 +5%»)'
+  base_params.inner_params.refit_every: 'владелец 2026-10-02: «раз в неделю/день или месяц» (docs/RETUNE.md);
+    monthly, as the detector reads 30 days of BTC'
+  base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  base_params.inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  base_params.inner_params.score_costs: 'specs/trend-retune-weekly.yaml costs: the spec''s own costs (docs/RETUNE.md:
+    scores use the spec''s costs)'
+  data.start: specs/trend-retune-weekly.yaml (the same window start)
+  data.end: 'data/research/trend-2026-10-26.md: the trend-live panel extended to 2026-10-25 (Hyperliquid
+    daily data to that day)'
+  costs.differs_from_table: '3.5 + 0.9 bp are not the hyperliquid row of night/costs.yaml (4.5 + 0.9 bp);
+    numbers recorded before the table (2026-10-29) and kept, as cited at costs.taker_fee_bps: funding-rate-arbitrage/research/SCREENING.md
+    line 32: «taker 3.5 + проскальзывание»'
+  costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)»'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults),
+    min_order_usd: HL''s own minimum order'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  base_params.inner_code_ref: 'specs/research/trend/trend-research-flat-choice-hl.yaml: the base''s code_ref,
+    unchanged'
+  inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
+  base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
+    it'
+  base_params.costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 +
+    проскальзывание»'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line
+    32, «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs.taker_fee_bps: 'funding-rate-arbitrage/research/SCREENING.md line 32: «taker 3.5 + проскальзывание»'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32,
+    «~4.4 б.п. на ногу (taker 3.5 + проскальзывание)»'
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+strategy_capital_usd: 3000.0
+regime_claim:
+  bull: earns
+  bear: earns
+selects_causally: true

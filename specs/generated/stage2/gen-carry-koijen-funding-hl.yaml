@@ -1,0 +1,89 @@
+# Stage 2 of gen-carry-koijen-funding (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: gen-carry-koijen-funding-hl
+title: 'Перенос по ставке финансирования: покупать монеты с самой низкой средней ставкой за год, продавать
+  с самой высокой, пересмотр раз в месяц (второй этап: hyperliquid)'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: funding
+    window_days: 360
+  portfolio:
+    block: long_short_fraction
+    fraction: 0.3
+  sizing:
+    block: equal
+    gross: 1.0
+  rebalance_days: 30
+  min_history_days: 360
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-10-30'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- The paper does not test cryptocurrencies; this spec carries its result over to Binance USDT perpetuals.
+- The paper's carry is computed from futures prices and interest rates; here it is minus the average funding
+  rate, an assumption.
+- The paper's main portfolio weights assets by carry rank; this spec uses equal weights in the top and
+  bottom 30%, which the paper gives only as a robustness check.
+- The paper's pnl is price change plus carry as here, but the stand does not separate the mechanical funding
+  payment from price prediction.
+- The paper's numbers come from the NBER working paper; the journal version may differ.
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (gen-carry-koijen-funding) on hyperliquid''s own perpetual contracts listed at each bar; nothing
+  was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $10.
+- 'Judged from 2026-07-23: the first day hyperliquid has the 4 coins the portfolio rule needs at once
+  (snapshot 28dfb67cb8ccbb062b7d64b0b02a24a790494f951c83a39a2f823444d3fac90b); the days before are warm-up
+  with no book.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2024-06-12'
+params_fixed_evidence: 'Inherited from stage 1 (gen-carry-koijen-funding): named by code: the start of
+  the last third of the window'
+judged_from: '2026-07-23'
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism classic-carry, blocks: universe: all (Koijen et al. 2018)'
+  signal: 'docs/MECHANISMS.md, mechanism classic-carry, blocks: signal: funding'
+  signal.window_days: 'docs/MECHANISMS.md, mechanism classic-carry, row signal.window_days: 360 (carry
+    1-12, 12 months of 30 days; Koijen, Moskowitz, Pedersen, Vrugt 2018)'
+  portfolio: 'docs/MECHANISMS.md, mechanism classic-carry, blocks: portfolio: long_short_fraction (Koijen,
+    Moskowitz, Pedersen, Vrugt 2018)'
+  portfolio.fraction: 'docs/MECHANISMS.md, mechanism classic-carry, row portfolio.fraction: 0.2, 0.25,
+    0.3 (Koijen, Moskowitz, Pedersen, Vrugt 2018)'
+  sizing: 'docs/MECHANISMS.md, mechanism classic-carry, blocks: sizing: equal (Koijen, Moskowitz, Pedersen,
+    Vrugt 2018)'
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism classic-carry, row rebalance_days: 30 (monthly; Koijen,
+    Moskowitz, Pedersen, Vrugt 2018)'
+  min_history_days: 'derived: 360; the signal window_days of mechanism classic-carry, row signal.window_days:
+    360'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+regime_claim: {}
+review_answers: {}
+selects_causally: false

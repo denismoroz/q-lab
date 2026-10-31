@@ -59,7 +59,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-26'
+  end: '2026-10-30'
   instruments:
   - AVAX
   - AVAX-SPOT
@@ -211,7 +211,10 @@ sources:
   regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
     режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
     раз меньше»'
-  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 42: Hyperliquid perpetual taker, base tier 0, 0.045%
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
     (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
     a book of a few thousand dollars trades at the base tier'
   costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
