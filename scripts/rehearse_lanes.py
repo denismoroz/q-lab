@@ -129,7 +129,8 @@ def _compare(argv: list[str]) -> int:
 #: Keys whose values are moments or durations of the run, not results.
 VOLATILE = {"seconds", "at", "attempt_at", "time", "finished_at", "started_at", "prefetch",
             "slept", "stopped_at", "deadline", "account", "tokens", "elapsed", "minutes",
-            "stage_errors", "trial_id", "trial", "trials", "previous_trial"}
+            "stage_errors", "trial_id", "trial", "trials", "previous_trial", "stage1_trial_id",
+            "stage2_seconds", "total_seconds", "minutes_spent"}
 
 
 def _strip(value):

@@ -896,3 +896,15 @@ def test_a_skipped_step_makes_the_next_one_ready_without_waiting_for_another_lan
                  log=lambda t: None).execute()
     assert out == {"long": "ok", "skipme": "skipped", "after": "ok"}
     assert clock.span("after")[1] < clock.span("long")[1]
+
+
+def test_the_page_gets_each_steps_lane_and_the_lanes_in_order() -> None:
+    from qlab.api.pipeline import _step_json
+
+    table = load_table()
+    detail = _step_json(table, "twins-research")
+    assert detail["lane"] == "calc"
+    together = detail["can_run_with_in_lanes"]  # the checks and the later agents, not its own lane
+    assert "decay" in together and "implement" in together
+    assert not any(table.by_id[s].lane == "calc" for s in detail["can_run_with_in_lanes"])
+    assert list(table.lanes()) == ["calc", "checks", "agents", "final"]
