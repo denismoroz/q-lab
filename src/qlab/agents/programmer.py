@@ -1141,8 +1141,10 @@ def merge(req: Request, config: dict) -> str:
     current = _git(repo_path, "rev-parse", "--abbrev-ref", "HEAD").strip()
     if current != base:
         raise ValueError(f"{repo_path} is on {current}, not {base}: merge refused")
-    dirty = [line for line in _git(repo_path, "status", "--porcelain").splitlines()
-             if line.strip()]
+    # Untracked files stay out of it: the implementer's unfinished drafts refused the owner's merge
+    # on 2026-11-01, and a merge that would overwrite one is refused by git itself.
+    dirty = [line for line in _git(repo_path, "status", "--porcelain",
+                                   "--untracked-files=no").splitlines() if line.strip()]
     if dirty:
         raise ValueError(f"{repo_path} has uncommitted changes ({len(dirty)}): merge refused")
     worktree = Path(req.worktree)

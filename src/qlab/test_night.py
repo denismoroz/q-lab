@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import qlab.night as night
 from qlab.night import ItemResult, last_closed_day, with_end
@@ -653,6 +654,20 @@ def test_a_generator_idea_that_is_a_researched_strategys_root_is_not_counted_twi
     limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
     plan = {"strategies": {"gen": {"ideas": ["gen-root"]}}}
     assert night.strategy_slots(session, plan, limits) == (5, 6, ["gen"])
+
+
+def test_a_generator_idea_that_only_waits_for_data_takes_no_place(tmp_path, monkeypatch) -> None:
+    # owner, 2026-11-01: «не считать ждущие»; a decided one and one never run still count
+    session = _memory_session()
+    _add_ideas(session, [("gen-waits", "bench", None), ("gen-passed", "validated", None),
+                         ("gen-new", "candidate", None)])
+    routes = {"gen-waits": "needs-forward", "gen-passed": "paper"}
+    monkeypatch.setattr("qlab.registry.stages.latest_routed", lambda s, idea: (
+        (SimpleNamespace(route=routes[idea]), None) if idea in routes else None))
+    limits = tmp_path / "limits.yaml"
+    limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
+    assert night.strategy_slots(session, {"strategies": {}}, limits) == (
+        4, 6, ["gen-new", "gen-passed"])
 
 
 def test_variant_slots_and_the_drop_one_instruction(tmp_path) -> None:

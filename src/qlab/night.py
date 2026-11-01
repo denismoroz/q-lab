@@ -2106,16 +2106,25 @@ def strategy_slots(session, research_plan: dict,
     Owner, 2026-10-25: the lab counts strategies, not ideas. The researcher's
     strategies (`research_plan["strategies"]`) always occupy their places; each
     active generator idea that is a root of its own is a new strategy and takes
-    a free place. Variants (ideas with a parent) take none. Without the limits
-    file there is no cap."""
+    a free place, unless it only waits for data: owner, 2026-11-01, «не считать ждущие»: the cap
+    keeps work from sprawling and such an idea asks for no work. Variants (ideas with a parent)
+    take none. Without the limits file there is no cap."""
     from qlab.registry.models import Idea
+    from qlab.registry.stages import latest_routed
     from qlab.registry.strategies import ACTIVE_STATUSES, strategy_root
+    from qlab.waiting import WAITING_ROUTES
+
+    def only_waits(idea_id: str) -> bool:
+        routed = latest_routed(session, idea_id)
+        return routed is not None and getattr(routed[0].route, "value",
+                                              routed[0].route) in WAITING_ROUTES
 
     plan = research_plan.get("strategies") or {}
     taken = {strategy_root(session, e["ideas"][0]) for e in plan.values() if e.get("ideas")}
     generated = sorted(
         i for (i,) in session.query(Idea.id).filter(Idea.status.in_(ACTIVE_STATUSES))
-        if is_generator_idea(i) and strategy_root(session, i) == i and i not in taken)
+        if is_generator_idea(i) and strategy_root(session, i) == i and i not in taken
+        and not only_waits(i))
     active = [*plan, *generated]
     cap = _limit(limits, "max_active_strategies")
     if cap is None:

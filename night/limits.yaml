@@ -13,7 +13,8 @@
 # (night/research.yaml; five since 2026-10-25, FRAB with the spot on Binance the fifth) always
 # occupy their places; each active generator idea that is a
 # root of its own is a new strategy and takes a free place. The generator writes new
-# specs only into free places.
+# specs only into free places. An idea that only waits for data takes none (owner, 2026-11-01:
+# «не считать ждущие»).
 max_active_strategies: 6
 
 # The researcher runs every night, so the variants inside one strategy stay bounded too:

@@ -186,6 +186,18 @@ def test_merge_refuses_a_dirty_base(repo, tmp_path, monkeypatch):
     assert req.status == "ready"
 
 
+def test_an_untracked_file_in_the_base_does_not_refuse_the_merge(repo, tmp_path, monkeypatch):
+    # the implementer's unfinished drafts refused the owner's merge on 2026-11-01
+    _agent(monkeypatch, _good_change)
+    req = _request([])
+    prog.run_request(req, _config(repo), budget=ExplicitNoBudget("test"), session=None,
+                     worktrees=tmp_path / "wt")
+    (repo / "someone-elses-draft.txt").write_text("not tracked\n")
+    head = prog.merge(req, _config(repo))
+    assert req.status == "merged" and head
+    assert (repo / "someone-elses-draft.txt").is_file()
+
+
 def test_the_queue_takes_a_request_once(tmp_path):
     queue: list = []
     assert _request(queue) is not None and _request(queue) is None
