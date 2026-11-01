@@ -22,3 +22,15 @@ decided_recheck_days: 7
 # and the report names them. A second stage follows its first stage when this re-run makes it a
 # survivor, and is not counted.
 decided_max_per_night: 4
+
+# The stage's whole time on one night, in minutes (src/qlab/stage_time.py, docs/PIPELINE.md).
+# 2026-11-01 (owner, «да, делай по порядку», on the first night on three lanes): the stage took 94.7
+# minutes, 72.5 of them one idea's second stage (a Bv2 book on 38 contracts whose snapshot was
+# never found again, so each of its noise books rebuilt the panel; fixed the same day). Before an
+# idea starts, the estimate (its data to fetch, the time it took last time) is compared with this
+# limit: an idea that alone is larger than the whole limit is not run by the night, the report and
+# the page name it with the hand command, `qlab twins run --only IDEA`; nothing new starts once the
+# time is up; an idea that takes the stage past the limit is not cut but recorded, and the next
+# night does not start it again until a hand run shows it has become faster. A hand run of named
+# ideas has no limit. The ideas of the watch list are not here: they run in the recheck step.
+max_minutes_per_night: 45

@@ -616,3 +616,48 @@ def test_a_twin_entry_shows_its_result_year_by_year() -> None:
                          "year_2025_return": -0.05, "year_2025_days": 365.0}}
     text = "\n".join(twin_stage.entry_lines(entry))
     assert "по годам: 2024 +20%, 2025 −5%" in text
+
+
+# ---- the stage's time (qlab.stage_time, night/twins.yaml `max_minutes_per_night`) ----------
+
+
+def _timed(world, limit=30) -> None:
+    world.config.write_text(
+        "enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
+        f"max_minutes_per_night: {limit}\n", encoding="utf-8")
+
+
+def test_an_idea_whose_twin_took_more_than_the_whole_limit_last_time_waits_for_a_hand_run(
+        world) -> None:
+    from qlab.stage_time import SecondsLedger
+
+    _timed(world)
+    SecondsLedger().record("twins", EXPERIMENT, 50 * 60, "2026-10-31")
+    state = _stage(world)
+    assert world.calls == [] and not world.experiment.with_name(f"{TWIN}.yaml").exists()
+    time = state["twins"]["time"]["twins"]
+    assert EXPERIMENT in time["heavy"] and f"qlab twins run --only {EXPERIMENT}" in time[
+        "heavy"][EXPERIMENT]
+    assert f"- {EXPERIMENT}: не запущена" in "\n".join(twin_stage.report_lines(state["twins"]))
+    # a hand run of the named idea has no limit, and the ledger then holds how long it took
+    hand = _stage(world, {"done": {}}, only=[EXPERIMENT])
+    assert hand["twins"]["entries"][0]["action"] == "made" and "time" not in hand["twins"]
+    assert SecondsLedger().last("twins", EXPERIMENT) is not None
+
+
+def test_nothing_new_starts_once_the_stages_time_is_up(world, monkeypatch) -> None:
+    _timed(world, limit=1e-9)
+    state = _stage(world)
+    assert world.calls == []
+    assert state["twins"]["time"]["twins"]["time_up"] is True
+    assert state["twins"]["time"]["twins"]["deferred"] == [EXPERIMENT]
+    assert EXPERIMENT not in {k.split(":")[1] for k in state["done"] if k.startswith("twins:")}
+    # the twins of the researcher's experiments have a limit of their own, by the step's label
+    other = _stage(world, {"done": {}}, label="twins-research")
+    assert "twins-research" in other["twins"]["time"]
+
+
+def test_the_shipped_twins_config_has_a_time_limit() -> None:
+    from qlab.stage_time import read_limit
+
+    assert read_limit(Path("night/twins.yaml")) is not None

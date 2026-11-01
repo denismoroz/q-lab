@@ -615,7 +615,8 @@ def write_report(day: date, state: dict) -> Path:
         from qlab.waiting import report_lines as waiting_lines
 
         lines += [f"## {WAITING_TITLE}", "",
-                  *waiting_lines(state.get("waiting") or [], state.get("waiting_notes")), ""]
+                  *waiting_lines(state.get("waiting") or [], state.get("waiting_notes"),
+                                 state.get("waiting_time")), ""]
     if state.get("twins"):
         from qlab.twin_stage import SECTION_TITLE as TWINS_TITLE
         from qlab.twin_stage import report_lines as twins_lines
@@ -1101,6 +1102,16 @@ def _watch_specs() -> list[str]:
     return yaml.safe_load(WATCHLIST.read_text(encoding="utf-8"))["specs"]
 
 
+def _watch_clock(ctx):
+    """The watch list's clock (`qlab.stage_time`): it only times the list, it never refuses an
+    item. The limit and the slow-item mark are in night/watchlist.yaml."""
+    from qlab.stage_time import SLOW_KEY, SecondsLedger, StageClock, read_limit
+
+    return StageClock("recheck", read_limit(WATCHLIST),
+                      slow_minutes=read_limit(WATCHLIST, SLOW_KEY), ledger=SecondsLedger(),
+                      day=ctx.day.isoformat())
+
+
 def _flag(name: str):
     """`skip_reason` of a step an old command-line flag switches off."""
     return lambda ctx: None if ctx.flags[name] else "выключен флагом команды"
@@ -1146,18 +1157,24 @@ def _step_recheck(ctx: NightContext) -> None:
     queue = [("watch", Path(p)) for p in watch]
     if ctx.sweep:
         queue += [("graveyard", p) for p in graveyard_specs() if str(p) not in watch]
+    clock = _watch_clock(ctx)
     for kind, path in queue:
         key = f"{kind}:{path}"
         if key in state["done"]:
             continue
         if past_stop(ctx.stop_at, state, "recheck"):
             break
+        started = clock.now()
         try:
             spec = load_spec(path)
         except Exception as exc:  # noqa: BLE001 - one broken spec file is its own row
             result = ItemResult(kind=kind, name=str(path), error=f"{type(exc).__name__}: {exc}")
         else:
             result = evaluate_item(kind, spec, end=ctx.end, noise_trials=ctx.noise_trials)
+        # The list is never skipped; how long each took is recorded and, past the limit or the
+        # slow mark, reported (qlab.stage_time).
+        clock.finished(str(path), clock.now() - started)
+        state["recheck_time"] = clock.summary()
         state["results"] = [r for r in state["results"]
                             if not (r["kind"] == kind and r["name"] == result.name)]
         state["results"].append(asdict(result))
@@ -1358,6 +1375,8 @@ def _stage_note(name: str, ctx: NightContext) -> str | None:
     """What a code stage left undone tonight and why (too heavy, past its time), for the pipeline
     page. A note that cannot be made is no note: it never fails the step."""
     try:
+        if name in _TIME_NOTES:
+            return _time_note(name, ctx)
         if name == "restamp":
             from qlab.restamp import page_note
         else:
@@ -1365,6 +1384,28 @@ def _stage_note(name: str, ctx: NightContext) -> str | None:
         return page_note(ctx.state.get(name))
     except Exception:  # noqa: BLE001 - a note is advice for the page
         return None
+
+
+_TIME_NOTES = {
+    # step -> (where the stage keeps its time in the state, the command that runs an idea by hand)
+    "recheck": ("recheck_time", ""),
+    "waiting": ("waiting_time", "qlab twins run --only {idea}"),
+    "twins": ("twins", "qlab twins run --only {idea}"),
+    "twins-research": ("twins", "qlab twins run --only {idea}"),
+    "overlays": ("overlays", "qlab overlays run --only {idea}"),
+}
+
+
+def _time_note(name: str, ctx: NightContext) -> str | None:
+    """The step's time as the pipeline page shows it (`qlab.stage_time`): what the limit kept
+    from running, what was too heavy, what ran past it, and for the watch list what was slow."""
+    from qlab.stage_time import page_note
+
+    key, hand = _TIME_NOTES[name]
+    block = ctx.state.get(key)
+    summary = (block.get("time") or {}).get(name) if name in ("twins", "twins-research",
+                                                             "overlays") and block else block
+    return page_note(summary, hand, watch=name == "recheck")
 
 
 def night_steps() -> dict[str, StepImpl]:
@@ -1377,11 +1418,13 @@ def night_steps() -> dict[str, StepImpl]:
             skip_reason=_flag_and_not_in_state("detectors", "detectors",
                                                "уже собраны этой ночью (по состоянию ночи)"),
             inspect=_detectors_all_failed, finals=_detector_items),
-        "recheck": StepImpl(_step_recheck, "recheck"),
+        "recheck": StepImpl(_step_recheck, "recheck", note=lambda c: _stage_note("recheck", c)),
         "waiting": StepImpl(_step_waiting, "waiting", skip_reason=flag("waiting"),
-                            is_cut=cut("stop_at", "waiting")),
+                            is_cut=cut("stop_at", "waiting"),
+                            note=lambda c: _stage_note("waiting", c)),
         "twins": StepImpl(_step_twins, "twins", skip_reason=lambda c: None if c.run_twins
-                          else "выключен флагом команды", is_cut=cut("stop_at", "twins")),
+                          else "выключен флагом команды", is_cut=cut("stop_at", "twins"),
+                          note=lambda c: _stage_note("twins", c)),
         "restamp": StepImpl(_step_restamp, "restamp", skip_reason=flag("restamp"),
                             is_cut=cut("code_cut", "restamp"),
                             note=lambda c: _stage_note("restamp", c)),
@@ -1394,7 +1437,8 @@ def night_steps() -> dict[str, StepImpl]:
             _step_anomalies_investigate, "anomalies-investigate", skip_reason=flag("anomalies"),
             is_cut=cut("code_cut", "anomalies"), finals=_anomaly_failures("investigations")),
         "overlays": StepImpl(_step_overlays, "overlays", skip_reason=lambda c: None if c.flags[
-            "overlays"] else "выключен флагом команды", is_cut=cut("code_cut", "overlays")),
+            "overlays"] else "выключен флагом команды", is_cut=cut("code_cut", "overlays"),
+                             note=lambda c: _stage_note("overlays", c)),
         "paper": StepImpl(
             _step_paper, "paper",
             skip_reason=_flag_and_not_in_state("paper", "paper",
@@ -1421,7 +1465,8 @@ def night_steps() -> dict[str, StepImpl]:
         "research": StepImpl(_step_research, "research", skip_reason=_research_skip),
         "twins-research": StepImpl(_step_twins_research, "twins-research",
                                    skip_reason=_twins_research_skip,
-                                   is_cut=cut("stop_at", "twins-research")),
+                                   is_cut=cut("stop_at", "twins-research"),
+                                   note=lambda c: _stage_note("twins-research", c)),
         "implement": StepImpl(_step_implement, "implement", skip_reason=flag("implement"),
                               is_cut=cut("stop_at", "implement")),
         "search": StepImpl(_step_search, "search", skip_reason=flag("search"),

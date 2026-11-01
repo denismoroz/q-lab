@@ -21,6 +21,12 @@ max_variants_per_night: 6
 # never cuts a run it has started; it only checks the night's stop time between variants).
 slow_variant_minutes: 20
 
+# The stage's whole time on one night, in minutes, checked between variants
+# (src/qlab/stage_time.py): a variant that took longer than this last time, or more than what is
+# left, waits for another night and the page says so; a variant that takes the stage past the limit
+# is recorded, not cut. A hand run of named bases (`qlab overlays run --only BASE`) has no limit.
+max_minutes_per_night: 40
+
 # Which strategies are taken first (the strategy at the bottom of the wrappers, by its module
 # name): trend and XSMOM first, Bv2 last, as a control.
 priority: [trend, xsmom, bv2]

@@ -62,6 +62,8 @@ TWIN_METRICS = ("ann_return_net", "sharpe_net", "max_dd", "ann_return_net_ex_bes
                 "noise_return_percentile", "forward_days", "forward_days_needed",
                 "min_capital_usd", *CAP_NUMBERS)
 BINANCE = "binance"
+HAND_COMMAND = "qlab twins run --only {idea}"
+"""How an idea the night keeps for its time is run by hand."""
 
 
 # --------------------------------------------------------------------------
@@ -430,7 +432,13 @@ def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
     except (OSError, ValueError) as exc:  # a broken config switches the second stage off here
         stage2_config = None
         block.setdefault("notes", []).append(f"night/stage2.yaml не прочитан: {exc}")
-    run = _Run(day=day, end=end, state=state, block=block, config=config,
+    from qlab.stage_time import SecondsLedger, StageClock, read_limit
+
+    # The night's time limit for the stage (night/twins.yaml, `max_minutes_per_night`); a hand run
+    # of named ideas has none (`qlab.stage_time`).
+    clock = StageClock(label, None if only else read_limit(config_path),
+                       hand_command=HAND_COMMAND, ledger=SecondsLedger(), day=day.isoformat())
+    run = _Run(day=day, end=end, state=state, block=block, config=config, clock=clock,
                stage2_config=stage2_config, noise_trials=noise_trials, stop_at=stop_at, label=label,
                plan=night.load_research_plan(research_config), ledger_path=ledger_path,
                ledger=load_ledger(ledger_path), forced=bool(only), dry_run=dry_run,
@@ -452,6 +460,8 @@ def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
             run.finish(cand, {"idea": cand.idea_id, "spec": cand.path.as_posix(),
                               "action": "error", "error": f"{type(exc).__name__}: {exc}"},
                        counted=False)
+    if clock.limit_minutes is not None:
+        block.setdefault("time", {})[label] = clock.summary()
     if not dry_run:
         night.save_state(day, state)
 
@@ -484,6 +494,7 @@ class _Run:
     dry_run: bool
     allow_heavy: bool
     cap: int | None
+    clock: object = None
     venue_names: list[str] | None = None
 
     def full(self) -> bool:
@@ -502,8 +513,17 @@ class _Run:
         night.save_state(self.day, self.state)
 
     def run_twin(self, cand: Candidate, twin: StrategySpec, entry: dict) -> None:
+        started = self.clock.now()
         _run_twin(twin, cand.idea_id, entry, end=self.end, noise_trials=self.noise_trials,
                   slow_minutes=self.config.slow_twin_minutes, stage2_config=self.stage2_config)
+        if not self.dry_run:
+            self.clock.finished(cand.idea_id, self.clock.now() - started)
+
+    def refused_for_time(self, cand: Candidate) -> bool:
+        """Whether the stage's time keeps the candidate from running tonight (it waits, and the
+        stage's block says why): the time is up, or the time it took last time is more than the
+        limit or than what is left (`qlab.stage_time`)."""
+        return not self.dry_run and self.clock.refuse(cand.idea_id) is not None
 
     def handle(self, cand: Candidate) -> str | None:
         """Handle one candidate; "stop" when the night's stop time has passed."""
@@ -518,6 +538,8 @@ class _Run:
                 return None
             if night.past_stop(self.stop_at, self.state, f"{self.label}:{cand.idea_id}"):
                 return "stop"
+            if self.refused_for_time(cand):
+                return None
             entry = {"idea": cand.idea_id, "spec": cand.path.as_posix(), "action": "existing",
                      "twin": twin.idea_id, "twin_spec": existing.as_posix()}
             self.run_twin(cand, twin, entry)
@@ -585,6 +607,8 @@ class _Run:
             entry["action"] = "would-make"
             self.finish(cand, entry, counted=False)
             return None
+        if self.refused_for_time(cand):
+            return None  # nothing written: the idea is looked at again on a night with time
         from qlab.twin import write_twin
 
         write_twin(cand.path, result.spec, cand.idea_id)
@@ -702,7 +726,10 @@ def report_lines(block: Mapping | None) -> list[str]:
     if not block:
         return []
     entries = block.get("entries") or []
-    if not (entries or block.get("notes") or block.get("deferred") or block.get("refused")):
+    timed = any(t.get("heavy") or t.get("deferred") or t.get("overran")
+                for t in (block.get("time") or {}).values())
+    if not (entries or block.get("notes") or block.get("deferred") or block.get("refused")
+            or timed):
         return []  # the stage found nothing to do tonight: no section
     lines = [
         "Идея, которой мало данных после выбора её чисел, не ждёт месяцы. Её «двойник» — тот же "
@@ -721,6 +748,10 @@ def report_lines(block: Mapping | None) -> list[str]:
     if block.get("deferred"):
         lines.append(f"Не уместились в ночной предел и ждут следующей ночи: "
                      f"{', '.join(block['deferred'])}.")
+    from qlab.stage_time import time_lines
+
+    for summary in (block.get("time") or {}).values():
+        lines += time_lines(summary, HAND_COMMAND)
     for idea, why in (block.get("refused") or {}).items():
         lines.append(f"- {idea}: не подходит для двойника — {why}")
     lines.append("")

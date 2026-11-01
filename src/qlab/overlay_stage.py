@@ -48,6 +48,8 @@ SECTION_TITLE = "Надстройки: когда стратегия входи�
 LEDGER_VERSION = 1
 """Bumped when the rules that build a variant change, so an old fingerprint is not kept."""
 DATA_END_NIGHT, DATA_END_BASE = "night", "base"
+HAND_COMMAND = "qlab overlays run --only БАЗА"
+"""How a variant the night keeps for its time is run by hand (the option names its base)."""
 
 
 # --------------------------------------------------------------------------
@@ -262,7 +264,13 @@ def overlays_stage(day: date, end: date, state: dict, *, noise_trials: int = 200
     ledger = load_ledger(ledger_path)
     cap = max_variants if max_variants is not None else (
         None if only else config.max_variants_per_night)
-    run = _Run(day=day, end=end, state=state, block=block, config=config,
+    from qlab.stage_time import SecondsLedger, StageClock, read_limit
+
+    # The night's time limit (night/overlays.yaml, `max_minutes_per_night`); none for a hand run
+    # of named bases (`qlab.stage_time`).
+    clock = StageClock(label, None if only else read_limit(config_path),
+                       hand_command=HAND_COMMAND, ledger=SecondsLedger(), day=day.isoformat())
+    run = _Run(day=day, end=end, state=state, block=block, config=config, clock=clock,
                noise_trials=noise_trials,
                stop_at=stop_at, label=label, ledger=ledger, ledger_path=ledger_path,
                spec_dir=spec_dir, data_end=data_end, kinds=tuple(kinds), dry_run=dry_run,
@@ -280,6 +288,8 @@ def overlays_stage(day: date, end: date, state: dict, *, noise_trials: int = 200
         except Exception as exc:  # noqa: BLE001 - one base's failure must not stop the others
             block["entries"].append({"base": base.idea_id, "variant": None, "action": "error",
                                      "error": f"{type(exc).__name__}: {exc}"})
+    if clock.limit_minutes is not None:
+        block.setdefault("time", {})[label] = clock.summary()
     if not dry_run:
         night.save_state(day, state)
 
@@ -305,6 +315,7 @@ class _Run:
     cap: int | None
     chains_only: set[str]
     second_stage: bool
+    clock: object = None
     stage2_config: object = None
     base_limit: int = 10**9
     """How many bases may get new variants tonight; a base whose variants are all done does not
@@ -378,6 +389,9 @@ class _Run:
             if night.past_stop(self.stop_at, self.state, f"{self.label}:{spec.idea_id}"):
                 self.finish_base(base, entry_base, end, active)
                 return "stop"
+            if not self.dry_run and self.clock.refuse(spec.idea_id) is not None:
+                self.block["deferred"].append(spec.idea_id)  # the stage's time (qlab.stage_time)
+                continue
             if not active:
                 active = True
                 self.block["bases"].append(entry_base)
@@ -387,7 +401,9 @@ class _Run:
                 entry["action"] = "would-run"
                 self.block["entries"].append(entry)
                 continue
+            started = self.clock.now()
             self.run_variant(base, spec, entry, end)
+            self.clock.finished(spec.idea_id, self.clock.now() - started)
             self.block["entries"].append(entry)
             if entry["action"] != "error":
                 self.block["new"] += 1
@@ -629,6 +645,10 @@ def report_lines(block: dict | None, tables: dict[str, dict] | None = None) -> l
     if block.get("deferred"):
         lines.append("Не уместились в ночной предел и ждут следующей ночи: "
                      f"{', '.join(block['deferred'])}.")
+    from qlab.stage_time import time_lines
+
+    for summary in (block.get("time") or {}).values():
+        lines += time_lines(summary, HAND_COMMAND)
     for idea, why in (block.get("refused") or {}).items():
         lines.append(f"- {idea}: не подходит как база — {why}")
     lines.append("")

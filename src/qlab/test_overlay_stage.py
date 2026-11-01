@@ -709,3 +709,51 @@ def test_the_twins_stage_leaves_overlay_variants_alone(world, registry) -> None:
         s.get(Idea, f"{XSMOM}-ov-own").status = IdeaStatus.BENCH
         found, _ = twin_stage.find_candidates(s, spec_files(world.specs))
         assert f"{XSMOM}-ov-own" not in [c.idea_id for c in found]
+
+
+# ---- the stage's time (qlab.stage_time, night/overlays.yaml `max_minutes_per_night`) -------
+
+
+def _timed_config(w, limit) -> None:
+    raw = yaml.safe_load(w.config.read_text(encoding="utf-8"))
+    raw["max_minutes_per_night"] = limit
+    w.config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+
+def test_nothing_new_starts_once_the_stages_time_is_up(world) -> None:
+    _timed_config(world, 1e-9)
+    state = run_stage(world)
+    assert stands(world) == [] and state["overlays"]["new"] == 0
+    time = state["overlays"]["time"]["overlays"]
+    assert time["time_up"] is True and time["deferred"]
+    assert set(time["deferred"]) <= set(state["overlays"]["deferred"])
+
+
+def test_a_variant_that_took_more_than_the_whole_limit_last_time_waits_for_a_hand_run(
+        world) -> None:
+    from qlab.stage_time import SecondsLedger
+
+    _timed_config(world, 30)
+    first = run_stage(world, only=None, max_variants=1)  # find out which variant goes first
+    variant = next(e["variant"] for e in first["overlays"]["entries"] if e.get("variant"))
+    SecondsLedger().record("overlays", variant, 45 * 60, "2026-10-31")
+    world.calls.clear()
+    world.ledger.unlink()  # forget that it was run: the stage meets it as new
+    second = run_stage(world)
+    assert variant not in stands(world)
+    heavy = second["overlays"]["time"]["overlays"]["heavy"]
+    assert variant in heavy and "qlab overlays run --only" in heavy[variant]
+    assert variant in second["overlays"]["deferred"]
+    assert "не запущена" in "\n".join(overlay_stage.report_lines(second["overlays"]))
+
+
+def test_a_hand_run_of_named_bases_has_no_time_limit(world) -> None:
+    _timed_config(world, 1e-9)
+    state = run_stage(world, only={XSMOM}, max_variants=2)
+    assert len(stands(world)) == 2 and "time" not in state["overlays"]
+
+
+def test_the_shipped_overlays_config_has_a_time_limit() -> None:
+    from qlab.stage_time import read_limit
+
+    assert read_limit(Path("night/overlays.yaml")) is not None

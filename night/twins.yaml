@@ -17,6 +17,13 @@ max_new_twins_per_night: 4
 # never cuts a run it has started; it only checks the night's stop time between ideas).
 slow_twin_minutes: 20
 
+# The stage's whole time on one night, in minutes, for each of its two steps (the twins of the
+# waiting ideas, and the twins of the researcher's experiments), checked between ideas
+# (src/qlab/stage_time.py): an idea that took longer than this last time, or more than what is left,
+# waits for another night and the page says so; an idea that takes the stage past the limit is
+# recorded, not cut. A hand run of named ideas (`qlab twins run --only IDEA`) has no limit.
+max_minutes_per_night: 30
+
 # Twins whose data is hourly candles of every Binance perpetual (no instrument list in the spec)
 # are not run by the night: Binance's candles are fetched one instrument at a time, and the
 # first measurement (2026-10-27, frab-binance-spot-research-sw24-causal) took about 25 seconds

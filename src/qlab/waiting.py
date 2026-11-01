@@ -497,16 +497,75 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             "lines": stage2.report_lines({"route": route}, dataclasses.asdict(outcome))}
 
 
+HAND_COMMAND = "qlab twins run --only {idea}"
+"""How an idea the night refuses (too heavy, past the stage's time) is run by hand."""
+TIME_KEY = "waiting_time"
+"""The key of the night's state that holds the stage's time (limit, spent, what was refused)."""
+
+
+def _estimate(plan: Plan, end: date, stage2_config, cost, last_seconds: float | None,
+              listing: dict | None = None):
+    """About how long the plan's item takes: the larger of the data it has to fetch (the first
+    stage's, or the translated second stage's, by what the raw cache holds, `qlab.hl_fetch`) and
+    the time it took the last time (`qlab.stage_time.SecondsLedger`). Advice: an estimate that
+    cannot be made is no estimate, and the run reports its own errors."""
+    from qlab import hl_fetch, night
+    from qlab.pipeline import stage2
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.db import session_scope
+
+    estimates: list = []
+    try:
+        if plan.spec_path is not None:
+            spec = night.with_end(load_spec(Path(plan.spec_path)), end)
+            with session_scope() as session:
+                if plan.step == "idea":
+                    estimates.append(hl_fetch.estimate(spec, session, cost))
+                elif stage2_config is not None:
+                    names = None
+                    if (spec.data.instruments is not None
+                            or spec.required_instruments is not None):
+                        # Hyperliquid's listing is asked once for the whole stage
+                        cache = listing if listing is not None else {}
+                        if "names" not in cache:
+                            cache["names"] = stage2.venue_listing()
+                        names = cache["names"]
+                    translation = stage2.translate(spec, stage2_config, venue_names=names)
+                    if translation.spec is not None:
+                        estimates.append(hl_fetch.estimate(translation.spec, session, cost))
+    except Exception:  # noqa: BLE001 - an estimate is advice
+        estimates = []
+    if not estimates and last_seconds is None:
+        return None
+    return hl_fetch.total(estimates, last_seconds)
+
+
+def _stage_clock(day: date, only: Collection[str] | None, force: bool, config_path: Path):
+    """The stage's clock: its limit from night/waiting.yaml; none for a hand run of named ideas."""
+    from qlab.stage_time import SecondsLedger, StageClock, read_limit
+
+    limit = None if (only is not None or force) else read_limit(config_path)
+    return StageClock("waiting", limit, hand_command=HAND_COMMAND, ledger=SecondsLedger(),
+                      day=day.isoformat())
+
+
 def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_trials: int = 200,
                   spec_dir: Path = SPEC_DIR,
-                  only: Collection[str] | None = None, force: bool = False) -> None:
+                  only: Collection[str] | None = None, force: bool = False,
+                  config_path: Path = CONFIG) -> None:
     """Re-run the ideas that wait for data and are due tonight; write what happened (and
     what waits until when) to `state["waiting"]` for the morning report. Resumable: a
     finished re-run has a done-marker, a failed one is tried again on the next run. `only`
     (by hand, `qlab twins run --only`) limits the plan to those ideas, and `force` runs them
     whether or not a day has come that can change the route (a spec file edited since the
-    last run, for one)."""
-    from qlab import night
+    last run, for one).
+
+    Bounded in time (night/waiting.yaml, `max_minutes_per_night`; none for a hand run of named
+    ideas, `qlab.stage_time`): an idea whose estimate (its data to fetch, the time it took last
+    time) is larger than the whole limit is not run by the night, it is reported with the command
+    for a hand run; nothing new starts once the time is up; an idea that takes the stage past its
+    limit is not cut but recorded. 2026-11-01: one idea's second stage took 72 minutes of 95."""
+    from qlab import hl_fetch, night
     from qlab.pipeline import stage2
     from qlab.registry.db import session_scope
     from qlab.rules.loader import load_latest
@@ -537,6 +596,12 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
     if only is not None:
         plans = [p for p in plans if p.idea_id in only]
     entries: list[dict] = state.setdefault("waiting", [])
+    clock = _stage_clock(day, only, force, config_path)
+    try:
+        cost = hl_fetch.load_config()
+    except (OSError, ValueError):
+        cost = None  # no fetch estimate; the time of the last run still counts
+    listing: dict = {}
     ran: dict[str, dict] = {}
     queue = list(plans)
     planned = {(p.idea_id, p.step) for p in plans}
@@ -552,7 +617,23 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         if plan.skip is not None or not (plan.due or force):
             entries.append(_entry(plan, end))
             continue
+        item = f"{plan.idea_id}:{plan.step}"
+        if clock.limit_minutes is not None:
+            last = clock.ledger.last("waiting", item) if clock.ledger is not None else None
+            if cost is not None:
+                est = _estimate(plan, end, stage2_config, cost, last, listing)
+            else:
+                est = None if last is None else hl_fetch.total([], last)
+            refusal = clock.refuse(item, None if est is None else est.minutes,
+                                   "" if est is None else est.why)
+            if refusal is not None:
+                kind, text = refusal
+                entries.append({**_entry(plan, end), "action": "heavy" if kind == "heavy"
+                                else "wait", "why": text, "due_end": None})
+                night.save_state(day, state)
+                continue
         stage1 = ran.get(plan.idea_id)
+        started = clock.now()
         try:
             if plan.step == "idea":
                 entry = _rerun_idea(plan, end, noise_trials=noise_trials)
@@ -564,6 +645,9 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             entry = {"idea": plan.idea_id, "step": plan.step, "action": "error",
                      "route_before": plan.route, "error": f"{type(exc).__name__}: {exc}"}
+        elapsed = clock.now() - started
+        entry["seconds"] = round(elapsed, 1)
+        clock.finished(item, elapsed)
         if plan.step == "idea":
             ran[plan.idea_id] = entry
             if follow := _new_survivor(plan, entry, stage2_config, planned):
@@ -573,6 +657,8 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         if entry["action"] != "error":
             state["done"][key] = datetime.now(UTC).isoformat()
         night.save_state(day, state)
+    if clock.limit_minutes is not None:
+        state[TIME_KEY] = clock.summary()
     night.save_state(day, state)
 
 
@@ -630,9 +716,11 @@ def _days(entry: dict) -> str:
     return f"{shown} (нужная длина не задана)"
 
 
-def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[str]:
+def report_lines(entries: list[dict], notes: list[str] | None = None,
+                 time_summary: dict | None = None) -> list[str]:
     """The section for the morning report: which waiting ideas were re-run, how many
-    forward days each has against how many it needs, and any change of outcome."""
+    forward days each has against how many it needs, and any change of outcome. `time_summary` is
+    the stage's time (`state["waiting_time"]`): what the night's limit kept from running."""
     lines = [
         "Идея, которой не хватает данных для вывода, прогоняется заново на свежих данных с тем "
         "же описанием, ничего не подгоняется. Прогон нужен только в день, когда исход может "
@@ -641,9 +729,15 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
         "испытание. Дни до этого срока считаются по календарю.", "",
         f"Прогнано: {sum(e['action'] == 'rerun' for e in entries)}, ждут своего дня: "
         f"{sum(e['action'] == 'wait' for e in entries)}, не прогнать: "
-        f"{sum(e['action'] == 'skip' for e in entries)}, сбоев: "
+        f"{sum(e['action'] == 'skip' for e in entries)}, слишком тяжёлых для ночи: "
+        f"{sum(e['action'] == 'heavy' for e in entries)}, сбоев: "
         f"{sum(e['action'] == 'error' for e in entries)}.", ""]
     lines += [f"- {n}" for n in notes or []]
+    from qlab.stage_time import time_lines
+
+    lines += time_lines(time_summary, HAND_COMMAND)
+    if time_lines(time_summary, HAND_COMMAND):
+        lines.append("")
     if not entries:
         return lines
     lines += ["| идея | что | вперёд, дней: есть из нужных | исход: было → стало | статус | "
@@ -664,6 +758,7 @@ def report_lines(entries: list[dict], notes: list[str] | None = None) -> list[st
             route += f"; по двум этапам {e['combined']}"
         when = {"rerun": "прогнано сегодня",
                 "wait": f"{e.get('due_end') or '—'}: {e['why']}",
+                "heavy": e["why"],
                 "skip": e["why"]}[e["action"]]
         lines.append(f"| {e['idea']} | {what} | {_days(e)} | {route} | "
                      f"{e.get('status') or '—'} | {when} |")

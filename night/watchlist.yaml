@@ -7,6 +7,16 @@
 # random books and a trial for a verdict nobody reads, and the trials counted in deflation. The
 # eighth retired idea, bv2-research-headroom, stays: it is the configuration the paper book
 # b2_cold runs (night/paper_books.yaml), and the paper-against-stand check reads its forward test.
+#
+# 2026-11-01 (owner, "да, делай по порядку", on the first night on three lanes, which spent 94.7
+# minutes on one waiting idea): every step of the night that runs ideas from a list has a time
+# limit in minutes (src/qlab/stage_time.py, docs/PIPELINE.md). The watch list is the owner's own
+# list and is NEVER skipped for time: it runs every night whatever it costs. These two numbers
+# only decide what is REPORTED: a night on which the list took longer than the limit, and every
+# strategy that alone took longer than `slow_item_minutes`, are named on the page and in the
+# morning report (the 2026-11-01 night: 46.6 minutes, one strategy 17.2 of them).
+max_minutes_per_night: 60
+slow_item_minutes: 15
 specs:
   # Hyperliquid, what production trades or could
   - specs/trend-retune-weekly.yaml

@@ -51,6 +51,16 @@ def _no_prefetch(monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _stage_seconds_in_tmp(monkeypatch, tmp_path_factory) -> None:
+    """The stages that run ideas from a list note how long each took (`qlab.stage_time`); a test
+    must not write the owner's data/stage_seconds.json."""
+    import qlab.stage_time as stage_time
+
+    monkeypatch.setattr(stage_time, "SECONDS_LEDGER",
+                        tmp_path_factory.mktemp("stage-seconds") / "stage_seconds.json")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_agent_ledgers(monkeypatch) -> None:
     """A test that runs the whole night never reaches the programmer's queue, the
     cataloguer's ledger or the carder's stage on disk: the stages read and write the owner's real

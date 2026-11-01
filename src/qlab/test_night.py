@@ -57,6 +57,42 @@ def test_a_stopped_night_resumes_where_it_left_off(tmp_path, monkeypatch) -> Non
     assert "a.yaml" in text and "b.yaml" in text and "Токены" in text
 
 
+def test_the_watch_list_is_never_skipped_for_time_but_a_slow_night_is_reported(
+        tmp_path, monkeypatch) -> None:
+    """Run 31 (2026-11-01): the list took 46.6 minutes, one strategy 17. The list runs whatever
+    it costs; the state and the page say what was slow and that the limit was passed
+    (`qlab.stage_time`, night/watchlist.yaml)."""
+    from qlab.stage_time import StageClock
+
+    monkeypatch.setattr(night, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    watch = tmp_path / "watch.yaml"
+    watch.write_text("specs: [a.yaml, b.yaml, c.yaml]\nmax_minutes_per_night: 10\n"
+                     "slow_item_minutes: 3\n")
+    monkeypatch.setattr(night, "WATCHLIST", watch)
+    monkeypatch.setattr(night, "load_spec",
+                        lambda p: _spec().model_copy(update={"idea_id": str(p)}))
+    moment = [0.0]
+    monkeypatch.setattr(night, "_watch_clock", lambda ctx: StageClock(
+        "recheck", 10.0, slow_minutes=3.0, now=lambda: moment[0]))
+    calls = []
+
+    def fake_eval(kind, spec, **kw):
+        calls.append(spec.idea_id)
+        moment[0] += {"a.yaml": 120, "b.yaml": 480, "c.yaml": 60}[spec.idea_id]  # 2, 8, 1 minutes
+        return ItemResult(kind=kind, name=spec.idea_id, route="needs-forward",
+                          metrics={"ann_return_net": 0.05, "sharpe_net": 1.0})
+
+    monkeypatch.setattr(night, "evaluate_item", fake_eval)
+    day = date(2026, 10, 3)
+    night.run(day, graveyard=False, paper=False, implement=False, search=False, detectors=False,
+              assess=False, research=False, waiting=False)
+    assert calls == ["a.yaml", "b.yaml", "c.yaml"]  # none skipped, though the limit was passed
+    time = night.load_state(day)["recheck_time"]
+    assert time["slow"] == [{"idea": "b.yaml", "minutes": 8.0}]
+    assert time["minutes_spent"] == 11.0 and time["overran"]["idea"] == "c.yaml"
+
+
 def test_report_keeps_the_forward_test_out_of_yearly_figures() -> None:
     from qlab.night import _report_row
 
