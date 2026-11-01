@@ -16,7 +16,11 @@
 #   exclusive  -- both write the same kind of thing (trials of one idea): they must not overlap,
 #                 or one idea would be run twice and counted twice in the deflation.
 #   budget     -- only the order in which the night spends the token budget (CLAUDE.md: the cut goes
-#                 from the end). No data passes; a failed parent does not block the step.
+#                 from the end). No data passes; a failed parent does not block the step. In the
+#                 lanes' scheduler it does not even hold the step: the lane takes the first READY
+#                 step in the table's order, so a budget parent that waits for another lane (the
+#                 anomaly scan) cannot keep the agents idle -- the first lane night, 2026-11-01,
+#                 lost 100 minutes that way.
 # `reads_all` is shorthand for a `fresh` edge to every step above (the morning report).
 #
 # `done_prefixes` / `state_keys`: what a RESTART of the step clears in the night's state file, so
@@ -53,7 +57,7 @@ steps:
     tokens: false
     items: стратегия из списка наблюдения (кладбище по воскресеньям)
     done_prefixes: ["watch:", "graveyard:"]
-    state_keys: [results, unwatched_bench]
+    state_keys: [results, unwatched_bench, recheck_time]
     depends_on:
       - {step: detectors, kind: data, why: "Стратегии списка читают файлы определителей режима, собранные первым шагом."}
 
@@ -65,7 +69,7 @@ steps:
     tokens: false
     items: ждущая идея и её ступень
     done_prefixes: ["waiting:"]
-    state_keys: [waiting, waiting_notes, waiting_followed]
+    state_keys: [waiting, waiting_notes, waiting_followed, waiting_time]
     depends_on:
       - {step: detectors, kind: data, why: "Ждущие идеи читают те же файлы определителей режима."}
 
@@ -200,7 +204,6 @@ steps:
     state_keys: [programmer]
     depends_on:
       - {step: assess, kind: budget, why: "Порядок трат: сначала здоровье работающих стратегий и второе мнение, потом новое (CLAUDE.md)."}
-      - {step: anomalies-investigate, kind: budget, why: "Порядок трат: разбор аномалий — здоровье результатов, он идёт до нового (на дорожке агентов шаги идут по готовности, и без этой связи программист мог бы встать раньше разбора)."}
 
   - id: director
     title: Руководитель исследований

@@ -28,7 +28,7 @@ from typing import Any
 
 from qlab.nightflow import current
 from qlab.nightflow.plan import BLOCKED, OFF, OUTSIDE, blocking_parent
-from qlab.nightflow.table import Step, Table
+from qlab.nightflow.table import GATING_KINDS, Step, Table
 
 #: Walked in order to name a failed item found in a step's state block.
 NAME_KEYS = ("name", "idea", "idea_id", "strategy", "card", "path", "id", "trial")
@@ -409,12 +409,13 @@ class Runner:
         return self._execute_in_lanes()
 
     def _execute_in_lanes(self) -> dict[str, str]:
-        """A step starts when every parent (of every kind) has ended and its lane is free; at most
-        `concurrency` steps at a time and one per lane. Among the steps ready for a lane the one
-        first in the table's order goes, so a step waiting for another lane does not hold up the
-        ones behind it. The coordinator is this thread; the steps run in threads of their own,
-        which are daemons: a stop of the night (SIGTERM, Ctrl-C) must end the process, not wait
-        for a step that may run for hours."""
+        """A step starts when every parent it really waits for has ended (`data`, `fresh` and
+        `exclusive` edges; a `budget` edge is only the order of spending and never holds a step)
+        and its lane is free; at most `concurrency` steps at a time and one per lane. Among the
+        steps ready for a lane the one first in the table's order goes, so a step waiting for
+        another lane does not hold up the ones behind it. The coordinator is this thread; the steps
+        run in threads of their own, which are daemons: a stop of the night (SIGTERM, Ctrl-C) must
+        end the process, not wait for a step that may run for hours."""
         pending = list(self.table.steps)
         busy: dict[str, str] = {}  # lane -> the step running in it
         ended: queue.Queue = queue.Queue()
@@ -431,7 +432,8 @@ class Runner:
             while pending or busy:
                 started_something = False
                 for step in list(pending):
-                    if any(p not in self.outcome for p in self.table.parents(step.id)):
+                    if any(p not in self.outcome
+                           for p in self.table.parents(step.id, GATING_KINDS)):
                         continue
                     if not self._precheck(step):
                         pending.remove(step)

@@ -17,6 +17,9 @@ leave every trial exactly as the same steps one after another do.
     # when the steps of the latest run started and ended, and which of them overlapped
     python scripts/rehearse_lanes.py timeline RUN.db
 
+    # when a lane stood idle although one of its steps was ready (empty: it never did)
+    python scripts/rehearse_lanes.py idle RUN.db [lane] [grace seconds]
+
     # N threads run the stand on ONE spec at once (the same idea from several lanes): every run
     # must give the same numbers, and the registry must hold one spec row and N trials
     python scripts/rehearse_lanes.py stress specs/trend-retune-weekly.yaml 4
@@ -238,9 +241,36 @@ def _timeline(argv: list[str]) -> int:
     return 0
 
 
+def _idle(argv: list[str]) -> int:
+    """The latest run's steps of one lane that waited longer than `grace` seconds although they
+    could have started (`qlab.nightflow.rehearsal.idle_while_ready`)."""
+    from qlab.nightflow import rehearsal
+    from qlab.nightflow.table import load_table
+
+    db = _connect(argv[0])
+    lane = argv[1] if len(argv) > 1 else "agents"
+    grace = float(argv[2]) if len(argv) > 2 else 0.5
+    run = db.execute("select id from pipeline_run order by id desc limit 1").fetchone()[0]
+    rows = db.execute("select step_id, started_at, finished_at from pipeline_step_run where "
+                      "run_id = ? and state in ('ok', 'failed') and finished_at is not null",
+                      (run,)).fetchall()
+    t0 = min(_aware(r[1]) for r in rows)
+    spans = {step: ((_aware(a) - t0).total_seconds(), (_aware(b) - t0).total_seconds())
+             for step, a, b in rows}
+    table = load_table()
+    print(f"run {run}, lane {lane}:")
+    for step in sorted((s for s in spans if table.by_id[s].lane == lane), key=lambda s: spans[s]):
+        print(f"  {step:<24} {spans[step][0]:7.1f}s -> {spans[step][1]:7.1f}s")
+    waits = rehearsal.idle_while_ready(table, spans, lane, grace)
+    for step, since, start in waits:
+        print(f"  IDLE while ready: {step} could start at {since:.1f}s, started at {start:.1f}s")
+    print("lane idle while a step was ready:", "YES" if waits else "never")
+    return 1 if waits else 0
+
+
 def main() -> int:
     commands = {"run": _run, "compare": _compare, "timeline": _timeline, "states": _states,
-                "stress": _stress}
+                "stress": _stress, "idle": _idle}
     if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2

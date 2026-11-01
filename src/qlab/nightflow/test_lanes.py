@@ -22,7 +22,7 @@ from qlab.boundedcache import BoundedCache
 from qlab.nightflow import journal
 from qlab.nightflow.runner import ItemTracker, Runner, StepImpl
 from qlab.nightflow.statehub import ForeignStateWrite, NightStateHub
-from qlab.nightflow.table import LANES, TableError, load_table, parse
+from qlab.nightflow.table import GATING_KINDS, LANES, TableError, load_table, parse
 from qlab.registry.models import Base
 
 
@@ -95,14 +95,29 @@ def test_decay_keeps_its_edge_to_the_watch_list_and_the_agents_keep_their_order(
     table = load_table()
     kinds = {e.step: e.kind for e in table.by_id["decay"].depends_on}
     assert kinds["recheck"] == "fresh" and kinds["paper"] == "data"
-    order = ["assess", "anomalies-investigate", "programmer", "director", "research", "implement",
-            "search", "catalogue", "cards", "generate"]
+    order = ["assess", "programmer", "director", "research", "implement", "search", "catalogue",
+             "cards", "generate"]
     for before, after in zip(order, order[1:], strict=False):
-        if after == "anomalies-investigate":
-            continue
         assert before in table.ancestors(after) or before == "assess" and \
             "assess" in table.ancestors(after)
-    assert "anomalies-investigate" in table.ancestors("programmer")
+
+
+def test_no_agent_step_is_chained_behind_a_step_that_waits_for_another_lane() -> None:
+    """Run 31 (2026-11-01): the programmer was chained by a budget edge behind the anomaly
+    investigator, which waits for the anomaly scan of the calculations lane, and the agents' lane
+    stood idle from 01:26 to 03:06. The only steps an agent step may wait for through a `data` or
+    `fresh` edge are the ones whose output it reads; the order of spending is the table's."""
+    table = load_table()
+    assert "anomalies-investigate" not in table.ancestors("programmer")
+    assert "anomalies-investigate" not in table.ancestors("director")
+    for step in table.steps:
+        if step.lane != "agents" or step.id == "anomalies-investigate":
+            continue
+        gating = {e.step for e in step.depends_on if e.kind in GATING_KINDS}
+        assert "anomalies-investigate" not in gating
+    # and the one agent step that really needs another lane's output still waits for it
+    investigate = {e.step: e.kind for e in table.by_id["anomalies-investigate"].depends_on}
+    assert investigate == {"anomalies": "data"}
 
 
 def test_two_steps_may_not_own_one_key_unless_the_table_orders_them() -> None:
@@ -344,6 +359,52 @@ def test_a_step_waiting_for_another_lane_does_not_hold_up_the_steps_behind_it(jr
     # `late` is first in the table's order in its lane but waits for `slow`; `free` goes at once
     assert clock.span("free")[1] < clock.span("slow")[1]
     assert clock.span("late")[0] >= clock.span("slow")[1] - 1e-3
+
+
+def _agents_after_a_scan() -> list[dict]:
+    """The shape of run 31: an agent step that needs the calculations lane's scan, and the other
+    agent steps chained behind it only by the order of spending."""
+    return [
+        _step("scan", lane="calc", keys=["scan"]),
+        _step("health", [("scan", "data")], lane="agents", keys=["health"]),
+        _step("prog", [("health", "budget")], lane="agents", keys=["prog"]),
+        _step("plan", [("prog", "budget")], lane="agents", keys=["plan"]),
+        _step("new", [("plan", "budget"), ("scan", "fresh")], lane="agents", keys=["new"]),
+    ]
+
+
+def test_the_agents_lane_is_never_idle_while_one_of_its_steps_is_ready(jr, tmp_path) -> None:
+    """A budget edge is the order of spending, not a wait: the lane takes the first READY step in
+    the table's order, and the step that waits for the scan runs in the lane's next free slot."""
+    work = {"scan": 0.8, "health": 0.1, "prog": 0.3, "plan": 0.3, "new": 0.1}
+    clock, outcome, _, _ = _lanes_run(jr, tmp_path, _agents_after_a_scan(), work)
+    assert set(outcome.values()) == {"ok"}
+    # prog and plan do not wait for the scan or for `health`: they start at once, in order
+    t0, scan_end = clock.span("scan")
+    assert clock.span("prog")[0] - t0 < 0.2
+    assert clock.span("plan")[0] >= clock.span("prog")[1] - 1e-3
+    assert clock.span("plan")[1] < scan_end + 0.05
+    # `health` needs the scan's output and goes as soon as the scan has ended AND the lane is free
+    assert clock.span("health")[0] >= scan_end - 1e-3
+    # the lane's gaps: from the first start to the last end, it stood idle only while NO agent
+    # step was ready (here: between `plan` ending and the scan ending, `health` is not ready)
+    spans = sorted(clock.span(n) for n in ("prog", "plan", "health", "new"))
+    idle = [(a_end, b_start) for (_, a_end), (b_start, _) in zip(spans, spans[1:], strict=False)
+            if b_start - a_end > 0.05]
+    for _, gap_end in idle:
+        assert gap_end <= scan_end + 0.05, "idle while a step was ready"
+    # `new` still comes after `health` (same lane, the table's order among the ready ones)
+    assert clock.span("new")[0] >= clock.span("health")[1] - 1e-3
+
+
+def test_a_budget_parent_that_has_not_run_does_not_hold_the_step_in_the_sequential_night(
+        jr, tmp_path) -> None:
+    """With concurrency 1 the table's order is the order of the night, budget edges included."""
+    clock, outcome, _, _ = _lanes_run(
+        jr, tmp_path, _agents_after_a_scan(), {n: 0.02 for n in ("scan", "health", "prog", "plan",
+                                                                 "new")}, concurrency=1)
+    order = [n for k, n, _ in clock.events if k == "start"]
+    assert order == ["scan", "health", "prog", "plan", "new"] and set(outcome.values()) == {"ok"}
 
 
 def test_concurrency_caps_the_steps_running_together(jr, tmp_path) -> None:
@@ -908,3 +969,21 @@ def test_the_page_gets_each_steps_lane_and_the_lanes_in_order() -> None:
     assert "decay" in together and "implement" in together
     assert not any(table.by_id[s].lane == "calc" for s in detail["can_run_with_in_lanes"])
     assert list(table.lanes()) == ["calc", "checks", "agents", "final"]
+
+
+def test_the_idle_audit_finds_a_lane_that_stood_idle_behind_a_budget_edge_and_clears_the_new(
+) -> None:
+    """`idle_while_ready` is the rehearsal's proof: the run-31 shape (the other agent steps started
+    only after the investigator, which waited for the scan) shows up as idle time; the same steps
+    started at once show none."""
+    from qlab.nightflow import rehearsal
+
+    table = parse({"steps": _agents_after_a_scan()})
+    # old: the lane did nothing until the scan (0..8) was done, though `prog` could start at 0
+    old = {"scan": (0, 8), "health": (8, 9), "prog": (9, 15), "plan": (15, 20), "new": (20, 21)}
+    waits = rehearsal.idle_while_ready(table, old, "agents")
+    assert ("prog", 0.0, 8) in waits and ("plan", 0.0, 8) in waits
+    # new: prog and plan run during the scan, health when the scan has ended
+    new = {"scan": (0, 8), "prog": (0, 3), "plan": (3, 6), "health": (8, 9), "new": (9, 10)}
+    assert rehearsal.idle_while_ready(table, new, "agents") == []
+    # the 2..4 s the lane stood idle between `plan` and `health` were nobody's fault: nothing ready

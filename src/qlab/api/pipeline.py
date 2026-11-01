@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from qlab.api.deps import get_session
 from qlab.nightflow import control, journal
-from qlab.nightflow.table import LANE_TITLES, Table, load_table
+from qlab.nightflow.table import GATING_KINDS, LANE_TITLES, Table, load_table
 
 CONSOLE_HEADER = "x-qlab-console"
 _LOCAL_HOST = re.compile(r"^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
@@ -70,7 +70,7 @@ def _table() -> Table:
 
 def _step_json(table: Table, step_id: str) -> dict[str, Any]:
     step = table.by_id[step_id]
-    waves, waves_free = table.layers(), table.layers(("data", "fresh", "exclusive"))
+    waves, waves_free = table.layers(), table.layers(GATING_KINDS)
     children = [{"step": s.id, "kind": e.kind, "why": e.why}
                 for s in table.steps for e in s.depends_on if e.step == step_id]
     return {
@@ -80,10 +80,10 @@ def _step_json(table: Table, step_id: str) -> dict[str, Any]:
         "depends_on": [{"step": e.step, "kind": e.kind, "why": e.why} for e in step.depends_on],
         "children": children, "wave": waves[step.id], "wave_without_budget": waves_free[step.id],
         "can_run_with": table.can_run_with(step.id),
-        "can_run_with_in_lanes": [s for s in table.can_run_with(step.id)
+        # what the scheduler really lets run together: a budget edge holds nobody (GATING_KINDS)
+        "can_run_with_in_lanes": [s for s in table.can_run_with(step.id, GATING_KINDS)
                                   if table.by_id[s].lane_key != step.lane_key],
-        "can_run_with_without_budget": table.can_run_with(
-            step.id, ("data", "fresh", "exclusive")),
+        "can_run_with_without_budget": table.can_run_with(step.id, GATING_KINDS),
         "restart_set": table.restart_set(step.id),
     }
 

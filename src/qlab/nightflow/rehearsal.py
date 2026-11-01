@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from qlab.nightflow.runner import StepImpl
-from qlab.nightflow.table import Table, validate
+from qlab.nightflow.table import GATING_KINDS, Table, validate
 
 
 def stub_key(step_id: str) -> str:
@@ -63,3 +63,34 @@ def table_with_stub_keys(table: Table, step_ids: list[str]) -> Table:
     new = Table(steps)
     validate(new)
     return new
+
+
+def idle_while_ready(table: Table, spans: Mapping[str, tuple[float, float]], lane: str,
+                     grace: float = 0.0) -> list[tuple[str, float, float]]:
+    """The stretches in which `lane` did nothing although one of its steps could have started:
+    (the step that was ready, from when the lane stood idle, until when) for every idle gap longer
+    than `grace` seconds that a step started after, while it was ready. `spans` is {step: (start,
+    end)} in seconds of the steps that ran. A step is ready when every parent it really waits for
+    (`GATING_KINDS`) that ran has ended. An empty answer is the proof that the lane was never idle
+    while one of its steps was ready (run 31, 2026-11-01: the agents' lane stood idle for 100
+    minutes behind a budget edge)."""
+    mine = sorted((s for s in table.ids if s in spans and table.by_id[s].lane == lane),
+                  key=lambda s: spans[s][0])
+    ready = {s: max((spans[p][1] for p in table.parents(s, GATING_KINDS) if p in spans),
+                    default=0.0) for s in mine}
+    gaps: list[tuple[float, float]] = []
+    free = 0.0
+    for step in mine:
+        start, end = spans[step]
+        if start > free:
+            gaps.append((free, start))
+        free = max(free, end)
+    waits: list[tuple[str, float, float]] = []
+    for gap_from, gap_to in gaps:
+        for step in mine:
+            if spans[step][0] < gap_to:
+                continue  # started before the gap ended: it was not waiting through it
+            idle_from = max(gap_from, ready[step])
+            if gap_to - idle_from > grace:
+                waits.append((step, idle_from, gap_to))
+    return waits

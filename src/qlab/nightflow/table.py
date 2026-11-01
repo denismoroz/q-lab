@@ -24,6 +24,13 @@ PIPELINE = Path(__file__).resolve().parents[3] / "night" / "pipeline.yaml"
 EDGE_KINDS = ("data", "fresh", "exclusive", "budget")
 STEP_KINDS = ("data", "code", "agent")
 
+#: The edges a step waits for before it may start in the lanes' scheduler. A `budget` edge is only
+#: the order in which one lane spends the token budget, which the table's order already gives
+#: among the steps that are ready: waiting for the parent as well held the agents' lane idle for
+#: 100 minutes on the night of 2026-11-01 (the programmer was chained behind an agent step that
+#: waited for the anomaly scan of the calculations lane). So a budget edge never holds a step.
+GATING_KINDS = ("data", "fresh", "exclusive")
+
 #: The lanes of the night (docs/PIPELINE.md, «Дорожки»): steps of one lane run one at a time, in
 #: the table's order among those that are ready; lanes run together. `final` is the ladder and
 #: the report, which wait for every other lane. A step with no lane (a test's table) is alone in a

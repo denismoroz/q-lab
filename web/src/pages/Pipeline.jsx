@@ -32,7 +32,7 @@ const EDGE = {
   data: { text: 'данные: упавший родитель блокирует шаг', stroke: '#334155', dash: '' },
   fresh: { text: 'свежесть: ждёт, но не блокируется', stroke: '#94a3b8', dash: '5 4' },
   exclusive: { text: 'не вместе: оба пишут испытания одних идей', stroke: '#c2410c', dash: '2 3' },
-  budget: { text: 'порядок трат токенов, данных не передаёт', stroke: '#cbd5e1', dash: '1 4' },
+  budget: { text: 'порядок трат токенов: шаг не ждёт родителя, дорожка берёт первый готовый', stroke: '#cbd5e1', dash: '1 4' },
 }
 const LANE_TITLE = { calc: 'Расчёты', checks: 'Проверки', agents: 'Агенты', final: 'Итог' }
 const TRIGGER = { schedule: 'по расписанию', button: 'кнопкой', hand: 'вручную' }
