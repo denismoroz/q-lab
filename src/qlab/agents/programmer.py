@@ -67,7 +67,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -82,7 +82,11 @@ QUEUE = Path("data/programmer/queue.json")
 WORKTREES = Path("data/programmer/worktrees")
 PLANS = Path("data/programmer/plans")
 TOOLS = "Read,Glob,Grep,Write,Edit"
-"""The agent's tools without a shell; `tools_pattern` adds the one allowed shell command."""
+"""The agent's tools without a shell; `tools_pattern` adds the shell commands it may run."""
+DELETE_COMMAND = "git rm"
+"""The one way the writer deletes a file (2026-11-01: request 2026-10-28-1 spent seven iterations on
+one remark, "delete the leftover test_band.py", which the file tools cannot do). Code checks every
+deletion afterwards: a path outside `allowed`, or an existing test of the base, is put back."""
 REVIEW_TOOLS = "Read,Glob,Grep"
 BRANCH_PREFIX = "agent/"
 STATUSES = ("queued", "ready", "failed", "blocked", "merged", "rejected")
@@ -262,13 +266,29 @@ def reuse_worktree(repo_path: Path, req: Request, *, root: Path = WORKTREES) -> 
 
 
 def revert_paths(worktree: Path, paths: list[str]) -> None:
-    """Undo changes the agent made outside what it may change: a tracked file is restored, a new
-    one is deleted (the agent has no way to delete a file itself)."""
+    """Undo changes the agent made outside what it may change: a file the branch already had is
+    restored (a deletion by `git rm` too: the index and the file), a new one is deleted."""
     for rel in paths:
-        if _git(worktree, "ls-files", "--error-unmatch", "--", rel, check=False).strip():
-            _git(worktree, "checkout", "--", rel, check=False)
+        if subprocess.run(["git", "-C", str(worktree), "cat-file", "-e", f"HEAD:{rel}"],
+                          capture_output=True).returncode == 0:
+            _git(worktree, "checkout", "HEAD", "--", rel, check=False)
         else:
+            _git(worktree, "rm", "--cached", "-q", "--ignore-unmatch", "--", rel, check=False)
             (worktree / rel).unlink(missing_ok=True)
+
+
+def deleted_paths(worktree: Path) -> list[str]:
+    """The paths the worktree has lost against its branch (a `git rm`, or a file removed some
+    other way), relative to it."""
+    out = _git(worktree, "status", "--porcelain", "--untracked-files=all")
+    return sorted(line[3:].strip().strip('"') for line in out.splitlines()
+                  if "D" in line[:2])
+
+
+def in_base(repo_path: Path, base: str, rel: str) -> bool:
+    """Whether `rel` exists at the tip of the base branch."""
+    return subprocess.run(["git", "-C", str(repo_path), "cat-file", "-e", f"{base}:{rel}"],
+                          capture_output=True).returncode == 0
 
 
 def tests_prefix(test_command: list[str]) -> str:
@@ -288,9 +308,11 @@ def tests_prefix(test_command: list[str]) -> str:
 
 
 def tools_pattern(test_command: list[str]) -> str:
-    """`--allowedTools` value: the file tools and Bash restricted to the test command's prefix --
-    no other shell command (a command outside the list is refused in a non-interactive run)."""
-    return f"{TOOLS},Bash({tests_prefix(test_command)}:*)"
+    """`--allowedTools` value: the file tools and Bash restricted to the test command's prefix and
+    to `git rm` (deleting a file) -- no other shell command (a command outside the list is refused
+    in a non-interactive run). What a deletion may touch is checked by code afterwards
+    (`check_worktree`)."""
+    return f"{TOOLS},Bash({tests_prefix(test_command)}:*),Bash({DELETE_COMMAND}:*)"
 
 
 def link_ignored(repo_path: Path, worktree: Path, paths: list[str]) -> None:
@@ -365,7 +387,7 @@ def prepare_environment(worktree: Path, repo_cfg: dict, config: dict, root: Path
     2026-10-28-1 saw an empty file with no tables). A failing command is the environment's."""
     link_siblings(root, config.get("siblings") or {})
     link_ignored(_abs(Path(repo_cfg["path"])), worktree, list(repo_cfg.get("link_ignored") or []))
-    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH")}
+    env = _clean_env()
     for command in repo_cfg.get("prepare") or []:
         done = subprocess.run(list(command), cwd=worktree, capture_output=True, text=True, env=env)
         if done.returncode != 0:
@@ -472,20 +494,35 @@ def changed_paths(worktree: Path) -> list[str]:
     return sorted(paths)
 
 
-def path_problems(paths: list[str], allowed: list[str]) -> list[str]:
-    """What is wrong with the set of changed paths: one outside `allowed`, none at all, no test."""
+def path_problems(paths: list[str], allowed: list[str],
+                  deleted: Collection[str] = ()) -> list[str]:
+    """What is wrong with the set of changed paths: one outside `allowed`, none at all, no test.
+    A deleted test is no test among the changes."""
     if not paths:
         return ["nothing was written"]
     problems = [f"{p} is outside what the agent may change ({', '.join(allowed)})"
                 for p in paths if not any(fnmatch.fnmatch(p, pattern) for pattern in allowed)]
-    if not any(_TEST.search(p) for p in paths):
+    if not any(_TEST.search(p) for p in paths if p not in set(deleted)):
         problems.append("no test among the changes: a new behaviour needs its test")
     return problems
 
 
+def _clean_env() -> dict[str, str]:
+    """The environment tests and setup commands run in: the night's own without the virtualenv and
+    path of the process that runs the night, and with bytecode off. 2026-11-01: 14 tests of
+    `test_programmer.py` failed on a clean checkout of main inside the night and passed at the
+    owner's desk, because the owner's shell sets PYTHONDONTWRITEBYTECODE and launchd's job does
+    not: the toy repositories those tests build then held `__pycache__` files, and the guard
+    below took them for the agent's changes. The count of tests that fail on the clean base must
+    be 0 (docs/PROGRAMMER.md)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH")}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
 def run_tests(worktree: Path, command: list[str], timeout_s: int) -> tuple[bool, str]:
     """The repository's tests in the worktree; (passed, the output's tail)."""
-    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH")}
+    env = _clean_env()
     try:
         out = subprocess.run(command, cwd=worktree, capture_output=True, text=True,
                              timeout=timeout_s, env=env)
@@ -543,13 +580,19 @@ Rules -- code checks every one of them after you finish, and a broken rule fails
 - Code is in English (names, comments, docstrings, test names); match the style of the code
   around it. No new dependency.
 
-Running the tests -- you have ONE shell command, the repository's test command, and no other:
-`{tests}`. Run it from your working directory, alone (no pipe, no `cd`, no redirect, no `&&`); you
-may shorten it to the part you work on (`{prefix} <path>`, `{prefix} -k <name>`) and run the whole
-at the end. Write the code and its tests, then run them, and KEEP GOING until ALL tests pass, the
-new ones and the existing ones. Code runs the same command after you finish and its result is the
-only one that counts: your word that the tests pass is never trusted, and a failing run fails the
-request.
+Deleting a file -- the file tools cannot delete. To remove a file that must not stay (a leftover,
+an empty or superseded file you or an earlier round created) run `git rm -f <path>`, for a path
+inside the patterns above. Code puts back any deletion outside them, and the deletion of a test the
+repository already has; a remark that asks you to delete a file is done with this command, not by
+emptying the file.
+
+Running the tests -- apart from `git rm` you have ONE shell command, the repository's test
+command, and no other: `{tests}`. Run it from your working directory, alone (no pipe, no `cd`, no
+redirect, no `&&`); you may shorten it to the part you work on (`{prefix} <path>`,
+`{prefix} -k <name>`) and run the whole at the end. Write the code and its tests, then run them,
+and KEEP GOING until ALL tests pass, the new ones and the existing ones. Code runs the same command
+after you finish and its result is the only one that counts: your word that the tests pass is never
+trusted, and a failing run fails the request.
 When a test fails, do not stop after a couple of tries and do not hand the request back: find the
 cause. Decide first whether the TEST or the CODE is wrong, and fix whichever is wrong. A test you
 wrote can be wrong as easily as the code: check the test's own numbers against what it claims --
@@ -738,8 +781,18 @@ def check_worktree(worktree: Path, repo_cfg: dict, config: dict | None = None,
     worktree for a later pass or attempt; the problem is still reported."""
     allowed = list(repo_cfg["allowed"])
     paths = changed_paths(worktree)
-    out = Check(problems=path_problems(paths, allowed))
+    deleted = deleted_paths(worktree)
+    out = Check(problems=path_problems(paths, allowed, deleted))
     outside = [p for p in paths if not any(fnmatch.fnmatch(p, pat) for pat in allowed)]
+    # A deletion is allowed inside `allowed` (`git rm`), but never of a test the base already has:
+    # "never weaken, delete or skip an existing test".
+    repo_path = _abs(Path(repo_cfg["path"]))
+    base = repo_cfg.get("base", "main")
+    tests_gone = [p for p in deleted if p not in outside and _TEST.search(p)
+                  and in_base(repo_path, base, p)]
+    out.problems += [f"{p} is a test the repository already has: deleting it is refused and it "
+                     "is put back" for p in tests_gone]
+    outside = [*outside, *tests_gone]
     if outside:
         revert_paths(worktree, outside)
         out.reverted = outside
@@ -891,11 +944,53 @@ def run_request(req: Request, config: dict, *, budget: CandidateBudget | Explici
         return environment_stop(req, exc)
 
 
-def iteration_signature(problems: list[str], gaps: list[str]) -> str:
-    """What an unaccepted iteration failed ON: the checks' problems, else the reviewer's gaps."""
+_NAMED_FILE = re.compile(r"[\w./-]*[\w-]\.(?:py|md|yaml|yml|json|toml|txt|rst|cfg|ini)\b")
+
+
+def remark_files(gaps: list[str]) -> list[str]:
+    """The files the reviewer's remarks name, by base name and sorted: the reviewer words the same
+    remark differently every round ("delete it with git rm", "remove the leftover", "the file is
+    still there"), but it names the same file."""
+    return sorted({Path(m.group(0).strip("./")).name for gap in gaps
+                   for m in _NAMED_FILE.finditer(gap)})
+
+
+def _file_state(worktree: Path, name: str) -> str:
+    """What the named file is in the worktree now: a fingerprint of its content, or `absent`.
+    A remark about a file that did not change since the last round is the same unmet remark."""
+    found = sorted(p for p in worktree.rglob(name)
+                   if p.is_file() and ".git" not in p.relative_to(worktree).parts)
+    if not found:
+        return "absent"
+    digest = hashlib.sha1()
+    for path in found:
+        digest.update(path.relative_to(worktree).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+def normalized_remark(gap: str) -> str:
+    """A remark without its wording: lower case, no digits or punctuation, the first words."""
+    return " ".join(re.sub(r"[^a-zа-я ]+", " ", gap.lower()).split()[:24])
+
+
+def iteration_signature(problems: list[str], gaps: list[str],
+                        worktree: Path | None = None) -> str:
+    """What an unaccepted iteration failed ON: the checks' problems, else the reviewer's gaps.
+
+    Reviewer remarks are compared by the FILES they name and what those files are in the worktree
+    (a remark about a file the writer did not change is the same unmet remark whatever its words),
+    or, naming no file, by their normalized wording. 2026-11-01: seven iterations on "delete
+    test_band.py" worded seven ways never counted as the same failure."""
     if problems:
         return failure_signature(problems)
-    return failure_signature([f"reviewer: {g}" for g in gaps])
+    files = remark_files(gaps)
+    if files:
+        basis = "reviewer files: " + ", ".join(
+            f"{name}={'?' if worktree is None else _file_state(worktree, name)}" for name in files)
+    else:
+        basis = "reviewer: " + " | ".join(sorted(normalized_remark(g) for g in gaps))
+    return hashlib.sha1(basis.encode()).hexdigest()[:12]
 
 
 def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, plans: Path,
@@ -1012,12 +1107,16 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
         req.history.append({"n": n, "result": "checks" if problems else "review",
                             "remarks": len(problems) or len(gaps)})
         req.failures.append({"attempt": req.attempts, "iteration": n, "plan": req.plan_hash,
-                             "sig": iteration_signature(problems, gaps)})
+                             "sig": iteration_signature(problems, gaps, worktree)})
         if checkpoint is not None:
             checkpoint(req)
         if identical_failures(req) >= 3:
             req.status = "blocked"
-            req.problems.append("the same failure three times: the owner decides")
+            named = remark_files(gaps) if gaps and not problems else []
+            req.problems.append(
+                "the same failure three times: the owner decides" if not named else
+                "the same remark three times, about " + ", ".join(named) + " (the file did not "
+                "change between the rounds): the owner decides")
             return req
         if req.iterations >= limit:
             req.status = "failed"
@@ -1170,7 +1269,8 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
         if e.get("env_failures"):
             lines.append(f"    - упавших тестов, которые падают и на чистой основной ветке "
                          f"(это среда, а не работа агента; исправлений на них не тратилось): "
-                         f"{len(e['env_failures'])}")
+                         f"{len(e['env_failures'])}. Должно быть 0: на чистой основной ветке "
+                         "тесты зелёные, так что среда проверки неисправна, и её нужно чинить")
         lines += [f"    - {p}" for p in e.get("problems") or []]
         lines += [f"    - проверяющий: {g}" for g in e.get("review") or []]
         if e.get("status") == "ready":
@@ -1200,7 +1300,8 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
     return lines
 
 
-__all__ = ["CONFIG", "DEFAULT_MAX_ITERATIONS", "PLANS", "QUEUE", "EnvironmentFailure", "Request",
+__all__ = ["CONFIG", "DEFAULT_MAX_ITERATIONS", "DELETE_COMMAND", "PLANS", "QUEUE",
+           "EnvironmentFailure", "Request",
            "answer", "changed_paths", "diff_text", "drop_worktree", "enqueue", "environment_stop",
            "failure_signature", "iteration_signature", "judge_tests", "load_config", "load_queue",
            "make_worktree", "merge", "next_request", "parse_plan", "path_problems", "plan_request",

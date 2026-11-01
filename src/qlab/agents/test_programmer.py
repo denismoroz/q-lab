@@ -35,6 +35,10 @@ def repo(tmp_path: Path) -> Path:
     (work / "pkg" / "strategy" / "signal.py").write_text("WINDOW = 14\n")
     (work / "pkg" / "strategy" / "tests" / "test_signal.py").write_text(
         "from pkg.strategy.signal import WINDOW\n\n\ndef test_window():\n    assert WINDOW == 14\n")
+    # A repository ignores its bytecode. Without this the tests below depended on the environment:
+    # the owner's shell sets PYTHONDONTWRITEBYTECODE and launchd's night does not, and 14 of them
+    # failed on a clean checkout of main inside the night (2026-11-01).
+    (work / ".gitignore").write_text("__pycache__/\n*.pyc\n")
     subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
     _git(work, "config", "user.email", "t@example.com")
     _git(work, "config", "user.name", "t")
@@ -253,7 +257,7 @@ def test_the_agent_may_run_the_tests_and_no_other_shell_command(repo, tmp_path, 
     assert args[0] == "--allowedTools" and "--disallowedTools" not in args
     tools = args[1].split(",")
     assert tools == ["Read", "Glob", "Grep", "Write", "Edit",
-                     f"Bash({sys.executable} -m pytest:*)"]
+                     f"Bash({sys.executable} -m pytest:*)", "Bash(git rm:*)"]
     assert "Bash" not in tools  # never an unrestricted shell
     assert "KEEP GOING until ALL tests pass" in calls.prompts[0]
     assert "You cannot run anything" not in calls.prompts[0]
@@ -262,7 +266,8 @@ def test_the_agent_may_run_the_tests_and_no_other_shell_command(repo, tmp_path, 
 def test_the_shell_pattern_is_the_test_commands_prefix():
     assert prog.tests_prefix(["uv", "run", "pytest", "-q", "-rs", "src/frab/strategy"]) == (
         "uv run pytest")
-    assert prog.tools_pattern(["uv", "run", "pytest", "-q"]).endswith(",Bash(uv run pytest:*)")
+    assert prog.tools_pattern(["uv", "run", "pytest", "-q"]).endswith(
+        ",Bash(uv run pytest:*),Bash(git rm:*)")
     assert prog.tests_prefix(["python", "-m", "pytest", "-q", "pkg"]) == "python -m pytest"
 
 
@@ -989,3 +994,142 @@ def test_a_begun_request_goes_before_a_new_block_request():
                          source="owner", day=date(2026, 10, 28))
     begun.worktree, begun.remarks, begun.iterations = "/w", ["reviewer: x"], 1
     assert [r.id for r in prog.runnable(q, 7)] == [begun.id, block.id]
+
+
+# ---- deleting a file, and the same remark worded another way (2026-11-01) ------------------
+
+LEFTOVER = "pkg/strategy/tests/test_band.py"
+
+
+def _leave_a_file(wt: Path, n: int) -> None:
+    """The writer's good change plus a leftover file it cannot delete with its file tools."""
+    _good_change(wt)
+    (wt / LEFTOVER).write_text('"""Superseded by test_window_setting.py."""\n')
+
+
+def _delete_the_leftover_when_asked(wt: Path, n: int) -> None:
+    """Round one leaves the file; the next round deletes it the one way the writer has."""
+    _good_change(wt)
+    if n == 0:
+        (wt / LEFTOVER).write_text('"""Superseded by test_window_setting.py."""\n')
+    elif (wt / LEFTOVER).exists():
+        subprocess.run(["git", "rm", "-f", "-q", "--", LEFTOVER], cwd=wt, check=True)
+
+
+def test_the_writer_may_delete_a_leftover_file_with_git_rm_and_the_request_is_accepted(
+        repo, tmp_path, monkeypatch):
+    """Request 2026-10-28-1 spent seven iterations on one remark, "delete test_band.py", which
+    the file tools cannot do."""
+    calls = _reviewer_says(monkeypatch, _delete_the_leftover_when_asked, [
+        f"GAP: `{LEFTOVER}` is a leftover; delete it with `git rm -f {LEFTOVER}`\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready", req.problems
+    assert req.iterations == 2 and calls.count("programmer") == 2
+    wt = Path(req.worktree)
+    assert not (wt / LEFTOVER).exists()
+    committed = _git(wt, "ls-tree", "-r", "--name-only", "HEAD")
+    assert LEFTOVER not in committed and "pkg/strategy/tests/test_window_setting.py" in committed
+    assert "git rm" in calls.prompts[0] and "inside the patterns above" in calls.prompts[0]
+
+
+def test_a_deletion_of_a_test_the_repository_has_or_of_a_file_outside_the_patterns_is_put_back(
+        repo, tmp_path, monkeypatch):
+    def delete_what_it_must_not(wt: Path, n: int) -> None:
+        _good_change(wt)
+        if n == 0:
+            for path in ("pkg/strategy/tests/test_signal.py", "pkg/__init__.py"):
+                subprocess.run(["git", "rm", "-f", "-q", "--", path], cwd=wt, check=True)
+
+    calls = _reviewer_says(monkeypatch, delete_what_it_must_not, ["VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready", req.problems
+    assert req.history[0]["result"] == "checks" and req.iterations == 2
+    wt = Path(req.worktree)
+    assert (wt / "pkg/strategy/tests/test_signal.py").is_file()
+    assert (wt / "pkg/__init__.py").is_file()
+    assert calls.count("programmer") == 2
+
+
+def test_the_checks_name_a_deleted_existing_test_and_restore_it(repo, tmp_path):
+    cfg = _config(repo)
+    req = _request([])
+    wt = prog.make_worktree(repo, "main", req, root=tmp_path / "wt")
+    _good_change(wt)
+    subprocess.run(["git", "rm", "-f", "-q", "--", "pkg/strategy/tests/test_signal.py"], cwd=wt,
+                   check=True)
+    check = prog.check_worktree(wt, cfg["repos"]["demo"], cfg, tmp_path / "wt")
+    assert not check.passed
+    assert any("test_signal.py is a test the repository already has" in p for p in check.problems)
+    assert "pkg/strategy/tests/test_signal.py" in check.reverted
+    assert (wt / "pkg/strategy/tests/test_signal.py").is_file()
+    assert prog.deleted_paths(wt) == []  # the index is restored as well
+
+
+def test_a_deleted_new_file_is_not_a_test_among_the_changes() -> None:
+    allowed = ["pkg/strategy/*"]
+    assert prog.path_problems([LEFTOVER], allowed, deleted=[LEFTOVER]) == [
+        "no test among the changes: a new behaviour needs its test"]
+    assert prog.path_problems([LEFTOVER], allowed) == []
+
+
+def test_the_same_remark_worded_three_ways_about_a_file_nobody_changed_stops_the_loop_early(
+        repo, tmp_path, monkeypatch):
+    """The reviewer worded "delete test_band.py" differently every round, so the loop never saw
+    the same failure and ran its seven rounds."""
+    calls = _reviewer_says(monkeypatch, _leave_a_file, [
+        f"GAP: `{LEFTOVER}` is a leftover. Delete it with `git rm -f {LEFTOVER}`.\nVERDICT: GAP",
+        "GAP: test_band.py still holds only a docstring and nothing uses it\nVERDICT: GAP",
+        "GAP: please remove the empty file pkg/strategy/tests/test_band.py\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "blocked" and req.iterations == 3 and calls.count("programmer") == 3
+    assert "same remark three times, about test_band.py" in req.problems[-1]
+
+
+def test_a_remark_about_a_file_the_writer_keeps_changing_is_not_the_same_remark(
+        repo, tmp_path, monkeypatch):
+    def keep_editing(wt: Path, n: int) -> None:
+        _good_change(wt)
+        (wt / LEFTOVER).write_text(f'"""Superseded, round {n}."""\n')
+
+    _reviewer_says(monkeypatch, keep_editing, [
+        f"GAP: {LEFTOVER} is a leftover\nVERDICT: GAP"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "failed" and req.iterations == 7  # it changes, so it is not "the same"
+
+
+def test_remarks_are_compared_by_the_files_they_name_or_by_their_normalized_words(tmp_path):
+    assert prog.remark_files([
+        "`src/qlab/strategies/blocks/test_band.py` is a leftover; git rm it",
+        "see signals.py and docs/BLOCKS.md; the number 3 is wrong"]) == [
+        "BLOCKS.md", "signals.py", "test_band.py"]
+    assert prog.remark_files(["the list misses a family", "something about 3 things"]) == []
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "x.py").write_text("one\n")
+    first = prog.iteration_signature([], ["x.py is wrong"], tmp_path)
+    assert first == prog.iteration_signature([], ["Please fix a/x.py, it is wrong!"], tmp_path)
+    (tmp_path / "a" / "x.py").write_text("two\n")
+    assert first != prog.iteration_signature([], ["x.py is wrong"], tmp_path)  # it changed
+    same_words = prog.iteration_signature([], ["The list misses family 3."])
+    assert same_words == prog.iteration_signature([], ["the list MISSES family 7"])
+    assert same_words != prog.iteration_signature([], ["another thing is missing"])
+
+
+def test_tests_and_setup_run_without_bytecode_whatever_the_environment_of_the_night(
+        monkeypatch):
+    """14 tests failed on a clean checkout of main inside the night because bytecode files
+    appeared in the toy repositories they build; the owner's shell hid it. The count of tests that
+    fail on the clean base must be 0."""
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    monkeypatch.setenv("VIRTUAL_ENV", "/elsewhere")
+    env = prog._clean_env()
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1" and "VIRTUAL_ENV" not in env
+    from qlab.agents.programmer import report_lines
+
+    entry = {"id": "x-1", "repo": "qlab", "what": "w", "status": "failed", "env_failures": ["t::a"]}
+    assert any("Должно быть 0" in line for line in report_lines([entry], []))
