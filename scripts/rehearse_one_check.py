@@ -60,7 +60,7 @@ def _prepare(target: Path) -> None:
         sys.exit(f"{target} exists")
     copy = target / "q-lab"
     copy.mkdir(parents=True)
-    subprocess.run(["rsync", "-a", "--exclude", "data", "--exclude", ".git", "--exclude",
+    subprocess.run(["rsync", "-a", "--exclude", "/data", "--exclude", ".git", "--exclude",
                     "web/node_modules", "--exclude", ".venv", f"{root}/", f"{copy}/"], check=True)
     subprocess.run(["cp", "-Rc", str(root / "data"), str(copy / "data")], check=True)
     for stale in (copy / "data").glob("qlab.db*"):
