@@ -1,0 +1,235 @@
+# Causal twin of frab-binance-spot-five-coins (qlab twin, src/qlab/twin.py): its numbers are chosen
+# by code, from the past only, on Binance's history (docs/RETUNE.md). Written by
+# code, not by hand.
+idea_id: frab-binance-spot-five-coins-causal
+title: 'FRAB со спотом на Binance и коротким контрактом на Hyperliquid, только пять монет живого FRAB
+  (шестая, PURR, на Binance не торгуется): отделяет действие площадки от действия числа монет: числа выбирает
+  код раз в месяц только по прошлому, история Binance с 2019'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.live.frab_binance_spot:LiveFrabBinanceSpot
+  base_params:
+    entry_threshold_apr: 0.1
+    phase2_exit_threshold: -0.1
+    base_min_hold_hours: 24
+    cap_min_hold_hours: 720
+    safety_mult: 5
+    signal_window_hours: 8
+    concurrency_cap: 4
+    budget_cap_usdc: 1000
+    margin_buffer_factor: 3
+    phase1_negative_patience: 24
+    phase1_breakeven_cap_hours: 720
+    neg_stop_threshold_apr: -0.15
+    neg_stop_patience_hours: 6
+    phase2_giveback_fee_mult: 1.0
+    spot_taker_fee: 0.001
+    perp_taker_fee: 0.00045
+    transfer_delay_hours: 1
+    binance_withdrawal_fee_usdc: 0.4
+    binance_withdrawal_min_usdc: 3
+    hl_withdrawal_fee_usdc: 1
+    top_up_trigger: 2.0
+    healthy_ratio: 3.0
+    maintenance_over_initial: 0.5
+    leverage_table: seed/venue_facts/2026-10-25-hl_max_leverage.csv
+    transfers: batched
+    batch_share: 0.1
+    idle_share: 0.25
+    entry_parity_tolerance: 0.03
+    max_wait_hours: 24
+    universe: all_paired
+    leverage:
+      AVAX: 3
+      BTC: 40
+      ETH: 25
+      HYPE: 10
+      PURR: 3
+      SOL: 20
+  grid:
+    variant:
+      base: {}
+      experiment:
+        universe:
+        - AVAX
+        - BTC
+        - ETH
+        - HYPE
+        - SOL
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 7.5
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1h
+  include_spot: false
+  spot_prices: own
+  start: '2019-09-08'
+  end: '2026-10-24'
+  instruments:
+  - AVAX
+  - AVAX-SPOT
+  - BTC
+  - BTC-SPOT
+  - ETH
+  - ETH-SPOT
+  - HYPE
+  - HYPE-SPOT
+  - SOL
+  - SOL-SPOT
+costs:
+  taker_fee_bps: 7.5
+  slippage_bps: 0.9
+min_leg_notional: 5.0
+simultaneous_legs: 2
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of frab-binance-spot-five-coins: the numbers it trades are chosen by code, every month,
+  from returns realised before the choice (the base frab-binance-spot against its experiment (universe));
+  the data is Binance''s history, a proxy for hyperliquid''s market, judged for Binance itself: Binance''s
+  costs and minimum leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
+- 'The twin trades only 10 named columns (AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, HYPE, HYPE-SPOT,
+  SOL, SOL-SPOT), the params.universe of frab-binance-spot-five-coins, not the whole market: the list
+  was chosen by 2026-10-10 and would know which coins survived if applied to the history before it (survivorship),
+  so the twin is judged only from 2026-10-10 (judged_from = instruments_chosen_at); the days from 2019-09-08
+  are warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
+noise_universe: held
+measure_hedge_timing: false
+params_fixed_at: '2019-12-01'
+params_fixed_evidence: 'The wrapper''s first causal choice (qlab.strategies.retune, docs/RETUNE.md): the
+  data starts 2019-09-08; the longest warm-up read from the parameters is 30 days (cap_min_hold_hours
+  = 720), so the book can first trade on 2019-10-08; a candidate is eligible only after one whole month
+  re-tuning period, so the first re-tuning after 2019-10-08 is 2019-11-01 and the first choice is made
+  at the one after it, 2019-12-01. This is warm-up arithmetic read generically from the parameters (every
+  day, hour, window and lookback number, whatever the strategy does with it), not a result. If the strategy
+  needs more than the parameters show (enough instruments listed on Binance, a signal that waits for history),
+  the true first choice is later and the days before it are judged as flat days. The grid is two candidates
+  declared whole: the numbers of frab-binance-spot unchanged, and the numbers of frab-binance-spot-five-coins
+  (universe). What this does not prove: the experiment''s numbers were chosen by hand, looking at hyperliquid
+  data up to 2026-10-10 (its window starts 2025-01-01): the same market on Binance from 2025-01-01 to
+  2026-10-10 is in-sample for the grid (it may have been seen), while the days before 2025-01-01 and after
+  2026-10-10 were not (the spec''s own date for its numbers: 2026-10-10). The instrument list is not point-in-time
+  before 2026-10-10. The twin trades only the 10 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT,
+  HYPE, HYPE-SPOT, SOL, SOL-SPOT (params.universe of frab-binance-spot-five-coins) (hourly candles of
+  every Binance perpetual take hours; these take about 4 minutes). A list chosen by hand and applied to
+  history from 2019-09-08 knows which coins existed and survived, which the days before it was chosen
+  did not; a coin Binance listed later has no candles before its listing day and enters then. The earliest
+  documented day the list existed is 2026-10-10 (params_fixed_at of frab-binance-spot-five-coins), so
+  the twin is judged only from that day (`judged_from` = `instruments_chosen_at` = 2026-10-10): the history
+  before it is warm-up for the code''s monthly choice (more data to choose with), not judged, and from
+  that day the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
+judged_from: '2026-10-10'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml: the same window end'
+  base_params.entry_threshold_apr: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.phase2_exit_threshold: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.base_min_hold_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.cap_min_hold_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.safety_mult: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.signal_window_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.concurrency_cap: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.budget_cap_usdc: 'владелец 2026-10-25: «блин 90$ это вот очем а? на текущем Frab - так получилось.
+    если нужно 300-400-1000 - давай считать на них.» Total budget; the slot count stays the live 4, so
+    a slot is budget / 4. 90 is the live FRAB''s accident, not a property of this strategy.'
+  base_params.margin_buffer_factor: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.phase1_negative_patience: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.phase1_breakeven_cap_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.neg_stop_threshold_apr: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.neg_stop_patience_hours: seed/prod_params/2026-10-24-two_phase.json (frab.db strategies.params_json
+    id 1, read-only)
+  base_params.phase2_giveback_fee_mult: funding-rate-arbitrage/src/frab/strategy/two_phase/params.py (TwoPhaseParams
+    default; not in the live params_json)
+  base_params.spot_taker_fee: docs/FRAB_BINANCE_SPOT.md; https://www.binance.com/en/fee/schedule (Regular
+    User, taker 0.100%, read 2026-10-25)
+  base_params.perp_taker_fee: docs/FRAB_BINANCE_SPOT.md; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+    (tier 0 perps taker 0.045%, read 2026-10-25)
+  base_params.transfer_delay_hours: 'docs/FRAB_BINANCE_SPOT.md (a declared parameter: one bar is the shortest
+    delay the hourly stand can express; both transfers take minutes)'
+  base_params.binance_withdrawal_fee_usdc: seed/venue_facts/2026-10-25-binance_usdc_arbitrum_withdrawal.json
+    (Binance public fee table, USDC on Arbitrum One, read 2026-10-25)
+  base_params.binance_withdrawal_min_usdc: seed/venue_facts/2026-10-25-binance_usdc_arbitrum_withdrawal.json
+    (Binance public fee table, USDC on Arbitrum One, read 2026-10-25)
+  base_params.hl_withdrawal_fee_usdc: docs/FRAB_BINANCE_SPOT.md; https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint
+    ($1 fee for withdrawing, read 2026-10-25)
+  base_params.top_up_trigger: funding-rate-arbitrage/src/frab/settings.py (MarginSettings default; a prod
+    override is not visible from q-lab)
+  base_params.healthy_ratio: funding-rate-arbitrage/src/frab/settings.py (MarginSettings default; a prod
+    override is not visible from q-lab)
+  base_params.maintenance_over_initial: docs/FRAB_BINANCE_SPOT.md; https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margining
+    (maintenance margin is half of the initial margin at max leverage, read 2026-10-25)
+  base_params.transfers: 'владелец 2026-10-25: «а если без вывода спота. просто купили - продали. оставили
+    там USDC. вывод когда наберется сумма либо реинвестирование»; docs/FRAB_BINANCE_SPOT.md'
+  base_params.batch_share: docs/FRAB_BINANCE_SPOT.md (a declared parameter with its rationale, not a market
+    fact; the owner gave no number, the sensitivity table measures 0.05, 0.1, 0.25 and 0.5)
+  base_params.idle_share: 'docs/FRAB_BINANCE_SPOT.md (a declared parameter with its rationale: a quarter
+    of the budget is the live slot, 1 / 4 slots; measured in the sensitivity table)'
+  base_params.entry_parity_tolerance: funding-rate-arbitrage/src/frab/coin_discovery.py (SPOT_PERP_PARITY_TOLERANCE
+    = 0.03, frab's own tolerance between a spot token and its perp before trading)
+  base_params.max_wait_hours: 'docs/FRAB_BINANCE_SPOT.md (a declared parameter: the live engine waits
+    on missing data without a bound, which on a delisted pair holds a slot for ever; a day is declared,
+    nothing sourced)'
+  base_params.leverage_table: seed/venue_facts/2026-10-25-hl_max_leverage.csv (Hyperliquid metaAndAssetCtxs,
+    maxLeverage per coin, read 2026-10-25)
+  base_params.universe: 'docs/FRAB_BINANCE_SPOT.md (every coin with a Hyperliquid perp and a Binance USDT
+    spot pair; the owner''s idea, 2026-10-25: «frab на более чем 4-5 монетах»)'
+  base_params.leverage: seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry, active
+    and validated, read-only)
+  inner_code_ref: 'src/qlab/strategies/live/frab_binance_spot.py: the strategy both frab-binance-spot
+    and frab-binance-spot-five-coins run'
+  grid.variant.base: 'specs/frab-binance-spot.yaml: the base''s numbers, unchanged'
+  grid.variant.experiment.universe: 'seed/prod_params/2026-10-24-coin_registry_active.csv (frab.db coin_registry,
+    active and validated, read-only), without PURR: it has no Binance spot pair (docs/FRAB_BINANCE_SPOT.md)'
+  data.instruments: 'specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml: params.universe
+    of frab-binance-spot-five-coins, the coins its book trades'
+  instruments_chosen_at: 'specs/research/frab-binance-spot/frab-binance-spot-five-coins.yaml: params_fixed_at
+    = 2026-10-10 of frab-binance-spot-five-coins, the earliest documented day the list of frab-binance-spot-five-coins
+    existed'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2026-10-10); the days before are warm-up'
+  score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5.0, Binance USDT-M futures'' MIN_NOTIONAL
+    of the ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); BTC (50) and five contracts
+    (20) differ and are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
+selects_causally: true
+instruments_chosen_at: '2026-10-10'
