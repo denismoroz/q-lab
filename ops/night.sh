@@ -20,6 +20,12 @@ STOP_AT="${QLAB_STOP_AT:-}"
 # Hyperliquid stays one at a time whatever this says. Back to 1 if the log shows 429 refusals.
 export QLAB_FETCH_WORKERS=2
 set -u
+# Who started this run (the journal's `trigger`): decided here, before the script replaces itself
+# with caffeinate, and handed down in the environment (ops/trigger.sh; 2026-11-01: run 31 came from
+# launchd and was written down as a hand).
+source "${0:A:h}/trigger.sh"
+export QLAB_TRIGGER="$(qlab_trigger "${QLAB_TRIGGER:-}" "${XPC_SERVICE_NAME:-}" "$PPID" \
+  "$([[ -t 0 ]] && echo 1 || echo 0)")"
 # The whole script stays awake, the wait for the recorder too: on 2026-10-30 the Mac was asleep at
 # 03:05, the recorder crept through 45-second dark wakes until 08:13 while this script waited for
 # it, and the night started after its stop time. -i holds on battery, -s on power.
@@ -31,6 +37,7 @@ LOG="data/night/logs/$(date -u +%Y-%m-%d).log"
 mkdir -p data/night/logs
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
+  echo "=== trigger ${QLAB_TRIGGER} (xpc ${XPC_SERVICE_NAME:-none}, parent ${PPID})"
   # The night reads what the recorder writes: wait for it if it is still running.
   while pgrep -f ops/record-daily.sh > /dev/null; do sleep 30; done
   # Arguments go through to `qlab night run` (the console's button passes --off / --restart; one run

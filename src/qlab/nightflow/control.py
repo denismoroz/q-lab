@@ -22,7 +22,7 @@ import os
 import subprocess
 import time
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -36,6 +36,22 @@ STARTING_FILE = ROOT / "data" / "night" / "run.starting"
 NIGHT_SCRIPT = ROOT / "ops" / "night.sh"
 LOCK_ENV = "QLAB_NIGHT_LOCK"
 EXIT_BUSY = 75
+
+
+TRIGGERS = ("schedule", "button", "hand")
+SCHEDULE_LABEL = "com.qlab.night"
+
+
+def resolve_trigger(explicit: str | None, environ: Mapping[str, str]) -> str:
+    """Who started the run, for the journal and the lock: schedule (launchd's night), button (the
+    console) or hand (a person). The option wins, then `QLAB_TRIGGER` (`ops/night.sh` sets it for
+    every start: it knows the parent process, which Python cannot see through `uv run`), then
+    launchd's service name, else a hand. A word that is none of the three is refused."""
+    chosen = explicit or environ.get("QLAB_TRIGGER") or (
+        "schedule" if environ.get("XPC_SERVICE_NAME") == SCHEDULE_LABEL else "hand")
+    if chosen not in TRIGGERS:
+        raise ValueError(f"trigger {chosen!r} is none of {', '.join(TRIGGERS)}")
+    return chosen
 
 
 def lock_path() -> Path:

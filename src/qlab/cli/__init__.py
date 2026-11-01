@@ -846,7 +846,7 @@ def night_run_cmd(
     from datetime import date as _date
 
     from qlab.night import run, stop_time
-    from qlab.nightflow.control import EXIT_BUSY, RunLock, refusal
+    from qlab.nightflow.control import EXIT_BUSY, RunLock, refusal, resolve_trigger
     from qlab.nightflow.journal import Journal, SafeJournal
     from qlab.nightflow.table import load_table
 
@@ -857,8 +857,10 @@ def night_run_cmd(
                                  f"(see `qlab night steps`)")
     if restart and only:
         raise typer.BadParameter("--restart names its own steps; do not combine it with --only")
-    chosen = trigger or os.environ.get("QLAB_TRIGGER") or (
-        "schedule" if os.environ.get("XPC_SERVICE_NAME") == "com.qlab.night" else "hand")
+    try:
+        chosen = resolve_trigger(trigger, os.environ)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     steps_only = table.restart_set(restart) if restart else (list(only) or None)
     lock = RunLock()
     if not lock.acquire({"trigger": chosen, "token": os.environ.get("QLAB_RUN_TOKEN"),

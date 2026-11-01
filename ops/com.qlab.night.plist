@@ -22,6 +22,10 @@
   <dict>
     <key>PATH</key>
     <string>/Users/d/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <!-- The journal's label for this run (ops/trigger.sh decides on its own too: a plist already
+         installed without this key still gets `schedule`, from the parent being launchd). -->
+    <key>QLAB_TRIGGER</key>
+    <string>schedule</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>

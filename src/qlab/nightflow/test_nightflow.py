@@ -856,3 +856,74 @@ def test_the_yaml_is_the_only_place_that_names_the_steps() -> None:
     doc = yaml.safe_load((Path(__file__).resolve().parents[3] / "night" / "pipeline.yaml")
                          .read_text(encoding="utf-8"))
     assert [s["id"] for s in doc["steps"]] == load_table().ids
+
+
+# ---------------------------------------------------------------------------------- the trigger
+# 2026-11-01: run 31 was started by launchd at 03:20 and the journal said `hand`.
+
+
+def test_the_trigger_is_the_option_then_the_environment_then_launchds_name_else_a_hand() -> None:
+    resolve = control.resolve_trigger
+    assert resolve(None, {}) == "hand"
+    assert resolve(None, {"XPC_SERVICE_NAME": "com.qlab.night"}) == "schedule"
+    assert resolve(None, {"XPC_SERVICE_NAME": "application.com.apple.Terminal"}) == "hand"
+    assert resolve(None, {"QLAB_TRIGGER": "button"}) == "button"
+    assert resolve(None, {"QLAB_TRIGGER": "schedule", "XPC_SERVICE_NAME": "x"}) == "schedule"
+    assert resolve("hand", {"QLAB_TRIGGER": "schedule"}) == "hand"
+    with pytest.raises(ValueError, match="none of"):
+        resolve("cron", {})
+
+
+def _label(script_env: dict[str, str], *args: str) -> str:
+    """`qlab_trigger` of ops/trigger.sh, as zsh runs it."""
+    import subprocess
+    from pathlib import Path
+
+    root = Path(control.__file__).resolve().parents[3]
+    done = subprocess.run(
+        ["zsh", "-c", f'source "{root}/ops/trigger.sh"; qlab_trigger "$@"', "zsh", *args],
+        capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", **script_env}, check=True)
+    return done.stdout.strip()
+
+
+def test_the_script_labels_launchds_night_a_schedule_and_a_persons_command_a_hand() -> None:
+    # (existing label, XPC_SERVICE_NAME, parent pid, stdin is a terminal)
+    assert _label({}, "", "com.qlab.night", "123", "0") == "schedule"
+    assert _label({}, "", "", "1", "0") == "schedule"  # a job of launchd's: parent 1, no terminal
+    assert _label({}, "", "application.com.apple.Terminal", "5122", "1") == "hand"
+    assert _label({}, "", "", "1", "1") == "hand"  # a terminal's own process whose shell has gone
+    assert _label({}, "", "", "5122", "0") == "hand"
+    assert _label({}, "button", "", "5122", "0") == "button"  # the console's start is kept
+    assert _label({}, "schedule", "", "5122", "1") == "schedule"
+
+
+def test_the_night_script_hands_its_label_down_before_it_becomes_caffeinate(tmp_path) -> None:
+    """The script itself, run in a copy with `caffeinate` and `uv` replaced by stubs, writes the
+    label to its log and exports it to the run."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    root = Path(control.__file__).resolve().parents[3]
+    (tmp_path / "ops").mkdir()
+    script = (root / "ops" / "night.sh").read_text(encoding="utf-8")
+    script = script.replace("exec caffeinate -i -s", "exec env").replace(
+        "uv run qlab night run", 'echo "RUN trigger=$QLAB_TRIGGER"; true')
+    (tmp_path / "ops" / "night.sh").write_text(script, encoding="utf-8")
+    (tmp_path / "ops" / "night.sh").chmod(0o755)  # it starts itself again through the wrapper
+    shutil.copy(root / "ops" / "trigger.sh", tmp_path / "ops" / "trigger.sh")
+
+    def run(env: dict[str, str]) -> str:
+        done = subprocess.run(
+            [str(tmp_path / "ops" / "night.sh")], capture_output=True, text=True,
+            cwd=tmp_path, env={"PATH": "/usr/bin:/bin", **env}, stdin=subprocess.DEVNULL,
+            check=True)
+        assert done.returncode == 0
+        return next(tmp_path.glob("data/night/logs/*.log")).read_text(encoding="utf-8")
+
+    log = run({})
+    assert "=== trigger hand" in log and "RUN trigger=hand" in log
+    scheduled = run({"XPC_SERVICE_NAME": "com.qlab.night"})
+    assert "RUN trigger=schedule" in scheduled
+    pressed = run({"QLAB_TRIGGER": "button"})
+    assert "RUN trigger=button" in pressed
