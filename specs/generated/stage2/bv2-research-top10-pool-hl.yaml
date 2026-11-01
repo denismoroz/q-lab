@@ -90,7 +90,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-30'
+  end: '2026-10-31'
   instruments:
   - ADA
   - ARB
@@ -163,9 +163,9 @@ differs_from_source:
   PAXG-SPOT, PENGU-SPOT, PEOPLE-SPOT, RNDR, RNDR-SPOT, SEI-SPOT, SUI-SPOT, TAO-SPOT, TON-SPOT, TRB-SPOT,
   TRX-SPOT, UNI-SPOT, WIF-SPOT, WLD-SPOT, XLM-SPOT, XRP-SPOT.'
 - 'Of those, listed by the venue but with no candle in the window, so treated as not listed: MATIC (delisted,
-  with no daily candle between 2025-01-01 and 2026-10-30); RNDR (delisted, with no daily candle between
-  2025-01-01 and 2026-10-30); WLD-SPOT (the spot market @224 has no daily candle between 2025-01-01 and
-  2026-10-30).'
+  with no daily candle between 2025-01-01 and 2026-10-31); RNDR (delisted, with no daily candle between
+  2025-01-01 and 2026-10-31); WLD-SPOT (the spot market @224 has no daily candle between 2025-01-01 and
+  2026-10-31).'
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
   AVAX is UAVAX (@306), bridge_safe in production''s coin_registry then; but funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
