@@ -16,8 +16,17 @@ from qlab.data.sources.base import (
     align_funding_to_index,
     detect_bad_price_bars,
     load_cached_history,
+    parse_second_venue,
+    second_venue_column,
     store_cached_history,
 )
+
+
+def test_a_second_venue_column_round_trips():
+    assert second_venue_column("BTC", "aster") == "BTC@ASTER"
+    assert parse_second_venue("BTC@ASTER") == ("BTC", "aster")
+    assert parse_second_venue("BTC-SPOT") is None
+    assert parse_second_venue("BTC") is None
 
 
 def test_exact_frequency_match_passes_through():

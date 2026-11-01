@@ -62,7 +62,7 @@ import hashlib
 import io
 import json
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -81,6 +81,7 @@ from qlab.data.sources.base import (
     InstrumentHistory,
     align_funding_to_index,
     detect_bad_price_bars,
+    parse_second_venue,
 )
 from qlab.harness.gaps import holdable_gaps
 from qlab.registry import repo
@@ -104,7 +105,11 @@ reaches a run whose request did not change. Bump it with every such change.
   the field were built before it and are never reused.
 - 2026-10-03.2: a bar without a price is never tradeable, and the bar before
   it is when the position can be held through it (docs/TASKS.md T36,
-  `qlab.harness.gaps`)."""
+  `qlab.harness.gaps`).
+
+Manifest key ``second_perp_sources`` (not a rules change, so no bump): the
+other venues whose perpetuals are in the panel as ``<COIN>@<VENUE>`` columns.
+Written only when there are any, so every other snapshot keeps its id."""
 
 SPOT_PRICES = ("perp", "own")
 """What a spot column's price is (`StrategySpec.data.spot_prices`):
@@ -211,6 +216,7 @@ _SOURCES = {
         "fetch_spot": binance_source.fetch_spot_universe,
         "pair_spot_universe": binance_source.pair_spot_universe,
         "spot_quote_rate": binance_source.fetch_quote_rate,
+        "quote": "USDT",
     },
     # Aster: USDT perpetuals, explicit instrument lists only -- the venue
     # cannot list its delisted contracts, so `describe_universe` is None and
@@ -221,8 +227,11 @@ _SOURCES = {
         "funding_native_interval": aster_source.FUNDING_NATIVE_INTERVAL,
         "discover_universe": aster_source.discover_universe,
         "describe_universe": aster_source.describe_universe,
+        "quote": "USDT",
     },
 }
+# "quote": the currency a source's perpetual prices are in; absent means USDC
+# (Hyperliquid and its HIP-3 deployments).
 
 
 _VENUE_LOCKS: dict[str, threading.Lock] = {}
@@ -252,6 +261,7 @@ def _canonical_manifest(
     min_daily_volume_usd: float | None,
     spot_prices: str = "perp",
     spot_source: str | None = None,
+    second_perp_sources: list[str] | None = None,
 ) -> dict:
     manifest = {
         "source": source,
@@ -283,6 +293,8 @@ def _canonical_manifest(
         manifest["spot_prices"] = spot_prices
     if spot_source is not None:
         manifest["spot_source"] = spot_source
+    if second_perp_sources:
+        manifest["second_perp_sources"] = second_perp_sources
     return manifest
 
 
@@ -306,9 +318,16 @@ def _build_frames_from_histories(
     *,
     min_daily_volume_usd: float | None = None,
     spot_prices: str = "perp",
+    funding_native_by_column: Mapping[str, pd.Timedelta] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assemble and return ``(prices, funding, tradeable, volume)`` from raw
     per-instrument histories.
+
+    ``funding_native_by_column`` gives a column its own settlement interval
+    (a perpetual of another venue, ``<COIN>@<VENUE>``); a column not named
+    there uses ``funding_native_interval``. Such a column keeps its own closes
+    whatever ``spot_prices`` says, and is checked against the primary perp of
+    the same coin like a spot column is.
 
     ``spot_prices`` says what a spot column's price is (`SPOT_PRICES`):
     ``"perp"`` (the default) marks it at its perp's price, ``"own"`` keeps the
@@ -334,7 +353,8 @@ def _build_frames_from_histories(
         price_cols[coin] = hist.prices.reindex(full_index)
         volume_cols[coin] = hist.volume.reindex(full_index)
         funding_cols[coin] = align_funding_to_index(
-            hist.funding, full_index, funding_native_interval
+            hist.funding, full_index,
+            (funding_native_by_column or {}).get(coin, funding_native_interval),
         )
 
         listed = full_index >= hist.first_seen
@@ -378,13 +398,16 @@ def _build_frames_from_histories(
         # the same "exclude just the affected bars" policy as the funding
         # gap above, not a guess and not a whole-instrument drop.
         perp = coin[: -len(SPOT_COLUMN_SUFFIX)] if coin.endswith(SPOT_COLUMN_SUFFIX) else None
+        parsed = parse_second_venue(coin)
+        second_ref = parsed[0] if parsed is not None and parsed[0] in histories else None
+        reference_col = perp if perp is not None and perp in histories else second_ref
         raw_price = price_cols[coin]
         bad_price = detect_bad_price_bars(
             raw_price,
             trade_count=hist.trade_count.reindex(full_index),
             reference=(
-                histories[perp].prices.reindex(full_index)
-                if perp is not None and perp in histories
+                histories[reference_col].prices.reindex(full_index)
+                if reference_col is not None
                 else None
             ),
         )
@@ -413,17 +436,21 @@ def _build_frames_from_histories(
         # is 1:1 with the perp's asset -- what `bridge_safe` asserts in
         # production (docs/TASKS.md T30); a token far from its perp is flagged
         # above and never marked.
-        if perp is not None and perp in histories:
-            perp_price = histories[perp].prices.reindex(full_index)
+        if reference_col is not None:
+            perp_price = histories[reference_col].prices.reindex(full_index)
             other = spot_is_another_asset(raw_price, perp_price,
                                           hist.trade_count.reindex(full_index), bad_price)
             if other is not None:
-                logger.warning("spot_token_is_another_asset", instrument=coin,
-                               median_ratio_to_perp=round(other, 6))
+                logger.warning(
+                    "second_venue_contract_is_another_asset" if second_ref is not None
+                    else "spot_token_is_another_asset",
+                    instrument=coin, median_ratio_to_perp=round(other, 6))
                 price_cols[coin] = price_cols[coin].where(pd.Series(False, index=full_index))
                 volume_cols[coin] = volume_cols[coin].where(pd.Series(False, index=full_index))
                 tradeable &= False
-            if spot_prices == "perp":
+            # A second venue's contract is never marked at the first venue's
+            # price: its own closes are the point of holding it.
+            if spot_prices == "perp" and second_ref is None:
                 price_cols[coin] = perp_price.where(price_cols[coin].notna())
             # "own": the column keeps the spot's own closes (bad prints were
             # NaN'd above), and a bar without one stays NaN.
@@ -629,6 +656,33 @@ def _resolve_casing(source_spec, instruments, start_ts, end_ts) -> list[str]:
     return sorted({by_lower.get(i.lower(), i) for i in instruments})
 
 
+def _second_venue_columns(source: str, names: Sequence[str]) -> dict[str, list[str]]:
+    """``{venue: [column, ...]}`` for the ``<COIN>@<VENUE>`` names in a hand-written
+    instrument list. Raises when a name cannot mean what it says, before any fetch."""
+    out: dict[str, list[str]] = {}
+    for name in names:
+        parsed = parse_second_venue(name)
+        if parsed is None:
+            continue
+        coin, venue = parsed
+        if venue == source:
+            raise ValueError(f"{name!r}: the venue {venue!r} is the source itself; "
+                             "name the coin without '@'")
+        spec = _SOURCES.get(venue)
+        if spec is None:
+            raise ValueError(f"{name!r}: unknown second venue {venue!r}; "
+                             f"expected one of {sorted(_SOURCES)}")
+        if "fetch" not in spec:
+            raise ValueError(f"{name!r}: {venue!r} has no perpetual fetcher")
+        if coin.endswith(SPOT_COLUMN_SUFFIX):
+            raise ValueError(f"{name!r}: a second venue gives perpetuals only, not spot")
+        if _SOURCES[source].get("quote", "USDC") == "USDT" and spec.get("quote", "USDC") == "USDC":
+            raise ValueError(f"{name!r}: a USDC price cannot be valued against a USDT "
+                             f"source ({source!r}): no USDT-to-USDC rate is wired")
+        out.setdefault(venue, []).append(name)
+    return out
+
+
 def _in_usdc(histories: dict[str, InstrumentHistory], usdt_per_usdc: pd.Series
              ) -> dict[str, InstrumentHistory]:
     """Spot histories quoted in USDT, re-quoted in USDC bar by bar: price and
@@ -805,6 +859,7 @@ def build_snapshot(
         # a not-found. Upper-casing a discovered name therefore does not
         # normalise it, it invents an instrument that does not exist.
         instruments_sorted = sorted(set(discovered))
+        second_venues: dict[str, list[str]] = {}
         perp_complete = True
 
         spot_complete = True
@@ -842,6 +897,7 @@ def build_snapshot(
         # does not resolve is passed through as typed, so a genuine typo still
         # fails loudly rather than being silently rewritten.
         instruments_sorted = _resolve_casing(source_spec, instruments, start_ts, end_ts)
+        second_venues = _second_venue_columns(source, instruments_sorted)
         universe_complete = False
 
     if not instruments_sorted:
@@ -856,7 +912,9 @@ def build_snapshot(
     # list -- so `instruments=["BTC", "BTC-SPOT"]` routes correctly even
     # without `include_spot` (which only controls AUTO-discovery).
     on_missing = "skip" if universe_complete else "raise"
-    perp_instruments = [i for i in instruments_sorted if not i.endswith(SPOT_COLUMN_SUFFIX)]
+    second_columns = {c for columns in second_venues.values() for c in columns}
+    perp_instruments = [i for i in instruments_sorted
+                        if not i.endswith(SPOT_COLUMN_SUFFIX) and i not in second_columns]
     spot_coins = [
         i[: -len(SPOT_COLUMN_SUFFIX)] for i in instruments_sorted if i.endswith(SPOT_COLUMN_SUFFIX)
     ]
@@ -881,6 +939,24 @@ def build_snapshot(
                 spot_histories = _in_usdc(spot_histories, spot_spec["spot_quote_rate"](
                     start_ts, end_ts, interval))
         histories.update(spot_histories)
+
+    # Perpetuals of other venues (`<COIN>@<VENUE>`): fetched from their own source, each
+    # column renamed, in USDC when the panel's source quotes USDC. Each column settles on
+    # its own venue's schedule.
+    funding_native_by_column: dict[str, pd.Timedelta] = {}
+    for venue, columns in sorted(second_venues.items()):
+        venue_spec = _SOURCES[venue]
+        by_coin = {parse_second_venue(c)[0]: c for c in columns}
+        with _venue_lock(venue):
+            fetched = venue_spec["fetch"](
+                sorted(by_coin), start_ts, end_ts, interval, on_missing=on_missing)
+            if source_spec.get("quote", "USDC") == "USDC" and venue_spec.get("quote") == "USDT":
+                fetched = _in_usdc(fetched, _SOURCES["binance"]["spot_quote_rate"](
+                    start_ts, end_ts, interval))
+        for coin, hist in fetched.items():
+            column = by_coin[coin]
+            histories[column] = dataclasses.replace(hist, instrument=column)
+            funding_native_by_column[column] = venue_spec["funding_native_interval"]
 
     if not histories:
         raise ValueError(
@@ -943,6 +1019,10 @@ def build_snapshot(
         bar_td = pd.Timedelta(_INTERVAL_TO_PANDAS_FREQ[interval])
         now_ts = pd.Timestamp.now(tz="UTC")
         for name, hist in histories.items():
+            # `served_candles_cap` is the primary source's; another venue's listing is
+            # not truncated by it.
+            if name in second_columns:
+                continue
             if not hist.has_funding or hist.first_seen <= start_ts:
                 continue
             anchor = hist.last_seen if hist.is_delisted else now_ts
@@ -967,6 +1047,7 @@ def build_snapshot(
         source_spec["funding_native_interval"],
         min_daily_volume_usd=min_daily_volume_usd,
         spot_prices=spot_prices,
+        funding_native_by_column=funding_native_by_column or None,
     )
 
     no_funding_instruments = sorted(
@@ -984,6 +1065,7 @@ def build_snapshot(
         min_daily_volume_usd,
         spot_prices,
         spot_source,
+        sorted(second_venues),
     )
     if delisted_without_history:
         manifest["delisted_without_history"] = delisted_without_history
@@ -1079,6 +1161,7 @@ def build_snapshot(
         "spot_source": spot_source,
         "delisted_without_history": delisted_without_history,
         "history_truncated": history_truncated,
+        "second_perp_sources": sorted(second_venues),
     }
     return MarketPanel(
         snapshot_id=snapshot_id,
@@ -1152,6 +1235,8 @@ def load_snapshot(snapshot_id: str, *, session: Session | None = None) -> Market
             # Absent from every snapshot that had no such instruments.
             "delisted_without_history": manifest.get("delisted_without_history", []),
             "history_truncated": manifest.get("history_truncated", {}),
+            # Absent from every snapshot without `<COIN>@<VENUE>` columns.
+            "second_perp_sources": manifest.get("second_perp_sources", []),
         }
         return MarketPanel(
             snapshot_id=snapshot_id,

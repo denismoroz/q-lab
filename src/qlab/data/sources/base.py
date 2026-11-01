@@ -51,6 +51,24 @@ INTERVAL_TO_TIMEDELTA: dict[str, pd.Timedelta] = {
 # own spelling.
 SPOT_COLUMN_SUFFIX = "-SPOT"
 
+SECOND_VENUE_SEPARATOR = "@"
+"""``<COIN>@<VENUE>`` names a perpetual of the same coin on a venue other than the
+panel's source (upper case, so a requested name is found again by
+`_find_matching_snapshot`, which upper-cases what it is given)."""
+
+
+def second_venue_column(coin: str, venue: str) -> str:
+    return f"{coin}{SECOND_VENUE_SEPARATOR}{venue.upper()}"
+
+
+def parse_second_venue(column: str) -> tuple[str, str] | None:
+    """``(coin, venue)`` of a second-venue column, the venue lower-cased as in
+    `_SOURCES`; None for a column without the separator."""
+    coin, separator, venue = column.rpartition(SECOND_VENUE_SEPARATOR)
+    if not separator or not coin or not venue:
+        return None
+    return coin, venue.lower()
+
 
 @dataclass(frozen=True)
 class InstrumentHistory:
@@ -669,6 +687,9 @@ __all__ = [
     "InstrumentHistory",
     "INTERVAL_TO_TIMEDELTA",
     "SPOT_COLUMN_SUFFIX",
+    "SECOND_VENUE_SEPARATOR",
+    "second_venue_column",
+    "parse_second_venue",
     "MAX_PLAUSIBLE_BAR_MOVE",
     "align_funding_to_index",
     "detect_bad_price_bars",
