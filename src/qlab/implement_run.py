@@ -4,21 +4,23 @@
 Owner, 2026-10-27: the framework itself turns an idea that needs NEW code into a verdict by the
 next morning. The implementer agent writes the block and the spec (`qlab.agents.implementer`);
 this module is everything after it, and it is CODE only: no agent, no tokens, so it sits outside
-the budget guard by construction. Five steps, in this order, each a run that writes its trials
-(the deflation counts every one of them):
+the budget guard by construction. Owner, 2026-10-31: one idea, one check (docs/ONE_CHECK.md) --
+before, a card ran as the written spec AND as its causal version AND the second stage of each;
+now it is three steps, in this order, each a run that writes its trials (the deflation counts
+every one of them):
 
-1. `spec`         -- the spec as written, on the stand, matched noise as configured;
-2. `causal`       -- the CAUSAL version over the card's declared grid: `Retune` picks the
-                     variant every month from the past only, expanding window, after-cost Sharpe,
-                     on Binance's history from 2019-09-08 (or the card's `honest_from`)
-                     (`qlab.twin.causal_twin(grid=...)`; a hand-picked coin list is judged only
-                     from the day the card says it was known);
-3. `baseline`     -- the card's baseline spec re-run on exactly the causal version's panel, costs
-                     and judged part (`qlab.twin.same_panel_spec`), so the report compares like
-                     with like; with no causal version, on the written spec's panel;
-4. `stage2-spec`, `stage2-causal` -- the second stage on Hyperliquid
-                     (`qlab.pipeline.stage2.run_stage2`, a consistency check with stage 1, not a
-                     measurement) for every survivor of step 1 or 2.
+1. `check`        -- the idea's one check, under the idea's own id: over the card's declared grid
+                     (`StrategySpec.choice`, written into the spec by code from the card) `Retune`
+                     picks the variant every month from the past only, expanding window,
+                     after-cost Sharpe, on Binance's history from 2019-09-08 (or the card's
+                     `honest_from`), judged at once (`qlab.one_check`); every variant is a trial
+                     of its own. A card whose spec says there is nothing to choose runs as written;
+2. `baseline`     -- the card's baseline spec re-run on exactly the check's panel, costs and
+                     judged part (`qlab.twin.same_panel_spec`), so the report compares like with
+                     like; with nothing to choose, on the written spec's panel;
+3. `stage2`       -- the second stage on Hyperliquid (`qlab.pipeline.stage2.run_stage2`, the same
+                     idea there, a consistency check with stage 1, not a measurement) for a
+                     survivor of step 1.
 
 The heavy-data guard of the twins stage applies to every step (`night/twins.yaml`): an hourly
 panel of every Binance perpetual is not fetched in a night. The night's stop time is checked
@@ -26,6 +28,8 @@ before each step; a step that is cut, or that failed, is kept in the ledger
 (`data/implement/ledger.json`) and done on the next night, where the previous steps' results are
 reused as they are. A reviewer's verified gap (the code does not express the card) runs step 1
 only: the stand answers "not evaluable" and the rest would be about a different strategy.
+Ledger records of cards finished before the rule keep their old steps (`spec`, `causal`,
+`stage2-spec`, `stage2-causal`) and are shown as they were.
 
 Nothing here judges: every verdict is the stand's."""
 
@@ -52,7 +56,9 @@ MAX_ATTEMPTS = 2
 programmer's requests do, docs/PROGRAMMER.md)."""
 MAX_STEP_TRIES = 2
 """A step that failed with an error is tried again on the next night, once."""
-STEPS = ("spec", "causal", "baseline", "stage2-spec", "stage2-causal")
+STEPS = ("check", "baseline", "stage2")
+OLD_STEPS = ("spec", "causal", "stage2-spec", "stage2-causal")
+"""The steps of a card finished before the one-check rule (shown, never run again)."""
 FINAL = ("complete", "not-expressible", "blocked")
 """Ledger statuses after which a card is not taken again."""
 
@@ -156,80 +162,102 @@ def _cite(card: str) -> str:
 # The steps. Each returns the step's result and never raises.
 
 
-def _step_spec(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
-               fields: CardFields | None) -> dict:
-    from qlab import night
+def with_choice(spec_path: Path, spec: StrategySpec, fields: CardFields | None, card: str
+                ) -> StrategySpec:
+    """The spec with the `choice` block of the card's grid, written into the spec file by code.
 
-    entry: dict = {"idea": spec.idea_id, "action": "ran", "data": _data_text(spec)}
-    heavy = _heavy(ctx, spec)
-    if heavy:
-        entry.update(action="heavy", reason=heavy)
-        return entry
-    twin_stage.stage1_on_stand(
-        spec, entry, ensure_idea=lambda: night._ensure_idea(spec, card), end=ctx.end,
-        noise_trials=ctx.noise_trials,
-        slow_minutes=ctx.twins.slow_twin_minutes, kind="implemented")
-    return entry
+    The implementer agent writes the plain spec carrying the grid's first variant and no
+    `choice`; the lists come from the card (the owner's idea), and code is the one that declares
+    them, so that every later night's re-run of the idea (`qlab.waiting`) finds the same check in
+    the file. A spec that already has a `choice` (the agent's `nothing_to_choose`) is as it is."""
+    from qlab.pipeline.spec import Choice
+
+    if spec.choice is not None or fields is None or fields.grid is None:
+        return spec
+    grid = fields.grid
+    choice = Choice(axes={p: list(v) for p, v in grid.axes.items()},
+                    candidates={n: dict(o) for n, o in grid.candidates.items()},
+                    source=_cite(card))
+    block = {"axes": {p: list(v) for p, v in choice.axes.items()}} if choice.axes else {
+        "candidates": {n: dict(o) for n, o in choice.candidates.items()}}
+    block["source"] = choice.source
+    text = spec_path.read_text(encoding="utf-8").rstrip("\n")
+    spec_path.write_text(
+        text + "\n\n# Written by code from the card's grid (qlab.implement_run,\n"
+        "# docs/ONE_CHECK.md): the lists the idea's one check chooses among, every month from the\n"
+        "# past only.\n"
+        + yaml.safe_dump({"choice": block}, sort_keys=False, allow_unicode=True),
+        encoding="utf-8")
+    return load_spec(spec_path)
 
 
-def _causal_spec(spec: StrategySpec, runs: Mapping) -> StrategySpec | None:
-    """The causal version as the file holds it, once step 2 made it."""
-    if (runs.get("causal") or {}).get("action") != "ran":
-        return None
-    return load_spec(twin.twin_path(spec_file(spec.idea_id)))
-
-
-def _step_causal(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
-                 fields: CardFields | None) -> dict:
-    from qlab import night, own_numbers
+def _check_form(ctx: RunContext, card: str, spec: StrategySpec, fields: CardFields | None
+                ) -> twin.TwinResult:
+    """The idea's check as the card describes it (`qlab.one_check.check_spec`): the same call for
+    the check step, the baseline's panel and the second stage."""
+    from qlab import one_check
 
     cfg = ctx.twins
-    entry: dict = {"idea": f"{spec.idea_id}{twin.TWIN_SUFFIX}", "action": "none"}
     names = ctx.listing() if twin.needs_listing(
         spec, None, coin_params=cfg.coin_list_params) else None
-    grid = None
-    if fields is not None and fields.grid is not None:
-        grid, why = twin.card_grid(
-            spec, axes=dict(fields.grid.axes) or None,
-            candidates=dict(fields.grid.candidates) or None, cite=_cite(card),
-            max_candidates=int(own_numbers.load_config()["max_candidates"]))
-        if grid is None:
-            entry["reason"] = why
-            return entry
     honest = exec_venue = None
     if fields is not None and fields.data is not None:
         if fields.data.honest_from is not None:
             honest = (fields.data.honest_from, _cite(card))
         if fields.data.venue != twin.TWIN_VENUE:
             exec_venue = fields.data.venue
-    result = twin.causal_twin(
-        spec, spec_path=spec_file(spec.idea_id), venue_names=names,
-        coin_params=cfg.coin_list_params, seconds_per_instrument=cfg.seconds_per_instrument,
-        grid=grid, honest_from=honest, execution_venue=exec_venue)
-    if result.spec is None:
-        entry["reason"] = result.reason
-        return entry
-    path = twin.twin_path(spec_file(spec.idea_id))
-    made = load_spec(path) if path.is_file() else result.spec  # a file is never rebuilt
-    if not path.is_file():
-        twin.write_twin(spec_file(spec.idea_id), made, spec.idea_id)
-    entry.update(
-        action="ran", kind=result.kind, candidates=list(result.candidates),
-        twin_spec=path.as_posix(), data=_data_text(made),
-        first_choice=made.params_fixed_at.isoformat() if made.params_fixed_at else None,
-        instruments=list(result.instruments), list_source=result.list_source)
-    heavy = _heavy(ctx, made)
+    return one_check.check_spec(
+        spec, venue_names=names, coin_params=cfg.coin_list_params,
+        seconds_per_instrument=cfg.seconds_per_instrument, peers=[], honest_from=honest,
+        execution_venue=exec_venue)
+
+
+def _checked(ctx: RunContext, card: str, spec: StrategySpec, fields: CardFields | None
+             ) -> StrategySpec:
+    """The spec the idea's check runs, or the spec itself when there is nothing to choose."""
+    from qlab import one_check
+
+    if not one_check.declares_lists(spec):
+        return spec
+    return _check_form(ctx, card, spec, fields).spec or spec
+
+
+def _step_check(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
+                fields: CardFields | None) -> dict:
+    from qlab import night, one_check
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    entry: dict = {"idea": spec.idea_id, "action": "ran", "data": _data_text(spec)}
+    ran = spec
+    if rec.get("blocked"):
+        # the reviewer found a gap between the card and the code: the stand answers «проверить
+        # нечем» for the spec as written, and no value of a list is worth a trial of its own
+        pass
+    elif one_check.declares_lists(spec):
+        result = _check_form(ctx, card, spec, fields)
+        if result.spec is None:
+            entry.update(action="none", reason=result.reason)
+            return entry
+        ran = result.spec
+        made = ran.params_fixed_at.isoformat() if ran.params_fixed_at else None
+        entry.update(kind=result.kind, candidates=list(result.candidates), data=_data_text(ran),
+                     first_choice=made, instruments=list(result.instruments),
+                     list_source=result.list_source)
+    else:
+        entry["nothing_to_choose"] = one_check.nothing_to_choose(spec)
+    heavy = _heavy(ctx, ran)
     if heavy:
         entry.update(action="heavy", reason=heavy)
         return entry
-
-    def ensure() -> None:
-        night._ensure_idea(spec, card)
-        twin_stage._ensure_twin_idea(made, spec.idea_id)
-
+    night._ensure_idea(spec, card)
+    if ran is not spec:  # every value of the lists is a trial of its own, before the verdict
+        with session_scope() as session:
+            entry["candidate_trials"] = one_check.record_candidates(ran, session, load_latest())
     twin_stage.stage1_on_stand(
-        made, entry, ensure_idea=ensure, end=ctx.end, noise_trials=ctx.noise_trials,
-        slow_minutes=ctx.twins.slow_twin_minutes, kind="implemented")
+        ran, entry, ensure_idea=lambda: night._ensure_idea(spec, card), end=ctx.end,
+        noise_trials=ctx.noise_trials, slow_minutes=ctx.twins.slow_twin_minutes,
+        kind="implemented")
     return entry
 
 
@@ -238,14 +266,13 @@ def _step_baseline(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
     if fields is None or fields.baseline_spec is None:
         return {"action": "skipped", "reason": "у карточки нет базовой стратегии"}
     baseline = load_spec(fields.baseline_spec)
-    like = _causal_spec(spec, rec["runs"])
-    like_file = twin.twin_path(spec_file(spec.idea_id)) if like is not None \
-        else spec_file(spec.idea_id)
-    like = like or spec
+    like = _checked(ctx, card, spec, fields)
+    like_file = spec_file(spec.idea_id)
     names = ctx.listing() if baseline.required_instruments \
         and baseline.data.source != twin.TWIN_VENUE else None
     base = twin.same_panel_spec(baseline, like, idea_id=f"{spec.idea_id}{BASE_SUFFIX}",
-                                cite=like_file.as_posix(), venue_names=names)
+                                cite=like_file.as_posix(), venue_names=names,
+                                own_sources=like is not spec)
     BASELINE_DIR.mkdir(parents=True, exist_ok=True)
     (BASELINE_DIR / f"{base.idea_id}.yaml").write_text(
         yaml.safe_dump(base.model_dump(mode="json", exclude_none=True), sort_keys=False,
@@ -268,39 +295,36 @@ def _step_baseline(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
     return entry
 
 
-def _step_stage2(which: str) -> Callable[..., dict]:
-    def step(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
-             fields: CardFields | None) -> dict:
-        source = (rec["runs"].get(which) or {})
-        if source.get("action") != "ran":
-            if _needs_run(source):  # the run it follows failed and is tried again tomorrow
-                return {"action": "waiting", "reason": "эта версия упала и будет прогнана ещё раз"}
-            return {"action": "skipped", "reason": "эта версия не прогнана"}
-        target = spec if which == "spec" else _causal_spec(spec, rec["runs"])
-        if not twin_stage.goes_to_stage2(target):
-            return {"action": "skipped",
-                    "reason": f"данные уже с {target.data.source}, второму этапу нечего проверять"}
-        if ctx.stage2_config is None:
-            return {"action": "skipped", "reason": "настройки второго этапа не прочитаны или "
-                    "он выключен (`night/stage2.yaml`)"}
-        holder = {"route": source.get("route"), "trial": source.get("trial")}
-        twin_stage.second_stage(
-            target, holder, end=ctx.end, noise_trials=ctx.noise_trials, config=ctx.stage2_config)
-        if "stage2" not in holder:
-            return {"action": "skipped", "route": source.get("route"),
-                    "reason": f"на первом этапе исход «{twin_stage.route_ru(source.get('route'))}»"
-                              ", на второй идут только прошедшие"}
-        out = {"action": "ran", "route": source.get("route"), "stage2": holder["stage2"],
-               "seconds": holder.get("stage2_seconds")}
-        if holder["stage2"].get("status") == "error":
-            out.update(action="error", error=holder["stage2"].get("error"))
-        return out
-    return step
+def _step_stage2(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
+                 fields: CardFields | None) -> dict:
+    source = (rec["runs"].get("check") or {})
+    if source.get("action") != "ran":
+        if _needs_run(source):  # the run it follows failed and is tried again tomorrow
+            return {"action": "waiting", "reason": "проверка упала и будет прогнана ещё раз"}
+        return {"action": "skipped", "reason": "проверка не прогнана"}
+    target = _checked(ctx, card, spec, fields)
+    if not twin_stage.goes_to_stage2(target):
+        return {"action": "skipped",
+                "reason": f"данные уже с {target.data.source}, второму этапу нечего проверять"}
+    if ctx.stage2_config is None:
+        return {"action": "skipped", "reason": "настройки второго этапа не прочитаны или "
+                "он выключен (`night/stage2.yaml`)"}
+    holder = {"route": source.get("route"), "trial": source.get("trial")}
+    twin_stage.second_stage(
+        target, holder, end=ctx.end, noise_trials=ctx.noise_trials, config=ctx.stage2_config)
+    if "stage2" not in holder:
+        return {"action": "skipped", "route": source.get("route"),
+                "reason": f"на первом этапе исход «{twin_stage.route_ru(source.get('route'))}»"
+                          ", на второй идут только прошедшие"}
+    out = {"action": "ran", "route": source.get("route"), "stage2": holder["stage2"],
+           "seconds": holder.get("stage2_seconds")}
+    if holder["stage2"].get("status") == "error":
+        out.update(action="error", error=holder["stage2"].get("error"))
+    return out
 
 
 _STEP: dict[str, Callable[..., dict]] = {
-    "spec": _step_spec, "causal": _step_causal, "baseline": _step_baseline,
-    "stage2-spec": _step_stage2("spec"), "stage2-causal": _step_stage2("causal"),
+    "check": _step_check, "baseline": _step_baseline, "stage2": _step_stage2,
 }
 
 
@@ -329,12 +353,13 @@ def run_card(card: str, rec: dict, ctx: RunContext) -> bool:
 
     spec = load_spec(spec_file(rec["idea_id"]))
     fields = read_fields(card)
+    spec = with_choice(spec_file(rec["idea_id"]), spec, fields, card)
     runs = rec.setdefault("runs", {})
     for name in STEPS:
         if not _needs_run(runs.get(name)):
             continue
         blocked = rec.get("blocked")
-        if blocked and name != "spec":
+        if blocked and name != STEPS[0]:
             runs[name] = {"action": "skipped", "reason": "проверяющий нашёл пробел между "
                           "карточкой и кодом: прогоны о другой стратегии не нужны"}
             continue
@@ -367,7 +392,11 @@ def _sharpe(value: object) -> str:
     return f"{value:.2f}" if isinstance(value, int | float) else "—"
 
 
-LABELS = {"baseline": "база", "spec": "написанная", "causal": "с выбором кода"}
+LABELS = {"baseline": "база", "check": "проверка идеи", "spec": "написанная",
+          "causal": "с выбором кода"}
+SHOWN = ("baseline", "check", "spec", "causal")
+"""The runs a card's table shows, in this order; `spec` and `causal` are only in the records of
+cards finished before the one-check rule."""
 
 
 def _label(step: str, r: Mapping) -> str:
@@ -377,10 +406,10 @@ def _label(step: str, r: Mapping) -> str:
 
 
 def table_lines(runs: Mapping[str, Mapping]) -> list[str]:
-    """The comparison: baseline, written spec, causal version -- per year, Sharpe, drawdown, the
-    return without the best 1% of days, the route -- plain Russian."""
+    """The comparison: baseline and the idea's check -- per year, Sharpe, drawdown, the return
+    without the best 1% of days, the route -- plain Russian."""
     rows = []
-    for step in ("baseline", "spec", "causal"):
+    for step in SHOWN:
         r = runs.get(step)
         if not r or r.get("action") == "skipped":
             continue  # a version that was never due (no baseline on the card) has no row
@@ -436,25 +465,29 @@ def entry_lines(e: Mapping) -> list[str]:
     runs = e.get("runs") or {}
     if not runs:
         return out
-    causal = runs.get("causal") or {}
-    if causal.get("action") == "ran":
+    check = runs.get("check") or runs.get("causal") or {}
+    if check.get("action") == "ran" and check.get("candidates"):
         out.append(
-            f"    - версия с выбором кода: числа выбирает код раз в месяц и только по прошлому, "
-            f"между вариантами карточки ({', '.join(causal.get('candidates') or [])}); данные "
-            f"Binance, торгует с {causal.get('first_choice')} (до первого выбора "
-            "она не торгует)"
-            + (f"; монет только {len(causal['instruments'])}: список подобран заранее, поэтому "
-               "версия судится только со дня, когда он был известен" if causal.get("instruments")
+            f"    - одна проверка: числа выбирает код раз в месяц и только по прошлому, между "
+            f"вариантами карточки ({', '.join(check.get('candidates') or [])}), каждый записан "
+            f"отдельным испытанием; данные Binance, торгует с {check.get('first_choice')} (до "
+            "первого выбора она не торгует)"
+            + (f"; монет только {len(check['instruments'])}: список подобран заранее, поэтому "
+               "идея судится только со дня, когда он был известен" if check.get("instruments")
                else ""))
+    elif check.get("action") == "ran" and check.get("nothing_to_choose"):
+        out.append(f"    - выбирать не из чего: {check['nothing_to_choose']}; судится после дня "
+                   "фиксации")
     out += table_lines(runs)
-    spec_run, base_run = runs.get("spec") or {}, runs.get("baseline") or {}
-    if spec_run.get("action") == "ran" and (causal.get("action") == "ran"
+    base_run = runs.get("baseline") or {}
+    spec_run = runs.get("spec") or {}
+    if spec_run.get("action") == "ran" and (check.get("action") == "ran"
                                             or base_run.get("action") == "ran") \
-            and spec_run.get("data") != (causal or base_run).get("data"):
+            and spec_run.get("data") != (check or base_run).get("data"):
         out.append("    - строка «написанная» считалась на своих данных, а база и версия с "
                    "выбором кода — на одних и тех же: сравнивать их друг с другом можно, "
                    "с написанной — осторожно.")
-    for step in ("baseline", "spec", "causal"):
+    for step in SHOWN:
         r = runs.get(step)
         if not r:
             continue
@@ -465,8 +498,8 @@ def entry_lines(e: Mapping) -> list[str]:
         if r.get("action") == "ran" and r.get("route_reason") and step != "baseline" \
                 and r.get("route") not in ("paper", "shelf"):
             out.append(f"    - {LABELS[step]}, причина исхода (слова кода): {r['route_reason']}")
-    for key, label in (("stage2-spec", "написанной версии"), ("stage2-causal", "версии с "
-                                                                              "выбором кода")):
+    for key, label in (("stage2", "проверки идеи"), ("stage2-spec", "написанной версии"),
+                       ("stage2-causal", "версии с выбором кода")):
         r = runs.get(key)
         if not r:
             continue
@@ -483,10 +516,10 @@ def entry_lines(e: Mapping) -> list[str]:
 
 
 def summary(e: Mapping) -> str:
-    """One short line for the console's agents page: the routes of the three versions."""
+    """One short line for the console's agents page: the routes of the check and the baseline."""
     runs = e.get("runs") or {}
     parts = []
-    for step in ("spec", "causal", "baseline"):
+    for step in ("check", "spec", "causal", "baseline"):
         r = runs.get(step)
         if not r:
             continue
@@ -498,6 +531,7 @@ def summary(e: Mapping) -> str:
     return "; ".join(parts)
 
 
-__all__ = ["BASELINE_DIR", "LEDGER", "MAX_ATTEMPTS", "RunContext", "STEPS", "entry_lines",
+__all__ = ["BASELINE_DIR", "LEDGER", "MAX_ATTEMPTS", "OLD_STEPS", "RunContext", "STEPS",
+           "entry_lines", "with_choice",
            "load_stage2_config", "new_record", "pending_cards", "read_fields", "run_card",
            "should_take", "spec_file", "summary", "table_lines", "waits_for_owner"]

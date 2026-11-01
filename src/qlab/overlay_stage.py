@@ -166,6 +166,15 @@ def find_bases(session, specs: dict[str, list[Path]], config: Config, *,
             except Exception as exc:  # noqa: BLE001 - a broken file fails in its own run
                 refused[idea_id] = f"the spec does not load: {exc}"
                 continue
+            from qlab import one_check
+
+            if one_check.declares_lists(spec):
+                # The idea's check is built in code (docs/ONE_CHECK.md): there is no file of the
+                # form that was judged, so a variant could not cite its numbers. Not built yet.
+                refused[idea_id] = ("the idea's one check is built in code from the lists it "
+                                    "declares, with no spec file of that form to put an overlay "
+                                    "on: overlays of such an idea are not built yet")
+                continue
             if (flagged := anomaly_refusal(session, idea_id)) is not None:
                 refused[idea_id] = flagged
                 continue

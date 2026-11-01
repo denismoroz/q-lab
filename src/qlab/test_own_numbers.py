@@ -35,7 +35,7 @@ def config() -> dict:
 
 
 def _spec(mech: str, name: str, *, window: str, rebalance: str, min_history: str,
-          own_block: str = "", extra_sources: str = "") -> str:
+          own_block: str = "", extra_sources: str = "", choice: str = "") -> str:
     return f"""# mechanism: {mech}
 idea_id: {name}
 title: Пример для проверки своих чисел
@@ -65,7 +65,7 @@ min_leg_notional: 10.0
 simultaneous_legs: 1
 noise_universe: panel
 unexpressed_mechanisms: []
-{own_block}sources:
+{choice}{own_block}sources:
   universe: 'docs/MECHANISMS.md, mechanism {mech}, blocks: universe: all'
   signal: 'docs/MECHANISMS.md, mechanism {mech}, blocks: signal: funding'
   portfolio: 'docs/MECHANISMS.md, mechanism {mech}, blocks: portfolio'
@@ -80,6 +80,14 @@ unexpressed_mechanisms: []
 OPEN_SOURCES = (f"  signal.window_days: '{OWN_CITE.format('signal.window_days')}'\n"
                 f"  rebalance_days: '{OWN_CITE.format('rebalance_days')}'\n"
                 "  min_history_days: 'derived: 30; the longest open window'\n")
+def _choice(window: str = "[3, 7, 14, 30]", rebalance: str = "[1, 7]") -> str:
+    """The lists of night/own_numbers.yaml in the form a NEW idea declares them (docs/ONE_CHECK.md);
+    `params` then carry the first value of each."""
+    return ("choice:\n  axes:\n"
+            f"    signal.window_days: {window}\n    rebalance_days: {rebalance}\n"
+            "  source: night/own_numbers.yaml\n")
+
+
 OWN_BLOCK = """own_mechanism:
   idea: Short the coins whose perpetual pays a high funding rate and buy those paying little.
   why: Longs who pay a high funding rate overpay for leverage; the carry is earned from them.
@@ -97,36 +105,46 @@ def _check(tmp_path: Path, mechanisms, text: str, name: str) -> list[str]:
 
 
 def test_an_empty_row_may_be_left_open_with_the_whole_declared_list(mechanisms, tmp_path):
-    text = _spec("perp-carry-crash-timing", "gen-ex-open", window="[3, 7, 14, 30]",
-                 rebalance="[1, 7]", min_history="30", extra_sources=OPEN_SOURCES)
+    text = _spec("perp-carry-crash-timing", "gen-ex-open", window="3", rebalance="1",
+                 min_history="30", extra_sources=OPEN_SOURCES, choice=_choice())
     assert _check(tmp_path, mechanisms, text, "gen-ex-open") == []
 
 
 def test_a_subset_of_the_list_is_refused(mechanisms, tmp_path):
-    text = _spec("perp-carry-crash-timing", "gen-ex-subset", window="[7, 14]",
-                 rebalance="[1, 7]", min_history="30", extra_sources=OPEN_SOURCES)
+    text = _spec("perp-carry-crash-timing", "gen-ex-subset", window="7", rebalance="1",
+                 min_history="30", extra_sources=OPEN_SOURCES, choice=_choice(window="[7, 14]"))
     problems = _check(tmp_path, mechanisms, text, "gen-ex-subset")
-    assert any("whole declared list" in p for p in problems)
+    assert any("whole list" in p for p in problems)
 
 
 def test_a_row_the_catalogue_fills_cannot_be_left_open(mechanisms, tmp_path):
-    # classic-carry gives rebalance_days 30 (a month): no list may replace it.
-    text = _spec("classic-carry", "gen-ex-filled", window="[3, 7, 14, 30]",
-                 rebalance="[1, 7]", min_history="30", extra_sources=OPEN_SOURCES)
+    # classic-carry gives rebalance_days 30 (a month): no list of the lab's may replace it.
+    text = _spec("classic-carry", "gen-ex-filled", window="3", rebalance="1",
+                 min_history="30", extra_sources=OPEN_SOURCES, choice=_choice())
     problems = _check(tmp_path, mechanisms, text, "gen-ex-filled")
-    assert any(p.startswith("rebalance_days: classic-carry gives values") for p in problems)
+    assert any("rebalance_days" in p and "not among the catalogue's values" in p
+               for p in problems)
+
+
+def test_the_old_way_of_leaving_numbers_open_is_refused_for_a_new_idea(mechanisms, tmp_path):
+    text = _spec("perp-carry-crash-timing", "gen-ex-old", window="[3, 7, 14, 30]",
+                 rebalance="[1, 7]", min_history="30", extra_sources=OPEN_SOURCES)
+    problems = _check(tmp_path, mechanisms, text, "gen-ex-old")
+    assert any("`choice.axes` now" in p for p in problems)
 
 
 def test_an_own_mechanism_needs_its_idea_and_open_numbers(mechanisms, tmp_path):
-    good = _spec("own", "gen-ex-own", window="[3, 7, 14, 30]", rebalance="[1, 7]",
-                 min_history="30", own_block=OWN_BLOCK, extra_sources=OPEN_SOURCES)
+    good = _spec("own", "gen-ex-own", window="3", rebalance="1", min_history="30",
+                 own_block=OWN_BLOCK, extra_sources=OPEN_SOURCES, choice=_choice())
     assert _check(tmp_path, mechanisms, good, "gen-ex-own") == []
-    no_idea = _spec("own", "gen-ex-own2", window="[3, 7, 14, 30]", rebalance="[1, 7]",
-                    min_history="30", extra_sources=OPEN_SOURCES)
+    no_idea = _spec("own", "gen-ex-own2", window="3", rebalance="1", min_history="30",
+                    extra_sources=OPEN_SOURCES, choice=_choice())
     assert any("needs own_mechanism" in p for p in _check(tmp_path, mechanisms, no_idea,
                                                            "gen-ex-own2"))
-    fixed = _spec("own", "gen-ex-own3", window="7", rebalance="[1, 7]", min_history="30",
-                  own_block=OWN_BLOCK, extra_sources=(
+    fixed = _spec("own", "gen-ex-own3", window="7", rebalance="1", min_history="30",
+                  own_block=OWN_BLOCK, choice=(
+                      "choice:\n  axes:\n    rebalance_days: [1, 7]\n"
+                      "  source: night/own_numbers.yaml\n"), extra_sources=(
                       "  signal.window_days: 'docs/MECHANISMS.md, mechanism own, 7'\n"
                       f"  rebalance_days: '{OWN_CITE.format('rebalance_days')}'\n"
                       "  min_history_days: 'derived: 30; the longest open window'\n"))

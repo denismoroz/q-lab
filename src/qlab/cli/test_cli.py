@@ -432,3 +432,37 @@ def test_budget_status_names_the_account_and_probe_refuses_a_wrong_one(cli_db, m
     probe = runner.invoke(app, ["budget", "probe"])
     assert probe.exit_code == 1
     assert "claude auth login" in probe.output
+
+
+def test_check_prints_what_code_chooses_among_or_the_reason_for_nothing(tmp_path) -> None:
+    """`qlab check SPEC` (docs/ONE_CHECK.md): the idea's one check in plain facts; no database."""
+    import yaml
+
+    base = {
+        "idea_id": "cli-idea", "title": "x", "code_ref": "a:b",
+        "params": {"signal": {"window_days": 3}},
+        "data": {"source": "binance", "interval": "1d", "start": "2025-01-01",
+                 "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 5.0, "slippage_bps": 0.9}, "min_leg_notional": 5.0,
+        "unexpressed_mechanisms": []}
+    lists = tmp_path / "lists.yaml"
+    lists.write_text(yaml.safe_dump({**base, "choice": {
+        "axes": {"signal.window_days": [3, 7, 14, 30]}, "source": "night/own_numbers.yaml"}}))
+    done = runner.invoke(app, ["check", str(lists)])
+    assert done.exit_code == 0, done.output
+    assert "one check, 4 values, each a trial of its own" in done.output
+    assert "the first choice is" in done.output
+    as_yaml = runner.invoke(app, ["check", str(lists), "--yaml"])
+    assert as_yaml.exit_code == 0 and "idea_id: cli-idea" in as_yaml.output
+    assert "cli-idea-causal" not in as_yaml.output  # one idea, no twin
+
+    reason = tmp_path / "reason.yaml"
+    reason.write_text(yaml.safe_dump({**base, "choice": {
+        "nothing_to_choose": "the paper gives one value for every number used"}}))
+    said = runner.invoke(app, ["check", str(reason)])
+    assert said.exit_code == 0 and "nothing to choose -- the paper gives one value" in said.output
+
+    bare = tmp_path / "bare.yaml"
+    bare.write_text(yaml.safe_dump(base))
+    refused = runner.invoke(app, ["check", str(bare)])
+    assert refused.exit_code == 1 and "refused:" in refused.output

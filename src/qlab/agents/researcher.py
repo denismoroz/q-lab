@@ -193,31 +193,56 @@ Write two kinds of files and nothing else:
    on the stand that tests one fix of the memo: copy the closest existing spec, change
    only what the fix needs, give it a new idea_id "{name}-research-<short>", and cite a source
    for every changed number in `sources`. Prefer strategy code that already exists (wrappers
-   such as qlab.strategies.regime_gate:RegimeGate and qlab.strategies.retune:Retune, or
-   existing parameters); you cannot write strategy code. Write no spec if nothing is worth a
-   trial.
+   such as qlab.strategies.regime_gate:RegimeGate, or existing parameters); you cannot write
+   strategy code. Write no spec if nothing is worth a trial.
    Where long history exists, prefer a variant on it: Binance (`data.source: binance`, history
-   since 2019; see specs/bv2-binance.yaml, specs/trend-binance-cap.yaml). Set
-   params_fixed_at to the day the code names (owner, 2026-10-29, docs/FIXATION.md): the start
-   of the LAST THIRD of the spec's own window, data.start + round(2/3 of the days to data.end),
-   with params_fixed_evidence "declared by the researcher on {today}: fix designed on the data
-   before <that day>; <hypothesis>". The data after it is then the fix's forward test, and the
-   stand judges it at once. You may write a LATER day only with a source (the paper whose
-   numbers were fitted up to it, cited under sources.params_fixed_at); an earlier or a missing
-   day is corrected by code to the named one and the memo says so. Never set params_fixed_at
-   to {today} for a fixed-parameter fix on history: it has no forward test until data after
-   today accumulates.
+   since 2019; see specs/bv2-binance.yaml, specs/trend-binance-cap.yaml).
+
+   ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). An experiment does not
+   get a "twin" any more and you do not write a causal wrapper: the idea declares up front the
+   values of the numbers it changes, code chooses among them every month from the past only, on
+   the venue's whole history, and the verdict comes at once. So every experiment spec carries a
+   `choice` block. `params` holds the FIRST value of every list; the block holds the lists:
+
+     choice:
+       axes:                       # a dotted path of params -> the WHOLE list of its values
+         signal.window_days: [3, 7, 14, 30]
+         rebalance_days: [1, 7]
+       source: "night/own_numbers.yaml"
+
+   `source` names the file the values come from: night/own_numbers.yaml (then each list is the
+   WHOLE list that file declares for that parameter, never a subset you picked) or a file that
+   holds sourced values (a document of the strategy, frab's research, the base spec): every value
+   must literally stand in the cited file, and a number needs a source like any other. The
+   product of the lists may not exceed max_candidates of night/own_numbers.yaml. When the fix is
+   one named set of numbers against another (a base and a variant), give them whole instead:
+
+     choice:
+       candidates:                 # at least two; the first is what `params` holds
+         fix: {{hedge_margin_headroom: 1.5}}
+         base: {{hedge_margin_headroom: 1.0}}
+       source: "specs/bv2-live.yaml, docs/research/<the document that gives 1.5>"
+
+   Do not set params_fixed_at, params_fixed_evidence or selects_causally for such a spec: its
+   check names its own first choice. Every value of every list is a trial of its own, so a long
+   list raises the bar the best of them has to clear.
+
+   A spec with no list is refused, unless it says why there is nothing to choose from:
+
+     choice:
+       nothing_to_choose: "<a sentence: why no number of this fix has an alternative the lab
+                           has declared or a source gives>"
+
+   Then it is judged after its fixation date as before (params_fixed_at is the day the code names,
+   owner 2026-10-29, docs/FIXATION.md: the start of the LAST THIRD of the spec's own window, with
+   params_fixed_evidence "declared by the researcher on {today}: fix designed on the data before
+   <that day>; <hypothesis>"; a LATER day only with a source cited under sources.params_fixed_at).
+   Never set params_fixed_at to {today} for a fixed-parameter fix on history: it has no forward
+   test until data after today accumulates. Use this only when it is true: the stand shows the
+   sentence on the idea's page.
    Where only a short history exists (Hyperliquid only, as for FRAB), the same applies with
    the cut of the evidence, but its held-out part is short: say in the memo that the result is
    preliminary. A preliminary result does not block anything; you keep working.
-   To test a parameter idea on history at once, you may also offer it as a grid to
-   qlab.strategies.retune:Retune with `selects_causally: true` (docs/RETUNE.md): the wrapper
-   picks among the grid using only the past, so every day after its first choice is a forward
-   test. For such a spec params_fixed_at is NOT today but the date of the wrapper's FIRST
-   choice -- the start of the data where the whole book exists, plus the inner strategy's
-   warm-up, plus one whole re-tuning period -- as in specs/trend-retune-monthly.yaml; its
-   params_fixed_evidence says that arithmetic and that the grid was declared {today}. With
-   today's date the whole history would be warm-up.
 
 {focus}Reply with one line: the memo path and the experiment spec paths."""
 
@@ -261,6 +286,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
              budget: CandidateBudget | ExplicitNoBudget, session, max_experiments: int = 3,
              model: str = MODEL, max_turns: int = 60, focus: str | None = None
              ) -> ResearchOutcome:
+    from qlab import one_check
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
 
@@ -315,7 +341,8 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
                                 f"{max_experiments}: not run and removed {[str(p) for p in extra]}")
     for spec_path in outcome.specs:
         try:
-            problems = source_problems(load_spec(QLAB_ROOT / spec_path))
+            spec = load_spec(QLAB_ROOT / spec_path)
+            problems = [*source_problems(spec), *one_check.declaration_problems(spec)]
             outcome.problems += [f"{spec_path}: {p}" for p in problems]
         except Exception as exc:  # noqa: BLE001
             outcome.problems.append(f"{spec_path} does not load: {exc}")
@@ -327,10 +354,12 @@ def second_stage_lines(experiment, judged, opened: dict, result, *, noise_trials
     report lines (docs/TWO_STAGE.md). The same call the generator makes after a stage 1
     survivor (`qlab.pipeline.stage2.run_stage2`, not a measurement): the same mechanism and
     numbers on Hyperliquid, the idea's status moved by both stages together. Code only, no
-    tokens. `judged` and `opened` are `own_numbers.prepare`'s: an experiment with open numbers
-    carries to the second stage the value chosen at its cut. Empty when the experiment does not
-    go on (stage 1 did not survive, or it already runs on Hyperliquid); a failure is a line,
-    never raised -- stage 1 is on record and stays so."""
+    tokens. `experiment` is what the stand ran: the idea's one check (docs/ONE_CHECK.md), which
+    goes to Hyperliquid whole, the same lists chosen month by month there. `judged` and `opened`
+    are `own_numbers.prepare`'s, for an experiment of the older kind that leaves numbers open in
+    its params: it carries to the second stage the value chosen at its cut. Empty when the
+    experiment does not go on (stage 1 did not survive, or it already runs on Hyperliquid); a
+    failure is a line, never raised -- stage 1 is on record and stays so."""
     from dataclasses import asdict
 
     from qlab import own_numbers
@@ -365,10 +394,13 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
                     noise_trials: int = 200) -> list[str]:
     """Run declared experiments on the stand (matched noise, every rule) and
     append their results to the memo -- numbers written by code, not by the
-    researcher. An experiment that survives stage 1 on Binance's history goes on to the
-    second stage on Hyperliquid at once (`second_stage_lines`); its lines follow the
+    researcher. An experiment is ONE idea with ONE check (docs/ONE_CHECK.md): it declares the
+    values it leaves open, every value is a trial, code chooses among them month by month from the
+    past, and the verdict comes on Binance's whole history; one that declares nothing is refused
+    unless it says why there is nothing to choose. An experiment that survives stage 1 goes on to
+    the second stage on Hyperliquid at once (`second_stage_lines`); its lines follow the
     experiment's, indented."""
-    from qlab import own_numbers
+    from qlab import one_check
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
@@ -391,6 +423,10 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
         if source_problems(experiment):
             lines.append(f"- `{spec_path}`: не запущен — числа без источника")
             continue
+        if declared := one_check.declaration_problems(experiment):
+            lines.append(f"- `{spec_path}`: не запущен — у идеи один способ проверки, и он не "
+                         f"объявлен: {'; '.join(declared)}")
+            continue
         try:
             with session_scope() as session:
                 if session.get(Idea, experiment.idea_id) is None:
@@ -398,16 +434,21 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
                                      source_type=SourceType.INTERNAL,
                                      asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER,
                                      notes=f"Declared by the researcher ({name}).")
-                # Open numbers (qlab.own_numbers, owner 2026-10-26): every value a trial,
-                # then the spec that chooses one at the cut and is judged after it.
-                judged, opened = own_numbers.prepare(
-                    experiment, session, load_latest())
+                    session.flush()
+                prepared = one_check.prepare(experiment, session, load_latest(),
+                                             spec_path=spec_path)
+                if prepared.heavy:
+                    one_check.note_refusal(experiment.idea_id, prepared.heavy, str(spec_path))
+                    lines.append(f"- `{experiment.idea_id}`: не запущен — данные проверки слишком "
+                                 f"тяжёлые для одной ночи (слова кода: {prepared.heavy}); "
+                                 f"вручную: `qlab twins run --only {experiment.idea_id} "
+                                 "--allow-heavy`")
+                    continue
                 result = evaluate_spec_with_shape_aware_bar(
-                    judged, session=session, ruleset=load_latest(), n_trials=noise_trials).candidate
+                    prepared.spec, session=session, ruleset=load_latest(),
+                    n_trials=noise_trials).candidate
             m = result.metrics or {}
-            own = (f" [свои числа: {len(opened['candidate_trials'])} вариантов записаны "
-                   f"испытаниями, выбор на данных до {opened['cut']}, вердикт — по дням с него]"
-                   if opened else "")
+            own = _check_words(prepared)
             reg = "cap_regime_" if headline(m).on_capital else "regime_"
             regimes = ", ".join(f"{r}: {m[f'{reg}{r}_return']:+.1%}" for r in
                                 ("bull", "flat", "bear") if f"{reg}{r}_return" in m)
@@ -418,13 +459,26 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
                 f"{min_capital_ru(m)}; {regimes}")
             if years := years_line(m):
                 lines.append(f"  - {years}")
-            lines += second_stage_lines(experiment, judged, opened, result,
+            lines += second_stage_lines(prepared.spec, prepared.spec, {}, result,
                                         noise_trials=noise_trials)
+        except one_check.OneCheckRefused as exc:
+            one_check.note_refusal(experiment.idea_id, str(exc), str(spec_path))
+            lines.append(f"- `{experiment.idea_id}`: проверка не построена — {exc} "
+                         "(слова кода)")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"- `{experiment.idea_id}`: прогон упал: {type(exc).__name__}: {exc}")
     with memo.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     return lines
+
+
+def _check_words(prepared) -> str:
+    """The short note after an experiment's name: what its one check chose among."""
+    if prepared.declared == "nothing":
+        return f" [выбирать не из чего: {prepared.reason}; судится после дня фиксации]"
+    return (f" [одна проверка: код выбирает раз в месяц по прошлому между "
+            f"{len(prepared.candidates)} вариантами ({', '.join(prepared.candidates)}), каждый "
+            f"записан испытанием; история Binance, судится с {prepared.first_choice}]")
 
 
 __all__ = ["CUT_SENTENCE", "MODEL", "DropProposal", "ResearchOutcome", "build_context",

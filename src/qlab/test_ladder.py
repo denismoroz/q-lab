@@ -289,7 +289,10 @@ def test_reason_waits_for_night_for_a_spec_with_no_run_and_for_a_twin_not_yet_bu
     assert [s.reason for s in ladder(session, "queued").steps[:3]] == [Reason.WAITS_FOR_NIGHT] * 3
     assert ladder(session, "file-only", spec_stems=frozenset({"file-only"})).steps[0].reason \
         == Reason.WAITS_FOR_NIGHT
-    assert ladder(session, "waiting").steps[1].reason == Reason.WAITS_FOR_NIGHT
+    # since 2026-11-01 (docs/ONE_CHECK.md) no twin is built for an idea that waits: its Binance
+    # step says so, instead of promising a twin the night will not make
+    older = ladder(session, "waiting").steps[1]
+    assert older.reason == Reason.NO_NEW_TWINS and "одна идея — одна проверка" in older.detail
     cut = ladder(session, "deferred", deferred_twins=frozenset({"deferred"})).steps[1]
     assert cut.reason == Reason.WAITS_FOR_NIGHT and "предел" in cut.detail
 
@@ -746,3 +749,53 @@ def test_the_report_table_carries_the_reason_the_venues_differ(session) -> None:
     assert header.endswith("| итог по площадкам | почему площадки расходятся |")
     row = next(line for line in lines if line.startswith("| t |"))
     assert row.endswith("| Hyperliquid: `net_edge_positive` −3,1% |")
+
+
+# --------------------------------------------------------------------------
+# One idea, one check (2026-11-01, docs/ONE_CHECK.md)
+
+
+def test_an_idea_older_than_the_rule_with_no_twin_says_no_twin_is_built_any_more(session) -> None:
+    idea(session, "old-waiting")
+    run(session, "old-waiting", TrialRoute.NEEDS_FORWARD, "hyperliquid")
+
+    step = ladder(session, "old-waiting").steps[1]
+
+    assert step.outcome == Outcome.NOT_RUN and step.reason == Reason.NO_NEW_TWINS
+    assert "одна идея — одна проверка" in step.detail
+    assert lad.REASON_RU[Reason.NO_NEW_TWINS] in lad.REASON_RU.values()
+
+
+def test_an_idea_that_declares_nothing_to_choose_shows_its_own_words_on_both_kinds_of_page(
+        session) -> None:
+    idea(session, "declared-hl")
+    run(session, "declared-hl", TrialRoute.NEEDS_FORWARD, "hyperliquid")
+    idea(session, "declared-bn")
+    run(session, "declared-bn", TrialRoute.NEEDS_FORWARD, "binance")
+    words = "the card gives one value for every number it uses"
+
+    on_hl = ladder(session, "declared-hl", no_choice={"declared-hl": words}).steps[1]
+    on_bn = ladder(session, "declared-bn", no_choice={"declared-bn": words}).steps[1]
+
+    assert on_hl.reason == Reason.NO_CHOICE and words in on_hl.detail
+    assert on_bn.outcome == Outcome.UNDECIDED and words in on_bn.detail  # its own run, and why
+    assert "судится после дня фиксации" in on_bn.detail
+
+
+def test_an_idea_whose_check_was_refused_for_its_data_says_so_before_any_run(session) -> None:
+    idea(session, "heavy-one", IdeaStatus.CANDIDATE)
+    found = ladder(session, "heavy-one", spec_stems=frozenset({"heavy-one"}), twins={
+        "heavy-one": {"reason": "hourly candles of every Binance perpetual", "day": "2026-11-01"}})
+
+    assert [s.reason for s in found.steps[:3]] == [Reason.HEAVY_DATA] * 3
+    assert "слова кода" in found.steps[1].detail
+
+
+def test_the_nothing_to_choose_words_are_read_from_the_spec_files_only_where_they_stand(
+        tmp_path) -> None:
+    (tmp_path / "a.yaml").write_text(
+        "idea_id: with-words\nchoice:\n  nothing_to_choose: because there is one value\n",
+        encoding="utf-8")
+    (tmp_path / "b.yaml").write_text("idea_id: no-words\nparams: {}\n", encoding="utf-8")
+    (tmp_path / "c.yaml").write_text("idea_id: [broken\n  nothing_to_choose", encoding="utf-8")
+    assert lad.spec_no_choice(tmp_path) == {"with-words": "because there is one value"}

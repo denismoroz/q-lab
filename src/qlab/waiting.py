@@ -268,14 +268,21 @@ def watched_idea_ids(watch: list[str]) -> set[str]:
 
 
 def _stage2_experiment(path: Path | None) -> bool:
-    """Whether the spec file is an experiment (a `research` folder) on Binance's history."""
+    """Whether the spec file is an idea whose check runs on Binance's history and so goes to the
+    second stage: an experiment (a `research` folder) on that history, or any idea that declares
+    lists of values to choose among (`qlab.one_check`, docs/ONE_CHECK.md), whatever folder its file
+    is in and whatever venue it is written on."""
+    from qlab import one_check
     from qlab.pipeline.spec import load_spec
     from qlab.twin_stage import goes_to_stage2
 
-    if path is None or "research" not in path.parts:
+    if path is None:
         return False
     try:
-        return goes_to_stage2(load_spec(path))
+        spec = load_spec(path)
+        if one_check.declares_lists(spec):
+            return True
+        return "research" in path.parts and goes_to_stage2(spec)
     except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
         return False
 
@@ -457,7 +464,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
                   **stage2_kwargs) -> dict:
     """The second stage on the fresh tail. `stage1` is tonight's re-run of the first
     stage when there was one; otherwise stage 1's latest outcome in the registry."""
-    from qlab import night, own_numbers
+    from qlab import night, one_check, own_numbers
     from qlab.pipeline import stage2
     from qlab.pipeline.spec import load_spec
     from qlab.registry.db import session_scope
@@ -471,7 +478,9 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             route = getattr(routed[0].route, "value", routed[0].route) if routed else None
             trial_id = routed[0].id if routed else None
     spec = load_spec(Path(plan.spec_path))
-    if own_numbers.open_params(spec):  # the values chosen at stage 1's cut, as the generator
+    if one_check.declares_lists(spec):  # the idea's check goes to Hyperliquid whole, as a twin did
+        spec = one_check.rerun_form(spec)
+    elif own_numbers.open_params(spec):  # the values chosen at stage 1's cut, as the generator
         retune = night.rerun_spec(spec)
         with session_scope() as session:
             chosen = own_numbers.chosen_params(night.with_end(retune, end), session)
@@ -517,7 +526,7 @@ def _estimate(plan: Plan, end: date, stage2_config, cost, last_seconds: float | 
     estimates: list = []
     try:
         if plan.spec_path is not None:
-            spec = night.with_end(load_spec(Path(plan.spec_path)), end)
+            spec = night.with_end(night.rerun_spec(load_spec(Path(plan.spec_path))), end)
             with session_scope() as session:
                 if plan.step == "idea":
                     estimates.append(hl_fetch.estimate(spec, session, cost))

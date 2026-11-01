@@ -789,8 +789,8 @@ def night_run_cmd(
         help="Re-run the ideas waiting for data that are not on the watch list (no tokens)"),
     twins: bool | None = typer.Option(
         None, "--twins/--no-twins",
-        help="Causal twins and the second stage for ideas waiting for forward data "
-        "(no tokens; default: with --waiting)"),
+        help="Twin files written and never run (no new twin is built since 2026-11-01: one idea, "
+        "one check, docs/ONE_CHECK.md); no tokens; default: with --waiting"),
     overlays: bool | None = typer.Option(
         None, "--overlays/--no-overlays",
         help="Every overlay and pair on the strategies that passed, each compared with its base "
@@ -2100,6 +2100,59 @@ def twin_cmd(
             raise typer.Exit(code=1) from exc
         return
     typer.echo(twin_yaml(result.spec, spec.idea_id), nl=False)
+
+
+@app.command("check")
+def check_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC", help="A spec that declares `choice`"),  # noqa: B008
+    write: bool = typer.Option(
+        False, "--yaml", help="Print the spec the stand runs for the check (YAML) instead of "
+        "the summary"),
+) -> None:
+    """The one check of an idea (docs/ONE_CHECK.md): what code chooses among, month by month from
+    the past only, on which data and from which day; or the idea's own reason for having nothing to
+    choose. Reads the spec and the lab's lists; no database, no agent, no tokens."""
+    from qlab import one_check, twin_stage
+    from qlab.twin import twin_yaml
+
+    try:
+        spec = load_spec(spec_path)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: invalid spec: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    problems = one_check.declaration_problems(spec)
+    for line in problems:
+        typer.echo(f"refused: {line}")
+    if problems:
+        raise typer.Exit(code=1)
+    if not one_check.declares_lists(spec):
+        typer.echo(f"{spec.idea_id}: nothing to choose -- {one_check.nothing_to_choose(spec)}")
+        typer.echo("judged after its fixation date, as an idea always was")
+        return
+    config = twin_stage.load_config() or twin_stage.Config(True, 4, 20.0)
+    try:
+        result = one_check.check_spec(
+            spec, coin_params=config.coin_list_params,
+            seconds_per_instrument=config.seconds_per_instrument, spec_path=spec_path)
+    except Exception as exc:  # noqa: BLE001 - the network (Binance's listing): say so and stop
+        typer.echo(f"error: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if result.spec is None:
+        typer.echo(f"no check for {spec.idea_id}: {result.reason}")
+        raise typer.Exit(code=1)
+    if write:
+        typer.echo(twin_yaml(result.spec, spec.idea_id), nl=False)
+        return
+    checked = result.spec
+    typer.echo(f"{spec.idea_id}: one check, {len(result.candidates)} values, each a trial of its "
+               f"own: {', '.join(result.candidates)}")
+    typer.echo(f"data: {checked.data.source} {checked.data.interval} "
+               f"{checked.data.start} .. {checked.data.end}; code chooses every month from the "
+               f"past only; the first choice is {checked.params_fixed_at}")
+    heavy = twin_stage.heavy_data(checked, config.slow_twin_minutes,
+                                  config.max_hourly_instruments, config.seconds_per_instrument)
+    if heavy:
+        typer.echo(f"HEAVY for the night: {heavy}")
 
 
 @app.command("director")

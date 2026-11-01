@@ -73,9 +73,16 @@ steps:
     depends_on:
       - {step: detectors, kind: data, why: "Ждущие идеи читают те же файлы определителей режима."}
 
+  # 2026-11-01, owner 2026-10-31: «не уверен что нам нужна вот такая дубликация. поидее просто для
+  # стратегии достаточна проверка» -- one idea, one check (docs/ONE_CHECK.md). New ideas declare the
+  # values they leave open and are checked by the step that runs them (the researcher, the
+  # generator, the implementer, the waiting step for the nights after); no twin is built beside
+  # them. This step no longer builds twins (night/twins.yaml, build_new: false); it runs a twin
+  # file that was written and never run, and the check of a named idea by hand. The step
+  # `twins-research` (the twins of the researcher's experiments) is gone.
   - id: twins
-    title: Двойники и вторая ступень
-    description: Для идей без проверки вперёд строит двойника, который выбирает числа только по прошлому, и гонит его на истории.
+    title: Двойники, уже написанные
+    description: Новых двойников не строит (одна идея — одна проверка); гонит двойника, который записан и ни разу не считался, и проверку названной идеи вручную.
     kind: code
     lane: calc
     tokens: false
@@ -229,19 +236,6 @@ steps:
     depends_on:
       - {step: director, kind: budget, why: "Руководитель расставляет порядок стратегий для исследователя; он идёт первым."}
 
-  - id: twins-research
-    title: Двойники экспериментов исследователя
-    description: Для экспериментов, которые исследователь прогнал этой ночью, строит двойников и гонит их на истории.
-    kind: code
-    lane: calc
-    tokens: false
-    items: эксперимент
-    done_prefixes: ["twins:"]
-    state_keys: [twins]
-    depends_on:
-      - {step: research, kind: data, why: "Берёт эксперименты, записанные исследователем этой ночью."}
-      - {step: twins, kind: exclusive, why: "Тот же код и тот же журнал двойников, что у шага «Двойники»: вместе они не идут."}
-
   - id: implement
     title: Реализация карточек
     description: Агент-реализатор пишет блок и спек по карточкам из очереди, затем код гонит их на стенде.
@@ -329,7 +323,6 @@ steps:
       - {step: twins, kind: fresh, why: "То же."}
       - {step: restamp, kind: fresh, why: "То же."}
       - {step: overlays, kind: fresh, why: "То же."}
-      - {step: twins-research, kind: fresh, why: "То же."}
       - {step: implement, kind: fresh, why: "То же."}
       - {step: generate, kind: fresh, why: "То же."}
       - {step: second_venue, kind: fresh, why: "То же."}

@@ -174,9 +174,25 @@ def citation_problems(label: str, citation: str, value: object) -> list[str]:
     return problems
 
 
+def choice_problems(spec: StrategySpec) -> list[str]:
+    """What is wrong with the source of a declared list of values (`StrategySpec.choice`): it names
+    something checkable, the cited file exists, and every value of every list literally stands in
+    it. A spec that declares no list (or only why there is none) has nothing to check."""
+    choice = spec.choice
+    if choice is None or not choice.lists:
+        return []
+    numbers: list[float] = []
+    for values in choice.axes.values():
+        numbers += [float(v) for v in values]
+    for overrides in choice.candidates.values():
+        for value in overrides.values():
+            numbers += _numbers(value)
+    return citation_problems("choice", choice.source, numbers)
+
+
 def source_problems(spec: StrategySpec) -> list[str]:
     """Everything wrong with `spec`'s sources; empty means the run may start."""
-    problems: list[str] = []
+    problems: list[str] = choice_problems(spec)
     sources = spec.sources
     checked: dict[str, tuple[list[Path], bool]] = {}
     for key, citation in sources.items():
@@ -239,4 +255,5 @@ def require_sources(spec: StrategySpec) -> None:
         )
 
 
-__all__ = ["SpecSourceError", "covering_key", "require_sources", "source_problems", "spec_leaves"]
+__all__ = ["SpecSourceError", "choice_problems", "citation_problems", "covering_key",
+           "require_sources", "source_problems", "spec_leaves"]

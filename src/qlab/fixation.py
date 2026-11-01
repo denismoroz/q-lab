@@ -11,7 +11,9 @@ on another window, so two ideas on one stand were judged on forward tests of unr
 An agent may put the day LATER than the named one, and only with a source: a paper whose numbers
 were fitted up to a later day (`sources["params_fixed_at"]`, a citation that names something
 checkable like any other). Earlier is never allowed: the days between were not held out. A spec
-that selects causally (`selects_causally`) names its first choice instead and is left alone.
+that selects causally (`selects_causally`) names its first choice instead and is left alone; so does
+a spec that declares lists of values to choose among (`choice`, docs/ONE_CHECK.md): its check names
+its own first choice.
 
 Pure functions plus one file rewrite (`normalise_file`): code corrects an agent's date to the named
 one rather than throwing the spec away, and says so.
@@ -65,6 +67,10 @@ def check(spec, share: float | None = None) -> Fixation:
     named = named_date(spec.data.start, spec.data.end, share)
     given = spec.params_fixed_at
     if spec.selects_causally:  # names the wrapper's first choice, not a cut of the window
+        return Fixation(named, given, True)
+    if spec.choice is not None and spec.choice.lists:
+        # One idea, one check (docs/ONE_CHECK.md): the idea's check names its own first choice
+        # (`qlab.twin.first_choice`), so no day is named for the plain spec.
         return Fixation(named, given, True)
     if given is None:
         return Fixation(named, given, False,

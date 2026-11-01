@@ -124,6 +124,8 @@ class Reason(StrEnum):
     SECOND_VENUE_QUEUED = "second_venue_queued"
     # Added with the crash rules (2026-10-31):
     STAGE2_FAILED = "stage2_failed"
+    # Added with one idea, one check (2026-11-01, docs/ONE_CHECK.md):
+    NO_NEW_TWINS = "no_new_twins"
 
 
 REASON_RU: dict[Reason, str] = {
@@ -146,6 +148,7 @@ REASON_RU: dict[Reason, str] = {
     Reason.NO_VERSION_ON_VENUE: "нет версии на этой площадке",
     Reason.SECOND_VENUE_QUEUED: "вторая площадка не проводилась: стоит в очереди закрытых идей",
     Reason.STAGE2_FAILED: "не проводился: сбой",
+    Reason.NO_NEW_TWINS: "двойники больше не строятся: у идеи одна проверка",
 }
 
 STEP_KEYS = ("description", "binance", "hyperliquid", "money", "readings", "paper", "owner")
@@ -472,6 +475,9 @@ class Ledgers:
     """Card ideas named in `night/implement_queue.yaml`."""
     deferred_twins: frozenset[str] = frozenset()
     """Ideas the last night's twins stage did not reach (its nightly cap)."""
+    no_choice: Mapping[str, str] = field(default_factory=dict)
+    """Idea -> the words of its spec's `choice.nothing_to_choose` (docs/ONE_CHECK.md): the idea
+    declared that it has no list of values to choose among, and why."""
     money: Mapping[str, float] = field(default_factory=dict)
     """Idea -> `strategy_capital_usd` of its spec files (`specs/**/*.yaml`); an idea whose files
     state different sums, or none, is absent."""
@@ -536,6 +542,32 @@ def spec_money(spec_dir: Path) -> dict[str, float]:
     return {idea: next(iter(sums)) for idea, sums in seen.items() if len(sums) == 1}
 
 
+def spec_no_choice(spec_dir: Path) -> dict[str, str]:
+    """Idea -> why its spec says there is nothing to choose (`choice.nothing_to_choose`). Only the
+    files that contain the word are parsed: the page of an idea must not load 160 specs."""
+    out: dict[str, str] = {}
+    for path in sorted(spec_dir.rglob("*.yaml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "nothing_to_choose" not in text:
+            continue
+        raw = _yaml_text(text)
+        choice = raw.get("choice")
+        if raw.get("idea_id") and isinstance(choice, dict) and choice.get("nothing_to_choose"):
+            out[str(raw["idea_id"])] = str(choice["nothing_to_choose"])
+    return out
+
+
+def _yaml_text(text: str) -> dict:
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _independent() -> bool:
     from qlab.pipeline.stage2 import independent_venues
 
@@ -566,6 +598,7 @@ def load_ledgers(root: Path = Path(".")) -> Ledgers:
         implement=_json(root / "data" / "implement" / "ledger.json"),
         stage2_failures=_json(root / "data" / "stage2" / "failures.json"),
         queue=queue, deferred_twins=deferred, money=money, paper_books=held, spec_stems=stems,
+        no_choice=spec_no_choice(root / "specs"),
         stage1_survives=frozenset(stage2.get("stage1_survives") or DEFAULT_STAGE1_SURVIVES),
         independent=_independent(),
         anomaly_routes=frozenset((anomalies.get("scan") or {}).get("routes")
@@ -748,6 +781,13 @@ def _selects_by_code(spec: Spec | None) -> bool:
 def _blocker(session: Session, idea: Idea, ledgers: Ledgers) -> tuple[Reason, str]:
     """Why an idea with no run has none."""
     spec = _latest_spec(session, idea.id)
+    refused = ledgers.twins.get(idea.id)
+    if refused and idea.id in ledgers.spec_stems:
+        # the idea's check could not be made (docs/ONE_CHECK.md): the code's own words, in the
+        # closed list (too heavy for a night, no such coin on Binance, ...)
+        return twin_reason(str(refused.get("reason") or "")), (
+            "слова кода (запись " + str(refused.get("day") or "?") + "): "
+            + _short(str(refused.get("reason")), 300))
     if spec is not None or idea.id in ledgers.spec_stems:
         return Reason.WAITS_FOR_NIGHT, "спек записан, прогона ещё нет: его сделает ночь"
     rec = ledgers.implement.get(idea.id)
@@ -836,6 +876,10 @@ def _twin_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None
     if idea.status in (IdeaStatus.PAPER, IdeaStatus.LIVE):
         return _not_run(2, Reason.IN_PRODUCTION,
                         f"статус «{idea.status.value}»: двойников строят только идеям в работе")
+    if idea.id in ledgers.no_choice:
+        return _not_run(2, Reason.NO_CHOICE,
+                        "идея сама сказала, почему выбирать не из чего: "
+                        + _short(ledgers.no_choice[idea.id], 300))
     recorded = ledgers.twins.get(idea.id)
     if recorded:
         reason = twin_reason(str(recorded.get("reason") or ""))
@@ -847,8 +891,9 @@ def _twin_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None
     if idea.id in ledgers.deferred_twins:
         return _not_run(2, Reason.WAITS_FOR_NIGHT,
                         "двойник не уместился в ночной предел (4 новых за ночь)")
-    return _not_run(2, Reason.WAITS_FOR_NIGHT,
-                    "двойник ещё не рассматривался: идея ждёт проверки вперёд, очередь ночи")
+    return _not_run(2, Reason.NO_NEW_TWINS,
+                    "идея появилась до правила «одна идея — одна проверка» (владелец 2026-10-31): "
+                    "двойников ночь больше не строит, а своего списка значений у идеи нет")
 
 
 def _suffixed(step: Step, tail: str) -> Step:
@@ -880,11 +925,16 @@ def _steps23(session: Session, idea: Idea, own: _Run | None, spec: Spec | None,
     if own.venue == BINANCE:
         second = stage2_child(session, idea.id)
         run = None if second is None else _latest_run(session, second.id)
+        first = _from_run(session, 2, own)
+        if idea.id in ledgers.no_choice:
+            first = _suffixed(first, "; выбирать числам не из чего: "
+                              + _short(ledgers.no_choice[idea.id], 300)
+                              + " — судится после дня фиксации")
         if run is not None:
-            return (_from_run(session, 2, own),
+            return (first,
                     _from_run(session, 3, run, other=second.id,
                               prefix=f"второй этап «{second.id}»: "))
-        return _from_run(session, 2, own), _no_second_stage(session, idea, own, ledgers)
+        return first, _no_second_stage(session, idea, own, ledgers)
     return _twin_step(session, idea, own, spec, ledgers), _from_run(session, 3, own)
 
 

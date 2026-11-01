@@ -17,6 +17,13 @@ for the owner's decision.
 
 Paper does not judge profitability -- the stand does. The rule only says when
 a decision about the book may be taken; it never changes a status.
+
+**What goes to paper is the checked variant** (owner, 2026-10-31, docs/ONE_CHECK.md: one idea, one
+check). An idea is checked as ONE thing: the numbers it trades, or the lists code chooses among
+month by month. A book whose spec (`night/paper_books.yaml`, `spec`) is not what the idea's latest
+run judged -- other numbers, or fixed numbers where the check chose among a list -- is shown
+plainly (`checked_variant_note`): the owner must not read the check of one thing as the check of
+another.
 """
 
 from __future__ import annotations
@@ -58,6 +65,7 @@ PAPER_DIR = Path("data/paper")
 NIGHT_DIR = Path("data/night")
 
 RULE_TITLE = "Правило владельца: бумага не меньше 4–6 недель"
+NOT_CHECKED_TEXT = "внимание, книга торгует не то, что проверено"
 READY_TEXT = ("по правилу владельца книга готова к решению "
               "(бумага не судит о доходности — судит стенд)")
 
@@ -150,6 +158,9 @@ class PaperRule:
     weeks: float
     replay: str  # "match" | "mismatch" | "unknown"
     ready: bool
+    not_checked: str | None = None
+    """Plain words when the book trades numbers other than the ones the idea's check judged
+    (`checked_variant_note`); None when it trades the checked variant, or nothing can be told."""
 
     @property
     def whole_weeks(self) -> int:
@@ -164,7 +175,7 @@ class PaperRule:
             "first": self.first.isoformat(), "last": self.last.isoformat(),
             "weeks": round(self.weeks, 2), "whole_weeks": self.whole_weeks,
             "min_weeks": MIN_WEEKS, "max_weeks": MAX_WEEKS, "replay": self.replay,
-            "ready": self.ready, "text": rule_line(self),
+            "ready": self.ready, "not_checked": self.not_checked, "text": rule_line(self),
         }
 
 
@@ -188,6 +199,8 @@ def rule_line(rule: PaperRule) -> str:
     n = rule.whole_weeks
     text = (f"{rule.label}: на бумаге {n} {_weeks_word(n)} из минимум {MIN_WEEKS}–{MAX_WEEKS} "
             f"(с {rule.first:%d.%m.%Y}); {REPLAY_TEXT[rule.replay]}")
+    if rule.not_checked:
+        text += f"; {NOT_CHECKED_TEXT}: {rule.not_checked}"
     if rule.ready:
         return f"{text}; {READY_TEXT}"
     if rule.weeks >= MIN_WEEKS:
@@ -219,6 +232,56 @@ def replay_state(session: Session, idea_id: str, cfg: dict,
     return "unknown"
 
 
+def _flat(params: object, prefix: str = "") -> dict[str, object]:
+    if isinstance(params, dict):
+        out: dict[str, object] = {}
+        for key, item in params.items():
+            out.update(_flat(item, f"{prefix}.{key}" if prefix else str(key)))
+        return out
+    return {prefix: params}
+
+
+def _is_retune(code_ref: str) -> bool:
+    return str(code_ref).replace(".", ":").endswith("retune:Retune")
+
+
+def checked_variant_note(session: Session, idea_id: str, cfg: dict) -> str | None:
+    """Plain words when the book trades numbers other than the ones the idea's latest run judged,
+    else None (the same numbers, or nothing to compare: no run, no spec file).
+
+    The checked variant is what the stand ran: the idea's own numbers, or, for an idea that
+    declares lists (`qlab.one_check`), the chooser that picks among them month by month. A book
+    with FIXED numbers is never the chooser: it trades one value of the list."""
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.stages import latest_routed
+
+    path = cfg.get("spec")
+    routed = latest_routed(session, idea_id)
+    if not path or routed is None:
+        return None
+    try:
+        book = load_spec(Path(path))
+    except Exception:  # noqa: BLE001 - nothing to compare is not a finding
+        return None
+    checked = routed[1]
+    if str(checked.code_ref) == book.code_ref and dict(checked.params or {}) == book.params:
+        return None
+    if _is_retune(checked.code_ref) and not _is_retune(book.code_ref):
+        grid = (checked.params or {}).get("grid") or {}
+        axes = ", ".join(sorted(grid)) or "список значений"
+        return (f"стенд проверял выбор кода каждый месяц среди значений ({axes}), а книга "
+                "торгует одни фиксированные числа; это одно из значений списка, и проверено оно "
+                "только как часть выбора")
+    if _is_retune(checked.code_ref) != _is_retune(book.code_ref):
+        return "стенд проверял другую стратегию, чем та, что записана для книги"
+    left, right = _flat(dict(checked.params or {})), _flat(book.params)
+    differing = sorted(k for k in left.keys() | right.keys() if left.get(k) != right.get(k))
+    if not differing:
+        return None
+    shown = ", ".join(differing[:4]) + (" и другие" if len(differing) > 4 else "")
+    return f"числа книги отличаются от проверенных: {shown}"
+
+
 def paper_rule(session: Session, idea_id: str, cfg: dict, *, root: Path | None = None,
                replay_lines: list[str] | None = None) -> PaperRule | None:
     """One book's age and replay state; None when the book has no export yet."""
@@ -232,7 +295,8 @@ def paper_rule(session: Session, idea_id: str, cfg: dict, *, root: Path | None =
     replay = replay_state(session, idea_id, cfg, replay_lines)
     return PaperRule(idea_id=idea_id, label=cfg.get("label", idea_id), book=cfg["book"],
                      first=first, last=last, weeks=weeks, replay=replay,
-                     ready=weeks >= MIN_WEEKS and replay == "match")
+                     ready=weeks >= MIN_WEEKS and replay == "match",
+                     not_checked=checked_variant_note(session, idea_id, cfg))
 
 
 def paper_rules(session: Session, *, books: dict[str, dict] | None = None,
@@ -285,6 +349,7 @@ def paper_rule_for_idea(session: Session, idea_id: str, *, books: dict[str, dict
         return None
 
 
-__all__ = ["MAX_WEEKS", "MIN_REPLAY_DAYS", "MIN_WEEKS", "PaperRule", "ReplayFigures", "book_age",
-           "latest_export", "latest_replay_lines", "paper_rule", "paper_rule_for_idea",
-           "paper_rules", "parse_replay_lines", "report_lines", "rule_line"]
+__all__ = ["MAX_WEEKS", "MIN_REPLAY_DAYS", "MIN_WEEKS", "NOT_CHECKED_TEXT", "PaperRule",
+           "ReplayFigures", "book_age", "checked_variant_note", "latest_export",
+           "latest_replay_lines", "paper_rule", "paper_rule_for_idea", "paper_rules",
+           "parse_replay_lines", "report_lines", "rule_line"]

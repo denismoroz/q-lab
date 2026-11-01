@@ -26,12 +26,16 @@ CONFIG = stage2.Stage2Config(
                                                          "needs-forward"))
 
 
-def _spec(idea_id: str = "exp", source: str = "binance") -> StrategySpec:
+NOTHING = {"nothing_to_choose": "the fix has one value and no list the lab declares fits it"}
+
+
+def _spec(idea_id: str = "exp", source: str = "binance", choice: dict | None = NOTHING
+          ) -> StrategySpec:
     return StrategySpec.model_validate({
         "idea_id": idea_id, "title": idea_id, "code_ref": "a:b", "params": {"lookback": 14},
         "data": {"source": source, "interval": "1d", "start": "2025-01-01", "end": "2026-09-20"},
         "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
-        "unexpressed_mechanisms": []})
+        "unexpressed_mechanisms": [], "choice": choice})
 
 
 def _result(route: str = "needs-forward", trial_id: int = 41):
@@ -205,3 +209,86 @@ def test_an_experiments_fixation_day_is_named_by_code_before_it_runs(
     named = fixation.named_date(spec.data.start, spec.data.end, fixation.holdout_share())
     assert any("день фиксации назвал код" in line and str(named) in line for line in lines)
     assert load_spec(path).params_fixed_at == named
+
+
+# ---- one idea, one check (docs/ONE_CHECK.md) ------------------------------------------------
+
+
+def _with_lists(idea_id: str = "exp-l", source: str = "hyperliquid") -> StrategySpec:
+    return _spec(idea_id, source, choice={
+        "axes": {"rebalance_days": [1, 7]}, "source": "night/own_numbers.yaml"}).model_copy(
+        update={"params": {"lookback": 14, "rebalance_days": 1}})
+
+
+def test_an_experiment_with_neither_a_list_nor_a_reason_does_not_run(
+        tmp_path, stand, second) -> None:
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    lines = researcher.run_experiments(
+        memo, [_write(tmp_path, _spec("exp-bare", choice=None))], name="s", noise_trials=1)
+    assert stand == [] and second == []
+    assert "не запущен — у идеи один способ проверки, и он не объявлен" in "\n".join(lines)
+    assert "no list of values" in "\n".join(lines) or "не объявлен" in "\n".join(lines)
+
+
+def test_an_experiment_with_lists_runs_once_as_its_own_check_with_every_value_a_trial(
+        tmp_path, stand, second, monkeypatch) -> None:
+    from qlab import one_check
+
+    recorded: list[str] = []
+    monkeypatch.setattr(one_check, "record_candidates",
+                        lambda checked, session, ruleset: recorded.append(checked.idea_id)
+                        or [1, 2])
+    ran: list[StrategySpec] = []
+
+    def evaluate(spec, **kw):
+        ran.append(spec)
+        return types.SimpleNamespace(candidate=_result("needs-forward", 41))
+
+    monkeypatch.setattr("qlab.calibration.shape_aware.evaluate_spec_with_shape_aware_bar",
+                        evaluate)
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    lines = researcher.run_experiments(memo, [_write(tmp_path, _with_lists())], name="s",
+                                       noise_trials=1)
+    text = "\n".join(lines)
+    assert recorded == ["exp-l"]
+    (checked,) = ran  # ONE stand run, not the plain spec and then a twin
+    assert checked.idea_id == "exp-l" and checked.code_ref.endswith("retune:Retune")
+    assert checked.data.source == "binance"  # the file is on Hyperliquid; the check is not
+    assert [c["spec"].idea_id for c in second] == ["exp-l"]
+    assert second[0]["spec"].code_ref.endswith("retune:Retune")
+    assert "одна проверка" in text and "2 вариантами" in text and "exp-l-causal" not in text
+
+
+def test_an_experiment_with_nothing_to_choose_runs_as_written_and_says_so(
+        tmp_path, stand, second) -> None:
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    lines = researcher.run_experiments(memo, [_write(tmp_path, _spec("exp-n"))], name="s",
+                                       noise_trials=1)
+    assert stand == ["exp-n"] and "выбирать не из чего" in "\n".join(lines)
+
+
+def test_a_check_too_heavy_for_a_night_is_named_and_written_to_the_ledger(
+        tmp_path, stand, second, monkeypatch) -> None:
+    from qlab import one_check
+
+    monkeypatch.setattr(one_check, "_heavy", lambda spec: "hourly candles of every perpetual")
+    monkeypatch.setattr(one_check, "note_refusal",
+                        lambda idea, reason, path, **kw: kept.append((idea, reason)))
+    kept: list[tuple] = []
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    lines = researcher.run_experiments(memo, [_write(tmp_path, _with_lists())], name="s",
+                                       noise_trials=1)
+    assert stand == [] and kept == [("exp-l", "hourly candles of every perpetual")]
+    assert "слишком тяжёлые для одной ночи" in "\n".join(lines)
+    assert "--allow-heavy" in "\n".join(lines)
+
+
+def test_the_researcher_is_told_to_declare_lists_and_not_to_write_a_twin() -> None:
+    text = researcher.INSTRUCTIONS
+    assert "ONE IDEA, ONE CHECK" in text and "choice:" in text and "nothing_to_choose" in text
+    assert "docs/ONE_CHECK.md" in text
+    assert "offer it as a grid" not in text and "selects_causally: true" not in text

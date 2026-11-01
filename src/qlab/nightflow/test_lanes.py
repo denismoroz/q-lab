@@ -80,8 +80,8 @@ def test_the_shipped_table_puts_every_step_in_a_lane_and_the_agents_in_one() -> 
     assert lanes["checks"] == ["paper", "decay", "allocation"]
     # the owner's order of the calculations lane, and the steps that write ideas stay in it
     assert lanes["calc"][:3] == ["detectors", "recheck", "waiting"]
-    assert {"twins", "twins-research", "restamp", "overlays", "second_venue",
-            "anomalies"} <= set(lanes["calc"])
+    assert {"twins", "restamp", "overlays", "second_venue", "anomalies"} <= set(lanes["calc"])
+    assert "twins-research" not in table.ids  # one idea, one check (docs/ONE_CHECK.md)
 
 
 def test_the_ladder_and_the_report_wait_for_every_other_step() -> None:
@@ -963,7 +963,7 @@ def test_the_page_gets_each_steps_lane_and_the_lanes_in_order() -> None:
     from qlab.api.pipeline import _step_json
 
     table = load_table()
-    detail = _step_json(table, "twins-research")
+    detail = _step_json(table, "twins")
     assert detail["lane"] == "calc"
     together = detail["can_run_with_in_lanes"]  # the checks and the later agents, not its own lane
     assert "decay" in together and "implement" in together

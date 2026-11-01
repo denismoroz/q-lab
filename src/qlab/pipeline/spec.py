@@ -166,6 +166,62 @@ class OwnMechanism(BaseModel):
         return self
 
 
+class Choice(BaseModel):
+    """What the idea's one check chooses between, declared before any run (docs/ONE_CHECK.md).
+
+    Owner, 2026-10-31, on the causal twin that doubled every idea: «не уверен что нам нужна вот
+    такая дубликация. поидее просто для стратегии достаточна проверка. так мы гоняем все 2х хотя
+    все равно судим по двойнику». An idea is one idea with ONE check: the numbers it leaves open
+    are a declared list, code chooses among the values every month from the past only
+    (`qlab.strategies.retune.Retune`), and the verdict comes at once on the whole history
+    (`qlab.one_check`). Exactly one of the three is given:
+
+    - `axes`: a parameter path -> the WHOLE list of its values (the product of the lists is the
+      grid). The spec's own `params` carry the FIRST value of every list.
+    - `candidates`: named sets of overrides (a card's named variants).
+    - `nothing_to_choose`: the reason there is no list. The idea is then judged after its
+      fixation date, as an idea always was, and the page says why.
+
+    `source` is where the lists come from: `night/own_numbers.yaml` (the lab's declared lists) or
+    the file that holds the sourced values (the catalogue row, the card). Every value must
+    literally stand in the cited file (`qlab.pipeline.sources.choice_problems`)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    axes: dict[str, list[int | float]] = Field(default_factory=dict)
+    candidates: dict[str, dict[str, object]] = Field(default_factory=dict)
+    source: str = ""
+    nothing_to_choose: str | None = None
+
+    @model_validator(mode="after")
+    def _one_of_three(self) -> Choice:
+        given = [name for name in ("axes", "candidates") if getattr(self, name)]
+        if self.nothing_to_choose is not None:
+            given.append("nothing_to_choose")
+        if len(given) != 1:
+            raise ValueError("choice: give exactly one of axes, candidates or nothing_to_choose "
+                             f"(got {', '.join(given) or 'none'})")
+        if self.nothing_to_choose is not None:
+            if len(self.nothing_to_choose.strip()) < 20:
+                raise ValueError("choice.nothing_to_choose must say why in a sentence")
+            return self
+        if not self.source.strip():
+            raise ValueError("choice: a list of values needs `source`: where the values come from")
+        for path, values in self.axes.items():
+            if len(values) < 2 or len(set(values)) != len(values):
+                raise ValueError(f"choice.axes.{path}: at least two different values")
+            if any(isinstance(v, bool) for v in values):
+                raise ValueError(f"choice.axes.{path}: numbers only")
+        if self.candidates and len(self.candidates) < 2:
+            raise ValueError("choice.candidates: at least two variants to choose between")
+        return self
+
+    @property
+    def lists(self) -> bool:
+        """Whether the idea declares values to choose among (not a reason for having none)."""
+        return self.nothing_to_choose is None
+
+
 class StrategySpec(BaseModel):
     """One strategy spec, as formalized in a `<spec>.yaml` file.
 
@@ -396,6 +452,12 @@ class StrategySpec(BaseModel):
                 raise ValueError(f"unknown claim {word!r} (earns, loses, beats_market)")
         return value
 
+    choice: Choice | None = None
+    """What the idea's ONE check chooses between, or why there is nothing to choose
+    (`Choice`, `qlab.one_check`, docs/ONE_CHECK.md). `None`: an idea that existed before the
+    one-check rule, judged as it always was. A new idea of the researcher, the generator or the
+    implementer is refused without it."""
+
     review_answers: dict[str, str] = Field(default_factory=dict)
     """Answers to the reviewer agent's findings (docs/REVIEWER.md): finding
     summary -> why it is not a gap in this implementation. An accepted
@@ -558,4 +620,4 @@ def load_spec(path: Path | str) -> StrategySpec:
     return StrategySpec.model_validate(raw)
 
 
-__all__ = ["SpecCosts", "SpecData", "StrategySpec", "load_spec"]
+__all__ = ["Choice", "SpecCosts", "SpecData", "StrategySpec", "load_spec"]
