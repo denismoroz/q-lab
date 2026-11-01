@@ -82,8 +82,11 @@ def _spec_text(*, idea_id: str = "gen-xs-reversal", code_ref: str = gen.CODE_REF
                lookback: int | float = 7, mechanism: str | None = "xs-reversal-1w",
                signal_source: str | None = None, unexpressed: str = "[]",
                taker_fee: float = 5.0, end: date = DATA_END,
-               params_fixed_at: str | None = "named") -> str:
+               params_fixed_at: str | None = "named", choice: str | None = "nothing") -> str:
     header = f"# mechanism: {mechanism}\n" if mechanism else "# no header\n"
+    if choice == "nothing":  # one idea, one check (docs/ONE_CHECK.md): the reason for no list
+        choice = ("choice:\n  nothing_to_choose: the fixture takes one value of every row and "
+                  "does not choose among them\n")
     if params_fixed_at == "named":  # the day the code names: the start of the last third
         params_fixed_at = fixation.named_date(date(2019, 9, 8), end, 1 / 3).isoformat()
     fixed = (f"params_fixed_at: {params_fixed_at}\n"
@@ -122,7 +125,7 @@ min_leg_notional: 10.0
 simultaneous_legs: 1
 noise_universe: panel
 unexpressed_mechanisms: {unexpressed}
-{fixed}sources:
+{choice or ""}{fixed}sources:
   universe: "docs/MECHANISMS.md, mechanism xs-reversal-1w, rows universe.n, universe.window_days"
   signal: "{signal_source}"
   portfolio: "docs/MECHANISMS.md, mechanism xs-reversal-1w, row portfolio.top_n (Author 2020)"
@@ -142,9 +145,10 @@ def repo(tmp_path, monkeypatch):
     (root / "docs").mkdir(parents=True)
     (root / "docs" / "MECHANISMS.md").write_text(CATALOGUE_TEXT, encoding="utf-8")
     (root / "night").mkdir()  # the cost table, which the specs' costs cite
-    (root / "night" / "costs.yaml").write_text(
-        (Path(__file__).resolve().parents[3] / "night" / "costs.yaml").read_text(encoding="utf-8"),
-        encoding="utf-8")
+    for name in ("costs.yaml", "own_numbers.yaml"):
+        (root / "night" / name).write_text(
+            (Path(__file__).resolve().parents[3] / "night" / name).read_text(encoding="utf-8"),
+            encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
@@ -616,7 +620,7 @@ def test_run_second_stage_stores_the_step_as_a_dict_on_the_result(monkeypatch) -
                                    route="reject", trial_id=12)
 
     monkeypatch.setattr(stage2, "run_stage2", fake)
-    item = types.SimpleNamespace(spec=types.SimpleNamespace(idea_id="gen-a"))
+    item = types.SimpleNamespace(spec=types.SimpleNamespace(idea_id="gen-a", choice=None))
     result = gen.GeneratedResult(idea_id="gen-a", mechanism="m", spec_path="p", trial_id=9,
                                  route="paper")
     gen.run_second_stage(item, result, noise_trials=7)
@@ -775,3 +779,157 @@ def test_without_directions_the_generator_is_unchanged(
     outcome = gen.generate(budget=ExplicitNoBudget("test"), session=session, data_end=DATA_END)
     assert "research director" not in args_file.read_text()
     assert [a.spec.idea_id for a in outcome.accepted] == ["gen-good"]
+
+
+# ---- one idea, one check (docs/ONE_CHECK.md) -------------------------------------------------
+
+ROW = ("docs/MECHANISMS.md, mechanism xs-reversal-1w, row signal.lookback_days: 7, 14, 28 "
+       "(Author 2020)")
+
+
+def _lists(axes: str, source: str = ROW) -> str:
+    return f"choice:\n  axes:\n{axes}  source: \"{source}\"\n"
+
+
+def test_a_spec_with_neither_a_list_nor_a_reason_is_rejected(repo) -> None:
+    _, problems = _check(repo, _spec_text(choice=None))
+    assert any("declares no list of values" in p for p in problems)
+
+
+def test_a_reason_for_having_no_list_is_enough_for_a_spec_to_pass(repo) -> None:
+    item, problems = _check(repo, _spec_text())
+    assert problems == [] and item.spec.choice.nothing_to_choose.startswith("the fixture")
+
+
+def test_the_whole_row_of_the_catalogue_is_a_list_the_code_may_choose_among(repo) -> None:
+    item, problems = _check(repo, _spec_text(
+        choice=_lists("    signal.lookback_days: [7, 14, 28]\n")))
+    assert problems == []
+    assert item.spec.choice.axes == {"signal.lookback_days": [7, 14, 28]}
+
+
+def test_a_part_of_a_row_or_a_value_outside_it_is_not_the_catalogues_list(repo) -> None:
+    _, subset = _check(repo, _spec_text(choice=_lists("    signal.lookback_days: [7, 14]\n")))
+    assert any("whole row" in p and "28" in p for p in subset)
+    _, outside = _check(repo, _spec_text(choice=_lists("    signal.lookback_days: [7, 14, 30]\n")))
+    assert any("[30]" in p and "not among the catalogue's values" in p for p in outside)
+    _, uncited = _check(repo, _spec_text(choice=_lists(
+        "    signal.lookback_days: [7, 14, 28]\n", source="night/costs.yaml")))
+    assert any("must cite docs/MECHANISMS.md" in p for p in uncited)
+
+
+def test_a_number_the_catalogue_has_no_row_for_is_the_labs_own_list_whole(repo) -> None:
+    text = _spec_text(choice=_lists(
+        "    signal.window_days: [3, 7, 14, 30]\n",
+        source="night/own_numbers.yaml, docs/MECHANISMS.md")).replace(
+        "    block: reversal\n", "    block: reversal\n    window_days: 3\n", 1).replace(
+        "sources:\n", "sources:\n  signal.window_days: \"night/own_numbers.yaml, the declared "
+        "list for signal.window_days; owner 2026-10-26\"\n", 1)
+    item, problems = _check(repo, text)
+    assert problems == [], problems
+    subset = text.replace("[3, 7, 14, 30]", "[3, 7]")
+    _, found = _check(repo, subset, name="gen-xs-reversal")
+    assert any("whole list" in p for p in found)
+
+
+def test_a_list_inside_params_is_the_old_way_and_is_rejected(repo) -> None:
+    text = _spec_text(choice=None).replace("    lookback_days: 7\n",
+                                           "    lookback_days: [7, 14, 28]\n", 1)
+    _, problems = _check(repo, text)
+    assert any("`choice.axes` now" in p or "choice.axes" in p for p in problems)
+
+
+def test_a_spec_with_lists_needs_no_fixation_day(repo) -> None:
+    item, problems = _check(repo, _spec_text(
+        choice=_lists("    signal.lookback_days: [7, 14, 28]\n"), params_fixed_at=None))
+    assert problems == [], problems
+
+
+def test_the_stand_runs_the_idea_as_its_one_check_under_its_own_name(
+        repo, monkeypatch, tmp_path) -> None:
+    import qlab.calibration.shape_aware as shape_aware
+    import qlab.registry.db as db_module
+    from qlab import one_check
+    from qlab.registry.db import session_scope
+    from qlab.registry.models import Idea
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    Base.metadata.create_all(db_module.get_engine())
+    item, problems = _check(repo, _spec_text(
+        choice=_lists("    signal.lookback_days: [7, 14, 28]\n"), params_fixed_at=None))
+    assert problems == []
+    recorded = []
+    monkeypatch.setattr(one_check, "record_candidates",
+                        lambda checked, session, ruleset: recorded.append(checked.idea_id)
+                        or [1, 2, 3])
+    evaluated, second = [], []
+
+    class _Out:
+        class candidate:  # noqa: N801 - a stand's result, as a bag
+            trial_id = 88
+            metrics = {"ann_return_net": 0.1}
+
+            class routing:  # noqa: N801
+                route = "needs-forward"
+                reason = "waiting"
+
+    monkeypatch.setattr(shape_aware, "evaluate_spec_with_shape_aware_bar",
+                        lambda spec, **kw: evaluated.append(spec) or _Out())
+    monkeypatch.setattr(stage2, "run_stage2", lambda spec, **kw: second.append(spec)
+                        or stage2.Stage2Result(parent_id=spec.idea_id, idea_id="x-hl",
+                                               stage1_route=kw["stage1_route"], status="skipped",
+                                               skipped="stub"))
+    (result,) = gen.run_generated([item], noise_trials=5)
+    assert result.error is None and result.candidate_trials == [1, 2, 3]
+    assert recorded == ["gen-xs-reversal"]
+    (ran,) = evaluated
+    assert ran.idea_id == "gen-xs-reversal" and ran.code_ref.endswith("retune:Retune")
+    assert ran.data.source == "binance" and ran.selects_causally
+    assert [s.idea_id for s in second] == ["gen-xs-reversal"]
+    assert second[0].code_ref.endswith("retune:Retune")  # the check goes to Hyperliquid whole
+    assert result.candidates == ["lookback_days=7", "lookback_days=14", "lookback_days=28"]
+    line = gen.result_line(result)
+    assert "одна проверка" in line and "3 вариантами" in line
+    with session_scope() as session:
+        assert session.get(Idea, "gen-xs-reversal") is not None
+        assert session.get(Idea, "gen-xs-reversal-causal") is None
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_an_idea_with_nothing_to_choose_runs_as_written(repo, monkeypatch, tmp_path) -> None:
+    import qlab.calibration.shape_aware as shape_aware
+    import qlab.registry.db as db_module
+    from qlab import one_check
+
+    monkeypatch.setenv("QLAB_DB", str(tmp_path / "qlab.db"))
+    monkeypatch.setattr(db_module, "_engine", None)
+    monkeypatch.setattr(db_module, "_SessionLocal", None)
+    Base.metadata.create_all(db_module.get_engine())
+    item, problems = _check(repo, _spec_text())
+    assert problems == []
+    monkeypatch.setattr(one_check, "record_candidates",
+                        lambda *a, **k: pytest.fail("no value of a list to record"))
+    evaluated = []
+
+    class _Out:
+        class candidate:  # noqa: N801
+            trial_id = 5
+            metrics = {}
+
+            class routing:  # noqa: N801
+                route = "needs-forward"
+                reason = "waiting"
+
+    monkeypatch.setattr(shape_aware, "evaluate_spec_with_shape_aware_bar",
+                        lambda spec, **kw: evaluated.append(spec) or _Out())
+    monkeypatch.setattr(stage2, "run_stage2", lambda spec, **kw: stage2.Stage2Result(
+        parent_id=spec.idea_id, idea_id="x-hl", stage1_route=kw["stage1_route"],
+        status="skipped", skipped="stub"))
+    (result,) = gen.run_generated([item], noise_trials=5)
+    assert evaluated[0] is item.spec and result.nothing_to_choose.startswith("the fixture")
+    assert "выбирать не из чего" in gen.result_line(result)
+    db_module._engine = None
+    db_module._SessionLocal = None

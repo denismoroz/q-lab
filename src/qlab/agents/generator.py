@@ -27,13 +27,15 @@ nothing. Code then guards what it wrote and runs what passes:
    researcher's experiments (matched noise, every rule); a spec that fails a
    guard is reported and not run. Every run writes its trial.
 
-Two ways past a paper that gives no number (owner, 2026-10-26, «Разрешить с этими четырьмя
-ограничениями ... - еще я бы довавил правило - придумать свой механизм основываясь на
-идее»; `qlab.own_numbers`, docs/OWN_NUMBERS.md): a parameter the mechanism's row leaves
-empty may be left OPEN -- given as the whole list `night/own_numbers.yaml` declares for it,
-chosen by code on data before the cut and judged after it, every value a trial; and a spec
-may carry `# mechanism: own` with `own_mechanism` (the idea, why it should earn, where it came
-from) when no catalogue mechanism expresses the idea -- all its numbers are then open ones.
+One idea, one check (owner, 2026-10-31, docs/ONE_CHECK.md): a spec declares in `choice` the lists of
+values it leaves open -- the several values a mechanism's row gives, or, where the row is empty,
+the whole list `night/own_numbers.yaml` declares (owner, 2026-10-26, «Разрешить с этими
+четырьмя ограничениями ... - еще я бы довавил правило - придумать свой механизм основываясь на
+идее»; `qlab.own_numbers`, docs/OWN_NUMBERS.md) -- or says why there is nothing to choose.
+Code chooses among the values every month from the past only and judges at once on Binance's
+whole history (`qlab.one_check`); every value is a trial. A spec may also carry `# mechanism:
+own` with `own_mechanism` (the idea, why it should earn, where it came from) when no catalogue
+mechanism expresses the idea -- all its numbers are then lists of the lab's own values.
 
 The research director (`qlab.agents.director`) may steer the generator through
 `night/directions.yaml`: the mechanisms it prefers are named in the instructions,
@@ -319,7 +321,7 @@ def _catalogue_citation_problems(spec, mechanism: Mechanism | None, catalogue_pa
         if own:
             if not _in(numbers[0], FRAMEWORK_VALUES.get(path, ())) or len(numbers) != 1:
                 problems.append(f"{path} = {value!r}: an own mechanism takes its numbers from "
-                                "night/own_numbers.yaml (left open) or the framework values only")
+                                "night/own_numbers.yaml (choice.axes) or the framework values only")
             continue
         if str(catalogue_path) not in citation:
             problems.append(f"{path} = {value!r} does not cite {catalogue_path}: the numbers come "
@@ -422,13 +424,16 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
     if (other := (other_params or {}).get(key)) is not None and other != spec.idea_id:
         problems.append(f"same params as the already existing {other}")
 
-    from qlab import own_numbers
+    from qlab import one_check, own_numbers
 
     own_config = own_numbers.load_config()
-    opened = own_numbers.open_params(spec)
-    problems += own_numbers.problems(spec, own_config)
+    # One idea, one check (docs/ONE_CHECK.md): the idea declares the lists code chooses among, or
+    # says why there is nothing to choose; either way before the stand sees it.
+    problems += one_check.declaration_problems(spec)
+    opened = _own_axes(spec, mechanism, own_config, problems, catalogue_path)
     if own and not opened:
-        problems.append("an own mechanism leaves its numbers open (night/own_numbers.yaml)")
+        problems.append("an own mechanism leaves its numbers open: `choice.axes` with the lists of "
+                        "night/own_numbers.yaml")
     own_values = tuple(float(v) for vs in (own_config.get("lists") or {}).values() for v in vs)
     catalogue_text = _abs(catalogue_path).read_text(encoding="utf-8")
     problems += _catalogue_citation_problems(
@@ -436,6 +441,54 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
         own_values=own_values if opened else (), own=own)
     problems += [f"source: {p}" for p in source_problems(spec)]
     return GeneratedSpec(path=path, spec=spec, mechanism=mechanism_id or ""), problems
+
+
+def _own_axes(spec, mechanism: Mechanism | None, own_config: Mapping, problems: list[str],
+              catalogue_path: Path) -> dict[str, list[float]]:
+    """The axes of the spec's `choice` that code chooses among, checked against the catalogue.
+
+    An axis whose parameter the mechanism's table gives values for is those values (the whole row,
+    or, for a row in percent that also reads as shares, values of the row), cited to the catalogue.
+    An axis whose row is absent or empty is the WHOLE list `night/own_numbers.yaml` declares for
+    it (owner, 2026-10-26: the lab's own numbers only where no paper gives one), cited to that file.
+    Returns the second kind -- the open parameters -- keyed by path; problems are appended."""
+    choice = spec.choice
+    if choice is None or not choice.lists:
+        return {}
+    from qlab.own_numbers import CONFIG
+
+    rows: dict[str, list[ParamRow]] = {}
+    for r in (mechanism.params if mechanism else ()):
+        rows.setdefault(r.param, []).append(r)
+    declared = own_config.get("lists") or {}
+    opened: dict[str, list[float]] = {}
+    for path, values in choice.axes.items():
+        row_values = [v for r in rows.get(path, []) for v in r.values]
+        if row_values:
+            if str(catalogue_path) not in choice.source:
+                problems.append(f"choice.axes.{path}: sourced from the catalogue row, so "
+                                f"choice.source must cite {catalogue_path}")
+            off = [v for v in values if not _in(float(v), row_values)]
+            if off:
+                given = "; ".join(r.values_text for r in rows[path])
+                problems.append(f"choice.axes.{path}: {off} is not among the catalogue's values "
+                                f"for it in {mechanism.id} ({given})")
+            percent = any("%" in r.values_text for r in rows[path])
+            missing = [v for v in row_values if not _in(v, [float(x) for x in values])]
+            if not off and missing and not percent:
+                problems.append(f"choice.axes.{path}: the list must be the whole row of the "
+                                f"catalogue ({'; '.join(r.values_text for r in rows[path])}), "
+                                f"missing {missing}")
+            continue
+        opened[path] = [float(v) for v in values]
+        if str(CONFIG) not in choice.source:
+            problems.append(f"choice.axes.{path}: the catalogue gives no values for it, so it is "
+                            f"an own number: choice.source must cite {CONFIG}")
+        if path not in declared or sorted(float(v) for v in declared[path]) != sorted(
+                float(v) for v in values):
+            problems.append(f"choice.axes.{path} = {list(values)}: must be the whole list "
+                            f"{declared.get(path)} of {CONFIG}, not a choice from it")
+    return opened
 
 
 # --------------------------------------------------------------------------
@@ -495,6 +548,7 @@ Shape of each spec (comments allowed; the first line is mandatory):
                                   выражают» lists anything (e.g. the paper weights by market
                                   cap and you use equal weights): one short item per
                                   difference, in plain words. A spec without it is rejected.
+  choice:                                  (see ONE IDEA, ONE CHECK below)
   params_fixed_at / params_fixed_evidence   (see below)
   sources: ...
 
@@ -557,25 +611,45 @@ Rules:
   last third of the window". You may write a LATER day only with a source: a catalogue source
   whose numbers were fitted on a sample that ended after the named day, cited under
   sources.params_fixed_at (the paper, its sample end). Never an earlier day, never omit it, and
-  never {today}: code corrects an earlier or missing day to the named one and says so.
+  never {today}: code corrects an earlier or missing day to the named one and says so. (This is for
+  a spec with `choice.nothing_to_choose`; a spec with lists names its first choice itself.)
 
-Two ways past a paper that gives no number (owner, 2026-10-26):
-- OPEN NUMBERS. Where the chosen mechanism's row for a parameter is ABSENT or EMPTY ("—"), you
-  may leave that parameter open: write the WHOLE list {own_numbers} declares for it, as a YAML
-  list (e.g. `window_days: [3, 7, 14, 30]`), and cite it as "{own_numbers}, the declared list
-  for <path>; owner 2026-10-26". Never a subset, never a list for a parameter the row gives
-  values for, never a parameter {own_numbers} has no list for. The product of the open lists'
-  lengths may not exceed its max_candidates. Code chooses the value on data before the cut and
-  judges only after it; every value is a trial. min_history_days may then be "derived: <the
-  longest open window>; ..." with an operand from the open list.
-- AN OWN MECHANISM. If an idea is worth a trial but no catalogue mechanism expresses it, write
-  the first line `# mechanism: {own}` and the field
+ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). A spec does not get a
+"twin" and you do not write a causal wrapper. It declares up front the values of the numbers it
+leaves open, in a `choice` block; code chooses among them every month from the past only and
+judges at once on Binance's whole history. `params` holds the FIRST value of every list. There are
+three kinds of axis, and only these:
+- A parameter whose row in the mechanism's table gives SEVERAL values: the axis is that row's
+  values (the whole row; for a row in percent that reads as shares, any of its values), e.g.
+    choice:
+      axes:
+        signal.lookback_days: [7, 14, 28]
+      source: "{catalogue}, mechanism <id>, row signal.lookback_days: 7, 14, 28 (Author Year)"
+  The catalogue must be cited, and every value must appear in it literally.
+- A parameter whose row is ABSENT or EMPTY ("—"): the lab's own numbers. Write the WHOLE list
+  {own_numbers} declares for it (e.g. `window_days: [3, 7, 14, 30]`), never a subset, never a
+  list for a parameter the row gives values for, never a parameter {own_numbers} has no list for;
+  cite {own_numbers} in `source` (several files may be cited together: the catalogue for the
+  first kind, {own_numbers} for this). min_history_days may then be "derived: <the longest
+  window>; ..." with an operand from a list.
+- No list at all: only when nothing can be chosen -- every parameter has exactly one value in its
+  row and {own_numbers} declares nothing for the others -- and then you SAY WHY, in a sentence:
+    choice:
+      nothing_to_choose: "<why the catalogue gives one value for every number this spec uses>"
+  Such a spec is judged after its fixation date, as before, and the page shows your sentence.
+The product of the lists' lengths may not exceed max_candidates of {own_numbers}; every value is a
+trial of its own, so a long list raises the bar the best of them has to clear. A spec with no
+`choice` block is rejected. For a spec with lists leave out params_fixed_at and
+params_fixed_evidence: its check names its own first choice.
+
+AN OWN MECHANISM. If an idea is worth a trial but no catalogue mechanism expresses it, write
+the first line `# mechanism: {own}` and the field
     own_mechanism:
       idea: <what it buys and sells, and when -- a sentence or more>
       why: <why it should earn: who pays, which risk or behaviour -- a sentence or more>
       idea_from: <where it came from: an owner's idea in night/research.yaml, a publication of
                   the feed (data/publications/), a catalogue mechanism it varies, a report>
-  Its numbers are ALL open ones (lists of {own_numbers}) or the framework's sizing.gross 1;
+  Its numbers are ALL lists of {own_numbers} (in `choice.axes`) or the framework's sizing.gross 1;
   no catalogue number, since no paper backs this mechanism. At most {max_own} such spec per
   run. differs_from_source stays empty.
 
@@ -745,11 +819,16 @@ class GeneratedResult:
     metrics: dict = field(default_factory=dict)
     error: str | None = None
     candidate_trials: list[int] = field(default_factory=list)
-    """Trials of the values an open parameter could take (qlab.own_numbers), one each."""
+    """Trials of the values the idea's lists declare (`qlab.one_check`), one each."""
+    candidates: list[str] = field(default_factory=list)
+    """Names of the values code chooses among, month by month, in the idea's one check."""
     cut: str | None = None
-    """Where an open parameter's value was chosen; the verdict is on the days from it."""
+    """The day of the check's first choice: the verdict is on the days from it."""
     chosen: dict | None = None
-    """The params of the value chosen at the cut: what the second stage carries."""
+    """Kept for results recorded before the one-check rule (`qlab.own_numbers`, one choice at a
+    cut): the params chosen then. Not set any more."""
+    nothing_to_choose: str | None = None
+    """The idea's own words for why it declares no list: it is judged after its fixation date."""
     stage2: dict | None = None
     """The second stage (`qlab.pipeline.stage2.Stage2Result` as a dict): the same
     mechanism on Hyperliquid, run when this stage-1 result survived. None before it
@@ -759,17 +838,16 @@ class GeneratedResult:
 def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_trials: int) -> None:
     """The idea's second stage, from its stage-1 `result` (docs/TWO_STAGE.md): code
     only, no agent call, no tokens -- so it needs no budget. Sets `result.stage2`;
-    a failure is in it as `status == "error"`, never raised."""
+    a failure is in it as `status == "error"`, never raised. An idea that declares lists goes
+    to Hyperliquid as its one check, the lists chosen month by month there as on Binance."""
     from dataclasses import asdict
 
-    from qlab import own_numbers
+    from qlab import one_check
     from qlab.pipeline.stage2 import run_stage2
 
     spec = item.spec
-    if result.cut is not None:  # the spec left numbers open (qlab.own_numbers)
-        if not result.chosen:  # nothing was chosen at the cut: nothing to carry over
-            return
-        spec = own_numbers.fixed_at_choice(spec, result.chosen, date.fromisoformat(result.cut))
+    if one_check.declares_lists(spec):
+        spec = one_check.rerun_form(spec)
     result.stage2 = asdict(run_stage2(
         spec, stage1_route=result.route, stage1_trial_id=result.trial_id,
         noise_trials=noise_trials))
@@ -777,8 +855,10 @@ def run_second_stage(item: GeneratedSpec, result: GeneratedResult, *, noise_tria
 
 def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200) -> GeneratedResult:
     """One generated spec on the stand in its own transaction (matched noise,
-    every rule, the trial written like every stand run's)."""
-    from qlab import own_numbers
+    every rule, the trial written like every stand run's). It is one idea with one check
+    (`qlab.one_check`): every value of its lists is a trial, then the idea itself runs as the
+    form that chooses among them month by month, and the verdict is on Binance's whole history."""
+    from qlab import one_check
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.registry import repo
     from qlab.registry.db import session_scope
@@ -797,17 +877,18 @@ def run_generated_one(item: GeneratedSpec, *, noise_trials: int = 200) -> Genera
                 repo.upsert_idea(
                     session, id=spec.idea_id, title=spec.title, source_type=SourceType.INTERNAL,
                     asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER, notes=notes)
-            if own_numbers.open_params(spec):
-                # Open numbers (qlab.own_numbers): every value a trial of its own, then the
-                # spec that chooses one at the cut and is judged after it.
-                config = own_numbers.load_config()
-                result.candidate_trials = own_numbers.record_candidates(
-                    spec, session, load_latest())
-                spec = own_numbers.to_retune(spec, config)
-                result.cut = spec.params_fixed_at.isoformat()
-                result.chosen = own_numbers.chosen_params(spec, session)
+                session.flush()
+            prepared = one_check.prepare(spec, session, load_latest(), spec_path=item.path)
+            result.candidate_trials = list(prepared.candidate_trials)
+            result.candidates = list(prepared.candidates)
+            result.nothing_to_choose = prepared.reason
+            if prepared.first_choice is not None:
+                result.cut = prepared.first_choice.isoformat()
+            if prepared.heavy:
+                raise one_check.OneCheckRefused(prepared.heavy)
             out = evaluate_spec_with_shape_aware_bar(
-                spec, session=session, ruleset=load_latest(), n_trials=noise_trials).candidate
+                prepared.spec, session=session, ruleset=load_latest(),
+                n_trials=noise_trials).candidate
             result.trial_id = out.trial_id
             result.route = str(out.routing.route)
             result.reason = out.routing.reason
@@ -844,7 +925,13 @@ def result_line(r: GeneratedResult) -> str:
         return f"`{r.idea_id}`: прогон упал — {r.error}"
     m = r.metrics
     own = ""
-    if r.candidate_trials:
+    if r.candidates:
+        own = (f" [одна проверка: код выбирает раз в месяц по прошлому между {len(r.candidates)} "
+               f"вариантами, каждый записан отдельным испытанием; вердикт на всей истории, с "
+               f"{r.cut}]")
+    elif r.nothing_to_choose:
+        own = f" [выбирать не из чего: {r.nothing_to_choose}; судится после дня фиксации]"
+    elif r.candidate_trials:
         own = (f" [свои числа: {len(r.candidate_trials)} вариантов записаны отдельными "
                f"испытаниями, выбор на данных до {r.cut}, вердикт — по дням с него]")
     # The numbers are on the strategy's own money (docs/CAPITAL_BASE.md), the stand's small beside.

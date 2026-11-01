@@ -283,3 +283,87 @@ def test_russian_plurals_of_weeks() -> None:
     words = [paper_rule._weeks_word(n) for n in (0, 1, 2, 4, 5, 11, 12, 21, 22)]
     assert words == ["недель", "неделя", "недели", "недели", "недель", "недель", "недель",
                      "неделя", "недели"]
+
+
+# ---- what goes to paper is the checked variant (docs/ONE_CHECK.md) ----------------------------
+
+
+def _book_spec(tmp_path, *, code_ref: str, params: dict) -> Path:
+    import yaml
+
+    path = tmp_path / "book-spec.yaml"
+    path.write_text(yaml.safe_dump({
+        "idea_id": "bv2-a", "title": "x", "code_ref": code_ref, "params": params,
+        "data": {"source": "hyperliquid", "interval": "1h", "start": "2025-01-01",
+                 "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+        "unexpressed_mechanisms": []}), encoding="utf-8")
+    return path
+
+
+def _checked_run(session, *, code_ref: str, params: dict) -> None:
+    from qlab.registry.models import TrialRoute, TrialSource, TrialStatus
+
+    spec = repo.add_spec(session, idea_id="bv2-a", version=1, params=params,
+                         data_requirements={"source": "binance"}, rebalance="1d", costs_model={},
+                         code_ref=code_ref)
+    repo.add_trial(session, spec_id=spec.id, config_hash="h", code_sha="c", params={},
+                   status=TrialStatus.OK, route=TrialRoute("needs-forward"), route_reason="r",
+                   source=TrialSource.IMPORTED)
+
+
+RETUNE = "qlab.strategies.retune:Retune"
+CHOOSER = {"inner_code_ref": "a:b", "base_params": {"headroom": 1.0},
+           "grid": {"headroom": {"h1": {"headroom": 1.0}, "h2": {"headroom": 1.5}}}}
+
+
+def test_a_book_that_trades_the_numbers_the_idea_was_checked_on_says_nothing(
+        session, tmp_path) -> None:
+    _checked_run(session, code_ref="a:b", params={"headroom": 1.5, "coins": ["BTC"]})
+    path = _book_spec(tmp_path, code_ref="a:b", params={"headroom": 1.5, "coins": ["BTC"]})
+    assert paper_rule.checked_variant_note(session, "bv2-a", {"spec": str(path)}) is None
+
+
+def test_a_book_with_other_numbers_than_the_checked_ones_is_shown_plainly(
+        session, tmp_path) -> None:
+    _checked_run(session, code_ref="a:b", params={"headroom": 1.5, "hedge": {"days": 14}})
+    path = _book_spec(tmp_path, code_ref="a:b", params={"headroom": 1.0, "hedge": {"days": 30}})
+    note = paper_rule.checked_variant_note(session, "bv2-a", {"spec": str(path)})
+    assert "числа книги отличаются от проверенных" in note
+    assert "headroom" in note and "hedge.days" in note
+
+
+def test_a_fixed_book_is_not_the_chooser_the_stand_checked(session, tmp_path) -> None:
+    """One idea, one check: the stand judged the code's monthly choice among a list. A book with
+    ONE of the values fixed is a different thing, and the owner reads it so."""
+    _checked_run(session, code_ref=RETUNE, params=CHOOSER)
+    path = _book_spec(tmp_path, code_ref="a:b", params={"headroom": 1.5})
+    note = paper_rule.checked_variant_note(session, "bv2-a", {"spec": str(path)})
+    assert "выбор кода каждый месяц среди значений (headroom)" in note
+    assert "одни фиксированные числа" in note
+    same = _book_spec(tmp_path, code_ref=RETUNE, params=CHOOSER)
+    assert paper_rule.checked_variant_note(session, "bv2-a", {"spec": str(same)}) is None
+
+
+def test_nothing_to_compare_is_no_finding(session, tmp_path) -> None:
+    path = _book_spec(tmp_path, code_ref="a:b", params={"headroom": 1.5})
+    assert paper_rule.checked_variant_note(session, "bv2-a", {"spec": str(path)}) is None  # no run
+    _checked_run(session, code_ref="a:b", params={"headroom": 1.5})
+    assert paper_rule.checked_variant_note(session, "bv2-a", {}) is None  # no spec file named
+    assert paper_rule.checked_variant_note(
+        session, "bv2-a", {"spec": str(tmp_path / "gone.yaml")}) is None
+
+
+def test_the_rule_line_carries_the_warning_and_the_dict_too(session, tmp_path) -> None:
+    _checked_run(session, code_ref=RETUNE, params=CHOOSER)
+    path = _book_spec(tmp_path, code_ref="a:b", params={"headroom": 1.5})
+    export = tmp_path / "paper"
+    _export(export / "2026-10-26", date(2026, 9, 14), days=32)
+    cfg = {**_books()["bv2-a"], "spec": str(path)}
+    rule = paper_rule.paper_rule(session, "bv2-a", cfg, root=export,
+                                 replay_lines=REPLAY_LINES)
+    assert rule.not_checked and paper_rule.NOT_CHECKED_TEXT in rule.line()
+    assert rule.to_dict()["not_checked"] == rule.not_checked
+    plain = paper_rule.paper_rule(session, "bv2-a", _books()["bv2-a"], root=export,
+                                  replay_lines=REPLAY_LINES)
+    assert plain.not_checked is None and paper_rule.NOT_CHECKED_TEXT not in plain.line()

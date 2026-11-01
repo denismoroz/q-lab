@@ -1,6 +1,21 @@
 """The night's answer on the history that already exists (docs/NIGHT.md, «Двойники и вторая
 ступень»).
 
+**Owner, 2026-10-31: one idea, one check (docs/ONE_CHECK.md).** «не уверен что нам нужна вот такая
+дубликация ... так мы гоняем все 2х хотя все равно судим по двойнику». A new idea is no longer
+run once as it is and once as its twin: it declares the values it leaves open and its one check
+chooses among them month by month on Binance's history (`qlab.one_check`). So this stage does not
+BUILD twins any more (`Config.build_new`, night/twins.yaml, off): what is left of it is
+
+- the first run of a twin file that was written and never run (`existing`; the twins that exist
+  today are ordinary ideas, `qlab.waiting` re-runs them);
+- the first check of a named idea by hand (`qlab twins run --only IDEA`, `_first_check`), the way
+  to run a check whose data is too heavy for a night (`--allow-heavy`);
+- everything below about how a twin is built, kept because the checks are built by the same
+  machinery (`qlab.twin.causal_twin`) and because `build_new: true` brings the old behaviour back.
+
+The rest of this docstring describes the stage as it was built; read it with that in mind.
+
 Owner, 2026-10-27: «чем быстрее результат - тем понятнее куда дальше двигаться. а не ждать по
 пол года». An idea whose forward test is too short (`needs-forward`: its numbers were chosen
 recently, so little data came after them) is not left to wait for months. This stage gives it
@@ -77,6 +92,9 @@ class Config:
     slow_twin_minutes: float
     max_hourly_instruments: int = 40
     """An hourly twin may fetch at most this many columns (night/twins.yaml)."""
+    build_new: bool = False
+    """Whether the stage builds twins of the ideas that wait for forward data. Off since
+    2026-10-31: an idea has one check (docs/ONE_CHECK.md), not a twin beside it."""
     seconds_per_instrument: float = SECONDS_PER_INSTRUMENT
     coin_list_params: tuple[str, ...] = COIN_LIST_PARAMS
 
@@ -93,6 +111,7 @@ def load_config(path: Path = CONFIG) -> Config | None:
             max_new_twins_per_night=int(raw["max_new_twins_per_night"]),
             slow_twin_minutes=float(raw["slow_twin_minutes"]),
             max_hourly_instruments=int(raw.get("max_hourly_instruments", 40)),
+            build_new=bool(raw.get("build_new", False)),
             seconds_per_instrument=float(raw.get("seconds_per_instrument",
                                                  SECONDS_PER_INSTRUMENT)),
             coin_list_params=tuple(raw.get("coin_list_params") or COIN_LIST_PARAMS))
@@ -108,8 +127,12 @@ def goes_to_stage2(spec: StrategySpec) -> bool:
     """Whether an experiment that survived stage 1 goes on to the second stage on Hyperliquid.
     The second stage re-builds the idea on Hyperliquid's own data; an experiment that already
     runs on Hyperliquid has nothing new to look at there, so only an experiment on Binance's
-    long history (stage 1 in the sense of docs/TWO_STAGE.md) goes."""
-    return spec.data.source == BINANCE
+    long history (stage 1 in the sense of docs/TWO_STAGE.md) goes. An idea that declares lists of
+    values (`StrategySpec.choice`, docs/ONE_CHECK.md) runs its check on Binance's history whatever
+    venue its file is written on, so it goes too."""
+    from qlab import one_check
+
+    return spec.data.source == BINANCE or one_check.declares_lists(spec)
 
 
 HEAVY_REASON = (
@@ -450,6 +473,8 @@ def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
         candidates, refused = find_candidates(session, spec_files(spec_dir), only=only)
     if only:
         block["refused"] = refused
+        for idea_id in sorted(only):
+            _first_check(run, idea_id, spec_files(spec_dir))
     for cand in candidates:
         if f"twins:{cand.idea_id}" in state["done"]:
             continue
@@ -464,6 +489,51 @@ def twins_stage(day: date, end: date, state: dict, *, noise_trials: int = 200,
         block.setdefault("time", {})[label] = clock.summary()
     if not dry_run:
         night.save_state(day, state)
+
+
+def _first_check(run: _Run, idea_id: str, specs: Mapping[str, list[Path]]) -> None:
+    """The first run of the one check of a named idea that declares lists and has not run yet
+    (docs/ONE_CHECK.md): the way to run a check the night refused as too heavy, by hand
+    (`qlab twins run --only IDEA --allow-heavy`). Every value of the lists is a trial, then the
+    idea runs as the form that chooses among them month by month, then its second stage."""
+    from qlab import one_check
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    paths = specs.get(idea_id) or []
+    if len(paths) != 1 or _has_run(idea_id):
+        return
+    try:
+        spec = load_spec(paths[0])
+    except Exception:  # noqa: BLE001 - a broken file fails in its own runs
+        return
+    if not one_check.declares_lists(spec):
+        return
+    entry = {"idea": idea_id, "spec": paths[0].as_posix(), "action": "checked"}
+    try:
+        if run.dry_run:
+            entry["action"] = "would-check"
+            run.finish(Candidate(idea_id, paths[0], spec, "", None), entry, counted=False)
+            return
+        with session_scope() as session:
+            one_check.ensure_idea(session, spec, "The idea's one check, run by hand "
+                                                 "(qlab.twin_stage, docs/ONE_CHECK.md).")
+            prepared = one_check.prepare(spec, session, load_latest(), spec_path=paths[0],
+                                         allow_heavy=run.allow_heavy)
+        if prepared.heavy:
+            entry.update(action="heavy", reason=prepared.heavy)
+        else:
+            entry.update(candidates=list(prepared.candidates),
+                         candidate_trials=list(prepared.candidate_trials))
+            if stage1_on_stand(prepared.spec, entry, ensure_idea=lambda: None, end=run.end,
+                               noise_trials=run.noise_trials,
+                               slow_minutes=run.config.slow_twin_minutes):
+                second_stage(prepared.spec, entry, end=run.end, noise_trials=run.noise_trials,
+                             config=run.stage2_config)
+    except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
+        entry.update(action="error", error=f"{type(exc).__name__}: {exc}")
+    run.finish(Candidate(idea_id, paths[0], spec, "", None), entry, counted=False)
 
 
 def _watch_paths(config: Path) -> list[str]:
@@ -545,6 +615,8 @@ class _Run:
             self.run_twin(cand, twin, entry)
             self.finish(cand, entry, counted=True)
             return None
+        if not self.config.build_new:
+            return None  # one idea, one check (docs/ONE_CHECK.md): no new twin beside the idea
         pool = base_candidates(cand.path, self.plan, watch=self.watch)
         choice = find_base(cand.spec, [s for _, s in pool]) if pool else None
         base = None if choice is None else choice.base
@@ -687,6 +759,18 @@ def entry_lines(e: Mapping) -> list[str]:
                 "`instruments`, ни `required_instruments`, ни списка монет в параметрах), поэтому "
                 "двойнику нужна готовая выгрузка; вручную — `qlab twins run --only "
                 f"{e['idea']} --allow-heavy`. Больше не пробуем, пока не изменится файл спека."]
+    if e["action"] in ("checked", "would-check"):
+        if e["action"] == "would-check":
+            return [f"- {head}: проверка идеи будет прогнана (код выбирает раз в месяц по "
+                    "прошлому)"]
+        line = (f"- {head}: одна проверка прогнана вручную; код выбирает раз в месяц только по "
+                f"прошлому между {len(e.get('candidates') or [])} вариантами, каждый записан "
+                f"испытанием. Прогон {e.get('trial')}: {route_ru(e.get('route'))} — "
+                f"{numbers_ru(e.get('metrics') or {})}")
+        out = [line]
+        if e.get("stage2") is not None:
+            out += [f"    - {ln}" for ln in stage2_lines({"route": e.get("route")}, e["stage2"])]
+        return out
     if e["action"] == "would-make":
         listed = (f"; только {len(e['instruments'])} столбцов ({e.get('list_source')}), "
                   f"выгрузка около {e.get('fetch_minutes')} мин" if e.get("instruments") else "")

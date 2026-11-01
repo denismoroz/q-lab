@@ -182,7 +182,8 @@ def _implementer(day: str, st: dict) -> Run | None:
         if line := implement_run.summary(e):
             details.append(f"{e['card']}: {line}")
         for step, r in (e.get("runs") or {}).items():
-            if r.get("action") in ("error", "none", "heavy") and step in implement_run.STEPS:
+            known = (*implement_run.STEPS, *implement_run.OLD_STEPS)
+            if r.get("action") in ("error", "none", "heavy") and step in known:
                 details.append(f"{e['card']}: {step} — {r.get('error') or r.get('reason')}")
         if e.get("stopped"):
             details.append(f"{e['card']}: остановлено — {e['stopped']}")

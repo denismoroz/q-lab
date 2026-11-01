@@ -757,3 +757,71 @@ def test_the_stage_runs_the_due_decided_ideas_and_the_report_says_they_were_sche
     assert rows["recent"]["action"] == "wait"
     text = "\n".join(waiting.report_lines(state["waiting"]))
     assert "решённая, по расписанию" in text
+
+
+# ---- one idea, one check (docs/ONE_CHECK.md) -----------------------------------------------
+
+
+def test_a_retired_original_is_not_planned_again_but_its_twin_is(tmp_path, registry) -> None:
+    """The owner retired the originals that have a twin (2026-10-31: «гоняем все 2х хотя все равно
+    судим по двойнику»): the waiting stage re-runs the twin, an ordinary idea, and nothing else."""
+    with registry.session_scope() as s:
+        _idea(s, "orig", IdeaStatus.RETIRED)
+        _trial(s, "orig", "needs-forward", ago=90)
+        _idea(s, "orig-causal", IdeaStatus.BENCH, parent="orig")
+        _trial(s, "orig-causal", "needs-forward", ago=90)
+        _idea(s, "orig-bench", IdeaStatus.BENCH)
+        _trial(s, "orig-bench", "needs-forward", ago=90)
+    for name in ("orig", "orig-causal", "orig-bench"):
+        _spec(name, tmp_path)
+    plans = _plans(tmp_path, registry)
+    assert sorted(i for i, _ in plans) == ["orig-bench", "orig-causal"]
+    assert plans[("orig-causal", "idea")].due
+    with registry.session_scope() as s:  # the recheck of decided ideas does not take it either
+        found = waiting.plan_waiting(
+            s, end=END, watched=set(), specs=waiting.spec_files(tmp_path / "specs"),
+            coverage_days=30, recheck=waiting.Recheck(True, 7, 4))
+    assert "orig" not in {p.idea_id for p in found}
+
+
+def _checked_file(tmp_path: Path, idea_id: str, source: str = "hyperliquid") -> Path:
+    path = _spec(idea_id, tmp_path, source=source)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw["params"] = {"signal": {"window_days": 3}, "rebalance_days": 1}
+    raw["choice"] = {"axes": {"signal.window_days": [3, 7, 14, 30], "rebalance_days": [1, 7]},
+                     "source": "night/own_numbers.yaml"}
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
+
+
+def test_an_idea_that_declares_lists_gets_its_second_stage_whatever_venue_its_file_is_on(
+        tmp_path, registry) -> None:
+    with registry.session_scope() as s:
+        _idea(s, "checked", IdeaStatus.BENCH)
+        _trial(s, "checked", "needs-forward", ago=90)
+    _checked_file(tmp_path, "checked")
+    # the file is on Hyperliquid, outside a research folder: only the declared lists send it on
+    plans = _plans(tmp_path, registry, stage2_config=STAGE2_CONFIG)
+    assert plans[("checked", "stage2")].due
+
+
+def test_the_second_stage_of_such_an_idea_takes_the_whole_check_to_hyperliquid(
+        tmp_path, registry, monkeypatch) -> None:
+    path = _checked_file(tmp_path, "checked")
+    sent: list = []
+
+    def fake_stage2(spec, **kw):
+        sent.append(spec)
+        return stage2.Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}-hl",
+                                   status="evaluated", route="needs-forward", trial_id=5,
+                                   stage1_route=kw["stage1_route"], combined_route="needs-forward",
+                                   parent_status="bench")
+
+    monkeypatch.setattr(stage2, "run_stage2", fake_stage2)
+    plan = waiting.Plan("checked", "stage2", path.as_posix(), "needs-forward", True, "x")
+    entry = waiting.rerun_stage2(plan, END, stage1={"route_after": "needs-forward", "trial": 3},
+                                 noise_trials=1, config=STAGE2_CONFIG)
+    assert entry["action"] == "rerun"
+    (spec,) = sent
+    assert spec.idea_id == "checked" and spec.code_ref.endswith("retune:Retune")
+    assert spec.data.source == "binance" and len(spec.params["grid"]) == 2

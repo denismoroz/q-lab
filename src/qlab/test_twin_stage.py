@@ -42,6 +42,7 @@ STAGE2_CONFIG = stage2.Stage2Config(
     enabled=True, venue="hyperliquid", data_start=date(2025, 1, 1), taker_fee_bps=4.5,
     slippage_bps=0.9, cost_sources={}, stage1_survives=("paper", "shelf", "needs-infrastructure",
                                                          "needs-forward"))
+CONFIG_HEAD = "enabled: true\nbuild_new: true\n"
 EXPERIMENT = "xsmom-research-nobull"
 BASE = "xsmom-honest-20legs"
 TWIN = f"{EXPERIMENT}-causal"
@@ -109,7 +110,7 @@ def world(tmp_path, registry, monkeypatch):
     watch = tmp_path / "watch.yaml"
     watch.write_text("specs: []\n", encoding="utf-8")
     config = tmp_path / "twins.yaml"
-    config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
+    config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
                       encoding="utf-8")
     with registry.session_scope() as s:
         _idea(s, BASE, IdeaStatus.VALIDATED)
@@ -319,7 +320,7 @@ def test_at_most_the_nightly_cap_of_new_twins_the_rest_wait_for_the_next_night(w
     with registry.session_scope() as s:
         _idea(s, "xsmom-research-nobull-two")
         _trial(s, "xsmom-research-nobull-two", "needs-forward")
-    world.config.write_text("enabled: true\nmax_new_twins_per_night: 1\nslow_twin_minutes: 20\n",
+    world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 1\nslow_twin_minutes: 20\n",
                             encoding="utf-8")
     state = _stage(world)
     assert [e["idea"] for e in state["twins"]["entries"]] == [EXPERIMENT]
@@ -333,7 +334,7 @@ def test_at_most_the_nightly_cap_of_new_twins_the_rest_wait_for_the_next_night(w
 
 
 def test_an_explicit_request_is_not_capped(world) -> None:
-    world.config.write_text("enabled: true\nmax_new_twins_per_night: 0\nslow_twin_minutes: 20\n",
+    world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 0\nslow_twin_minutes: 20\n",
                             encoding="utf-8")
     assert _stage(world)["twins"]["entries"] == []  # the night's cap is 0: nothing, and said so
     state = _stage(world, only=[EXPERIMENT])
@@ -345,11 +346,12 @@ def test_nothing_starts_after_the_stop_time_and_the_report_names_the_stage(world
     _stage(world, state, stop_at=datetime.now(UTC) - timedelta(minutes=1), label="twins-research")
     assert world.calls == [] and state["stopped_at"]["before"].startswith("twins-research:")
     assert not world.experiment.with_name(f"{TWIN}.yaml").exists()
-    assert "twins-research" in night.STOP_STAGES and "twins" in night.STOP_STAGES
+    # the step `twins-research` is gone (docs/ONE_CHECK.md); the label is the stage's own
+    assert "twins-research" not in night.STOP_STAGES and "twins" in night.STOP_STAGES
 
 
 def test_a_slow_twin_is_reported_as_slow(world, monkeypatch) -> None:
-    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 0\n",
+    world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 0\n",
                             encoding="utf-8")
     state = _stage(world)
     entry = state["twins"]["entries"][0]
@@ -417,7 +419,7 @@ def test_a_twin_with_an_instrument_list_is_run_and_the_report_names_the_list(
 
 def test_a_list_past_the_threshold_is_recorded_as_heavy_with_its_size(world, monkeypatch) -> None:
     monkeypatch.setattr(twin_stage, "_causal_twin", lambda *a, **k: _bv2_result())
-    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
+    world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
                             "max_hourly_instruments: 5\n", encoding="utf-8")
     state = _stage(world)
     entry = state["twins"]["entries"][0]
@@ -561,14 +563,15 @@ def _run_night(**kw):
     return night.run(DAY, **{**flags, **kw})
 
 
-def test_the_stage_runs_right_after_waiting_and_again_after_the_researcher(
+def test_the_stage_runs_right_after_waiting_and_not_again_after_the_researcher(
         tmp_path, monkeypatch) -> None:
     order: list[str] = []
     _night_env(tmp_path, monkeypatch, order)
     report = _run_night(paper=True, research=True)
-    assert order == ["waiting", "twins", "paper", "research", "twins-research"]
+    # one idea, one check: the researcher's experiments get no twins step of their own any more
+    assert order == ["waiting", "twins", "paper", "research"]
     text = report.read_text(encoding="utf-8")
-    assert f"## {twin_stage.SECTION_TITLE}" in text and "idea-twins-research" in text
+    assert f"## {twin_stage.SECTION_TITLE}" in text and "idea-twins" in text
 
 
 def test_twins_follow_the_waiting_flag_unless_given(tmp_path, monkeypatch) -> None:
@@ -594,7 +597,7 @@ def test_a_failing_twins_stage_is_a_report_line_and_the_night_goes_on(
     report = _run_night(paper=True, research=False)
     assert order == ["waiting", "paper"]
     text = report.read_text(encoding="utf-8")
-    assert "двойники и вторая ступень" in text and "RuntimeError: boom" in text
+    assert "двойники, уже написанные" in text and "RuntimeError: boom" in text
 
 
 def test_the_command_is_registered() -> None:
@@ -623,7 +626,7 @@ def test_a_twin_entry_shows_its_result_year_by_year() -> None:
 
 def _timed(world, limit=30) -> None:
     world.config.write_text(
-        "enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
+        CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
         f"max_minutes_per_night: {limit}\n", encoding="utf-8")
 
 
@@ -661,3 +664,61 @@ def test_the_shipped_twins_config_has_a_time_limit() -> None:
     from qlab.stage_time import read_limit
 
     assert read_limit(Path("night/twins.yaml")) is not None
+
+
+# ---- one idea, one check (docs/ONE_CHECK.md): what is left of the twins ----------------------
+
+
+def test_the_stage_builds_no_new_twin_unless_the_config_asks_for_it(world) -> None:
+    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
+                            encoding="utf-8")
+    assert twin_stage.load_config(world.config).build_new is False
+    state = _stage(world)
+    assert state["twins"]["entries"] == [] and world.calls == []
+    assert not world.experiment.with_name(f"{TWIN}.yaml").exists()
+    assert not world.ledger.exists()  # nothing was refused and recorded either
+    world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
+                            encoding="utf-8")
+    assert twin_stage.load_config(world.config).build_new is True
+
+
+def test_a_twin_file_written_and_never_run_still_gets_its_first_run(world) -> None:
+    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
+                            encoding="utf-8")
+    shutil.copy(SPECS / "research" / "xsmom" / f"{TWIN}.yaml",
+                world.specs / "research" / "xsmom" / f"{TWIN}.yaml")
+    state = _stage(world)
+    (entry,) = state["twins"]["entries"]
+    assert entry["action"] == "existing" and entry["twin"] == TWIN
+    assert [c[:2] for c in world.calls] == [("stand", TWIN), ("stage2", TWIN)]
+
+
+def test_the_check_of_a_named_idea_is_run_by_hand_with_every_value_a_trial(
+        world, registry, monkeypatch) -> None:
+    from qlab import one_check
+
+    world.config.write_text("enabled: true\nmax_new_twins_per_night: 4\nslow_twin_minutes: 20\n",
+                            encoding="utf-8")  # the shipped default: no new twin is built
+    raw = _plain_spec("hand-idea").model_dump(mode="json", exclude_none=True)
+    raw["params"] = {"signal": {"window_days": 3}, "rebalance_days": 1}
+    raw["choice"] = {"axes": {"signal.window_days": [3, 7, 14, 30], "rebalance_days": [1, 7]},
+                     "source": "night/own_numbers.yaml"}
+    (world.specs / "hand-idea.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
+    recorded: list[str] = []
+    monkeypatch.setattr(one_check, "record_candidates",
+                        lambda checked, session, ruleset: recorded.append(checked.idea_id) or [1])
+    state = _stage(world, only=["hand-idea"])
+    (entry,) = [e for e in state["twins"]["entries"] if e["idea"] == "hand-idea"]
+    assert entry["action"] == "checked" and len(entry["candidates"]) == 8
+    assert recorded == ["hand-idea"]
+    # the stand ran the idea's own name on Binance, then its second stage; no `-causal` idea
+    assert [c[:2] for c in world.calls] == [("stand", "hand-idea"), ("stage2", "hand-idea")]
+    with registry.session_scope() as s:
+        assert s.get(Idea, "hand-idea") is not None and s.get(Idea, "hand-idea-causal") is None
+    lines = "\n".join(twin_stage.report_lines(state["twins"]))
+    assert "одна проверка прогнана вручную" in lines
+    # it is not run twice: the idea has a run now
+    world.calls.clear()
+    again = _stage(world, {"done": {}}, only=["hand-idea"])
+    assert [e for e in again["twins"]["entries"] if e["idea"] == "hand-idea"] == []
+    assert world.calls == []

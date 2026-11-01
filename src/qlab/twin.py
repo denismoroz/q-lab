@@ -60,6 +60,7 @@ TWIN_VENUE = "binance"
 REGIME_GATE = "qlab.strategies.regime_gate:RegimeGate"
 ALL_REGIMES = ["bull", "flat", "bear"]
 RETUNE_DOC = "docs/RETUNE.md"
+ONE_CHECK_DOC = "docs/ONE_CHECK.md"
 VENUES_DOC = "docs/VENUES.md"
 MONEY_SIZES = ("budget_cap_usdc", "capital_usd", "strategy_capital_usd")
 """Parameters that say how much money the book is: the owner chooses them (CLAUDE.md, the
@@ -85,8 +86,9 @@ class TwinResult:
     spec: StrategySpec | None
     reason: str | None = None
     kind: str | None = None
-    """`pair` (a base and its experiment), `wrapper` (a regime gate over the base) or
-    `lists` (the whole declared lists of night/own_numbers.yaml)."""
+    """`pair` (a base and its experiment), `wrapper` (a regime gate over the base), `lists` (the
+    whole declared lists of night/own_numbers.yaml), `card` (the grid of an inbox card) or
+    `choice` (the lists the idea declares itself, `StrategySpec.choice`)."""
     candidates: tuple[str, ...] = ()
     origin: str | None = None
     instruments: tuple[str, ...] = ()
@@ -442,13 +444,16 @@ def _axes_grid(spec: StrategySpec, axes: Mapping[str, list], *, kind: str, own: 
 
 def card_grid(spec: StrategySpec, *, axes: Mapping[str, list] | None = None,
               candidates: Mapping[str, Mapping[str, object]] | None = None, cite: str,
-              max_candidates: int) -> tuple[_Grid | None, str | None]:
+              max_candidates: int, declared_by: str = "card"
+              ) -> tuple[_Grid | None, str | None]:
     """The grid an idea's card declares (cards/SCHEMA.md, «Карточка из входящих идей»), or why
     none can be made. Either `axes` (a parameter path -> its list of values; the candidates
     are the product) or `candidates` (named overrides); never both. The spec's own params must
     carry the FIRST variant (code does not move the card's numbers) and every path must be a
     parameter of the spec. `cite` is the card as the sources cite it: every value of the grid
-    literally stands in that file."""
+    literally stands in that file. `declared_by` is `card` or `choice` (the idea's own
+    `StrategySpec.choice`, `choice_grid`): it only changes the words of the sources."""
+    one_check = declared_by == "choice"
     if (axes is None) == (candidates is None):
         return None, "a card grid is either `params` (lists) or `candidates` (named), not both"
     if axes is not None:
@@ -466,21 +471,33 @@ def card_grid(spec: StrategySpec, *, axes: Mapping[str, list] | None = None,
     if missing:
         return None, (f"the grid names {', '.join(missing)}, which are not parameters of "
                       f"{spec.idea_id}")
-    own = (f"{cite}: the grid the card declares, {count} variants; owner 2026-10-27: an idea "
-           "from the inbox is judged over the grid its card declares")
-    caveat = ("the grid was declared on the card before this twin ran; what was seen of the "
-              "history when the card was written is not recorded, so the choice is only as "
-              "honest as the grid is")
+    if one_check:
+        own = (f"{cite}: the lists the idea declares, {count} variants; owner 2026-10-31: one "
+               f"idea, one check -- code chooses among the declared values every month from the "
+               f"past only ({ONE_CHECK_DOC})")
+        caveat = ("the lists were declared with the idea before its check ran; what was seen of "
+                  "the history when they were declared is not recorded, so the choice is only as "
+                  "honest as the lists are")
+    else:
+        own = (f"{cite}: the grid the card declares, {count} variants; owner 2026-10-27: an idea "
+               "from the inbox is judged over the grid its card declares")
+        caveat = ("the grid was declared on the card before this twin ran; what was seen of the "
+                  "history when the card was written is not recorded, so the choice is only as "
+                  "honest as the grid is")
+    what = "the idea's declared" if one_check else "the card's"
+    kind = "choice" if one_check else "card"
     if axes is not None:
         for path, values in axes.items():
             current = _get(spec.params, path)[1]
             if current != values[0]:
-                return None, (f"the spec carries {path} = {current!r}, not the card's first "
-                              f"variant {values[0]!r}")
+                return None, (f"the spec carries {path} = {current!r}, not "
+                              + (f"the first value {values[0]!r} of the idea's list" if one_check
+                                 else f"the card's first variant {values[0]!r}"))
         return _axes_grid(
-            spec, axes, kind="card", own=own,
-            description=f"the card's declared lists ({', '.join(axes)}), {count} candidates",
-            caveat=caveat, differs=f"the grid declared on the card {cite}"), None
+            spec, axes, kind=kind, own=own,
+            description=f"{what} lists ({', '.join(axes)}), {count} candidates",
+            caveat=caveat, differs=f"the lists declared in {cite}" if one_check
+            else f"the grid declared on the card {cite}"), None
     named = {name: dict(overrides) for name, overrides in (candidates or {}).items()}
     for path, value in next(iter(named.values())).items():
         current = _get(spec.params, path)[1]
@@ -495,10 +512,11 @@ def card_grid(spec: StrategySpec, *, axes: Mapping[str, list] | None = None,
     sources["inner_code_ref"] = f"{_code_file(spec.code_ref) or RETUNE_DOC}: the code of the spec"
     sources["grid"] = own
     return _Grid(
-        kind="card", inner_code_ref=spec.code_ref, base_params=base_params, grid=grid,
+        kind=kind, inner_code_ref=spec.code_ref, base_params=base_params, grid=grid,
         candidates=expanded, sources=sources, trees=list(expanded.values()),
-        description=f"the card's named candidates ({', '.join(named)})",
-        caveat=caveat, differs=f"the candidates declared on the card {cite}"), None
+        description=f"{what} named candidates ({', '.join(named)})",
+        caveat=caveat, differs=f"the candidates declared in {cite}" if one_check
+        else f"the candidates declared on the card {cite}"), None
 
 
 def _with_largest(params: dict, axes: Mapping[str, list]) -> dict:
@@ -911,7 +929,7 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 seconds_per_instrument: float = SECONDS_PER_INSTRUMENT,
                 peers: Sequence[tuple[StrategySpec, str]] = (), grid: _Grid | None = None,
                 honest_from: tuple[date, str] | None = None,
-                execution_venue: str | None = None) -> TwinResult:
+                execution_venue: str | None = None, keep_id: bool = False) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
@@ -928,7 +946,12 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     exists: a hand-picked coin list is judged from it (`chosen_list`, `listed_at`), and a card
     without a list starts the data no earlier. `execution_venue` is kept for the callers that
     pass it and is ignored: since the venue split (docs/VENUE_SPLIT.md) the twin is judged for
-    Binance itself and names no other venue."""
+    Binance itself and names no other venue.
+
+    `keep_id` (owner, 2026-10-31, docs/ONE_CHECK.md): the result keeps the idea's own `idea_id`
+    instead of the `-causal` twin's. It is then not a second idea beside the first but the form in
+    which the idea's one check runs, built from the lists the idea declares (`grid` from
+    `choice_grid`); `qlab.one_check` is the caller."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
@@ -955,7 +978,7 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         return TwinResult(None, "; ".join(dict.fromkeys(reasons)))
 
     chosen, why = chosen_list(
-        spec, base if grid.kind not in ("lists", "card") else None,
+        spec, base if grid.kind not in ("lists", "card", "choice") else None,
         spec_cite=_text(spec_path) or RETUNE_DOC,
         base_cite=_text(base_path) or RETUNE_DOC, venue_names=venue_names,
         coin_params=coin_params,
@@ -985,8 +1008,9 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "score_costs": {"taker_fee_bps": spec.costs.taker_fee_bps,
                         "slippage_bps": spec.costs.slippage_bps},
     }
+    made = "One check of" if keep_id else "Causal twin of"
     notes = [
-        f"Causal twin of {spec.idea_id}: the numbers it trades are "
+        f"{made} {spec.idea_id}: the numbers it trades are "
         f"chosen by code, every {PERIODS[refit_every][0]}, from returns realised before the "
         f"choice ({grid.differs}); the data is Binance's history, a proxy for {spec.data.source}'s "
         "market, judged for Binance itself: Binance's costs and minimum leg and Binance's facts "
@@ -1013,9 +1037,10 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
             f"{chosen.dated_owner}), on or after the end of the data ({data.end}): a hand-picked "
             "list is judged only from the day it was known, and no such day is left"))
     update = {
-        "idea_id": f"{spec.idea_id}{TWIN_SUFFIX}",
+        "idea_id": spec.idea_id if keep_id else f"{spec.idea_id}{TWIN_SUFFIX}",
         "title": f"{spec.title}: числа выбирает код {PERIODS[refit_every][1]} только по "
                  f"прошлому, история Binance с {data.start.year}",
+        "choice": None,
         "code_ref": RETUNE,
         "params": params,
         "data": data,
@@ -1047,6 +1072,18 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         instruments=() if chosen is None else chosen.names,
         list_source=None if chosen is None else f"{chosen.kind} of {chosen.owner}",
         fetch_seconds=seconds)
+
+
+def choice_grid(spec: StrategySpec, *, max_candidates: int) -> tuple[_Grid | None, str | None]:
+    """The grid an idea declares in its own `choice` block, or why none can be made (the idea
+    declares no list, or the spec does not carry the first value of every list)."""
+    choice = spec.choice
+    if choice is None or not choice.lists:
+        return None, (choice.nothing_to_choose if choice is not None
+                      else "the idea declares nothing to choose between")
+    return card_grid(spec, axes=dict(choice.axes) or None,
+                     candidates=dict(choice.candidates) or None, cite=choice.source,
+                     max_candidates=max_candidates, declared_by="choice")
 
 
 def _text(path: Path | str | None) -> str | None:
@@ -1105,14 +1142,17 @@ def find_base(spec: StrategySpec, candidates: list[StrategySpec]) -> BaseChoice:
 
 
 def same_panel_spec(baseline: StrategySpec, twin: StrategySpec, *, idea_id: str, cite: str,
-                    venue_names: Collection[str] | None = None) -> StrategySpec:
+                    venue_names: Collection[str] | None = None,
+                    own_sources: bool = False) -> StrategySpec:
     """`baseline` run on exactly the panel and the costs of `twin`: the same data (venue,
     interval, window, instruments), the same costs and minimum leg, and the same judged part
     (`judged_from`, `instruments_chosen_at`), so that a comparison of the two runs is between
     equals. The baseline's own numbers are untouched: only the ground it stands on is the
     twin's. `cite` is where the twin's costs are written (the numbers must appear there
     literally); `venue_names` (Binance's listing) maps the instruments the baseline requires
-    when it names another venue's columns."""
+    when it names another venue's columns. `own_sources`: the version is not written to a file (the
+    idea's one check, `qlab.one_check`), so its costs and minimum leg are cited as its own sources
+    cite them."""
     required = baseline.required_instruments
     if required is not None and baseline.data.source != TWIN_VENUE and venue_names is not None:
         from qlab.pipeline.stage2 import venue_name
@@ -1121,8 +1161,11 @@ def same_panel_spec(baseline: StrategySpec, twin: StrategySpec, *, idea_id: str,
     data = twin.data
     sources = dict(baseline.sources)
     for name in ("taker_fee_bps", "slippage_bps"):
-        sources[f"costs.{name}"] = f"{cite}: the causal version's costs, the same for both runs"
-    sources["min_leg_notional"] = f"{cite}: the causal version's minimum leg"
+        own = twin.sources.get(f"costs.{name}") if own_sources else None
+        sources[f"costs.{name}"] = own or (
+            f"{cite}: the causal version's costs, the same for both runs")
+    sources["min_leg_notional"] = (twin.sources.get("min_leg_notional") if own_sources else None
+                                   ) or f"{cite}: the causal version's minimum leg"
     sources.pop(DEVIATION_KEY, None)  # the baseline stands on the twin's costs, so on its sentence
     if DEVIATION_KEY in twin.sources:
         sources[DEVIATION_KEY] = twin.sources[DEVIATION_KEY]
@@ -1184,6 +1227,7 @@ def write_twin(spec_path: Path, twin: StrategySpec, origin: str) -> Path:
 
 
 __all__ = ["BINANCE_ARCHIVE_START", "BaseChoice", "COIN_LIST_PARAMS", "ChosenList",
+           "ONE_CHECK_DOC", "choice_grid",
            "SECONDS_PER_INSTRUMENT", "TwinResult", "card_grid", "causal_twin", "chosen_list",
            "fetch_estimate", "find_base", "first_choice", "needs_listing", "same_panel_spec",
            "twin_path", "twin_yaml", "warmup_days", "write_twin"]

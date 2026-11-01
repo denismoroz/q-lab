@@ -1,6 +1,6 @@
 """The implement stage end to end with no tokens (qlab.implement_run, docs/IMPLEMENTER.md): a card
-from the inbox goes through a stubbed implementer, the guards' bookkeeping, the written spec, its
-causal version over the card's grid, the baseline on the same panel and the second stage of every
+from the inbox goes through a stubbed implementer, the guards' bookkeeping, the idea's ONE check
+over the card's grid (docs/ONE_CHECK.md), the baseline on the same panel and the second stage of a
 survivor, and the morning report shows the comparison.
 
 The agent, the reviewer, the budget, the stand and the second stage are replaced by stubs; the
@@ -18,7 +18,7 @@ import yaml
 
 import qlab.agents.implementer as implementer
 import qlab.registry.db as db_module
-from qlab import agent_blocks, implement_run, night, twin_stage
+from qlab import agent_blocks, implement_run, night, one_check, twin_stage
 from qlab.agent_reports import agent_reports
 from qlab.agents import reviewer
 from qlab.agents.implementer import ImplementOutcome
@@ -163,8 +163,10 @@ def world(tmp_path, registry, monkeypatch):
                 "end": "2026-10-26"}
         if w.venue == "binance" and w.coins:
             data["instruments"] = ["BTC", "ETH"]
+        extra = {} if fields.grid is not None else {"choice": {
+            "nothing_to_choose": "the card gives one value for every number it uses"}}
         _write(tmp_path / "specs/agent" / f"{fields.idea_id}.yaml", _plain_raw(
-            fields.idea_id, code_ref=f"qlab.strategies.agent.{module}:Toy", data=data))
+            fields.idea_id, code_ref=f"qlab.strategies.agent.{module}:Toy", data=data, **extra))
         return ImplementOutcome(
             idea_id=fields.idea_id, code_path=Path("src/qlab/strategies/agent") / f"{module}.py",
             spec_path=Path("specs/agent") / f"{fields.idea_id}.yaml", agent_reply="Toy",
@@ -213,7 +215,11 @@ def world(tmp_path, registry, monkeypatch):
     import qlab.budget as budget_module
 
     w.evaluated = {}
+    w.recorded = []
     w.add_card = add_card
+    monkeypatch.setattr(one_check, "record_candidates",
+                        lambda checked, session, ruleset: w.recorded.append(checked.idea_id)
+                        or [101, 102, 103])
     monkeypatch.setattr(implementer, "implement", fake_implement)
     monkeypatch.setattr(reviewer, "run_review", fake_review)
     monkeypatch.setattr(night, "evaluate_item", fake_eval)
@@ -259,39 +265,43 @@ def test_a_card_goes_from_idea_to_verdicts_in_the_order_the_stage_promises(world
     world.add_card()
     state = _stage(world)
     assert len(world.agent_calls) == 1
-    # a. the spec as written, b. the causal version, c. the baseline, d. stage 2 of survivors
-    assert _order(world) == [
-        ("stand", "toy-idea"), ("stand", "toy-idea-causal"), ("stand", "toy-idea-base"),
-        ("stage2", "toy-idea"), ("stage2", "toy-idea-causal")]
+    # a. the idea's one check, b. the baseline on its panel, c. stage 2 of a survivor: no twin
+    assert _order(world) == [("stand", "toy-idea"), ("stand", "toy-idea-base"),
+                             ("stage2", "toy-idea")]
     assert all(c[2] == "implemented" for c in world.calls if c[0] == "stand")
     (entry,) = state["implemented"]
     assert entry["idea_id"] == "toy-idea" and entry["tokens"] == 1234
     assert entry["idea_text"] == "купить то, что выросло за неделю"
-    assert set(entry["runs"]) == set(implement_run.STEPS)
+    assert set(entry["runs"]) == set(implement_run.STEPS) == {"check", "baseline", "stage2"}
     assert all(r["action"] == "ran" for r in entry["runs"].values())
     assert entry["stand"] == "paper: r"  # the line the report printed before the extra runs
 
-    causal, base = world.evaluated["toy-idea-causal"], world.evaluated["toy-idea-base"]
-    spec = world.evaluated["toy-idea"]
-    assert causal.selects_causally and causal.code_ref.endswith("retune:Retune")
-    assert causal.params["inner_code_ref"] == spec.code_ref
-    assert list(causal.params["grid"]) == ["signal.window_days"]  # exactly the card's grid
-    assert entry["runs"]["causal"]["candidates"] == ["window_days=7", "window_days=14",
-                                                     "window_days=30"]
-    assert causal.params["refit_every"] == "M" and causal.params["window"] == "expanding"
-    assert causal.params["objective"] == "sharpe_net"
-    assert causal.data.source == "binance" and causal.data.interval == "1d"
+    check, base = world.evaluated["toy-idea"], world.evaluated["toy-idea-base"]
+    assert check.idea_id == "toy-idea"  # the idea's own name: no second idea, no second page
+    assert check.selects_causally and check.code_ref.endswith("retune:Retune")
+    assert check.params["inner_code_ref"] == "qlab.strategies.agent.weekly_momentum:Toy"
+    assert list(check.params["grid"]) == ["signal.window_days"]  # exactly the card's grid
+    assert entry["runs"]["check"]["candidates"] == ["window_days=7", "window_days=14",
+                                                    "window_days=30"]
+    assert entry["runs"]["check"]["candidate_trials"] == [101, 102, 103]
+    assert world.recorded == ["toy-idea"]  # every value is a trial, once
+    assert check.params["refit_every"] == "M" and check.params["window"] == "expanding"
+    assert check.params["objective"] == "sharpe_net"
+    assert check.data.source == "binance" and check.data.interval == "1d"
     # the hand-picked coins are judged from the day the card says they were known
-    assert causal.judged_from == causal.instruments_chosen_at == date(2022, 1, 1)
-    assert causal.data.start == date(2019, 9, 8) and causal.data.instruments == ["BTC", "ETH"]
-    # the baseline stands on exactly the causal version's panel, costs and judged part
-    assert base.data == causal.data and base.costs == causal.costs
-    assert base.judged_from == causal.judged_from and base.params == {"lookbacks_days": [30]}
+    assert check.judged_from == check.instruments_chosen_at == date(2022, 1, 1)
+    assert check.data.start == date(2019, 9, 8) and check.data.instruments == ["BTC", "ETH"]
+    # the baseline stands on exactly the check's panel, costs and judged part
+    assert base.data == check.data and base.costs == check.costs
+    assert base.judged_from == check.judged_from and base.params == {"lookbacks_days": [30]}
     assert base.params_fixed_at == date(2025, 3, 1)  # the baseline's own numbers are untouched
-    # the files: the twin next to the spec, the baseline in the ledger's folder, one block
-    assert (world.tmp / "specs/agent/toy-idea-causal.yaml").is_file()
+    # the files: the grid written into the spec by code, no twin file, the baseline in the
+    # ledger's folder, one block
+    written = load_spec(world.tmp / "specs/agent/toy-idea.yaml")
+    assert written.choice is not None and written.choice.axes == {
+        "signal.window_days": [7, 14, 30]} and written.choice.source.endswith("toy.yaml")
+    assert not (world.tmp / "specs/agent/toy-idea-causal.yaml").exists()
     assert (world.tmp / "baselines/toy-idea-base.yaml").is_file()
-    assert load_spec(world.tmp / "specs/agent/toy-idea-causal.yaml").selects_causally
     (block,) = agent_blocks.load()
     assert block.name == "weekly-momentum" and block.specs == ["specs/agent/toy-idea.yaml"]
     assert entry["block"]["file"] == "src/qlab/strategies/agent/weekly_momentum.py"
@@ -299,7 +309,7 @@ def test_a_card_goes_from_idea_to_verdicts_in_the_order_the_stage_promises(world
     ledger = twin_stage.load_ledger(world.ledger)
     assert ledger[world.agent_calls[0]]["status"] == "complete"
     with world_session() as s:
-        assert s.get(Idea, "toy-idea-causal").parent_id == "toy-idea"
+        assert s.get(Idea, "toy-idea-causal") is None  # no twin beside the idea
         assert s.get(Idea, "toy-idea-base").parent_id == "toy-idea"
 
 
@@ -313,31 +323,44 @@ def test_the_second_stage_is_the_generators_call_not_a_measurement(world) -> Non
     world.add_card()
     _stage(world)
     stage2_calls = [c for c in world.calls if c[0] == "stage2"]
-    assert [c[3] for c in stage2_calls] == [{}, {}]  # `measure` is never passed
-    assert [c[2] for c in stage2_calls] == ["paper", "paper"]  # told stage 1's route
+    assert [c[3] for c in stage2_calls] == [{}]  # `measure` is never passed
+    assert [c[2] for c in stage2_calls] == ["paper"]  # told stage 1's route
 
 
-def test_data_from_the_execution_venue_has_no_second_stage_to_pass(world) -> None:
+def test_a_card_on_hyperliquid_data_is_checked_on_binance_and_goes_to_the_second_stage(
+        world) -> None:
     world.venue = "hyperliquid"
     world.add_card(data={"venue": "hyperliquid", "interval": "1d", "coins": ["BTC", "ETH"],
                          "honest_from": "2022-01-01"})
     state = _stage(world)
-    assert _order(world)[-1] == ("stage2", "toy-idea-causal")
-    assert ("stage2", "toy-idea") not in _order(world)
-    runs = state["implemented"][0]["runs"]
-    assert runs["stage2-spec"]["action"] == "skipped"
-    assert "hyperliquid" in runs["stage2-spec"]["reason"]
-    # the causal version is the idea's verdict for Binance, not a proxy for the card's venue
-    assert world.evaluated["toy-idea-causal"].execution_venue is None
+    assert _order(world)[-1] == ("stage2", "toy-idea")
+    assert state["implemented"][0]["runs"]["stage2"]["action"] == "ran"
+    # the check is the idea's verdict for Binance, not a proxy for the card's venue
+    assert world.evaluated["toy-idea"].execution_venue is None
+    assert world.evaluated["toy-idea"].data.source == "binance"
+
+
+def test_an_idea_with_nothing_to_choose_runs_as_written_and_data_on_hyperliquid_has_no_stage2(
+        world) -> None:
+    world.venue = "hyperliquid"
+    world.add_card(grid=None, data={"venue": "hyperliquid", "interval": "1d",
+                                    "coins": ["BTC", "ETH"], "honest_from": "2022-01-01"})
+    state = _stage(world)
+    (entry,) = state["implemented"]
+    assert entry["runs"]["check"]["nothing_to_choose"].startswith("the card gives one value")
+    assert "candidates" not in entry["runs"]["check"] and world.recorded == []
+    assert world.evaluated["toy-idea"].data.source == "hyperliquid"  # as written
+    assert entry["runs"]["stage2"]["action"] == "skipped"
+    assert "hyperliquid" in entry["runs"]["stage2"]["reason"]
 
 
 @pytest.mark.usefixtures("before_independent_venues")
 def test_only_a_survivor_goes_to_the_second_stage(world) -> None:
-    world.routes = {"toy-idea": "reject", "toy-idea-causal": "paper"}
+    world.routes = {"toy-idea": "reject"}
     world.add_card()
     state = _stage(world)
-    assert [c[:2] for c in world.calls if c[0] == "stage2"] == [("stage2", "toy-idea-causal")]
-    skipped = state["implemented"][0]["runs"]["stage2-spec"]
+    assert [c[:2] for c in world.calls if c[0] == "stage2"] == []
+    skipped = state["implemented"][0]["runs"]["stage2"]
     assert skipped["action"] == "skipped" and "отвергнута" in skipped["reason"]
 
 
@@ -351,9 +374,9 @@ def test_a_hand_written_card_behaves_as_before(world) -> None:
     assert "block" not in entry and "idea_text" not in entry
     assert _order(world)[0] == ("stand", "old-idea")
     runs = entry["runs"]
-    assert runs["spec"]["action"] == "ran" and entry["stand"] == "paper: r"
+    assert runs["check"]["action"] == "ran" and entry["stand"] == "paper: r"
     assert runs["baseline"]["action"] == "skipped"  # the card names no baseline
-    assert runs["causal"]["action"] == "none"  # no grid declared on the card, none in the lists
+    assert runs["check"]["nothing_to_choose"]  # no grid on the card: the spec says why
     assert agent_blocks.load() == []
 
 
@@ -362,20 +385,19 @@ def test_a_hand_written_card_behaves_as_before(world) -> None:
 
 def test_a_run_cut_by_the_stop_time_is_done_on_the_next_night_without_the_agent(world) -> None:
     world.add_card()
-    world.stops = [":causal"]
+    world.stops = [":baseline"]
     first = _stage(world)
-    assert _order(world) == [("stand", "toy-idea")]  # the written spec ran, then the stop
+    assert _order(world) == [("stand", "toy-idea")]  # the check ran, then the stop
     assert "время ночи вышло" in first["implemented"][0]["stopped"]
     ledger = twin_stage.load_ledger(world.ledger)
     assert ledger[world.agent_calls[0]]["status"] == "pending-run"
-    assert set(ledger[world.agent_calls[0]]["runs"]) == {"spec"}
+    assert set(ledger[world.agent_calls[0]]["runs"]) == {"check"}
 
     world.stops = []
     world.calls.clear()
     second = _stage(world, {"done": {}})  # the next night: a state of its own
     assert len(world.agent_calls) == 1  # the agent is not called again, no tokens
-    assert _order(world) == [("stand", "toy-idea-causal"), ("stand", "toy-idea-base"),
-                             ("stage2", "toy-idea"), ("stage2", "toy-idea-causal")]
+    assert _order(world) == [("stand", "toy-idea-base"), ("stage2", "toy-idea")]
     (entry,) = second["implemented"]
     assert entry["resumed"] and entry["idea_text"] == "купить то, что выросло за неделю"
     assert set(entry["runs"]) == set(implement_run.STEPS)
@@ -386,33 +408,33 @@ def test_a_run_cut_by_the_stop_time_is_done_on_the_next_night_without_the_agent(
 
 def test_a_step_that_failed_is_tried_once_more_on_the_next_night(world) -> None:
     world.add_card()
-    world.fail = {"toy-idea-causal": "the stand fell over"}
+    world.fail = {"toy-idea": "the stand fell over"}
     first = _stage(world)
     runs = first["implemented"][0]["runs"]
-    assert runs["causal"]["action"] == "error" and runs["causal"]["tries"] == 1
-    assert "the stand fell over" in runs["causal"]["error"]
+    assert runs["check"]["action"] == "error" and runs["check"]["tries"] == 1
+    assert "the stand fell over" in runs["check"]["error"]
     assert runs["baseline"]["action"] == "ran"  # one step's failure does not stop the others
-    assert runs["stage2-causal"]["action"] == "waiting"  # nothing to send on yet
+    assert runs["stage2"]["action"] == "waiting"  # nothing to send on yet
     assert twin_stage.load_ledger(world.ledger)[world.agent_calls[0]]["status"] == "pending-run"
     world.fail = {}
     world.calls.clear()
     second = _stage(world, {"done": {}})
-    assert _order(world) == [("stand", "toy-idea-causal"), ("stage2", "toy-idea-causal")]
+    assert _order(world) == [("stand", "toy-idea"), ("stage2", "toy-idea")]
     (entry,) = second["implemented"]
-    assert entry["runs"]["causal"]["action"] == "ran" and entry["runs"]["causal"]["tries"] == 2
+    assert entry["runs"]["check"]["action"] == "ran" and entry["runs"]["check"]["tries"] == 2
     assert len(world.agent_calls) == 1
     assert twin_stage.load_ledger(world.ledger)[world.agent_calls[0]]["status"] == "complete"
 
 
 def test_a_step_that_fails_twice_is_left_as_it_is(world) -> None:
     world.add_card()
-    world.fail = {"toy-idea-causal": "the stand fell over"}
+    world.fail = {"toy-idea": "the stand fell over"}
     _stage(world)
     _stage(world, {"done": {}})
     third = _stage(world, {"done": {}})
     assert third["implemented"] == []  # two tries are all a step gets
     rec = twin_stage.load_ledger(world.ledger)[world.agent_calls[0]]
-    assert rec["status"] == "complete" and rec["runs"]["causal"]["tries"] == 2
+    assert rec["status"] == "complete" and rec["runs"]["check"]["tries"] == 2
 
 
 def test_data_too_heavy_for_a_night_is_named_not_fetched(world) -> None:
@@ -421,14 +443,15 @@ def test_data_too_heavy_for_a_night_is_named_not_fetched(world) -> None:
                          "universe_rule": "all perpetuals", "honest_from": "2022-01-01"})
     state = _stage(world)
     runs = state["implemented"][0]["runs"]
-    for step in ("spec", "causal", "baseline"):
+    for step in ("check", "baseline"):
         assert runs[step]["action"] == "heavy" and "hourly" in runs[step]["reason"], step
     assert [c for c in world.calls if c[0] == "stand"] == []  # nothing was fetched or run
     text = night.write_report(DAY, state).read_text(encoding="utf-8")
     assert "данные слишком тяжёлые для одной ночи" in text
 
 
-def test_a_reviewers_verified_gap_runs_the_written_spec_only(world) -> None:
+def test_a_reviewers_verified_gap_runs_the_written_spec_only_and_records_no_values(
+        world) -> None:
     world.review_findings = [Finding(kind="unexpressed_mechanism", summary="the exit is missing",
                                      source_quote="q", code_ref="c:1",
                                      spec_path="p")]
@@ -436,7 +459,8 @@ def test_a_reviewers_verified_gap_runs_the_written_spec_only(world) -> None:
     state = _stage(world)
     assert _order(world) == [("stand", "toy-idea")]  # a run about another strategy is not made
     runs = state["implemented"][0]["runs"]
-    assert runs["causal"]["action"] == runs["baseline"]["action"] == "skipped"
+    assert runs["baseline"]["action"] == runs["stage2"]["action"] == "skipped"
+    assert world.recorded == [] and world.evaluated["toy-idea"].code_ref.endswith(":Toy")
     assert "block" not in state["implemented"][0] and agent_blocks.load() == []  # not registered
     assert twin_stage.load_ledger(world.ledger)[world.agent_calls[0]]["status"] == "blocked"
     assert _stage(world, {"done": {}})["implemented"] == []  # waits for the owner
@@ -509,33 +533,33 @@ def test_the_report_shows_the_idea_the_block_and_the_comparison(world) -> None:
     assert "window_days — сколько суток считать рост" in section
     assert "| версия | данные | в год | Шарп | просадка | без 1% лучших дней | исход |" in section
     assert "| база `old-strategy` |" in section
-    assert "| написанная `toy-idea` |" in section
-    assert "| с выбором кода `toy-idea-causal` |" in section
+    assert "| проверка идеи `toy-idea` |" in section
+    assert "| написанная" not in section and "toy-idea-causal" not in section
     assert "+12.3%" in section and "0.90" in section and "-31.0%" in section
     assert "+4.5%" in section  # the return without the best 1% of days
     assert "по годам: 2021 +40%, 2022 −10%" in section  # the per-year line, once per version
-    assert section.count("по годам:") >= 3
-    assert "второй этап, Hyperliquid" in section  # stage 2's own lines under the survivors
-    assert "торгует с" in section and "window_days=7, window_days=14, window_days=30" in section
+    assert section.count("по годам:") >= 2
+    assert "второй этап проверки идеи:" in section  # stage 2's own lines under the survivor
+    assert "одна проверка" in section and "торгует с" in section
+    assert "window_days=7, window_days=14, window_days=30" in section
     assert "судится только со дня" in section  # the hand-picked list is said to be judged late
 
 
-def test_a_version_that_did_not_run_is_a_dash_and_a_reason(world) -> None:
-    # a grid whose first variant the written spec does not carry: no causal version can be made
+def test_a_check_that_could_not_be_made_is_a_reason_not_a_silence(world) -> None:
+    # a grid whose first variant the written spec does not carry: no check can be made
     world.add_card(grid={"params": {"signal.window_days": [14, 30]}}, baseline_spec=None)
     state = _stage(world)
     text = night.write_report(DAY, state).read_text(encoding="utf-8")
     section = text.split("## Реализация карточек агентом")[1]
-    assert "с выбором кода: не сделана — the spec carries signal.window_days = 7" in section
-    assert "| написанная `toy-idea` |" in section and "| база" not in section
+    assert "проверка идеи: не сделана — the spec carries signal.window_days = 7" in section
+    assert "| база" not in section and world.evaluated == {}
 
 
-def test_the_agents_page_gets_the_three_routes(world) -> None:
+def test_the_agents_page_gets_the_routes_of_the_check_and_the_baseline(world) -> None:
     world.add_card()
     state = _stage(world)
     night.save_state(DAY, state)
     page = agent_reports(days=1, state_dir=night.STATE_DIR)
     (agent,) = [a for a in page["agents"] if a["key"] == "implementer"]
     (run,) = agent["runs"]
-    assert "написанная" in run["result"] and "с выбором кода" in run["result"]
-    assert "база" in run["result"]
+    assert "проверка идеи" in run["result"] and "база" in run["result"]

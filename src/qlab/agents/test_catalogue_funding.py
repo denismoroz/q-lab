@@ -112,6 +112,8 @@ min_leg_notional: 10.0
 simultaneous_legs: 1
 noise_universe: panel
 unexpressed_mechanisms: []
+choice:
+  nothing_to_choose: the example gives one value for every number it uses
 differs_from_source:
 - example difference written by hand
 sources:

@@ -106,6 +106,13 @@ Rules:
   the card's DATA part below says otherwise, end {today}), costs, min_leg_notional,
   unexpressed_mechanisms, sources, params_fixed_at {today}, params_fixed_evidence
   "written by the implementer agent from {card_path} on {today}".
+- One idea, one check (owner, 2026-10-31, docs/ONE_CHECK.md): the idea is checked by code choosing
+  among declared values every month from the past only. If the card has a GRID part below, you
+  write NO `choice` block: code writes the card's grid into the spec. If the card has no grid, you
+  must say why there is nothing to choose, in the spec, exactly:
+    choice:
+      nothing_to_choose: "<one sentence: why the card gives one value for every number>"
+  A spec with neither is rejected.
 - Code, comments and the spec in English except the title.
 
 When both files are written (the spec only, when the card says the block exists), stop.
@@ -146,11 +153,11 @@ def card_brief(fields: CardFields, code_path: Path, *, block_exists: bool,
         first = ", ".join(f"{p} = {v!r}" for p, v in fields.grid.first_variant().items())
         parts.append(
             f"\nGRID. Code runs the strategy over the card's variants ({fields.grid.count}), "
-            "choosing between them every month from the past only. You do NOT write the grid and "
-            "you do NOT write a Retune spec. Your spec's `params` carry the first variant: "
-            f"{first}. Each of these paths ({', '.join(fields.grid.paths)}) must be a key of "
-            "`params` (nested by dots) that the class reads. A grid parameter the class ignores "
-            "makes the choice meaningless and the attempt fails.")
+            "choosing between them every month from the past only. You do NOT write the grid, no "
+            "`choice` block, and you do NOT write a Retune spec. Your spec's `params` carry the "
+            f"first variant: {first}. Each of these paths ({', '.join(fields.grid.paths)}) must "
+            "be a key of `params` (nested by dots) that the class reads. A grid parameter the "
+            "class ignores makes the choice meaningless and the attempt fails.")
     if fields.readings:
         listed = "\n".join(f"    - {r}" for r in fields.readings)
         parts.append(
@@ -301,6 +308,15 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
         outcome.problems.append(f"spec does not load: {exc}")
         return outcome
     outcome.problems += [f"source: {p}" for p in source_problems(spec)]
+    # One idea, one check: the lists come from the card (code writes them into the spec); a card
+    # with no grid needs the spec to say why there is nothing to choose.
+    if fields.grid is not None and spec.choice is not None:
+        outcome.problems.append("choice: the card's grid is the idea's list of values and code "
+                                "writes it; the spec must carry no `choice` block")
+    elif fields.grid is None and (spec.choice is None or spec.choice.lists):
+        outcome.problems.append("choice: the card has no grid, so the spec must say why there is "
+                                "nothing to choose (`choice.nothing_to_choose`); lists of values "
+                                "come from the card only")
 
     # Guard 3: the module imports and the class looks like a Strategy.
     try:

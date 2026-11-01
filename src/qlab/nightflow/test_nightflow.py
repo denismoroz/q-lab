@@ -139,7 +139,9 @@ def test_descendants_waves_and_who_can_run_together() -> None:
 def test_restart_adds_the_steps_that_only_read() -> None:
     table = load_table()
     assert table.restart_set("recheck") == ["recheck", "assess", "ladder", "report"]
-    assert table.restart_set("research") == ["research", "twins-research", "ladder", "report"]
+    # the researcher's experiments have their one check in the same step (docs/ONE_CHECK.md): no
+    # step reads what it wrote as its data any more
+    assert table.restart_set("research") == ["research", "ladder", "report"]
 
 
 def test_reads_all_makes_a_fresh_edge_to_every_step_above() -> None:
@@ -423,20 +425,22 @@ def test_a_failing_step_blocks_its_descendants_and_the_journal_shows_it(
     def boom(*a, **kw):
         raise KeyError("strategy")
 
-    monkeypatch.setattr(night, "research_stage", boom)
+    monkeypatch.setattr("qlab.detector_builds.build_all", boom)
+    monkeypatch.setattr(night, "research_stage", lambda *a, **kw: ran.append("research"))
     monkeypatch.setattr("qlab.twin_stage.twins_stage", lambda *a, **k: ran.append("twins"))
     monkeypatch.setattr(night, "generate_stage", lambda *a, **kw: ran.append("generate"))
     day = date(2026, 10, 27)
-    report = night.run(day, journal=jr, trigger="button", **{**FLAGS, "twins": True,
-                                                              "generate": True})
+    report = night.run(day, journal=jr, trigger="button", **{**FLAGS, "detectors": True,
+                                                              "twins": True, "generate": True})
     states = {s.step_id: s for s in journal.night_states(factory(), day).values()}
-    assert states["research"].state == "failed" and "KeyError" in states["research"].error
-    assert states["twins-research"].state == "blocked"
-    assert states["twins-research"].blocked_by == "research"
+    assert states["detectors"].state == "failed" and "KeyError" in states["detectors"].error
+    assert states["recheck"].state == "blocked"
+    assert states["recheck"].blocked_by == "detectors"
     assert states["report"].state == "ok" and states["ladder"].state in ("ok", "failed")
-    assert ran == ["twins", "generate"]  # unrelated steps still ran; twins-research did not
+    # unrelated steps still ran; a step that only ordered the budget behind a failed one ran too
+    assert ran == ["twins", "research", "generate"]
     state = night.load_state(day)
-    assert state["stage_errors"]["research"].startswith("KeyError: 'strategy'")
+    assert state["stage_errors"]["detectors"].startswith("KeyError: 'strategy'")
     run = journal.latest_run(factory())
     assert run.state == "failed" and run.trigger == "button" and run.finished_at is not None
     assert report.exists()
@@ -446,18 +450,20 @@ def test_off_steps_block_children_and_a_step_done_earlier_today_does_not(
         tmp_path, monkeypatch, jr, factory) -> None:
     _night_env(tmp_path, monkeypatch)
     monkeypatch.setattr(night, "research_stage", lambda *a, **kw: None)
+    monkeypatch.setattr("qlab.detector_builds.build_all", lambda end: [])
     calls: list[str] = []
     monkeypatch.setattr("qlab.twin_stage.twins_stage", lambda *a, **k: calls.append("twins"))
     day = date(2026, 10, 28)
-    night.run(day, journal=jr, off=["research"], **{**FLAGS, "twins": True})
+    flags = {**FLAGS, "detectors": True, "twins": True}
+    night.run(day, journal=jr, off=["detectors"], **flags)
     states = {s.step_id: s for s in journal.night_states(factory(), day).values()}
-    assert states["research"].state == "off"
-    assert states["twins-research"].state == "blocked" and "twins" not in calls[1:]
-    # research done earlier tonight: switching it off no longer blocks its child
-    night.run(day, journal=jr, **{**FLAGS, "twins": True})
-    assert journal.night_states(factory(), day)["research"].state == "ok"
-    night.run(day, journal=jr, off=["research"], **{**FLAGS, "twins": True})
-    assert journal.night_states(factory(), day)["twins-research"].state == "ok"
+    assert states["detectors"].state == "off"
+    assert states["recheck"].state == "blocked" and states["recheck"].blocked_by == "detectors"
+    # detectors done earlier tonight: switching it off no longer blocks its child
+    night.run(day, journal=jr, **flags)
+    assert journal.night_states(factory(), day)["detectors"].state == "ok"
+    night.run(day, journal=jr, off=["detectors"], **flags)
+    assert journal.night_states(factory(), day)["recheck"].state == "ok"
 
 
 def test_a_restart_clears_the_steps_markers_and_runs_it_with_what_depends_on_it(
@@ -631,15 +637,15 @@ def test_a_refused_start_says_why(tmp_path, monkeypatch) -> None:
 
 def test_preview_names_what_runs_what_spends_tokens_and_what_is_blocked() -> None:
     table = load_table()
-    shown = control.preview(table, done_today=set(), off={"research"})
-    assert "research" in shown["off"]
+    shown = control.preview(table, done_today=set(), off={"anomalies"})
+    assert "anomalies" in shown["off"]
     assert [(b["step"], b["blocked_by"]) for b in shown["blocked"]] == [
-        ("twins-research", "research")]
+        ("anomalies-investigate", "anomalies"), ("overlays", "anomalies")]
     assert "выключен и сегодня не выполнен" in shown["blocked"][0]["reason"]
-    assert "generate" in shown["token_steps"] and "research" not in shown["token_steps"]
+    assert "generate" in shown["token_steps"] and "anomalies" not in shown["token_steps"]
     assert "detectors" in shown["run"]
-    again = control.preview(table, done_today={"research"}, off={"research"})
-    assert again["blocked"] == [] and "twins-research" in again["run"]
+    again = control.preview(table, done_today={"anomalies"}, off={"anomalies"})
+    assert again["blocked"] == [] and "overlays" in again["run"]
     restart = control.preview(table, done_today=set(), restart="recheck")
     assert restart["run"] == ["recheck", "assess", "ladder", "report"]
     assert restart["token_steps"] == ["assess"] and "detectors" in restart["outside"]
@@ -740,7 +746,7 @@ def test_the_page_reads_steps_states_stats_and_history(api, factory) -> None:
     _seed(factory)
     body = api.get("/api/pipeline").json()
     steps = {s["id"]: s for s in body["steps"]}
-    assert len(steps) == 25 and steps["recheck"]["depends_on"][0]["step"] == "detectors"
+    assert len(steps) == 24 and steps["recheck"]["depends_on"][0]["step"] == "detectors"
     assert steps["recheck"]["children"] and steps["recheck"]["wave"] == 1
     assert "waiting" in steps["recheck"]["can_run_with"]
     assert body["states"]["recheck"]["state"] == "failed" and body["running"] is False
@@ -813,7 +819,7 @@ def test_the_page_still_lists_the_steps_before_the_migration(api, factory) -> No
         session.execute(text(f"DROP TABLE {table}"))
     session.commit()
     body = api.get("/api/pipeline").json()
-    assert body["journal_ready"] is False and len(body["steps"]) == 25 and body["run"] is None
+    assert body["journal_ready"] is False and len(body["steps"]) == 24 and body["run"] is None
     assert api.get("/api/pipeline/runs").json() == {"runs": [], "journal_ready": False}
     assert api.get("/api/pipeline/steps/recheck").json()["journal_ready"] is False
 
@@ -822,7 +828,7 @@ def test_the_press_of_a_button_answers_only_the_local_console(api, factory, monk
     started = []
     monkeypatch.setattr(control, "start_detached",
                         lambda args, **k: started.append(args) or {"started": True, "pid": 7})
-    body = {"off": ["research"]}
+    body = {"off": ["anomalies"]}
     assert api.post("/api/pipeline/preview", json=body).status_code == 403  # no console header
     ok = {"x-qlab-console": "1"}
     assert api.post("/api/pipeline/preview", json=body, headers={
@@ -830,10 +836,10 @@ def test_the_press_of_a_button_answers_only_the_local_console(api, factory, monk
     assert api.post("/api/pipeline/preview", json=body, headers={
         **ok, "host": "evil.example"}).status_code == 403
     shown = api.post("/api/pipeline/preview", json=body, headers=ok).json()
-    assert shown["blocked"][0]["step"] == "twins-research" and not started
+    assert shown["blocked"][0]["step"] == "anomalies-investigate" and not started
     assert api.post("/api/pipeline/run", json={"off": ["nope"]}, headers=ok).status_code == 422
     sent = api.post("/api/pipeline/run", json=body, headers=ok)
-    assert sent.status_code == 200 and started == [["--off", "research"]]
+    assert sent.status_code == 200 and started == [["--off", "anomalies"]]
     again = api.post("/api/pipeline/restart", json={"step": "recheck"}, headers=ok)
     assert again.status_code == 200
     assert started[-1] == ["--restart", "recheck"]

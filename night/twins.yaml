@@ -8,6 +8,16 @@
 
 enabled: true
 
+# 2026-11-01. Owner, 2026-10-31: «не уверен что нам нужна вот такая дубликация. поидее просто для
+# стратегии достаточна проверка. так мы гоняем все 2х хотя все равно судим по двойнику». One idea,
+# one check (docs/ONE_CHECK.md): a new idea declares the values it leaves open and its check
+# chooses among them month by month on Binance's history, under the idea's own name, so the stage
+# no longer BUILDS twins. What it still does: runs a twin file that was written and never run, and
+# the first check of a named idea by hand (`qlab twins run --only IDEA [--allow-heavy]`). The
+# twins that exist today are ordinary ideas that qlab.waiting re-runs. `true` brings the old
+# behaviour back (a twin built for every idea that waits for forward data, up to the cap below).
+build_new: false
+
 # At most this many NEW twins a night (a twin is a stand run with 200 random books, and every
 # run is a trial that deflation counts). What does not fit waits for the next night; the report
 # names it. An explicit `qlab twins run --only IDEA` is not capped.

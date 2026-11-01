@@ -757,3 +757,27 @@ def test_the_shipped_overlays_config_has_a_time_limit() -> None:
     from qlab.stage_time import read_limit
 
     assert read_limit(Path("night/overlays.yaml")) is not None
+
+
+def test_an_idea_with_one_check_is_not_a_base_for_overlays_yet(tmp_path, registry) -> None:
+    """Its check is built in code from the lists it declares (docs/ONE_CHECK.md); there is no file
+    of the judged form for a variant to cite its numbers from."""
+    from qlab.pipeline.spec import StrategySpec
+
+    spec = StrategySpec.model_validate({
+        "idea_id": "checked", "title": "x", "code_ref": "a:b", "params": {"lookback": 14},
+        "data": {"source": "binance", "interval": "1d", "start": "2025-01-01",
+                 "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}, "min_leg_notional": 10.0,
+        "unexpressed_mechanisms": [],
+        "choice": {"axes": {"lookback": [14, 30]}, "source": "night/own_numbers.yaml"}})
+    path = tmp_path / "checked.yaml"
+    path.write_text(yaml.safe_dump(spec.model_dump(mode="json", exclude_none=True)),
+                    encoding="utf-8")
+    config = overlay_stage.Config(True, 3, 10, 20.0, (), ("checked",), False, True, {})
+    with registry.session_scope() as session:
+        _idea(session, "checked")
+        _trial(session, "checked", "paper")
+        found, refused = overlay_stage.find_bases(session, {"checked": [path]}, config,
+                                                  only=["checked"])
+    assert found == [] and "not built yet" in refused["checked"]

@@ -47,10 +47,9 @@ PROD_DB = "file:data/frab.db?mode=ro"  # read-only: q-lab never changes frab's s
 #: Stage names in the morning report's stop line (`past_stop`).
 STOP_STAGES = {"detectors": "определители режима",
                "recheck": "перепроверка списка наблюдения", "waiting": "ждущие идеи",
-               "twins": "двойники и вторая ступень",
+               "twins": "двойники, уже написанные, и проверка вручную",
                "second_venue": "вторая площадка для закрытых идей",
                "venue_gap": "почему площадки расходятся",
-               "twins-research": "двойники экспериментов исследователя",
                "restamp": "пересчёт старых результатов",
                "anomalies": "аномалии", "anomalies-investigate": "разбор аномалий агентом",
                "overlays": "надстройки", "ladder": "лестница оценки", "report": "утренний отчёт",
@@ -224,9 +223,15 @@ def rerun_spec(spec: StrategySpec) -> StrategySpec:
     data is extended -- so the forward days grow night by night and the choice stays the one
     made at the first run. Its candidates were recorded as trials by that first run (the
     researcher or the generator); re-running the same choice adds no new candidate. The
-    night of 2026-10-27 passed such specs to the stand as they were and both failed."""
-    from qlab import own_numbers
+    night of 2026-10-27 passed such specs to the stand as they were and both failed.
 
+    An idea that declares lists of values (`StrategySpec.choice`, docs/ONE_CHECK.md) is its one
+    check: the same idea, the numbers chosen by code every month from the past only, on Binance's
+    history (`qlab.one_check`). An idea that says there is nothing to choose runs as it is."""
+    from qlab import one_check, own_numbers
+
+    if one_check.declares_lists(spec):
+        return one_check.rerun_form(spec)
     if not own_numbers.open_params(spec):
         return spec
     config = own_numbers.load_config()
@@ -1197,8 +1202,9 @@ def _step_waiting(ctx: NightContext) -> None:
 
 
 def _step_twins(ctx: NightContext) -> None:
-    # Ideas that wait for forward data get an answer from the history that exists: their causal
-    # twin on Binance, then the second stage (qlab.twin_stage). Code only.
+    # What is left of the twins (owner, 2026-10-31, docs/ONE_CHECK.md): one idea has one check,
+    # so no new twin is built; a twin file written and never run gets its first run
+    # (qlab.twin_stage). Code only.
     from qlab.twin_stage import twins_stage
 
     twins_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at)
@@ -1296,20 +1302,6 @@ def _research_skip(ctx: NightContext) -> str | None:
     return None if ctx.wants_research() else "не по расписанию: исследователь сегодня не запрошен"
 
 
-def _twins_research_skip(ctx: NightContext) -> str | None:
-    if not ctx.wants_research():
-        return "не по расписанию: исследователь сегодня не работает"
-    return None if ctx.run_twins else "выключен флагом команды"
-
-
-def _step_twins_research(ctx: NightContext) -> None:
-    # The experiments the researcher has just run get their twins the same night.
-    from qlab.twin_stage import twins_stage
-
-    twins_stage(ctx.day, ctx.end, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at,
-                label="twins-research")
-
-
 def _step_implement(ctx: NightContext) -> None:
     implement_stage(ctx.day, ctx.state, noise_trials=ctx.noise_trials, stop_at=ctx.stop_at)
 
@@ -1391,7 +1383,6 @@ _TIME_NOTES = {
     "recheck": ("recheck_time", ""),
     "waiting": ("waiting_time", "qlab twins run --only {idea}"),
     "twins": ("twins", "qlab twins run --only {idea}"),
-    "twins-research": ("twins", "qlab twins run --only {idea}"),
     "overlays": ("overlays", "qlab overlays run --only {idea}"),
 }
 
@@ -1403,8 +1394,8 @@ def _time_note(name: str, ctx: NightContext) -> str | None:
 
     key, hand = _TIME_NOTES[name]
     block = ctx.state.get(key)
-    summary = (block.get("time") or {}).get(name) if name in ("twins", "twins-research",
-                                                             "overlays") and block else block
+    summary = (block.get("time") or {}).get(name) if name in ("twins", "overlays") and block \
+        else block
     return page_note(summary, hand, watch=name == "recheck")
 
 
@@ -1463,10 +1454,6 @@ def night_steps() -> dict[str, StepImpl]:
         "director": StepImpl(_step_director, "director", skip_reason=flag("director_on"),
                              is_cut=cut("stop_at", "director")),
         "research": StepImpl(_step_research, "research", skip_reason=_research_skip),
-        "twins-research": StepImpl(_step_twins_research, "twins-research",
-                                   skip_reason=_twins_research_skip,
-                                   is_cut=cut("stop_at", "twins-research"),
-                                   note=lambda c: _stage_note("twins-research", c)),
         "implement": StepImpl(_step_implement, "implement", skip_reason=flag("implement"),
                               is_cut=cut("stop_at", "implement")),
         "search": StepImpl(_step_search, "search", skip_reason=flag("search"),
@@ -1499,7 +1486,6 @@ def schedule_skips(day: date) -> dict[str, str]:
     try:
         if not research_due(day, load_research_plan(), sweep=day.weekday() == 6):
             out["research"] = "по расписанию исследователь сегодня не работает"
-            out["twins-research"] = out["research"]
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -2856,9 +2842,10 @@ def implement_stage(day: date, state: dict, *, noise_trials: int, stop_at: datet
 
 
 def _stand_line(entry: dict) -> None:
-    """The written spec's own verdict as one line (what the report printed before the extra runs
-    existed)."""
-    spec_run = (entry.get("runs") or {}).get("spec") or {}
+    """The idea's own verdict as one line: its check (the written spec for a record made before
+    the one-check rule, docs/ONE_CHECK.md)."""
+    runs = entry.get("runs") or {}
+    spec_run = runs.get("check") or runs.get("spec") or {}
     if spec_run.get("action") == "ran":
         entry["stand"] = spec_run.get("error") or f"{spec_run.get('route')}: " \
             f"{spec_run.get('route_reason')}"
