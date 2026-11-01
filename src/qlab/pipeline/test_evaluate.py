@@ -1779,6 +1779,27 @@ def test_spot_priced_at_the_perp_and_at_its_own_market_are_different_requests(
     assert find("own") == "snap-spot" and find("perp") is None
 
 
+def test_a_list_naming_a_k_coin_finds_its_snapshot_whatever_the_case(session, tmp_path) -> None:
+    """Hyperliquid's thousand-multiples are spelt kNEIRO, kPEPE in the manifest (the venue's own
+    spelling), while the request is matched in upper case. Night of 2026-11-01: a stage 2 spec
+    naming kNEIRO never found its own snapshot, so every run of it, each of the 200 noise books
+    too, rebuilt the panel (~100 s a book). The same request, typed in any case, finds it."""
+    names = ["BTC", "kNEIRO"]
+    _register_snapshot(session, tmp_path, snapshot_id="snap-k", instruments=names,
+                       universe_complete=False)
+
+    def find(instruments: list[str]) -> str | None:
+        return _find_matching_snapshot(
+            session, source=SOURCE, start=pd.Timestamp(START, tz="UTC"),
+            end=pd.Timestamp(END, tz="UTC"), interval=INTERVAL, instruments=instruments,
+            include_spot=False, min_daily_volume_usd=None)
+
+    assert find(["BTC", "kNEIRO"]) == "snap-k"
+    assert find(["btc", "KNEIRO"]) == "snap-k"
+    assert find(["BTC", "kPEPE"]) is None  # a different coin is still a different request
+    assert find(["BTC"]) is None
+
+
 def test_the_default_spot_price_is_not_written_into_the_spec_row(session) -> None:
     """Spec rows recorded before the option existed must still match, or every
     idea would grow a new version on its next run."""

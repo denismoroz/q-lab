@@ -350,7 +350,14 @@ def _find_matching_snapshot(
             # statement about the discovered universe, not about this list.
             if manifest.get("universe_complete") or manifest.get("delisted_without_history"):
                 continue
-            if sorted(manifest.get("instruments", [])) != wanted_instruments:
+            # Both sides are compared in upper case: the request is hand-typed (and said so above),
+            # while the manifest keeps the venue's own spelling. Hyperliquid's thousand-multiples
+            # are kNEIRO, kPEPE, kBONK; `build_snapshot` maps a typed name onto the venue's spelling
+            # case-insensitively (`_resolve_casing`), so a list naming kNEIRO built a panel whose
+            # manifest says kNEIRO and was then never found again: every run of it, each of the
+            # 200 noise books too, rebuilt the panel (night of 2026-11-01: ~100 s a book).
+            if sorted({str(name).upper() for name in manifest.get("instruments", [])}) \
+                    != wanted_instruments:
                 continue
         matches.append(str(row.id))
 
