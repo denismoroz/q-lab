@@ -2110,14 +2110,20 @@ def strategy_slots(session, research_plan: dict,
     keeps work from sprawling and such an idea asks for no work. Variants (ideas with a parent)
     take none. Without the limits file there is no cap."""
     from qlab.registry.models import Idea
-    from qlab.registry.stages import latest_routed
+    from qlab.registry.stages import latest_routed, stage2_child
     from qlab.registry.strategies import ACTIVE_STATUSES, strategy_root
     from qlab.waiting import WAITING_ROUTES
 
-    def only_waits(idea_id: str) -> bool:
+    def route_waits(idea_id: str) -> bool:
         routed = latest_routed(session, idea_id)
         return routed is not None and getattr(routed[0].route, "value",
                                               routed[0].route) in WAITING_ROUTES
+
+    def only_waits(idea_id: str) -> bool:
+        # An idea rejected on Binance stays open while Hyperliquid has not spoken: its own last
+        # route is the reject, and the waiting is its second stage's.
+        child = stage2_child(session, idea_id)
+        return route_waits(idea_id) or (child is not None and route_waits(child.id))
 
     plan = research_plan.get("strategies") or {}
     taken = {strategy_root(session, e["ideas"][0]) for e in plan.values() if e.get("ideas")}

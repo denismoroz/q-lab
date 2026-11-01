@@ -660,10 +660,14 @@ def test_a_generator_idea_that_only_waits_for_data_takes_no_place(tmp_path, monk
     # owner, 2026-11-01: «не считать ждущие»; a decided one and one never run still count
     session = _memory_session()
     _add_ideas(session, [("gen-waits", "bench", None), ("gen-passed", "validated", None),
-                         ("gen-new", "candidate", None)])
-    routes = {"gen-waits": "needs-forward", "gen-passed": "paper"}
+                         ("gen-new", "candidate", None), ("gen-venue", "bench", None)])
+    # gen-venue: rejected on Binance, its second stage on Hyperliquid has not spoken
+    routes = {"gen-waits": "needs-forward", "gen-passed": "paper", "gen-venue": "reject",
+              "gen-venue-hl": "needs-forward"}
     monkeypatch.setattr("qlab.registry.stages.latest_routed", lambda s, idea: (
         (SimpleNamespace(route=routes[idea]), None) if idea in routes else None))
+    monkeypatch.setattr("qlab.registry.stages.stage2_child", lambda s, idea: (
+        SimpleNamespace(id="gen-venue-hl") if idea == "gen-venue" else None))
     limits = tmp_path / "limits.yaml"
     limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
     assert night.strategy_slots(session, {"strategies": {}}, limits) == (
