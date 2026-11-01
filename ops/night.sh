@@ -24,6 +24,9 @@ set -u
 # with caffeinate, and handed down in the environment (ops/trigger.sh; 2026-11-01: run 31 came from
 # launchd and was written down as a hand).
 source "${0:A:h}/trigger.sh"
+if [[ -z "${QLAB_TRIGGER_FACTS:-}" ]]; then  # the first pass only: caffeinate is the parent of the second
+  export QLAB_TRIGGER_FACTS="given=${QLAB_TRIGGER:-none} xpc=${XPC_SERVICE_NAME:-none} parent=$PPID"
+fi
 export QLAB_TRIGGER="$(qlab_trigger "${QLAB_TRIGGER:-}" "${XPC_SERVICE_NAME:-}" "$PPID" \
   "$([[ -t 0 ]] && echo 1 || echo 0)")"
 # The whole script stays awake, the wait for the recorder too: on 2026-10-30 the Mac was asleep at
@@ -37,7 +40,7 @@ LOG="data/night/logs/$(date -u +%Y-%m-%d).log"
 mkdir -p data/night/logs
 {
   echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) start"
-  echo "=== trigger ${QLAB_TRIGGER} (xpc ${XPC_SERVICE_NAME:-none}, parent ${PPID})"
+  echo "=== trigger ${QLAB_TRIGGER} (${QLAB_TRIGGER_FACTS:-})"
   # The night reads what the recorder writes: wait for it if it is still running.
   while pgrep -f ops/record-daily.sh > /dev/null; do sleep 30; done
   # Arguments go through to `qlab night run` (the console's button passes --off / --restart; one run
