@@ -1217,6 +1217,168 @@ class TestSpotFromAnotherVenue:
         assert list(out.prices) == pytest.approx([100.0, 101.0 / 1.01])
 
 
+# --------------------------------------------------------------------------
+# A perpetual of another venue in the same panel (`<COIN>@<VENUE>` columns)
+# --------------------------------------------------------------------------
+
+
+def _fake_second_perp(coins, start, end, interval, *, on_missing="raise", factor=1.0):
+    full_index = pd.date_range(start, end, freq="1h", tz="UTC")
+    out = {}
+    for i, coin in enumerate(coins):
+        idx = full_index[3 * i:]  # each later coin lists three bars later
+        prices = _ramp_prices(idx) * USDT_PER_USDC * SPOT_PREMIUM * factor
+        marks = idx[idx.hour % 8 == 0]  # an 8-hour venue: settlements only on its marks
+        out[coin] = InstrumentHistory(
+            instrument=coin, prices=prices, funding=pd.Series(0.0008, index=marks),
+            volume=pd.Series(_DEFAULT_VOLUME, index=idx),
+            trade_count=pd.Series(1, index=idx, dtype="int64"),
+            first_seen=idx[0], last_seen=idx[-1], is_delisted=False, has_funding=True,
+            high=prices * 1.001,
+        )
+    return out
+
+
+_SECOND_REQUEST = ("hyperliquid", ["BTC", "BTC@OTHERPERP"], "2024-01-01",
+                   "2024-01-01T08:00:00", "1h")
+
+
+@pytest.fixture()
+def patched_second_venue(monkeypatch, patched_source):
+    monkeypatch.setitem(snap._SOURCES, "otherperp", {
+        "fetch": _fake_second_perp,
+        "funding_native_interval": pd.Timedelta(hours=8),
+        "quote": "USDT",
+    })
+    monkeypatch.setitem(snap._SOURCES["binance"], "spot_quote_rate", _fake_quote_rate)
+    return patched_source
+
+
+class TestPerpFromAnotherVenue:
+    def test_a_second_venue_contract_is_valued_in_usdc_at_its_own_closes(
+        self, session, patched_second_venue, tmp_path
+    ):
+        panel = snap.build_snapshot(*_SECOND_REQUEST, snapshots_dir=tmp_path, session=session)
+        expected = _ramp_prices(panel.prices.index) * SPOT_PREMIUM
+        pd.testing.assert_series_equal(panel.prices["BTC@OTHERPERP"], expected, check_names=False)
+        assert panel.prices["BTC@OTHERPERP"].iloc[0] == pytest.approx(100.2)
+        assert panel.prices["BTC@OTHERPERP"].iloc[1] == pytest.approx(100.21002)
+        assert panel.high["BTC@OTHERPERP"].iloc[0] == pytest.approx(100.3002)
+        assert list(panel.prices["BTC"].iloc[:2]) == pytest.approx([100.0, 100.01])
+
+    def test_each_column_settles_on_its_own_schedule(
+        self, session, patched_second_venue, tmp_path
+    ):
+        panel = snap.build_snapshot(*_SECOND_REQUEST, snapshots_dir=tmp_path, session=session)
+        funding = panel.funding["BTC@OTHERPERP"]
+        assert not funding.isna().any()
+        assert list(funding) == pytest.approx([0.0008] + [0.0] * 7 + [0.0008])
+        alone = snap.build_snapshot("hyperliquid", ["BTC"], *_SECOND_REQUEST[2:],
+                                    snapshots_dir=tmp_path, session=session)
+        pd.testing.assert_series_equal(panel.funding["BTC"], alone.funding["BTC"])
+
+    def test_the_panel_remembers_its_second_venue_after_a_round_trip(
+        self, session, patched_second_venue, tmp_path
+    ):
+        panel = snap.build_snapshot(*_SECOND_REQUEST, snapshots_dir=tmp_path, session=session)
+        loaded = snap.load_snapshot(panel.snapshot_id, session=session)
+        assert panel.meta["second_perp_sources"] == ["otherperp"]
+        assert loaded.meta["second_perp_sources"] == ["otherperp"]
+        assert loaded.meta["universe_complete"] is False
+        pd.testing.assert_frame_equal(loaded.prices, panel.prices, check_freq=False)
+        pd.testing.assert_frame_equal(loaded.funding, panel.funding, check_freq=False)
+        pd.testing.assert_frame_equal(loaded.tradeable, panel.tradeable, check_freq=False)
+
+    def test_an_ordinary_request_keeps_its_manifest_bytes(
+        self, session, patched_source, tmp_path
+    ):
+        args = ("hyperliquid", ["A"], pd.Timestamp("2026-01-01", tz="UTC"),
+                pd.Timestamp("2026-01-02", tz="UTC"), "1h", False, [], None)
+        assert "second_perp_sources" not in snap._canonical_manifest(*args)
+        assert "second_perp_sources" not in snap._canonical_manifest(*args, "perp", None, [])
+        assert snap._canonical_manifest(
+            *args, "perp", None, ["aster"])["second_perp_sources"] == ["aster"]
+        panel = snap.build_snapshot("hyperliquid", ["BTC", "ETH"], "2024-01-01",
+                                    "2024-01-01T05:00:00", "1h", snapshots_dir=tmp_path,
+                                    session=session)
+        assert panel.meta["second_perp_sources"] == []
+        manifest = (tmp_path / panel.snapshot_id / "manifest.json").read_text(encoding="utf-8")
+        assert "second_perp_sources" not in manifest
+
+    def test_a_second_venue_listing_is_not_read_as_truncated_history(
+        self, session, patched_second_venue, monkeypatch, tmp_path
+    ):
+        # With a cap this small the later listing would read as cut by the venue.
+        monkeypatch.setitem(snap._SOURCES["hyperliquid"], "served_candles_cap", 2)
+        panel = snap.build_snapshot(
+            "hyperliquid", ["BTC", "BTC@OTHERPERP", "ETH@OTHERPERP"], "2024-01-01",
+            "2024-01-01T08:00:00", "1h", snapshots_dir=tmp_path, session=session)
+        assert panel.meta["history_truncated"] == {}
+
+    def test_another_multiple_of_the_coin_is_dropped_whole(
+        self, session, patched_second_venue, monkeypatch, tmp_path
+    ):
+        monkeypatch.setitem(
+            snap._SOURCES["otherperp"], "fetch",
+            lambda *a, **kw: _fake_second_perp(*a, factor=1000.0, **kw))
+        panel = snap.build_snapshot(*_SECOND_REQUEST, snapshots_dir=tmp_path, session=session)
+        assert panel.prices["BTC@OTHERPERP"].isna().all()
+        assert not panel.tradeable["BTC@OTHERPERP"].any()
+        assert panel.prices["BTC"].notna().all()
+        assert panel.tradeable["BTC"].iloc[:-1].all()
+
+    def test_two_usdt_venues_need_no_conversion(self, session, monkeypatch, tmp_path):
+        monkeypatch.setitem(snap._SOURCES, "usdtperp", {
+            "fetch": _fake_fetch_universe,
+            "funding_native_interval": pd.Timedelta(hours=1),
+            "quote": "USDT",
+        })
+        monkeypatch.setitem(snap._SOURCES, "otherperp", {
+            "fetch": _fake_second_perp,
+            "funding_native_interval": pd.Timedelta(hours=8),
+            "quote": "USDT",
+        })
+        panel = snap.build_snapshot("usdtperp", ["BTC", "BTC@OTHERPERP"], "2024-01-01",
+                                    "2024-01-01T08:00:00", "1h", snapshots_dir=tmp_path,
+                                    session=session)
+        # A shared quote is not divided by a rate: the raw closes, premium and quote included.
+        expected = _ramp_prices(panel.prices.index) * USDT_PER_USDC * SPOT_PREMIUM
+        pd.testing.assert_series_equal(panel.prices["BTC@OTHERPERP"], expected, check_names=False)
+
+    def test_the_request_is_refused_when_it_cannot_mean_what_it_says(
+        self, session, patched_second_venue, monkeypatch, tmp_path
+    ):
+        monkeypatch.setitem(snap._SOURCES, "nofetch", {"quote": "USDT"})
+
+        def build(source, *names):
+            return snap.build_snapshot(source, list(names), "2024-01-01", "2024-01-01T05:00:00",
+                                       "1h", snapshots_dir=tmp_path, session=session)
+
+        with pytest.raises(ValueError, match="is the source itself"):
+            build("hyperliquid", "BTC", "BTC@HYPERLIQUID")
+        with pytest.raises(ValueError, match="unknown second venue"):
+            build("hyperliquid", "BTC", "BTC@NOWHERE")
+        with pytest.raises(ValueError, match="spot"):
+            build("hyperliquid", "BTC", "BTC-SPOT@OTHERPERP")
+        with pytest.raises(ValueError, match="no perpetual fetcher"):
+            build("hyperliquid", "BTC", "BTC@NOFETCH")
+        with pytest.raises(ValueError, match="cannot be valued"):
+            build("otherperp", "BTC", "BTC@HYPERLIQUID")
+
+    def test_the_pipeline_finds_the_panel_it_asked_for(
+        self, session, patched_second_venue, tmp_path
+    ):
+        from qlab.pipeline.evaluate import _find_matching_snapshot
+
+        panel = snap.build_snapshot(*_SECOND_REQUEST, snapshots_dir=tmp_path, session=session)
+        found = _find_matching_snapshot(
+            session, source="hyperliquid", start=pd.Timestamp("2024-01-01", tz="UTC"),
+            end=pd.Timestamp("2024-01-01T08:00:00", tz="UTC"), interval="1h",
+            instruments=["BTC", "BTC@OTHERPERP"], include_spot=False,
+            min_daily_volume_usd=None)
+        assert found == panel.snapshot_id
+
+
 class TestAVenuePairsItsOwnPerpsWithItsOwnSpot:
     """Binance has no spot discovery of its own: its spot pairs are found for ITS perps
     (`pair_spot_universe`). A perp without a spot pair is no part of a spot-versus-perp

@@ -17,6 +17,7 @@ DECLARED = {
     "qlab.strategies.live.frab_binance_spot:LiveFrabBinanceSpot": False,  # inherits
     "qlab.strategies.live.frab_binance_spot:LiveFrabAllBinance": False,  # inherits
     "qlab.strategies.frab:FrabFundingHarvest": False,  # a constant budget
+    "qlab.strategies.frab_perp_spread:FrabPerpSpread": False,  # FRAB's own: a constant budget
     "qlab.strategies.xsmom:XsmomCrossSectionalMomentum": False,  # live: a fixed budget
     "qlab.strategies.trend:TrendTSMOMEnsemble": True,  # the paper book resizes to all its money
     "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble": True,
@@ -103,6 +104,7 @@ ORDERS_DECLARED = {
     "qlab.calibration.noise:NoiseStrategy": True,
     "qlab.strategies.bv2:BStrategyV2": False,  # a transcription: weights only
     "qlab.strategies.frab:FrabFundingHarvest": False,
+    "qlab.strategies.frab_perp_spread:FrabPerpSpread": False,
     "qlab.strategies.xsmom:XsmomCrossSectionalMomentum": False,
     "qlab.strategies.trend:TrendTSMOMEnsemble": False,
     "qlab.strategies.live.trend:LiveTrendTSMOMEnsemble": False,  # signals, no book
