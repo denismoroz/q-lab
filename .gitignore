@@ -89,3 +89,6 @@ data/stage2/
 # already covers them, listed so that moving the state folder does not commit them
 data/night/run.lock
 data/night/run.starting
+
+# per-item seconds of the night stages (qlab.stage_time)
+data/stage_seconds.json
