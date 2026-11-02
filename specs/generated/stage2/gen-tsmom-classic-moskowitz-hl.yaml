@@ -1,0 +1,150 @@
+# Stage 2 of gen-tsmom-classic-moskowitz (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: gen-tsmom-classic-moskowitz-hl
+title: 'Каждая монета по своему знаку: купить, если за прошлый срок (от месяца до четырёх лет) выросла,
+  продать, если упала, пересмотр раз в месяц: числа выбирает код раз в месяц только по прошлому, история
+  Binance с 2019 (второй этап: hyperliquid)'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.blocks:Composed
+  base_params:
+    universe:
+      rule: all
+    signal:
+      block: momentum
+      lookback_days: 365
+    portfolio:
+      block: time_series_sign
+    sizing:
+      block: equal
+      gross: 1.0
+    rebalance_days: 30
+    min_history_days: 365
+  grid:
+    signal.lookback_days:
+      lookback_days=365:
+        signal.lookback_days: 365
+      lookback_days=30:
+        signal.lookback_days: 30
+      lookback_days=90:
+        signal.lookback_days: 90
+      lookback_days=180:
+        signal.lookback_days: 180
+      lookback_days=270:
+        signal.lookback_days: 270
+      lookback_days=720:
+        signal.lookback_days: 720
+      lookback_days=1080:
+        signal.lookback_days: 1080
+      lookback_days=1440:
+        signal.lookback_days: 1440
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 5.0
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-11-01'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- Moskowitz, Ooi and Pedersen trade 58 futures of commodities, currencies, equity indices and bonds; this
+  spec applies the sign rule to every Binance USDT perpetual.
+- The paper scales each position to a common volatility (exponentially weighted, 40% a year); this spec
+  uses equal shares because the catalogue gives no usable volatility-window or daily-target number.
+- The paper has no funding and no perpetual-contract costs; the stand charges both.
+- The paper is a secondary source, not tested on cryptocurrencies.
+- 'One check of gen-tsmom-classic-moskowitz: the numbers it trades are chosen by code, every month, from
+  returns realised before the choice (the lists declared in docs/MECHANISMS.md, mechanism classic-ts-momentum,
+  row signal.lookback_days: 365, 30, 90, 180, 270, 720, 1080, 1440 (Moskowitz, Ooi, Pedersen 2012)); the
+  data is Binance''s history, a proxy for binance''s market, judged for Binance itself: Binance''s costs
+  and minimum leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
+  where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
+  a run that passes every rule routes needs-infrastructure because the lab has no Binance order adapter.
+  Text above that speaks of the original''s or Hyperliquid''s costs and minimum leg describes the spec
+  as it was before that day.'
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (gen-tsmom-classic-moskowitz) on hyperliquid''s own perpetual contracts listed at each bar;
+  nothing was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2023-10-01'
+params_fixed_evidence: 'Inherited from stage 1 (gen-tsmom-classic-moskowitz): The wrapper''s first causal
+  choice (qlab.strategies.retune, docs/RETUNE.md): the data starts 2019-09-08; the longest warm-up read
+  from the parameters is 1440 days (signal.lookback_days = 1440), so the book can first trade on 2023-08-18;
+  a candidate is eligible only after one whole month re-tuning period, so the first re-tuning after 2023-08-18
+  is 2023-09-01 and the first choice is made at the one after it, 2023-10-01. This is warm-up arithmetic
+  read generically from the parameters (every day, hour, window and lookback number, whatever the strategy
+  does with it), not a result. If the strategy needs more than the parameters show (enough instruments
+  listed on Binance, a signal that waits for history), the true first choice is later and the days before
+  it are judged as flat days. The grid is the idea''s declared lists (signal.lookback_days), 8 candidates.
+  What this does not prove: the lists were declared with the idea before its check ran; what was seen
+  of the history when they were declared is not recorded, so the choice is only as honest as the lists
+  are.'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'docs/RETUNE.md: the same window end'
+  base_params.universe: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: universe: all (Moskowitz,
+    Ooi, Pedersen 2012)'
+  base_params.signal: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: signal: momentum'
+  base_params.portfolio: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: portfolio: time_series_sign'
+  base_params.sizing: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: sizing: equal (Moskowitz,
+    Ooi, Pedersen 2012)'
+  base_params.sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  base_params.rebalance_days: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, row rebalance_days:
+    30 (one-month holding; Moskowitz, Ooi, Pedersen 2012)'
+  base_params.min_history_days: 'derived: 365; the first lookback of docs/MECHANISMS.md, mechanism classic-ts-momentum,
+    row signal.lookback_days'
+  base_params.signal.lookback_days: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, row signal.lookback_days:
+    365, 30, 90, 180, 270, 720, 1080, 1440 (Moskowitz, Ooi, Pedersen 2012): the lists the idea declares,
+    8 variants; owner 2026-10-31: one idea, one check -- code chooses among the declared values every
+    month from the past only (docs/ONE_CHECK.md)'
+  inner_code_ref: 'src/qlab/strategies/blocks/__init__.py: the code of the spec'
+  grid: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, row signal.lookback_days: 365, 30, 90, 180,
+    270, 720, 1080, 1440 (Moskowitz, Ooi, Pedersen 2012): the lists the idea declares, 8 variants; owner
+    2026-10-31: one idea, one check -- code chooses among the declared values every month from the past
+    only (docs/ONE_CHECK.md)'
+  score_costs.taker_fee_bps: 'owner 2026-10-30, asked which fee tier his Binance account sits on: «у меня
+    обычный аккаунт» (a regular account: no VIP tier, no volume discount), so the regular-user rate stands;
+    docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular user, 0.0500% (5 bps),
+    https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee
+    could not be read, the article gives the rate as its example)'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+regime_claim: {}
+review_answers: {}
+selects_causally: true

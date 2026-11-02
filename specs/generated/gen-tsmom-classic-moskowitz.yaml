@@ -1,0 +1,50 @@
+# mechanism: classic-ts-momentum
+idea_id: gen-tsmom-classic-moskowitz
+title: 'Каждая монета по своему знаку: купить, если за прошлый срок (от месяца до четырёх лет) выросла, продать, если упала, пересмотр раз в месяц'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: momentum
+    lookback_days: 365
+  portfolio:
+    block: time_series_sign
+  sizing:
+    block: equal
+    gross: 1.0
+  rebalance_days: 30
+  min_history_days: 365
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-11-01'
+costs:
+  taker_fee_bps: 5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+noise_universe: panel
+unexpressed_mechanisms: []
+differs_from_source:
+- Moskowitz, Ooi and Pedersen trade 58 futures of commodities, currencies, equity indices and bonds; this spec applies the sign rule to every Binance USDT perpetual.
+- The paper scales each position to a common volatility (exponentially weighted, 40% a year); this spec uses equal shares because the catalogue gives no usable volatility-window or daily-target number.
+- The paper has no funding and no perpetual-contract costs; the stand charges both.
+- The paper is a secondary source, not tested on cryptocurrencies.
+choice:
+  axes:
+    signal.lookback_days: [365, 30, 90, 180, 270, 720, 1080, 1440]
+  source: "docs/MECHANISMS.md, mechanism classic-ts-momentum, row signal.lookback_days: 365, 30, 90, 180, 270, 720, 1080, 1440 (Moskowitz, Ooi, Pedersen 2012)"
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: universe: all (Moskowitz, Ooi, Pedersen 2012)'
+  signal: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: signal: momentum'
+  signal.lookback_days: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, row signal.lookback_days: 365, 30, 90, 180, 270, 720, 1080, 1440 (Moskowitz, Ooi, Pedersen 2012)'
+  portfolio: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: portfolio: time_series_sign'
+  sizing: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, blocks: sizing: equal (Moskowitz, Ooi, Pedersen 2012)'
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism classic-ts-momentum, row rebalance_days: 30 (one-month holding; Moskowitz, Ooi, Pedersen 2012)'
+  min_history_days: 'derived: 365; the first lookback of docs/MECHANISMS.md, mechanism classic-ts-momentum, row signal.lookback_days'
+  costs.taker_fee_bps: 'night/costs.yaml, venue binance, taker_fee_bps'
+  costs.slippage_bps: 'night/costs.yaml, venue binance, slippage_bps'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'

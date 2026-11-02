@@ -75,46 +75,22 @@ ideas:
   text: 'Стенд FRAB должен учитывать остаток монеты, который остаётся после продажи из-за округления до
     лота биржи: этот остаток не прикрыт контрактом и двигается с ценой, как на живом счёте; тогда сверка
     живых денег со стендом покажет, сколько он стоит'
-  status: new
-  card: null
-  notes: из записки docs/research/frab-2026-10-28.md
-  attempts: 2
-  problems:
-  - 'reviewer: rule-incomplete: `new_block.rule_ru` says the lot size is "taken from venue data" and that
-    a coin without one is reported and skipped. q-lab''s data layer has no lot sizes. The only lot-size
-    reference in `src` is `szDecimals` in `src/qlab/venue_watch.py`, a monitor that does not feed the
-    stand. `docs/FRAB_LIVE.md` gives lots only for BTC, SOL, HYPE and AVAX ("и т. п."); ETH and PURR are
-    missing. An engineer with only the card would have to guess where the lots come from. They would also
-    have to guess what happens to ETH and PURR, and "skip the coin" would silently shrink the test. The
-    card needs a table of lots per coin with its source, or the exact place to fetch them.'
-  review_blocks:
-  - kind: rule-incomplete
-    ref: new
-    text: '`new_block.rule_ru` says the lot size is "taken from venue data" and that a coin without one
-      is reported and skipped. q-lab''s data layer has no lot sizes. The only lot-size reference in `src`
-      is `szDecimals` in `src/qlab/venue_watch.py`, a monitor that does not feed the stand. `docs/FRAB_LIVE.md`
-      gives lots only for BTC, SOL, HYPE and AVAX ("и т. п."); ETH and PURR are missing. An engineer with
-      only the card would have to guess where the lots come from. They would also have to guess what happens
-      to ETH and PURR, and "skip the coin" would silently shrink the test. The card needs a table of lots
-      per coin with its source, or the exact place to fetch them.'
+  status: carded
+  card: cards/frab-lot-leftover.yaml
+  notes: карточка написана 2026-11-02; в очереди реализации
+  attempts: 3
+  problems: []
+  review_blocks: []
   review_notes:
-  - '`plain_summary` says the covered reading is "как сейчас делает живой FRAB". `docs/FRAB_LIVE.md` (lines
-    253–261, 292–294) says the extra short (0.21 against 0.20 bought) covers the coin while the position
-    is open. It also says "остатки не прикрыты" after the close, and that HYPE would otherwise look like
-    a short with no cover, "что неверно". The covered reading in the grid instead leaves a short of the
-    leftover''s size after the close. Say that this is a hypothetical variant, not the live behaviour,
-    or word the reading as it appears in the doc.'
-  - '`rule_ru` does not say whether leftovers pile up across closes (N closes give N lots) or are reset.
-    The text "не продаёт и не докупает" implies they pile up. Say so, because the idea''s "накапливается
-    от закрытия к закрытию" depends on it.'
-  - '`leftover_hedged` has no effect when `leftover_lots` is 0. Say that two of the four grid variants
-    coincide, and that the second parameter is read only when the first is 1.'
-  - 'Terms not explained at first use: "стенд" (the lab''s simulator), "ряд денег стратегии", "сверка
-    живых денег", and the coin names HYPE and PURR. The plain summary uses HYPE as an example before saying
-    what it is.'
-  - The `vs_tried` entries are tangential, since no tried entry covers lot rounding. The differences are
-    still honest. The card should say outright that none of the three covers the stand's accounting of
-    leftovers.
+  - The path in `rule_ru` is `frab/exchanges/hyperliquid/symbols.py`. The real path is `src/frab/exchanges/hyperliquid/symbols.py`.
+    The functions `spot_sz_decimals` and `lot_size` exist there.
+  - The known lots (BTC, SOL, HYPE, AVAX) match `docs/FRAB_LIVE.md:254`. The text does not say the table
+    will be a versioned file. It would help to name its path, for example `data/lots.yaml`, and to say
+    that the snapshot date is fixed for the whole run.
+  - The card says the table is built from today's `szDecimals`. A coin's lot could change over time, but
+    the card does not say this assumption is acceptable for a historical run.
+  - The explanation that two of the four grid variants coincide when `leftover_lots` is 0 is good. It
+    would be clearer to say plainly that the redundant variant is not run twice.
 - id: idea-0004
   date: '2026-10-28'
   source: agent:researcher
@@ -124,7 +100,11 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-10-28.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - wrote cards/drafts/idea-0004.yaml.fix outside its draft (reverted)
+  - new_block param short_venue meaning_ru is not in Russian
+  review_blocks: []
 - id: idea-0005
   date: '2026-10-28'
   source: agent:researcher
@@ -316,4 +296,15 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-10-31.md
+  attempts: 0
+- id: idea-0024
+  date: '2026-11-02'
+  source: agent:researcher
+  text: 'В ряду денег живого FRAB брать остаток монет из настоящего баланса кошелька, а не складывать
+    его из записей сделок: по записям на счёте лежит около $1.65 биткоина без прикрытия, которых на кошельке,
+    судя по старой сверке, нет, и они могут давать весь дневной разброс, из-за которого живая книга выглядит
+    на краю стенда'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-11-02.md
   attempts: 0
