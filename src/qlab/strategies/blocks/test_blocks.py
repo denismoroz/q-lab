@@ -524,10 +524,11 @@ def test_cap_weight_reads_stored_snapshots_visible_only_after_their_date(
 
 def test_registries_hold_every_block() -> None:
     assert set(UNIVERSES) == {"all", "top_volume", "asset_class"}
-    assert set(SIGNALS) == {"momentum", "reversal", "funding", "low_vol"}
+    assert set(SIGNALS) == {"momentum", "reversal", "funding", "funding_tail", "low_vol"}
     assert set(PORTFOLIOS) == {
         "long_short", "long_only", "long_short_quantile", "long_only_quantile",
-        "long_short_fraction", "long_only_fraction", "spot_perp_carry", "time_series_sign"}
+        "long_short_fraction", "long_only_fraction", "spot_perp_carry", "time_series_sign",
+        "time_series_long"}
     assert set(SIZINGS) == {"equal", "cap_weight", "vol_target"}
 
 

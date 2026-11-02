@@ -50,6 +50,7 @@ def _params(**overrides: object) -> dict:
     {"block": "long_short_quantile", "quantiles": 3},
     {"block": "long_short_fraction", "fraction": 0.3},
     {"block": "time_series_sign"},
+    {"block": "time_series_long"},
 ])
 def test_eligible_coins_is_the_mask_the_weights_are_built_on(portfolio: dict) -> None:
     panel = _panel()
@@ -92,6 +93,7 @@ def test_every_portfolio_block_declares_the_fewest_coins_it_needs() -> None:
     ({"block": "long_short_fraction", "fraction": 0.3}, 4),  # floor(4*0.3)=1, floor(3*0.3)=0
     ({"block": "long_only_fraction", "fraction": 0.25}, 4),
     ({"block": "time_series_sign"}, 1),
+    ({"block": "time_series_long"}, 1),
 ])
 def test_fewest_coins_is_where_the_block_first_holds_its_defined_book(
         portfolio: dict, fewest: int) -> None:
@@ -109,7 +111,7 @@ def test_fewest_coins_is_where_the_block_first_holds_its_defined_book(
         top_n = portfolio["top_n"]
         assert sides(fewest)[0] == top_n  # the book has the size the parameters name ...
         assert sides(fewest - 1)[0] < top_n  # ... and one coin fewer shrinks it
-    elif name == "time_series_sign":
+    elif name in ("time_series_sign", "time_series_long"):
         assert sum(sides(fewest)) >= 1
     else:
         assert sides(fewest)[0] >= 1  # a group of at least one coin

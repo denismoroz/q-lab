@@ -30,6 +30,10 @@ tie it is the first to be long and the last to be short).
 - `time_series_sign`: each eligible coin goes long if its own score is positive
   and short if negative, in parts of 1 / (number of eligible coins), so gross
   is at most 1. A score of exactly zero gives no position.
+- `time_series_long`: the buy-only side of `time_series_sign`: each eligible coin goes long if
+  its own score is positive, in parts of 1 / (number of eligible coins); a zero or negative
+  score gives no position. With `funding_tail` it buys the low tail and leaves on the first bar
+  back inside it.
 """
 
 from __future__ import annotations
@@ -146,6 +150,15 @@ def time_series_sign(scores: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFra
     return np.sign(masked).fillna(0.0).mul(part, axis=0)
 
 
+def time_series_long(scores: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
+    """Long each coin whose own score is positive, in parts of 1 / (number of eligible coins);
+    a zero or negative score gives no position."""
+    masked = scores.where(eligible)
+    count = masked.notna().sum(axis=1)
+    part = (1.0 / count.where(count > 0)).fillna(0.0)
+    return masked.gt(0.0).mul(part, axis=0)
+
+
 PORTFOLIOS: dict[str, Block] = {
     "long_short": Block(long_short, {"top_n": positive_int}),
     "long_only": Block(long_only, {"top_n": positive_int}),
@@ -155,6 +168,7 @@ PORTFOLIOS: dict[str, Block] = {
     "long_only_fraction": Block(long_only_fraction, {"fraction": fraction_up_to(1.0)}),
     "spot_perp_carry": Block(spot_perp_carry, {"top_n": positive_int}, needs_spot=True),
     "time_series_sign": Block(time_series_sign, {}),
+    "time_series_long": Block(time_series_long, {}),
 }
 
 
@@ -172,6 +186,7 @@ PORTFOLIO_MIN_COINS: dict[str, Callable[[Mapping[str, object]], int]] = {
     "long_only_fraction": lambda p: _fraction_min(float(p["fraction"])),
     "spot_perp_carry": lambda p: 1,
     "time_series_sign": lambda p: 1,
+    "time_series_long": lambda p: 1,
 }
 """Per block, the fewest eligible coins at one bar for which the block holds its book at
 the size its parameters name: the top and bottom `top_n` of `long_short` (below
