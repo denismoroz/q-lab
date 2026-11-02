@@ -172,10 +172,11 @@ class Composed:
         universe: {rule: all} | {rule: top_volume, n, window_days}
         signal: {block: momentum | reversal, lookback_days}
                 | {block: funding | low_vol, window_days}
+                | {block: funding_tail, history_window_days, tail_fraction}
         portfolio: {block: long_short | long_only | spot_perp_carry, top_n}
                    | {block: long_short_quantile | long_only_quantile, quantiles}
                    | {block: long_short_fraction | long_only_fraction, fraction}
-                   | {block: time_series_sign}
+                   | {block: time_series_sign | time_series_long}
         sizing: {block: equal | cap_weight, gross}
                 | {block: vol_target, window_days, target_daily, leverage_cap}
         rebalance_days: float
