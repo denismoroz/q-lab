@@ -76,6 +76,16 @@ def test_eligible_coins_follows_the_universe_and_the_history_gate() -> None:
     assert not gate.iloc[:59].any().any() and gate.iloc[60:].any().any()
 
 
+def test_eligible_coins_follows_the_bottom_volume_universe() -> None:
+    panel = _panel()
+    universe = {"n": 2, "window_days": 5}
+    bottom = eligible_coins(panel, _params(universe={"rule": "bottom_volume", **universe}))
+    top = eligible_coins(panel, _params(universe={"rule": "top_volume", **universe}))
+    assert bottom.sum(axis=1).max() <= 2
+    assert bottom.sum().sum() > 0
+    assert not (bottom & top).any().any()
+
+
 def test_eligible_coins_rejects_a_bad_spec_like_the_strategy_does() -> None:
     with pytest.raises(ValueError, match="unknown"):
         eligible_coins(_panel(), _params(portfolio={"block": "nope"}))

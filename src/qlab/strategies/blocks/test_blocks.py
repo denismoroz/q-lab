@@ -24,7 +24,7 @@ from qlab.strategies.blocks.portfolio import (
 )
 from qlab.strategies.blocks.signals import SIGNALS, funding, low_vol, momentum, reversal
 from qlab.strategies.blocks.sizing import SIZINGS, cap_weight, equal, market_caps, vol_target
-from qlab.strategies.blocks.universe import UNIVERSES, all_coins, top_volume
+from qlab.strategies.blocks.universe import UNIVERSES, all_coins, bottom_volume, top_volume
 
 NAN = np.nan
 
@@ -129,6 +129,73 @@ def test_top_volume_ties_go_to_the_first_listed_coin() -> None:
     panel = _panel({"A": [1.0, 1.0], "B": [1.0, 1.0]}, volume={"A": [5, 5], "B": [5, 5]})
     out = top_volume(panel, n=1, window_days=1)
     assert out.iloc[1].to_dict() == {"A": True, "B": False}
+
+
+def _bottom_panel():
+    return _panel(
+        {"A": [10, 10, 10, 10], "B": [1, 1, 1, 1], "C": [1, 1, 1, 1]},
+        volume={"A": [1, 1, 1, 1], "B": [5, 5, 20, 20], "C": [4, 4, 4, 30]},
+    )
+
+
+def test_bottom_volume_ranks_by_trailing_mean_dollar_volume() -> None:
+    panel = _bottom_panel()
+    out = bottom_volume(panel, n=1, window_days=2)
+    assert not out.iloc[0].any()  # window not full yet
+    # row 1: mean dollar volume A=10, B=5, C=4 -> C
+    assert out.iloc[1].to_dict() == {"A": False, "B": False, "C": True}
+    # row 2: A=10, B=12.5, C=4 -> C
+    assert out.iloc[2].to_dict() == {"A": False, "B": False, "C": True}
+    # row 3: A=10, B=20, C=17 -> A
+    assert out.iloc[3].to_dict() == {"A": True, "B": False, "C": False}
+    two = bottom_volume(panel, n=2, window_days=2)
+    assert two.iloc[3].to_dict() == {"A": True, "B": False, "C": True}
+
+
+def test_bottom_volume_skips_untradeable_and_unknown_volume() -> None:
+    panel = _panel(
+        {"A": [1.0] * 3, "B": [1.0] * 3, "C": [1.0] * 3},
+        volume={"A": [5, 5, 5], "B": [10, 10, 10], "C": [1, NAN, 20]},
+        tradeable={"A": [True, True, False], "B": True, "C": True},
+    )
+    out = bottom_volume(panel, n=1, window_days=1)
+    assert out["A"].tolist() == [False, True, False]  # A not tradeable at row 2
+    assert out["B"].tolist() == [False, False, True]  # B=10 < C=20
+    assert out["C"].tolist() == [True, False, False]  # unknown volume at row 1
+
+
+def test_bottom_volume_ties_go_to_the_first_listed_coin() -> None:
+    panel = _panel({"A": [1.0, 1.0], "B": [1.0, 1.0]}, volume={"A": [5, 5], "B": [5, 5]})
+    out = bottom_volume(panel, n=1, window_days=1)
+    assert out.iloc[1].to_dict() == {"A": True, "B": False}
+
+
+def test_bottom_volume_takes_a_known_zero_but_never_an_unknown() -> None:
+    panel = _panel(
+        {"A": [1.0] * 2, "B": [1.0] * 2, "C": [1.0] * 2},
+        volume={"A": [5, 5], "B": [0, 0], "C": [NAN, NAN]},
+    )
+    out = bottom_volume(panel, n=1, window_days=1)
+    assert out.iloc[1].to_dict() == {"A": False, "B": True, "C": False}
+
+
+def test_bottom_volume_drops_a_coin_with_an_unknown_bar_in_its_window() -> None:
+    panel = _panel(
+        {"A": [1.0] * 4, "C": [1.0] * 4},
+        volume={"A": [5, 5, 5, 5], "C": [1, NAN, 1, 1]},
+    )
+    out = bottom_volume(panel, n=1, window_days=2)
+    assert out["A"].tolist() == [False, True, True, False]
+    assert out["C"].tolist() == [False, False, False, True]  # NaN sits in its window on rows 1, 2
+
+
+def test_bottom_and_top_volume_split_the_competing_coins() -> None:
+    panel = _bottom_panel()
+    bottom = bottom_volume(panel, n=1, window_days=2)
+    top = top_volume(panel, n=2, window_days=2)
+    for row in (1, 2, 3):
+        assert not (bottom.iloc[row] & top.iloc[row]).any()
+        assert (bottom.iloc[row] | top.iloc[row]).all()
 
 
 # ---- portfolio ------------------------------------------------------------
@@ -523,7 +590,7 @@ def test_cap_weight_reads_stored_snapshots_visible_only_after_their_date(
 
 
 def test_registries_hold_every_block() -> None:
-    assert set(UNIVERSES) == {"all", "top_volume", "asset_class"}
+    assert set(UNIVERSES) == {"all", "top_volume", "bottom_volume", "asset_class"}
     assert set(SIGNALS) == {"momentum", "reversal", "funding", "funding_tail", "low_vol"}
     assert set(PORTFOLIOS) == {
         "long_short", "long_only", "long_short_quantile", "long_only_quantile",
@@ -544,6 +611,9 @@ def test_registries_hold_every_block() -> None:
         ("signal", {"block": "momentum", "lookback_days": True}, SIGNALS, "block", "lookback_days"),
         ("portfolio", {"block": "long_short", "top_n": 1.5}, PORTFOLIOS, "block", "top_n"),
         ("universe", {"rule": "top_volume", "n": 3}, UNIVERSES, "rule", "window_days"),
+        ("universe", {"rule": "bottom_volume", "n": 3}, UNIVERSES, "rule", "window_days"),
+        ("universe", {"rule": "bottom_volume", "n": 0, "window_days": 7},
+         UNIVERSES, "rule", "universe.n"),
         ("sizing", "equal", SIZINGS, "block", "sizing"),
     ],
 )
