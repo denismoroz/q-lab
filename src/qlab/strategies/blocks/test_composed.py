@@ -170,6 +170,37 @@ def test_top_volume_restricts_the_book_to_the_biggest_coins() -> None:
     assert held[["A", "B"]].abs().sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
 
 
+def test_bottom_volume_does_not_read_volume_after_the_bar() -> None:
+    panel = _walk_panel()
+    params = _params(universe={"rule": "bottom_volume", "n": 3, "window_days": 5})
+    base = Composed().target_weights(panel, params)
+    volume = panel.volume.copy()
+    later = volume.iloc[61:]
+    volume.iloc[61:] = later * np.random.default_rng(5).uniform(0.01, 100, later.shape)
+    changed = MarketPanel(snapshot_id="v", prices=panel.prices, funding=panel.funding,
+                          tradeable=panel.tradeable, meta={}, volume=volume)
+    again = Composed().target_weights(changed, params)
+    pd.testing.assert_frame_equal(base.iloc[:61], again.iloc[:61])
+    assert not base.iloc[61:].equals(again.iloc[61:])  # the later volume does matter later
+
+
+def test_bottom_volume_restricts_the_book_to_the_thinnest_coins() -> None:
+    panel = _walk_panel()
+    volume = panel.volume.copy()
+    volume["A"] = 1.0
+    volume["B"] = 2.0
+    volume = volume.where(panel.prices.notna())
+    thinned = MarketPanel(snapshot_id="b", prices=panel.prices, funding=panel.funding,
+                          tradeable=panel.tradeable, meta={}, volume=volume)
+    params = _params(universe={"rule": "bottom_volume", "n": 2, "window_days": 3},
+                     portfolio={"block": "long_short", "top_n": 1})
+    weights = Composed().target_weights(thinned, params)
+    assert (weights[["C", "D", "E", "F"]] == 0.0).all().all()
+    held = weights[weights.abs().sum(axis=1) > 0]
+    assert len(held) > 50
+    assert held[["A", "B"]].abs().sum(axis=1).tolist() == pytest.approx([1.0] * len(held))
+
+
 def test_history_gate_counts_known_price_bars() -> None:
     panel = _walk_panel()  # F is listed at row 15 (first price on row 15)
     weights = Composed().target_weights(
@@ -195,6 +226,7 @@ def test_history_gate_counts_known_price_bars() -> None:
         {"signal": {"block": "low_vol", "window_days": 10},
          "portfolio": {"block": "long_only", "top_n": 3}},
         {"universe": {"rule": "top_volume", "n": 4, "window_days": 5}},
+        {"universe": {"rule": "bottom_volume", "n": 4, "window_days": 5}},
         {"portfolio": {"block": "long_short_quantile", "quantiles": 3}},
         {"portfolio": {"block": "long_only_quantile", "quantiles": 2}},
         {"portfolio": {"block": "long_short_fraction", "fraction": 0.4}},

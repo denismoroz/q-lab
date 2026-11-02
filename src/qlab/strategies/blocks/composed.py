@@ -169,7 +169,7 @@ class Composed:
 
     Required `params` (no defaults; a missing or unknown key raises ValueError):
 
-        universe: {rule: all} | {rule: top_volume, n, window_days}
+        universe: {rule: all} | {rule: top_volume | bottom_volume, n, window_days}
         signal: {block: momentum | reversal, lookback_days}
                 | {block: funding | low_vol, window_days}
                 | {block: funding_tail, history_window_days, tail_fraction}

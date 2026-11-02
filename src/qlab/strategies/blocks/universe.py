@@ -8,6 +8,8 @@ allowed at that bar. It may use only data up to and including that bar.
   (volume times price, averaged over the last `window_days` days). Only coins
   that are tradeable, priced and have a fully known window at that bar compete
   for the places; ties go to the coin listed first in the panel.
+- `bottom_volume`: the mirror of `top_volume`. The same coins compete, the `n` with the
+  smallest average are taken, and ties go to the coin listed first.
 - `asset_class`: only instruments whose asset class AT THAT BAR is one of `classes`
   (docs/ASSET_CLASSES.md): a kind such as "stock" or "fund", or a ranking group such as
   "stock:US". The class comes from the point-in-time table of the deployment
@@ -30,14 +32,23 @@ def all_coins(panel: MarketPanel) -> pd.DataFrame:
     return pd.DataFrame(True, index=panel.prices.index, columns=panel.prices.columns)
 
 
-def top_volume(panel: MarketPanel, *, n: int, window_days: float) -> pd.DataFrame:
-    """The `n` coins with the highest trailing mean dollar volume at each bar."""
+def _volume_rank(panel: MarketPanel, window_days: float, *, ascending: bool) -> pd.DataFrame:
+    """Each competing coin's place by trailing mean dollar volume (NaN: not competing)."""
     window = bars(panel.prices.index, window_days)
     dollar_volume = panel.volume * panel.prices
     average = dollar_volume.rolling(window, min_periods=window).mean()
     competing = panel.tradeable.astype(bool) & panel.prices.notna() & average.notna()
-    rank = average.where(competing).rank(axis=1, method="first", ascending=False)
-    return rank.le(n)
+    return average.where(competing).rank(axis=1, method="first", ascending=ascending)
+
+
+def top_volume(panel: MarketPanel, *, n: int, window_days: float) -> pd.DataFrame:
+    """The `n` coins with the highest trailing mean dollar volume at each bar."""
+    return _volume_rank(panel, window_days, ascending=False).le(n)
+
+
+def bottom_volume(panel: MarketPanel, *, n: int, window_days: float) -> pd.DataFrame:
+    """The `n` coins with the lowest trailing mean dollar volume at each bar."""
+    return _volume_rank(panel, window_days, ascending=True).le(n)
 
 
 def _class_names(label: str, value: object) -> list[str]:
@@ -61,5 +72,6 @@ def asset_class(panel: MarketPanel, *, classes: list[str]) -> pd.DataFrame:
 UNIVERSES: dict[str, Block] = {
     "all": Block(all_coins, {}),
     "top_volume": Block(top_volume, {"n": positive_int, "window_days": positive_number}),
+    "bottom_volume": Block(bottom_volume, {"n": positive_int, "window_days": positive_number}),
     "asset_class": Block(asset_class, {"classes": _class_names}),
 }
