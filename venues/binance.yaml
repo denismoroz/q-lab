@@ -44,6 +44,14 @@ execution_adapter: false
 #     its own minimum leg, so this is a number the stand reads, no longer a field nobody consumed.
 min_leg_notional_usd: 5.0
 
+# reduce_only_exempt -- Binance lets EVERY reduce-only order through below the minimum, not only a
+# full close.
+#   - Binance USDS-M Futures error table, code -4164 MIN_NOTIONAL: "Order's notional must be no
+#     smaller than 5.0 (unless you choose reduce only)"
+#     (https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code, read
+#     2026-11-03). The message exempts reduce-only orders as a class; it does not say "closing".
+reduce_only_exempt: any_reduction
+
 # min_leg_notional_by_instrument -- the contracts whose MIN_NOTIONAL is not the ordinary 5, keyed by
 # the lab's column name (Binance's baseAsset). Source: the same table,
 # seed/venue_facts/2026-10-30-binance_um_min_notional.csv (every row that is not 5). A book's

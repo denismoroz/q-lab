@@ -1126,6 +1126,54 @@ def venue_gap_show_cmd(idea: str = typer.Argument(...)) -> None:
     typer.echo("the venues agree" if found.venue_gap is None else found.venue_gap.text_ru)
 
 
+@app.command("money-ladder")
+def money_ladder_cmd(
+    idea: str = typer.Argument(None, help="The idea to show (omit with --all)"),
+    measure: bool = typer.Option(
+        False, "--measure", help="Measure now what is not stored (a minute or more per run)"),
+    all_open: bool = typer.Option(
+        False, "--all", help="Measure every open idea whose run has no stored reading"),
+    max_trials: int = typer.Option(60, "--max", help="With --all: at most this many runs"),
+) -> None:
+    """How the idea works on $1 000, $3 000, $10 000 and its own money (docs/MONEY_LADDER.md):
+    the venue's minimum orders applied to the book, and the same book holding fewer positions.
+    A reading: it decides nothing. Code only, no agent, no tokens."""
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import ladder, money_ladder, night
+    from qlab.registry.db import session_scope
+
+    if all_open or measure:
+        night.STATE_DIR = _Path("data/restamp/runs")
+        day, end = _date.today(), night.last_closed_day()
+        state = night.load_state(day)
+        money_ladder.money_ladder_stage(day, end, state, only=[idea] if idea else None,
+                                        max_per_night=max_trials)
+        block = state.get("money_ladder") or {}
+        for entry in block.get("entries") or []:
+            typer.echo(f"{entry['idea']} (run {entry['trial']}): "
+                       + ("measured" if entry["measured"] else f"not measured ({entry['why']})"))
+        typer.echo(f"pending: {block.get('pending', 0)}")
+        if not idea:
+            return
+    if not idea:
+        typer.echo("error: name an idea or pass --all", err=True)
+        raise typer.Exit(code=1)
+    with session_scope() as session:
+        ledgers = ladder.load_ledgers()
+        found = ladder.build_ladder(session, idea, ledgers)
+        if found is None:
+            typer.echo(f"error: no idea {idea!r}", err=True)
+            raise typer.Exit(code=1)
+        readings = money_ladder.for_idea(session, idea, ledgers)
+    if not readings:
+        typer.echo("no stored reading: `qlab money-ladder IDEA --measure` makes one")
+        return
+    for reading in readings.values():
+        typer.echo(money_ladder.format_text(reading))
+
+
 regimes_app = typer.Typer(help="Market regimes: BTC bull / flat / bear (docs/REGIMES.md).",
                           no_args_is_help=True)
 app.add_typer(regimes_app, name="regimes")

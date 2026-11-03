@@ -50,6 +50,7 @@ STOP_STAGES = {"detectors": "определители режима",
                "twins": "двойники, уже написанные, и проверка вручную",
                "second_venue": "вторая площадка для закрытых идей",
                "venue_gap": "почему площадки расходятся",
+               "money_ladder": "как работает на разных деньгах",
                "restamp": "пересчёт старых результатов",
                "anomalies": "аномалии", "anomalies-investigate": "разбор аномалий агентом",
                "overlays": "надстройки", "ladder": "лестница оценки", "report": "утренний отчёт",
@@ -1239,6 +1240,12 @@ def _step_venue_gap(ctx: NightContext) -> None:
     venue_gap_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut)
 
 
+def _step_money_ladder(ctx: NightContext) -> None:
+    # How the open ideas work on $1 000, $3 000, $10 000 and their own money (qlab.money_ladder,
+    # docs/MONEY_LADDER.md): a reading of the latest runs. Code only.
+    money_ladder_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut)
+
+
 def _step_anomalies(ctx: NightContext) -> None:
     # Too-good results (docs/ANOMALIES.md): the code part, flags on the passed runs.
     anomalies_stage(ctx.day, ctx.end, ctx.state, stop_at=ctx.code_cut, agent=False)
@@ -1440,6 +1447,9 @@ def night_steps() -> dict[str, StepImpl]:
                             note=lambda c: _stage_note("restamp", c)),
         "venue_gap": StepImpl(_step_venue_gap, "venue_gap", skip_reason=flag("venue_gap"),
                               is_cut=cut("code_cut", "venue_gap")),
+        "money_ladder": StepImpl(_step_money_ladder, "money_ladder",
+                                 skip_reason=flag("money_ladder"),
+                                 is_cut=cut("code_cut", "money_ladder")),
         "anomalies": StepImpl(_step_anomalies, "anomalies", skip_reason=flag("anomalies"),
                               is_cut=cut("code_cut", "anomalies"),
                               finals=_anomaly_failures("scans")),
@@ -1547,7 +1557,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
         anomalies: bool = True, restamp: bool = True, noise_trials: int = 200,
         stop_at: datetime | None = None, programmer: bool = True,
         catalogue: bool = True, cards: bool = True, ladder: bool | None = None,
-        second_venue: bool | None = None, venue_gap: bool = True,
+        second_venue: bool | None = None, venue_gap: bool = True, money_ladder: bool = True,
         journal=None, trigger: str = "hand", off: Collection[str] = (),
         only: Collection[str] | None = None, restart: str | None = None,
         concurrency: int = 1, command: str | None = None) -> Path:
@@ -1635,7 +1645,7 @@ def run(day: date | None = None, *, graveyard: bool | None = None, paper: bool =
                "anomalies": anomalies, "restamp": restamp, "programmer": programmer,
                "catalogue": catalogue, "cards": cards, "ladder": ladder is not False,
                "second_venue": second_venue if second_venue is not None else run_twins,
-               "venue_gap": venue_gap})
+               "venue_gap": venue_gap, "money_ladder": money_ladder})
     # The data of the watch list is fetched in the background while the stages in front compute
     # (qlab.prefetch, docs/NIGHT_SPEED.md); the stages that need it wait for it, never fetch twice.
     if "recheck" in running and WATCHLIST.is_file():
@@ -1750,6 +1760,15 @@ def second_venue_stage(*args, **kwargs):
     from qlab import second_venue
 
     return second_venue.second_venue_stage(*args, **kwargs)
+
+
+def money_ladder_stage(*args, **kwargs):
+    """How the open ideas work on other money (`qlab.money_ladder.money_ladder_stage`), reached
+    through the night so that the suite can keep whole-night tests off the owner's registry
+    (conftest.py)."""
+    from qlab import money_ladder
+
+    return money_ladder.money_ladder_stage(*args, **kwargs)
 
 
 def venue_gap_stage(*args, **kwargs):

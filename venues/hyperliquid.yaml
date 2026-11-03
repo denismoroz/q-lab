@@ -42,6 +42,14 @@ execution_adapter: true
 #     `min_order_usd: float = 10.0` (live strategy default, this exchange).
 min_leg_notional_usd: 10.0
 
+# reduce_only_exempt -- what a reduce-only order may do below the $10 minimum: only exactly closing a
+# position, not trimming it.
+#   - funding-rate-arbitrage/src/frab/exchanges/hyperliquid/actions/close_position.py, `check_close`:
+#     the perp is closed with a reduce-only IOC order that HL exempts from the $10 minimum order
+#     value ("The only exception is exactly closing a position with a reduce-only order",
+#     Chainstack's HL order-precision guide), and prod has done it (XSMOM's WLD perp, $9.27).
+reduce_only_exempt: full_close
+
 # free_public_data — q-lab's own Hyperliquid fetcher uses only the free,
 # no-key /info endpoint, and is queried against it right now (forward, not
 # only historical) every time a spec asks for `source: hyperliquid` data.
