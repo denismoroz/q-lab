@@ -23,6 +23,17 @@ fix_notes: true      # an accepted draft with wording notes gets ONE edit pass f
 # Owner, 2026-10-28, on one idea a night with ten waiting: «да, ставь 3». Was 1 (2026-10-27, for
 # the budget: ~1.25M tokens an idea with all its attempts and reviews; a retry is an edit now).
 per_night: 3
+# Owner, 2026-11-03: «да, делай все четыре». The carder took ONE idea a night although per_night
+# was 3: the loop asked for "the oldest" again after each attempt, found the idea it had just tried
+# (a refused card stays `new` for a retry) and stopped -- so the oldest idea, refused twice and
+# needed by nobody, held the queue while the ideas the researcher waited for (idea-0006, idea-0022)
+# stood in it for six days. The loop now walks down the list, and with `need_first` the list is
+# ordered by CODE (qlab.carder_order): ideas that the newest memos of the researcher and the
+# director name as needed, then the owner's own ideas, then by age. The report says why each was
+# taken. The ideas still to be taken tonight share what is left of the search stage's budget
+# (the first is capped at a third of it, not at the whole remainder); the caps stay: `max_waiting`
+# cards at a time for the implementer, `max_attempts` per idea.
+need_first: true
 max_waiting: 3       # cards of the carder waiting for the implementer at a time (was 1)
 # An idea refused three times waits for the owner (status needs-owner). Was 2: two attempts were
 # one write and one retry, and a fresh retry bred fresh problems. A retry is an edit now, a

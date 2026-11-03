@@ -316,6 +316,27 @@ def drop_proposals(plan: dict, memo_dir: Path) -> dict[str, list[tuple[str, str,
     return out
 
 
+MAX_SECTIONS = 30
+
+
+def memo_sections(plan: dict, memo_dir: Path) -> dict[str, tuple[str, list[str]]]:
+    """Per strategy: (the newest memo's name, its section titles). Titles only, numbers masked:
+    they are what lets the director name a question that is already answered and the file
+    where (`repeats` in the directions block), without reading how any variant did."""
+    from qlab.night import latest_memo
+
+    out: dict[str, tuple[str, list[str]]] = {}
+    for name in plan.get("strategies") or {}:
+        memo = latest_memo(name, memo_dir)
+        if memo is None:
+            continue
+        titles = [mask_numbers(line.lstrip("#").strip())[:120]
+                  for line in memo.read_text(encoding="utf-8").splitlines()
+                  if line.startswith(("# ", "## ", "### "))]
+        out[name] = (memo.name, titles[:MAX_SECTIONS])
+    return out
+
+
 # --------------------------------------------------------------------------
 # The evidence file
 
@@ -435,8 +456,13 @@ def build_evidence(session: Session, *, root: Path, config: dirs.DirectorConfig,
 
     lines += ["## The researcher: DROP proposals and the owner's ideas", ""]
     drops = drop_proposals(plan, root / MEMO_DIR)
+    sections = memo_sections(plan, root / MEMO_DIR)
     for name, entry in (plan.get("strategies") or {}).items():
         lines.append(f"### strategy {name}")
+        if name in sections:
+            memo_name, titles = sections[name]
+            lines.append(f"- newest memo: {MEMO_DIR / memo_name}; section titles only, numbers "
+                         f"masked: {' | '.join(titles) or 'none'}")
         for memo_name, idea, why in drops.get(name, []):
             lines.append(f"- DROP proposal in {memo_name}: {idea} -- {why} (numbers masked)")
         if name not in drops:
@@ -498,6 +524,9 @@ What you must NOT do:
   would be tuned to forward data. Do not look for it: do not open the researcher's memos in
   docs/research, docs/STATE.md, the cards in cards/, the night reports, data/night, or the
   specs of single variants -- they quote how variants did. Say in the memo what you relied on.
+  The evidence lists each strategy's newest memo with its section titles: that is all you may use
+  to name a question that is already answered (`repeats`, below), and that memo is the place you
+  give for it.
 - You pass no verdicts and change no status. A pause or a priority is advice that code applies
   after checking it; `propose_close_family` is only shown to the owner, who decides.
 - Never invent a number. A direction with few trials is "too early to tell", not "dead": every
@@ -522,7 +551,12 @@ generator:
   pause_mechanisms:
     - {{id: <mechanism id>, why: "<one sentence, plain words>"}}
 researcher:
-  <strategy name from night/research.yaml>: {{priority: high|normal|low, note: "<plain text>"}}
+  <strategy name from night/research.yaml>:
+    priority: high|normal|low
+    note: "<plain text>"
+    repeats:                     # optional: questions ALREADY ANSWERED that must not be asked again
+      - {{question: "<the one question, in words>",
+          answered_in: "<a file that exists, e.g. docs/research/bv2-2026-11-01.md, or idea-0006>"}}
 catalogue_requests:
   - {{family: <family>, look_for: "<what a future catalogue agent should look for>", why: "<why>"}}
 data_requests:
@@ -544,6 +578,19 @@ A researcher `note` is plain text WITHOUT any
 digit (a digit is a parameter value; the note is dropped if it has one). The researcher reads
 the note as advice for where to look, next to the owner's own question; the generator reads the
 preferred and paused lists in its instructions, and code rejects a spec of a paused mechanism.
+
+**You direct research; you never stop it.** The owner, 2026-11-03: «да, делай все четыре». For
+four nights the researcher set no experiment at all because the notes told every strategy «новых
+вариантов не заводить» and «новых опытов не ставить»: nothing was tried, and open questions stayed
+open. So a note may NOT forbid new variants, new experiments, new families of variants, or the
+night's work ("finish the move without spending") -- not for a strategy, not "until X is done",
+not "for the questions already answered" without naming them. Code drops such a note and tells the
+owner why. What you MAY forbid is a REPEAT: a question the lab has already answered. Put it in
+`repeats` with the one question in words and the file where the answer is (a memo, a document, a
+card, or an idea of the inbox); the researcher is told not to ask it again, and everything else
+stays open. Where a strategy has open questions, say in the note which to take first (priority
+and "start with ...") instead of saying what not to do. A strategy with nothing open is a reason
+for a low priority, not for a ban.
 
 If you see an idea that needs NEW code -- not a number of a strategy, not a mechanism of the
 catalogue -- you may add a second fenced block just before the directions block, of exactly
@@ -647,7 +694,8 @@ def _code_section(result: ApplyResult) -> list[str]:
               f"{', '.join(f'{p.id} ({p.why})' for p in d.pause_mechanisms) or '—'}"]
     for name, s in d.researcher.items():
         lines.append(f"- исследователь, {name}: важность {s.priority}"
-                     + (f"; пометка: {s.note}" if s.note else ""))
+                     + (f"; пометка: {s.note}" if s.note else "")
+                     + (f"; уже отвечено, не повторять: {len(s.repeats)}" if s.repeats else ""))
     lines += [f"- просьб к каталогу: {len(d.catalogue_requests)}, просьб о данных: "
               f"{len(d.data_requests)}, запросов на код: {len(d.code_requests)}",
               f"- предложено закрыть (решает владелец, код этого не делает): "
@@ -674,7 +722,8 @@ def apply_memo(memo: Path, *, root: Path, mechanism_ids: set[str],
         pending = dirs.pending_for_new(root)
         parsed = dirs.parse_block(block, mechanism_ids=mechanism_ids,
                                   strategy_names=strategy_names, family_names=family_names,
-                                  day=day, memo=str(memo), pending_owner_review=pending)
+                                  day=day, memo=str(memo), pending_owner_review=pending,
+                                  root=root)
         result = ApplyResult(parsed.directions, parsed.problems)
         if parsed.directions is not None:
             result.written = dirs.write_directions(parsed.directions, root)
@@ -698,4 +747,4 @@ def summary(directions: dirs.Directions) -> dict:
 __all__ = ["APPLIED_HEADING", "INSTRUCTIONS", "MODEL", "ApplyResult", "DirectionStats",
            "DirectorOutcome", "MechanismCoverage", "agent_ideas", "apply_memo", "build_evidence",
            "catalogue_coverage", "direct", "direction_stats", "known_names", "mask_numbers",
-           "parse_gap_table", "summary"]
+           "memo_sections", "parse_gap_table", "summary"]

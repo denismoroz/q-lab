@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
 import threading
 from collections.abc import Collection
@@ -1876,7 +1877,7 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     owner), in the search stage's budget. At most `max_waiting` cards of the carder wait for the
     implementer: while that many do, no idea is taken (and no tokens are spent). Resumable: an
     idea done tonight is not repeated."""
-    from qlab import ideas
+    from qlab import carder_order, ideas
     from qlab import tried as tried_module
     from qlab.agents import carder
     from qlab.budget import BudgetExhausted, NightBudget, NightExhausted, Stage, probe
@@ -1903,12 +1904,27 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
     registry = tried_module.load_tried()
     done = {e["id"] for e in entry["entries"]}
     max_attempts = int(cfg.get("max_attempts", 3))
-    for _ in range(int(cfg.get("per_night", 1)) - len(done)):
+    per_night = int(cfg.get("per_night", 1))
+    # The order (qlab.carder_order): with `need_first` the ideas that the newest memos of the
+    # researcher and the director name as needed come first, then the owner's own, then by age;
+    # without it, by age. The walk goes down the list, so an idea that fails tonight does not
+    # block the ones behind it: until 2026-11-03 the loop asked for "the oldest" again and again,
+    # found the idea it had just tried, and stopped -- one idea a night with `per_night: 3`.
+    if cfg.get("need_first", False):
+        picks = carder_order.order(inbox, max_attempts=max_attempts,
+                                   strategies=set(load_research_plan().get("strategies") or {}))
+    else:
+        picks = carder_order.age_order(inbox, max_attempts=max_attempts)
+    entry["queue"] = [{"id": p.idea["id"], "why": p.why} for p in picks
+                      if p.idea["id"] not in done][:per_night + 3]
+    for pick in picks:
+        idea = pick.idea
+        if len(done) >= per_night:
+            break
+        if idea["id"] in done:
+            continue
         if len(waiting := carder.pending_cards(inbox)) >= max_waiting:
             entry["waiting_for"] = waiting[0]["card"]  # tonight's cards filled the places
-            break
-        idea = ideas.oldest_new(inbox, max_attempts=max_attempts)
-        if idea is None or idea["id"] in done:
             break
         # An attempt cut short keeps the idea as it was: the earlier remarks are what the next
         # attempt edits the draft by, and a half-written draft is not one to edit.
@@ -1916,8 +1932,10 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
         draft = carder._snapshot(carder.DRAFTS / f"{idea['id']}.yaml")
         try:
             with session_scope() as session:
+                # The ideas still to be taken tonight share what is left: the first is capped at
+                # its part, not at the whole night's remainder.
                 stage = NightBudget.open(session, probe(session).report.reading).stage(
-                    Stage.SEARCH, candidates=1)
+                    Stage.SEARCH, candidates=max(1, per_night - len(done)))
                 result = carder.run_idea(idea, inbox, cfg, budget=stage.candidate(None),
                                          session=session, day=day, registry=registry)
         except (NightExhausted, BudgetExhausted) as stop:
@@ -1937,10 +1955,12 @@ def cards_stage(day: date, state: dict, *, config: Path = CARDER) -> None:
             result = {"id": idea["id"], "source": idea["source"], "text": idea["text"],
                       "status": idea["status"], "problems": [f"{type(exc).__name__}: {exc}"],
                       "tokens": 0}
+        result["why"] = pick.why  # the morning report says why this idea and not another
         entry["entries"].append(result)
         done.add(idea["id"])
         ideas.save(inbox)
         save_state(day, state)
+    entry["queue"] = [q for q in entry.get("queue", []) if q["id"] not in done]
     save_state(day, state)
 
 
@@ -2193,6 +2213,14 @@ def owner_ideas_focus(ideas: list[str] | None) -> str | None:
             f"the memo why it cannot be tested yet:\n{lines}")
 
 
+def strategy_brief(brief: str | None) -> str | None:
+    """A strategy's standing brief (night/research.yaml `brief`): what the researcher must know
+    about it before proposing anything, e.g. the prior art a new family has to respect."""
+    if not brief or not brief.strip():
+        return None
+    return f"The standing brief for this strategy (night/research.yaml):\n{' '.join(brief.split())}"
+
+
 def full_strategy_focus(name: str, cap: int, variants: list[str]) -> str:
     """The researcher's instruction when the strategy has no free variant place."""
     return (f"The strategy `{name}` already has {len(variants)} active variants and the lab keeps "
@@ -2267,8 +2295,12 @@ def drop_focus(variants: list[str]) -> str:
 
 
 def latest_memo(name: str, memo_dir: Path = Path("docs/research")) -> Path | None:
-    """The strategy's newest research memo, handed to its next run."""
-    memos = sorted(memo_dir.glob(f"{name}-*.md"))
+    """The strategy's newest research memo, handed to its next run. Only `<name>-<date>.md`
+    counts: `frab-*` also matched `frab-binance-spot-...` and `frab-second-opinion-...`, which
+    sort after the date, so FRAB's researcher was handed another strategy's memo as its own
+    (found 2026-11-03)."""
+    own = re.compile(rf"^{re.escape(name)}-\d{{4}}-\d{{2}}-\d{{2}}\.md$")
+    memos = sorted(p for p in memo_dir.glob(f"{name}-*.md") if own.match(p.name))
     return memos[-1] if memos else None
 
 
@@ -2317,12 +2349,16 @@ def rotation_order(day: date, names: list[str], directions, unfinished: list[str
     that were NOT researched last night (so a strategy the director marks high importance goes
     first, yet takes at most every second night and the others keep their turns); then high
     importance before normal before low; then the one researched longest ago, never first; then
-    by name."""
+    by name.
+
+    A strategy that has had NO turn yet (not in `last`) goes before the importance order, after the
+    ones a stop cut and the one researched last night: a new strategy (Bv3, owner 2026-11-03) gets
+    its first turn at once instead of waiting behind the strategies the director marks high."""
     from qlab.directions import priority_rank
 
     first, yesterday = set(unfinished), day - timedelta(days=1)
     return sorted(names, key=lambda n: (
-        n not in first, last.get(n) == yesterday, priority_rank(directions, n),
+        n not in first, last.get(n) == yesterday, n in last, priority_rank(directions, n),
         last.get(n, date.min), n))
 
 
@@ -2336,6 +2372,34 @@ def carried_research(day: date, out: list[dict]) -> list[dict]:
             for e in load_state(yesterday).get("research", [])
             if e.get("memo") and (e["strategy"], e["memo"]) not in have
             and ("noted" not in e or (e.get("specs") and "stand" not in e))]
+
+
+def register_strategy_roots(session, strategies: dict, cards: Path = Path("cards")) -> list[str]:
+    """Put the root idea of a researcher strategy into the registry when it is not there yet and
+    a hand-written card of that id exists (`cards/<id>.yaml`, imported the way `qlab import-cards`
+    does). The strategies of the first five came into the registry with their specs; a new family
+    such as Bv3 has no spec of its own, only a card, and the researcher's variants
+    (`bv3-research-*`) hang under this idea (qlab.registry.families), so they count against the
+    family's own places.
+    No tokens; a card that does not import is a line in the log, never the end of the stage."""
+    from qlab.registry.card_importer import CardImportError, import_cards
+    from qlab.registry.models import Idea
+
+    wanted = {e["ideas"][0] for e in strategies.values() if e.get("ideas")}
+    missing = sorted(i for i in wanted if session.get(Idea, i) is None
+                     and (cards / f"{i}.yaml").is_file())
+    if not missing:
+        return []
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            for idea_id in missing:  # only these: the whole folder is `qlab import-cards`
+                (Path(folder) / f"{idea_id}.yaml").write_bytes(
+                    (cards / f"{idea_id}.yaml").read_bytes())
+            return import_cards(session, folder).ideas_inserted
+    except (CardImportError, OSError):
+        return []
 
 
 def research_due(day: date, plan: dict, *, sweep: bool) -> bool:
@@ -2393,6 +2457,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
         # A run stopped earlier tonight tries again now: its old stop line goes.
         out[:] = [e for e in out if not (e.get("stopped") and e["strategy"] in todo)]
         with session_scope() as session:
+            register_strategy_roots(session, todo)
             # `night_share`: with a rotation the one strategy of the night must not take all
             # that is left (the cards and the search come after), so its cap is the share.
             share = float(plan.get("night_share") or 0) or None
@@ -2416,6 +2481,7 @@ def research_stage(day: date, state: dict, *, noise_trials: int,
                                        focus="\n\n".join(filter(None, [
                                            plan_focus(plan),
                                            owner_ideas_focus(e.get("owner_ideas")),
+                                           strategy_brief(e.get("brief")),
                                            researcher_focus(name, directions),
                                            full_strategy_focus(name, cap, variants)
                                            if free == 0 else drop_focus(variants)])))

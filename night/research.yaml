@@ -1,6 +1,6 @@
-# The researcher, every night, on one of the five strategies it works on in turn (since
-# 2026-10-30; `rotation` below): Bv2, trend, FRAB, XSMOM and FRAB with the spot on Binance
-# (qlab.agents.researcher, docs/NIGHT.md).
+# The researcher, every night, on one of the six strategies it works on in turn (since
+# 2026-10-30; `rotation` below): Bv2, trend, FRAB, XSMOM, FRAB with the spot on Binance and, since
+# 2026-11-03, Bv3 (qlab.agents.researcher, docs/NIGHT.md).
 #
 # Owner, 2026-10-24: «мне не нравится вердикт агента - просто ждать - нужно
 # думать как улучшить стратегию - это задача фреймворка».
@@ -180,3 +180,49 @@ strategies:
       - docs/FRAB_LIVE.md
       - docs/VENUES.md
       - docs/FIT_VS_FORWARD.md
+  # Owner, 2026-10-27, on Bv2 and a NEW strategy next to it (ideas/inbox.yaml, idea-0001; the carder
+  # turned the narrow reading of it into cards/bv2-fast-release-by-own-trend.yaml, a block that
+  # still waits for the implementer). Owner, 2026-11-03: «да, делай все четыре» -- the researcher
+  # had set no experiment for four nights, and this is the one new family it was missing: Bv2 stays
+  # the protection (its variants are judged on the protection readings, docs/EVALUATION_PATHS.md,
+  # В8), Bv3 is the INCOME strategy, so it has its own turn in the rotation, its own variants and
+  # its own root idea (cards/bv3.yaml; the ids `bv3-research-*` are its variants, qlab.registry.families).
+  # It takes the sixth and last place of `max_active_strategies` (night/limits.yaml).
+  #
+  # The prior art it must respect, funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md,
+  # sections 6-9: about 45 variants of the hedge signal were tried in five studies and none beat the
+  # live rule; the share of false alarms stays at 60-75% whatever information the signal reads;
+  # what wins in the chop loses in the trend. docs/BV2_SIGNAL_SEARCH_REVIEW.md says how those
+  # studies judged and where they did not look. So the bar is high, and every experiment is ONE
+  # idea with ONE check whose whole grid is declared up front (docs/ONE_CHECK.md).
+  bv3:
+    ideas: [bv3]
+    # The owner's decision of 2026-10-27, verbatim (the text of idea-0001 in ideas/inbox.yaml; a
+    # test keeps the two equal).
+    owner_ideas:
+      - "bv2 можно оставить как защита. bv3 - доход. новая стратегия где страховка снимается чаще, по разным таймфреймам. ведь таймфреймы они как матрешки - чем ниже тем больше колебаний. если рассмотреть варианты определения тренда по более высокому таймфрейму а включать по более низкому... в качестве основы по тренду брать не биткоин а монету на которой работать - вот такие идеи"
+    brief: >-
+      Bv3 is the owner's income strategy that stands next to Bv2 (the protection): the hedge is
+      lifted more often, reading several timeframes (the trend from a higher one, the switch from a
+      lower one), with the trend taken from the coin itself and not from BTC. Read the prior art
+      before you propose anything: frab's five studies of the hedge signal
+      (funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, sections 6 to 9) tried about 45
+      variants and none beat the live rule; the share of false alarms stayed in the band of 60 to
+      75 percent whatever the signal read; what wins in the chop loses in the trend. The
+      review of how those studies were judged and where they did not look is
+      docs/BV2_SIGNAL_SEARCH_REVIEW.md. So the bar is high. A Bv3 experiment must differ from the Bv2
+      variants in kind (several timeframes, the coin's own trend), not by a number: say in the memo
+      which tried variant yours is closest to and what is new. Every experiment is ONE idea with
+      ONE check, its whole grid declared up front (docs/ONE_CHECK.md); the variant ids are
+      `bv3-research-<short>`. This strategy has no experiment yet, so the first memo may be short:
+      the question, the one check that answers it, and the data it needs.
+    specs:
+      - specs/bv2-live.yaml
+    docs:
+      - ../funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md
+      - docs/BV2_SIGNAL_SEARCH_REVIEW.md
+      - docs/HEDGE_TIMING.md
+      - docs/ONE_CHECK.md
+      - docs/FIT_VS_FORWARD.md
+      - cards/bv2-fast-release-by-own-trend.yaml
+      - cards/bv3.yaml

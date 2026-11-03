@@ -78,3 +78,33 @@ def test_a_variant_set_under_another_member_stays_there(session) -> None:
     assert assign_parents(session) == {}
     assert session.get(Idea, "bv2-pool-hl").parent_id == "bv2-pool"
     assert session.get(Idea, "bv2-pool").parent_id == "strategy-b-v2"
+
+
+def test_bv3_variants_run_bv2s_code_but_belong_to_the_bv3_root(session) -> None:
+    """Owner, 2026-11-03: Bv3 is a strategy of its own. Its experiments run Bv2's code, so by the
+    module name they would be Bv2's variants and use Bv2's places; the id prefix files them under
+    the `bv3` idea (its card) instead."""
+    live = "qlab.strategies.live.bv2:LiveBv2"
+    _idea(session, "strategy-b-v2", IdeaStatus.PAPER, live, day=1)
+    _idea(session, "bv2-research-short-window", IdeaStatus.BENCH, live, day=2)
+    _idea(session, "bv3", IdeaStatus.CANDIDATE, None, day=3)  # the root: a card, no spec
+    _idea(session, "bv3-research-multi-timeframe", IdeaStatus.CANDIDATE, live, day=4)
+    _idea(session, "bv3-research-own-trend", IdeaStatus.CANDIDATE, live, day=5)
+    changed = assign_parents(session)
+    assert changed == {"bv2-research-short-window": "strategy-b-v2",
+                       "bv3-research-multi-timeframe": "bv3", "bv3-research-own-trend": "bv3"}
+    assert session.get(Idea, "bv3").parent_id is None
+    assert assign_parents(session) == {}  # idempotent
+
+    from qlab.registry.strategies import active_branches, strategy_root
+
+    assert strategy_root(session, "bv3-research-own-trend") == "bv3"
+    assert active_branches(session, "bv3") == ["bv3-research-multi-timeframe",
+                                               "bv3-research-own-trend"]
+    assert active_branches(session, "strategy-b-v2") == ["bv2-research-short-window"]
+
+
+def test_one_bv3_variant_is_filed_under_its_root_even_when_it_is_the_only_one(session) -> None:
+    _idea(session, "bv3", IdeaStatus.CANDIDATE, None)
+    _idea(session, "bv3-research-first", IdeaStatus.CANDIDATE, "qlab.strategies.live.bv2:LiveBv2")
+    assert assign_parents(session) == {"bv3-research-first": "bv3"}

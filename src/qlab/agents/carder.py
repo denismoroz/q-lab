@@ -1277,12 +1277,18 @@ def report_lines(cards: dict | None, ideas: list[dict], memo_ideas: list[dict]) 
         if e.get("duplicate_of"):
             head += f": это уже было — `{e['duplicate_of']}`"
         lines.append(head + f"; {e.get('tokens', 0):,} токенов")
+        if e.get("why"):
+            lines.append(f"    - взята: {e['why']}")
         lines += [f"    - {p}" for p in e.get("problems") or []]
         if e.get("notes"):
             lines.append("    - замечания по словам (не блокируют): " + "; ".join(e["notes"]))
             lines += [f"    - {line}" for line in [_notes_pass_line(e)] if line]
         if e.get("question"):
             lines.append(f"    - вопрос владельцу: {e['question']}")
+    if cards.get("queue"):
+        lines.append("Дальше в очереди карточника (порядок решает код по запискам исследователя и "
+                     "руководителя, потом идеи владельца, потом по возрасту):")
+        lines += [f"    - {q['id']}: {q['why']}" for q in cards["queue"]]
     if cards.get("waiting_for"):
         lines.append(f"- новая идея ждёт: карточка `{cards['waiting_for']}` ещё не взята "
                      "реализатором (одна карточка карточника за раз)")
