@@ -16,7 +16,8 @@
 # idea that is a root of its own is a new strategy and takes a free place. The generator writes
 # new specs only into free places. An idea that only waits for data takes none (owner, 2026-11-01:
 # «не считать ждущие»).
-max_active_strategies: 6
+# Owner, 2026-11-03: «да, подними до 8» -- Bv3 took the last of six places and the generator had none.
+max_active_strategies: 8
 
 # The researcher runs every night, so the variants inside one strategy stay bounded too:
 # when a strategy has this many active variants it proposes no new experiment and says
