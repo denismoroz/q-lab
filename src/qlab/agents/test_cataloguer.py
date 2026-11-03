@@ -264,3 +264,37 @@ def test_the_owners_paper_comes_first_then_a_scout_draft_then_arxiv(tmp_path) ->
     assert cat.next_paper(ledger, session, max_attempts=2).id == "arxiv:1"
     ledger[-1].status = "none"
     assert cat.next_paper(ledger, session, max_attempts=2) is None  # SSRN needs a person
+
+
+def test_the_feed_is_ranked_by_closeness_to_q_labs_data_and_skips_what_another_agent_read(
+        ) -> None:
+    from qlab.registry.models import Base, Publication
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    now = datetime(2026, 11, 3, tzinfo=UTC)
+
+    def pub(pid, score, text, matched):
+        session.add(Publication(id=pid, source="arxiv", title=pid, title_key=pid, authors=[],
+                                published=now, abstract=text, link=f"https://{pid}",
+                                categories=[], first_seen=now, candidate=True, score=score,
+                                matched=matched))
+
+    # The filter's own count puts the order-book paper first (score 9 against 4) ...
+    pub("arxiv:book", 9, "limit order book tick data deep learning", {"strong": ["perp"]})
+    pub("arxiv:funding", 4, "funding rate of perpetual futures and liquidation",
+        {"strong": ["perp"]})
+    session.flush()
+    assert cat.next_paper([], session, max_attempts=2).id == "arxiv:book"
+    # ... and the ranking by usefulness puts it last.
+    weights = {"strong_term": 3, "close_to_data": 2, "far_from_data": -3,
+               "close_terms": ["funding", "perpetual", "liquidation"],
+               "far_terms": ["limit order book", "tick data", "deep learning"]}
+    assert cat.next_paper([], session, max_attempts=2, rank_weights=weights).id == "arxiv:funding"
+    # A paper the scout read tonight is not read again by the cataloguer.
+    taken = cat.next_paper([], session, max_attempts=2, rank_weights=weights,
+                           skip_ids={"arxiv:funding"})
+    assert taken.id == "arxiv:book"
+    queued = cat.Paper(id="arxiv:q", link="l")
+    assert cat.next_paper([queued], session, max_attempts=2, skip_ids={"arxiv:q"}).id != "arxiv:q"

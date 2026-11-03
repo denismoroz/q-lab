@@ -109,7 +109,45 @@ def fetch_stage(day, state: dict, *, config: Path = CONFIG, client: httpx.Client
 def _paper(row: Publication, max_chars: int) -> dict:
     return {"id": row.id, "title": row.title, "authors": row.authors, "link": row.link,
             "published": row.published.date().isoformat(), "source": row.source,
-            "matched": row.matched, "abstract": row.abstract[:max_chars]}
+            "matched": row.matched, "abstract": row.abstract[:max_chars],
+            "reading": "abstract only"}
+
+
+def pick_papers(session, cfg: dict, plan: dict, *, skip_ids: set[str], client=None,
+                root: Path | None = None) -> tuple[list[Publication], list[dict]]:
+    """The night's papers for the scout in `queue` mode: the queue ranked by usefulness
+    (`qlab.publications.rank`), as many as fit the paper count and the character cap, each with
+    its full text where the source serves it (`qlab.publications.fulltext`; SSRN and DOI links:
+    the abstract only, and the hand-off says so)."""
+    from qlab.publications import fulltext, rank
+
+    papers_cfg = plan["papers"]
+    ranked = rank.rank_candidates(
+        session, papers_cfg.get("rank") or {}, skip_ids=skip_ids,
+        min_abstract_chars=int(cfg["min_abstract_chars"]))
+    most = min(int(cfg["max_abstracts_per_night"]), int(papers_cfg["max_papers_per_night"]))
+    left = int(papers_cfg["max_chars_per_night"])
+    rows, papers = [], []
+    for item in ranked:
+        if len(rows) >= most or left < int(papers_cfg["min_chars_left"]):
+            break
+        row = item.row
+        paper = _paper(row, int(cfg["max_abstract_chars"]))
+        paper["rank_score"], paper["rank_why"] = item.score, list(item.why)
+        used = len(paper["abstract"])
+        if papers_cfg.get("full_text"):
+            text = fulltext.fetch(row.id, row.link, row.title, client=client, root=root,
+                                  cap_chars=min(int(papers_cfg["max_chars_per_paper"]), left))
+            paper["reading"] = (f"{text.kind}; the text is in {text.path}"
+                                + (" (cut at the character cap)" if text.cut else "")
+                                if text.path else text.kind)
+            if text.path:
+                paper["text_file"] = str(text.path)
+                used = text.chars
+        rows.append(row)
+        papers.append(paper)
+        left -= used
+    return rows, papers
 
 
 def parse_reply(reply: str | None) -> dict[str, tuple[str, str]]:
@@ -182,22 +220,30 @@ def scout_stage(day, state: dict, *, config: Path = CONFIG) -> None:
     cfg = load_config(config)
     if not cfg.get("scout_handoff", True):
         return
+    from qlab import scout_plan
+
+    plan = scout_plan.load_config(root=QLAB_ROOT)
+    if plan["papers"]["mode"] != "queue":
+        # The boundary with the cataloguer (docs/SCOUT.md): the cataloguer reads the papers,
+        # the scout gets only the ones it marks as a new mechanism (`catalogue_cards_stage`).
+        pubs["handoff"] = {"ids": [], "note": "статьи читает разборщик каталога, а разведчику "
+                           "отдаются только те, что он счёл новым механизмом "
+                           f"(night/scout.yaml, papers.mode = {plan['papers']['mode']})"}
+        save_state(day, state)
+        return
     if (state.get("scout") or {}).get("stopped"):
         pubs["handoff"] = {"stopped": "the night's budget ended in the search stage before this"}
         save_state(day, state)
         return
     with session_scope() as session:
-        rows = store.pick_for_scout(
-            session, cap=int(cfg["max_abstracts_per_night"]),
-            min_abstract_chars=int(cfg["min_abstract_chars"]))
+        rows, papers = pick_papers(session, cfg, plan, skip_ids=set(state.get("papers_read") or {}))
         if not rows:
             pubs["handoff"] = {"ids": [], "note": "no candidate with a readable abstract waiting"}
             save_state(day, state)
             return
-        papers = [_paper(r, int(cfg["max_abstract_chars"])) for r in rows]
         try:
             budget = _open_budget(session)
-            outcome = scout_publications(day, papers, budget=budget, session=session)
+            outcome = scout_publications(day, papers, budget=budget, session=session, cfg=plan)
         except BudgetExhausted as stop:
             pubs["handoff"] = {"ids": [r.id for r in rows], "stopped": str(stop)}
             session.commit()
@@ -213,11 +259,15 @@ def scout_stage(day, state: dict, *, config: Path = CONFIG) -> None:
         drafts = match_drafts(rows, outcome.drafts, reply)
         notes = {pid: f"{kind}: {rest}" for pid, (kind, rest) in reply.items()}
         store.mark_handed(session, rows, at=datetime.now(UTC), notes=notes, drafts=drafts)
+        state.setdefault("papers_read", {}).update({r.id: "scout" for r in rows})
         pubs["handoff"] = {
             "ids": [r.id for r in rows], "reply": outcome.reply, "problems": outcome.problems,
             "drafts": drafts, "tokens": budget.spent_tokens,
+            "web": outcome.web.to_dict() if outcome.web else None,
             "papers": [{"id": r.id, "title": r.title, "link": r.link,
-                        "result": _result(r.id, drafts, reply)} for r in rows],
+                        "reading": p["reading"], "rank_score": p.get("rank_score"),
+                        "result": _result(r.id, drafts, reply)}
+                       for r, p in zip(rows, papers, strict=True)],
             "waiting_after": session.query(Publication).filter(
                 Publication.candidate.is_(True), Publication.handed_at.is_(None)).count(),
         }
@@ -260,7 +310,11 @@ def report_lines(state: dict) -> list[str]:
                 + (f" ({hand['tokens']:,} токенов)" if hand.get("tokens") else "")
                 + f". Подходящих статей ждёт очереди: {hand.get('waiting_after', 0)}.")
             lines += [f"- [{p['title']}]({p['link']}) — {p['result']}"
+                      + (f" (читал: {p['reading']})" if p.get("reading") else "")
                       for p in hand.get("papers") or []]
+            lines += [f"- сеть: {f.get('url') or 'поиск «' + str(f.get('query')) + '»'}"
+                      + (" — отказано" if f.get("refused") else "")
+                      for f in (hand.get("web") or {}).get("fetched") or []]
             lines += [f"- проверка не пройдена: {p}" for p in hand.get("problems") or []]
     lines.append("")
     return lines

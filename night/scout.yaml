@@ -1,0 +1,146 @@
+# The scout (qlab.agents.scout, qlab.scout_plan, qlab.event_evidence; docs/SCOUT.md).
+#
+# Owner, 2026-11-03, on the scout producing no cards: «нужно разобраться почему он не
+# приносит - а не брать и душить его», then «делай все 4». Four changes, one switch for each
+# below. Nothing here lets the scout place an order or write outside cards/drafts: the rules of
+# qlab.agents.implementer (read anything, write one draft, a write elsewhere is reverted) hold.
+version: "2026-11-03.1"
+enabled: true
+model: sonnet            # docs/PLAN.md: Scout -> sonnet
+max_turns: 40
+
+# --- Change 1 and the rule that wakes the scout ---------------------------------------------
+# Code decides whether the scout is called tonight (no agent, no tokens): on a structural event
+# (a listing, a delisting, a change of terms -- as before) or when the evidence file
+# (data/events/evidence/<day>.json, qlab.event_evidence) holds a pattern that passes every
+# line below and is not already carded. Both rules together are capped by `budget`.
+wake:
+  on_structural_events: true
+  on_evidence: true
+  # A measure of the evidence file (a position held after a kind of event, net of costs) is a
+  # signal when ALL of these hold.
+  min_events: 30            # the sample
+  min_months: 10            # distinct calendar months of the events (events cluster in time)
+  min_net_pct: 1.0          # the mean net result of one position, percent
+  min_t: 2.5                # of the mean, errors clustered by month; the file counts ~170 cells,
+                            # so 2.0 alone would show a few by chance
+  both_halves_positive: true   # the mean is above zero in the first and the second half by date
+  require_tradeable: true   # a pattern known only in hindsight (delistings) never wakes it
+  # Patterns whose mechanism a card or the catalogue already holds do not wake the scout; they
+  # stay in the file for it to cite. Key: a glob over the pattern key; value: where it is held.
+  already_carded:
+    "funding-extreme/*":
+      - perp-funding-extreme-rebound     # docs/MECHANISMS.md
+      - perp-funding-carry               # docs/MECHANISMS.md
+      - frab-binance-spot                # cards/
+      - strategy-b-v2                    # cards/
+    "volume-jump/*": []
+    "oi-jump/*": []
+    "listing/*": []
+
+# --- Change 1: the measured history of events (qlab.event_evidence) -------------------------
+# Overrides of the defaults in qlab.event_evidence.DEFAULTS; code only, no tokens, a few
+# seconds, written once a night to data/events/evidence/<day>.json.
+evidence:
+  top: 5                      # extremes per measure and day, as the venue watcher lists
+  min_universe: 20            # fewer live contracts that day: no ranking
+  episode_days: 7             # an event repeating within this many days is one episode
+  horizons_days: [1, 7]
+  listing_horizons_days: [1, 7, 30]
+  delist_lead_days: 3         # an ASSUMPTION: the announcement's date is not in the data
+  liquid_floor_usd: {binance: 10000000, hyperliquid: 1000000}
+
+# --- Budget: the scout's own share ----------------------------------------------------------
+# One candidate budget through the guard (qlab.budget.run_agent) per call, as for every agent.
+budget:
+  # The scout may take at most this fraction of what the search stage has left tonight
+  # (1/4: the cataloguer, the generator and the carder share the rest).
+  share_divisor: 4
+  max_tokens_per_night: 400000   # across all the scout's calls of a night; the first call that
+                                 # would pass it is not made
+  max_calls_per_night: 2         # the evidence/events call, and the call over a paper card
+                                 # candidate of the cataloguer
+
+# --- Change 3: web access ------------------------------------------------------------------
+# The scout is the first agent with network tools. Reading only: venue documentation and paper
+# texts. WebFetch is limited by the CLI's own permission rule `WebFetch(domain:<d>)` (a call to
+# any other domain is refused by the CLI); `paths` of a domain, when given, are checked by code
+# afterwards (the CLI's rule has no path), and a fetch outside them is a recorded violation.
+# WebSearch cannot be limited by domain in the CLI: the prompt orders `allowed_domains` to be set
+# from this list, and code records a search without it as a violation. Every URL fetched or
+# searched is written to the night's state and to the morning report.
+# SWITCH OFF: `enabled: false` -- the scout then gets no network tool at all (docs/SCOUT.md).
+web:
+  enabled: true
+  search: true
+  domains:
+    - {domain: hyperliquid.gitbook.io}
+    - {domain: developers.binance.com}
+    - {domain: binance-docs.github.io}
+    - {domain: www.binance.com, paths: [/en/support/, /en/futures/trading-rules/]}
+    - {domain: arxiv.org}
+    - {domain: papers.ssrn.com}
+    - {domain: ssrn.com}
+    - {domain: doi.org}
+  max_fetches_per_call: 12     # more is recorded as a problem; the turn limit bounds the rest
+
+# --- Changes 2 and 4: papers ---------------------------------------------------------------
+# `mode`:
+#   from_cataloguer  the cataloguer (qlab.agents.cataloguer) reads the papers of the queue; the
+#                    scout does not read abstracts. A paper the cataloguer put in the catalogue
+#                    as a NEW mechanism (verdict `mechanism`, not `extends`) is handed to the
+#                    scout the same night with the cataloguer's own draft and quotes.
+#   queue            the previous behaviour: the scout reads the ranked queue itself.
+#   off              the scout reads no papers.
+# In every mode no paper is read by two agents in one night (night state `papers_read`).
+papers:
+  mode: from_cataloguer
+  # The queue is ranked by closeness to what q-lab has (qlab.publications.rank), not by arrival.
+  rank:
+    strong_term: 3          # per term of the publication filter's `strong` group
+    other_term: 1           # per term of its `crypto` / `mechanism` groups
+    close_to_data: 2        # per term below that names data or objects q-lab holds
+    far_from_data: -3       # per term below that names data q-lab lacks
+    full_text_available: 2  # an arXiv paper: the full text can be read
+    close_terms:
+      - funding
+      - perpetual
+      - liquidation
+      - listing
+      - delisting
+      - open interest
+      - basis
+      - carry
+      - cross-sectional
+      - cross sectional
+      - hyperliquid
+      - binance
+      - candle
+      - volatility
+      - momentum
+      - reversal
+    far_terms:
+      - limit order book
+      - order book
+      - order flow
+      - tick data
+      - high-frequency
+      - high frequency
+      - cfd
+      - on-chain
+      - onchain
+      - blockchain transaction
+      - smart contract
+      - amm
+      - liquidity pool
+      - sentiment
+      - twitter
+      - reddit
+      - deep learning
+      - reinforcement learning
+  # Used only by `mode: queue`:
+  full_text: true              # arXiv: the PDF/HTML as text; SSRN and DOI links: abstract only
+  max_papers_per_night: 3
+  max_chars_per_night: 60000   # of paper text across the night's hand-off
+  max_chars_per_paper: 24000
+  min_chars_left: 6000         # a paper is not started with less than this left of the cap

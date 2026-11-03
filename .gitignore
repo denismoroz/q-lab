@@ -49,6 +49,9 @@ data/programmer/
 # the cataloguer agent: its ledger, paper texts and work folders (docs/CATALOGUER.md)
 data/cataloguer/
 
+# the scout: which measured patterns it has already looked at (docs/SCOUT.md)
+data/scout/
+
 # the twins stage: its ledger of ideas with no twin and the hand runs' state (docs/NIGHT.md)
 data/twins/
 

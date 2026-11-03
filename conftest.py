@@ -61,6 +61,17 @@ def _stage_seconds_in_tmp(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _scout_config_in_tmp(monkeypatch, tmp_path_factory) -> None:
+    """The scout reads night/scout.yaml and writes data/scout/looked_at.json under
+    `qlab.scout_plan.QLAB_ROOT`. A test sees an empty root: no config means the defaults
+    (structural events only, no network tools, no evidence file built from the owner's caches),
+    and nothing is written to the owner's data. A test of the real file loads it by path."""
+    import qlab.scout_plan as scout_plan
+
+    monkeypatch.setattr(scout_plan, "QLAB_ROOT", tmp_path_factory.mktemp("scout-root"))
+
+
+@pytest.fixture(autouse=True)
 def _no_real_agent_ledgers(monkeypatch) -> None:
     """A test that runs the whole night never reaches the programmer's queue, the
     cataloguer's ledger or the carder's stage on disk: the stages read and write the owner's real

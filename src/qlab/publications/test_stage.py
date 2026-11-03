@@ -22,6 +22,7 @@ from qlab.publications import store
 from qlab.publications.filter import FILTER_PATH
 from qlab.registry.db import session_scope
 from qlab.registry.models import Base, Publication
+from qlab.venue_watch import Event
 
 DAY = date(2026, 10, 25)
 NOW = datetime(2026, 10, 25, 5, 30, tzinfo=UTC)
@@ -399,10 +400,12 @@ def test_the_search_stage_fetches_first_and_hands_papers_over_after_the_venue_sc
     order = []
     monkeypatch.setattr(stage, "fetch_stage", lambda day, state: order.append("fetch"))
     monkeypatch.setattr(stage, "scout_stage", lambda day, state: order.append("papers"))
-    monkeypatch.setattr("qlab.venue_watch.watch", lambda day: order.append("events") or [])
+    listed = Event("binance", "listed", "X", "")
+    monkeypatch.setattr("qlab.venue_watch.watch", lambda day: order.append("events") or [listed])
     monkeypatch.setattr("qlab.agents.scout.scout",
                         lambda day, **kw: order.append("venue scout") or SimpleNamespace(
-                            reply="NO CANDIDATE", draft=None, problems=[]))
+                            reply="NO CANDIDATE", draft=None, problems=[], web=None,
+                            evidence_file=None))
 
     class _Stage:
         def candidate(self, _idea):
@@ -426,3 +429,95 @@ def test_the_search_stage_fetches_first_and_hands_papers_over_after_the_venue_sc
     order.clear()
     night.search_stage(DAY, state)
     assert order == ["fetch", "papers"]
+
+
+# ---- the boundary with the cataloguer, ranking and full text (docs/SCOUT.md) -----------------
+
+
+def write_scout_config(env, **papers) -> None:
+    (env.root / "night").mkdir(exist_ok=True)
+    (env.root / "night/scout.yaml").write_text(yaml.safe_dump({"papers": papers}),
+                                               encoding="utf-8")
+
+
+def test_when_the_cataloguer_reads_the_papers_the_scout_is_handed_none(env, monkeypatch) -> None:
+    seed(TITLES)
+    write_scout_config(env, mode="from_cataloguer")
+
+    def never(*a, **k):
+        raise AssertionError("the scout must not read the queue")
+
+    monkeypatch.setattr(scout_mod, "run_agent", never)
+    state = {"done": {}, "publications": {"fetch": {}}}
+    stage.scout_stage(DAY, state, config=env.config)
+    hand = state["publications"]["handoff"]
+    assert hand["ids"] == [] and "разборщик" in hand["note"]
+    with session_scope() as session:
+        assert session.query(Publication).filter(Publication.handed_at.is_not(None)).count() == 0
+    assert any("Разведчику статьи не передавались" in ln for ln in stage.report_lines(state))
+
+
+def test_the_queue_mode_hands_the_most_useful_papers_with_their_text_under_the_cap(
+        env, monkeypatch) -> None:
+    from qlab.publications.filter import load_rules
+    from qlab.publications.items import Item
+
+    far = "Perpetual futures on a limit order book with deep learning. " * 6
+    seed(["Perpetual futures funding rate arbitrage", "Perpetual futures funding rate basis"])
+    with session_scope() as session:  # a newer paper that needs data q-lab lacks
+        store.add_new(session, [Item(
+            id="arxiv:99", source="arxiv", title="Perpetual futures limit order book", authors=[],
+            published=NOW, abstract=far, link="https://arxiv.org/abs/99", categories=[])], now=NOW)
+        store.apply_filter(session, load_rules())
+    write_scout_config(env, mode="queue", full_text=True, max_papers_per_night=2,
+                       max_chars_per_night=30000, max_chars_per_paper=12000, min_chars_left=5000,
+                       rank={"strong_term": 3, "other_term": 1, "close_to_data": 2,
+                             "far_from_data": -3, "full_text_available": 0,
+                             "close_terms": ["funding", "basis"],
+                             "far_terms": ["limit order book", "deep learning"]})
+    asked = []
+
+    def fake_fetch(paper_id, link, title, *, cap_chars, client=None, root=None):
+        asked.append((paper_id, cap_chars))
+        path = Path("data/publications/text") / f"{paper_id.replace(':', '_')}.txt"
+        (env.root / path).parent.mkdir(parents=True, exist_ok=True)
+        (env.root / path).write_text("x" * 100, encoding="utf-8")
+        return SimpleNamespace(path=path, kind="full text (arXiv PDF)", chars=cap_chars, cut=True)
+
+    monkeypatch.setattr("qlab.publications.fulltext.fetch", fake_fetch)
+    agent = FakeAgent(env.root, reply="NO CANDIDATE arxiv:90: a\nNO CANDIDATE arxiv:91: b")
+    state = run_scout(env, monkeypatch, agent)
+    handoff = json.loads((env.root / "data/publications/handoff/2026-10-25.json").read_text())
+    assert {p["id"] for p in handoff} == {"arxiv:90", "arxiv:91"}
+    assert all(p["reading"].startswith("full text") and p["text_file"] for p in handoff)
+    assert [c for _, c in asked] == [12000, 12000]
+    reported = state["publications"]["handoff"]["papers"]
+    assert all(p["reading"] and p["rank_score"] is not None for p in reported)
+    assert state["papers_read"] == {"arxiv:90": "scout", "arxiv:91": "scout"}
+
+
+def test_a_paper_the_cataloguer_read_tonight_is_not_handed_to_the_scout(env, monkeypatch) -> None:
+    seed(TITLES[:2])
+    write_scout_config(env, mode="queue")
+    agent = FakeAgent(env.root, reply="NO CANDIDATE arxiv:91: x")
+    state = {"done": {}, "publications": {"fetch": {}}, "papers_read": {"arxiv:90": "cataloguer"}}
+    state = run_scout(env, monkeypatch, agent, state=state)
+    assert state["publications"]["handoff"]["ids"] == ["arxiv:91"]
+
+
+def test_the_character_cap_of_the_night_bounds_each_papers_text(env, monkeypatch) -> None:
+    seed(TITLES)
+    write_scout_config(env, mode="queue", full_text=True, max_papers_per_night=3,
+                       max_chars_per_night=14000, max_chars_per_paper=10000, min_chars_left=5000)
+    taken = []
+
+    def fake_fetch(paper_id, link, title, *, cap_chars, client=None, root=None):
+        taken.append(cap_chars)
+        return SimpleNamespace(path=Path("data/publications/text/x.txt"), kind="full text",
+                               chars=cap_chars, cut=True)
+
+    monkeypatch.setattr("qlab.publications.fulltext.fetch", fake_fetch)
+    run_scout(env, monkeypatch, FakeAgent(env.root, reply=""))
+    # 14000 characters: the first paper may have 10000, the second the 4000 left -- less than
+    # `min_chars_left`, so the hand-off ends after one paper.
+    assert taken == [10000]

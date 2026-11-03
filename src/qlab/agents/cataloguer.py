@@ -91,6 +91,8 @@ class Paper:
     review: list[str] = field(default_factory=list)
     tokens: int = 0
     commit: str | None = None
+    card_candidate: bool = False  # a NEW mechanism: handed to the scout (docs/SCOUT.md)
+    scout: str | None = None  # what the scout answered to the hand-off
 
     @classmethod
     def from_dict(cls, raw: dict) -> Paper:
@@ -124,19 +126,34 @@ def add_owner_paper(ledger: list[Paper], link: str, *, pdf: str | None = None,
     return paper
 
 
-def next_paper(ledger: list[Paper], session, *, max_attempts: int) -> Paper | None:
+def next_paper(ledger: list[Paper], session, *, max_attempts: int,
+               skip_ids: frozenset[str] | set[str] = frozenset(),
+               rank_weights: dict | None = None) -> Paper | None:
     """The night's paper: the owner's queue, then one the scout drafted a card from, then the
-    feed's best-matching arXiv candidate the scout did not turn down. A paper already in the
-    ledger is taken again only while it failed fewer than `max_attempts` times."""
+    feed's best candidate the scout did not turn down. A paper already in the ledger is taken
+    again only while it failed fewer than `max_attempts` times. `skip_ids` are papers another
+    agent has read tonight. With `rank_weights` (night/scout.yaml, `papers.rank`) the feed is
+    ordered by closeness to q-lab's data (`qlab.publications.rank`) instead of the filter's
+    count of matched terms."""
     from qlab.registry.models import Publication
 
     for p in ledger:
-        if p.status == "queued" or (p.status == "failed" and p.attempts < max_attempts):
+        if p.id not in skip_ids and (
+                p.status == "queued" or (p.status == "failed" and p.attempts < max_attempts)):
             return p
-    seen = {p.id for p in ledger}
+    seen = {p.id for p in ledger} | set(skip_ids)
     rows = (session.query(Publication).filter(Publication.candidate.is_(True))
             .order_by(Publication.draft.is_(None), Publication.score.desc(),
                       Publication.published.desc()).all())
+    if rank_weights is not None:
+        from qlab.publications.rank import usefulness
+
+        def key(row: Publication) -> tuple:
+            score, _ = usefulness(row.title, row.abstract, row.matched or {}, row.id,
+                                  rank_weights)
+            return (row.draft is None, -score, -row.published.timestamp(), row.id)
+
+        rows = sorted(rows, key=key)
     for row in rows:
         if row.id in seen or (row.scout_note or "").upper().startswith("NO CANDIDATE"):
             continue
@@ -158,6 +175,11 @@ def pdf_url(paper: Paper) -> str:
     if paper.id.startswith("arxiv:"):
         return f"https://arxiv.org/pdf/{paper.id.removeprefix('arxiv:')}"
     return paper.link
+
+
+def draft_path(paper: Paper, work_root: Path = WORK) -> Path:
+    """Where the cataloguer's draft of a paper lies after `run_paper` (the scout reads it)."""
+    return _abs(work_root) / re.sub(r"[^\w.\-]+", "_", paper.id) / "draft.yaml"
 
 
 def text_path(paper: Paper, root: Path = PAPERS) -> Path:
@@ -701,7 +723,8 @@ def report_lines(entries: list[dict], ledger: list[Paper]) -> list[str]:
     return lines
 
 
-__all__ = ["CONFIG", "LEDGER", "Paper", "add_owner_paper", "check_draft", "extend_mechanism",
+__all__ = ["CONFIG", "LEDGER", "Paper", "add_owner_paper", "check_draft", "draft_path",
+           "extend_mechanism",
            "fetch_text", "insert_mechanism", "known_params", "load_config", "load_ledger",
            "next_paper", "normalise", "quote_numbers", "reject", "render_mechanism",
            "report_lines", "review_lines", "run_paper", "save_ledger", "written_back"]
