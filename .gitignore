@@ -92,3 +92,6 @@ data/night/run.starting
 
 # per-item seconds of the night stages (qlab.stage_time)
 data/stage_seconds.json
+
+# Binance listing cache of the one-check builder (qlab.one_check)
+data/one_check/
