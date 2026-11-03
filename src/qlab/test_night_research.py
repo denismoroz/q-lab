@@ -457,11 +457,10 @@ def test_the_owners_ideas_reach_the_researcher_verbatim() -> None:
     assert any("хеджирование почаще" in i for i in plan["strategies"]["bv2"]["owner_ideas"])
 
 
-def test_six_researcher_strategies_fill_the_six_places() -> None:
+def test_six_researcher_strategies_leave_two_places_under_the_cap_of_eight() -> None:
     """Owner, 2026-10-25: FRAB with the spot on Binance is a new strategy with its
-    own place; owner, 2026-11-03: Bv3 is the sixth. The six of night/research.yaml fit
-    exactly under night/limits.yaml's six, so the generator has no free place until a strategy
-    leaves (before Bv3 the five left one free)."""
+    own place; owner, 2026-11-03: Bv3 is the sixth, and «да, подними до 8»: the six of
+    night/research.yaml leave the generator two places under night/limits.yaml's eight."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -475,7 +474,7 @@ def test_six_researcher_strategies_fill_the_six_places() -> None:
         free, cap, active = night.strategy_slots(
             session, night.load_research_plan(REPO / "night/research.yaml"),
             REPO / "night/limits.yaml")
-    assert cap == 6 and len(active) == 6 and free == 0
+    assert cap == 8 and len(active) == 6 and free == 2
     assert "frab-binance-spot" in active and "bv3" in active
 
 
@@ -532,7 +531,7 @@ def test_bv3_carries_the_owners_words_verbatim_and_its_prior_art() -> None:
     assert "sections 6 to 9" in brief and "60 to 75 percent" in brief and "ONE check" in brief
 
 
-def test_bv3_has_all_its_variant_places_and_without_it_one_strategy_place_is_free() -> None:
+def test_bv3_has_all_its_variant_places_and_without_it_three_strategy_places_are_free() -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -546,7 +545,7 @@ def test_bv3_has_all_its_variant_places_and_without_it_one_strategy_place_is_fre
         # Bv3's variants are filed under its own root, so Bv2's full places do not touch them
         assert night.variant_slots(session, plan["strategies"]["bv3"], limits)[:2] == (6, 6)
         five = {"strategies": {k: v for k, v in plan["strategies"].items() if k != "bv3"}}
-        assert night.strategy_slots(session, five, limits)[0] == 1
+        assert night.strategy_slots(session, five, limits)[0] == 3
     engine.dispose()
 
 

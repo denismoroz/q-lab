@@ -322,7 +322,7 @@ def test_the_shipped_config_loads_and_uses_the_owners_four_weeks() -> None:
     assert config["method"] == "inverse_volatility"
     assert config["min_evidence_days"] == paper_rule.MIN_REPLAY_DAYS
     assert config["on_decay_alert"] == "report_only"
-    assert pool_allocation.max_strategies(config) == 6
+    assert pool_allocation.max_strategies(config) == 8  # owner 2026-11-03: «да, подними до 8»
 
 
 def test_the_shipped_config_splits_nothing_each_strategy_has_its_own_money() -> None:
