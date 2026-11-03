@@ -10,6 +10,9 @@ A scan has two kinds of flags:
 * **from the registry** -- `venue_divergence` (the idea's other stage), `stand_vs_paper` (the
   paper check) and `too_good_for_family` (the family's yearly returns) read stored numbers and,
   for the venues, the daily series of the two stages.
+
+Beside them, when `scan.venue_counterfactual` is on, a scan of a run that belongs to Hyperliquid
+stores a fact (not a flag): the yearly return when the strategy trades only Hyperliquid's coins.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from qlab.anomalies import flags as fl
 from qlab.anomalies.config import FLAGS, Config
-from qlab.anomalies.rerun import Decomposition, StoredRun, daily, decompose, load_run
+from qlab.anomalies.rerun import Decomposition, Rule, StoredRun, daily, decompose, load_run
 from qlab.capital_text import ann_of
 from qlab.harness.strategy import ZERO_WEIGHT_TOL
 
@@ -388,6 +391,78 @@ def family_flag(session: Session, idea_id: str, metrics: dict, cfg: Config) -> f
 
 
 # --------------------------------------------------------------------------
+# The venue counterfactual
+
+
+def venue_counterfactual_basis(session: Session, stored: StoredRun) -> str | None:
+    """Why this run gets the "only Hyperliquid's coins" number, or None when it does not.
+
+    `"judged_for"`: the run is judged for Hyperliquid. `"stage2"`: the idea also has a Hyperliquid
+    second stage. That case exists because, since docs/VENUE_SPLIT.md, a Binance run carries no
+    `execution_venue` even when the idea is also tried on Hyperliquid, so `judged_for` alone would
+    skip it. The number is a stored fact and judges nothing: a Binance run is still not flagged
+    for Hyperliquid's list. A run on Hyperliquid's own data (every second-stage run) gets none."""
+    from qlab.registry.stages import stage2_child
+
+    if stored.venue == "hyperliquid":
+        return None
+    if stored.judged_for == "hyperliquid":
+        return "judged_for"
+    if stage2_child(session, stored.idea_id) is not None:
+        return "stage2"
+    return None
+
+
+def _finite(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and value == value and abs(
+        value) != float("inf") else None
+
+
+def venue_counterfactual(session: Session, stored: StoredRun, route: str | None, cfg: Config
+                         ) -> dict[str, Any] | None:
+    """The run's yearly return when the strategy may hold only coins Hyperliquid lists and chooses
+    again, beside the original on the same rows -- the `--only-hl-listed --reselect` counterfactual
+    of the investigator's toolkit, run for the scan. None (no fact) when the setting is off, the
+    route is not one the scan covers, or the run does not belong to Hyperliquid; otherwise a
+    `computed` fact or an `unavailable` one with the reason. A fact, not a flag: it decides
+    nothing."""
+    basis = None
+    if cfg.scan.venue_counterfactual and route in cfg.scan.routes:
+        basis = venue_counterfactual_basis(session, stored)
+    if basis is None:
+        return None
+
+    def unavailable(reason: str) -> dict[str, Any]:
+        return {"state": "unavailable", "basis": basis, "reason": reason}
+
+    from qlab.anomalies import toolkit
+
+    try:
+        spot = [c for c in stored.weights.columns if str(c).endswith("-SPOT")]
+        if spot and bool((stored.part()[1][spot].abs() > ZERO_WEIGHT_TOL).any(axis=None)):
+            return unavailable("в книге есть спотовая нога, а список Hyperliquid спот не покрывает")
+        mask = toolkit.listed_mask(session, stored)
+        if mask is None:
+            return unavailable("в реестре нет снимка Hyperliquid со списком монет")
+        if not mask.any(axis=None):
+            return unavailable("список Hyperliquid не покрывает дни прогона")
+        data = toolkit.counterfactual(session, stored.trial_id, Rule(only_listed=mask),
+                                      run=stored, reselect_book=True).data
+        a, b = data["original"], data["with_rule"]
+        return {"state": "computed", "venue": "hyperliquid", "basis": basis,
+                "from": data["from"], "n_periods": a["n_periods"], "reinvested": a["reinvested"],
+                "removed_bars": data["removed_bars"],
+                "original_ann": _finite(a["ann_return_net"]),
+                "restricted_ann": _finite(b["ann_return_net"]),
+                "original_total": _finite(a["total_return_net"]),
+                "restricted_total": _finite(b["total_return_net"]),
+                "original_stand_ann": _finite(a["stand"]["ann_return_net"]),
+                "restricted_stand_ann": _finite(b["stand"]["ann_return_net"])}
+    except Exception as exc:  # noqa: BLE001 - the fact says why it could not be computed
+        return unavailable(f"{type(exc).__name__}: {exc}")
+
+
+# --------------------------------------------------------------------------
 # The scan
 
 
@@ -415,6 +490,10 @@ def scan_trial(session: Session, trial_id: int, cfg: Config, *, run: StoredRun |
         reason = f"прогон не удалось повторить: {exc}"
         flags = [fl._undefined(n, reason) for n in BOOK_FLAGS]
         facts = {"rerun_error": f"{type(exc).__name__}: {exc}"}
+    if stored is not None:
+        counterfactual = venue_counterfactual(session, stored, route, cfg)
+        if counterfactual is not None:
+            facts["venue_counterfactual"] = counterfactual
     flags += [venue_flag(session, trial_id, cfg, run=stored),
               paper_flag(session, idea_id, trial_id, cfg),
               family_flag(session, idea_id, trial.metrics or {}, cfg)]
@@ -426,5 +505,5 @@ def scan_trial(session: Session, trial_id: int, cfg: Config, *, run: StoredRun |
 __all__ = ["ScanResult", "by_coin", "coin_day_details", "coin_day_frames", "coin_of",
            "counterpart_trial", "delist_mask", "family_flag", "frozen_stretches", "listing_flag",
            "family_returns", "paper_flag", "run_flags", "scan_trial", "trial_daily_capital",
-           "trial_daily_returns",
+           "trial_daily_returns", "venue_counterfactual", "venue_counterfactual_basis",
            "venue_flag"]

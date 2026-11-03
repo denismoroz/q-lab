@@ -331,3 +331,9 @@ def test_a_price_that_does_not_move_for_days_fires_at_its_share() -> None:
     assert fired.detail["longest"][0]["instrument"] == "BTCST"
     assert fl.frozen_price(frozen_days=0, held_coin_days=0, longest=[], line=ln).state \
         == fl.UNDEFINED
+
+
+def test_the_venue_counterfactual_is_off_unless_the_file_turns_it_on() -> None:
+    assert CFG.scan.venue_counterfactual is False
+    on = parse_config({**RAW, "scan": {**RAW["scan"], "venue_counterfactual": True}})
+    assert on.scan.venue_counterfactual is True
