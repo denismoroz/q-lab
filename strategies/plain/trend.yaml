@@ -1,0 +1,34 @@
+# Trend — покупка растущих монет и продажа падающих. Простое описание для страницы идеи (docs/PLAIN_PAGE.md).
+id: trend
+title: "Trend: покупает растущие монеты, продаёт падающие"
+roots: [trend-tsmom-crypto, trend-live]
+code_refs:
+  - qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+  - qlab.strategies.trend:TrendTSMOMEnsemble
+  - qlab.strategies.cadence:SplitCadence
+base_specs:
+  LiveTrendTSMOMEnsemble: specs/trend-live.yaml
+  TrendTSMOMEnsemble: specs/trend.yaml
+base_name: "как на проде"
+checked_against:
+  - "funding-rate-arbitrage/src/frab/strategy/trend/signals.py (tsmom_sign: покупка, если за срок цена выросла, продажа, если упала; ensemble_signal: среднее из голосов по срокам; realized_vol и target_weights: размер по изменчивости монеты; book_vol_scale: подгонка размера всей книги)"
+  - "funding-rate-arbitrage/src/frab/strategy/trend/params.py (сроки 30/60/90/120 суток, vol_target_daily 0.02, leverage_cap 3, risk_scale 0.2, book_vol_target_ann 0.14, пересмотр раз в сутки в 00:00 UTC)"
+  - "src/qlab/strategies/live/trend.py (стенд ведёт настоящий код frab день за днём)"
+facts_default:
+  vol_target_pct: 2
+  book_vol_pct: 14
+sentences:
+  - >-
+    Набор монет: {trend_universe}. Для каждой монеты из набора стратегия отдельно решает, покупать её или
+    продавать в короткую (продавать взятое взаймы: это выигрывает, если цена падает); решение пересматривает раз в сутки.
+  - >-
+    Решает по тому, выросла ли цена за {lookbacks} суток: за каждый срок монета получает голос «покупать», если
+    цена выросла, и «продавать», если упала; позиция идёт по среднему из голосов, от «все за покупку» до «все за продажу».
+  - >-
+    Чем спокойнее монета, тем больше позиция в ней (размер подгоняют так, чтобы монета скакала в сутки
+    примерно на {vol_target_pct}%); если позиции вместе выходят слишком большими, всю книгу ужимают.
+  - >-
+    {book_vol_sentence}
+  - >-
+    Зарабатывает на затяжных движениях: если монета долго идёт в одну сторону, позиция идёт вместе с ней.
+    Теряет, когда цена мечется туда-сюда: сигнал разворачивается с опозданием, и каждая смена стороны стоит комиссий.

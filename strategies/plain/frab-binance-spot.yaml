@@ -1,0 +1,32 @@
+# FRAB со спотом на Binance и коротким контрактом на Hyperliquid.
+# Простое описание для страницы идеи (docs/PLAIN_PAGE.md).
+id: frab-binance-spot
+title: "FRAB: монета на Binance, короткий контракт на Hyperliquid"
+roots: [frab-binance-spot]
+code_refs:
+  - qlab.strategies.live.frab_binance_spot:LiveFrabBinanceSpot
+base_specs:
+  LiveFrabBinanceSpot: specs/frab-binance-spot.yaml
+base_name: "как в основной версии"
+checked_against:
+  - "src/qlab/strategies/live/frab_binance_spot.py (модульная строка: решения FRAB те же, спот на Binance по его ценам, залог USDC на Hyperliquid, пополнение продажей части спота и переводом, фиксированная плата за перевод, принудительное закрытие по максимумам свечей)"
+  - "cards/frab-binance-spot.yaml (plain_summary: отличие от живого FRAB, три заботы)"
+  - "specs/frab-binance-spot.yaml (universe: all_paired, concurrency_cap, transfers: batched)"
+  - "funding-rate-arbitrage/src/frab/strategy/two_phase/ (те же решающие функции входа и выхода, что у FRAB)"
+facts_default: {}
+sentences:
+  - >-
+    Зарабатывает на той же плате между участниками бессрочных контрактов (ставке финансирования), что и FRAB:
+    покупает монету за доллары и одновременно продаёт в короткую контракт на неё на столько же, поэтому цена
+    монеты на результат почти не влияет.
+  - >-
+    Отличие от FRAB — где лежит монета: её покупают на Binance (там пар на сотни монет, на Hyperliquid спотовых пар мало), а
+    контракт продают на Hyperliquid. Когда открывать и закрывать пару, решают те же правила, что у FRAB: открывает, когда
+    средняя ставка за {signal_hours} часов выше {entry_pct}% годовых, держит не больше {slots} пар сразу.
+  - >-
+    Залог под контракт лежит отдельно, в долларах (USDC) на Hyperliquid. Когда цена монеты растёт и контракт теряет, залог
+    пополняют: продают часть монеты на Binance и переводят деньги; каждый перевод стоит фиксированную плату.
+  - >-
+    Рискует так: комиссия за покупку на Binance выше, цены монеты на двух площадках немного расходятся (это
+    расхождение становится доходом или убытком), переводы денег стоят, а при резком взлёте цены залога может
+    не хватить, и контракт закроют принудительно.

@@ -56,7 +56,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from qlab import costs, fixation
+import yaml
+
+from qlab import costs, fixation, plain
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
@@ -413,6 +415,13 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
         problems.append("costs are the venue's row of night/costs.yaml; "
                         f"{costs.DEVIATION_KEY} is not the agent's to write")
     problems += [f"fixation: {p}" for p in fixation.problems(spec)]
+    # The idea's page opens with plain words (owner, 2026-11-03, docs/PLAIN_PAGE.md): a catalogue
+    # mechanism has its text in strategies/plain/mechanisms/, an own mechanism has none, so its
+    # spec carries `plain_summary`; one that is given is checked either way.
+    spec_text = _abs(path).read_text(encoding="utf-8")
+    raw_spec = yaml.safe_load(spec_text)
+    if own or raw_spec.get("plain_summary") is not None or raw_spec.get("plain_title") is not None:
+        problems += [f"plain words: {p}" for p in plain.spec_problems(raw_spec, spec_text)]
     if mechanism is not None and not mechanism.fully_expressed and not spec.differs_from_source:
         problems.append("the catalogue says the blocks do not express the whole mechanism "
                         f"({mechanism.unexpressed[:120]!r}) but differs_from_source is empty")
@@ -652,6 +661,15 @@ the first line `# mechanism: {own}` and the field
   Its numbers are ALL lists of {own_numbers} (in `choice.axes`) or the framework's sizing.gross 1;
   no catalogue number, since no paper backs this mechanism. At most {max_own} such spec per
   run. differs_from_source stays empty.
+  An own mechanism also needs `plain_summary` (owner, 2026-11-03: «смотрю и не могу понять - а что
+  она вообще делает и как»): the idea's page opens with it, and a mechanism of the catalogue has
+  its plain text written already (strategies/plain/mechanisms/), an own one has none. 3 to 6 short
+  sentences in Russian, no jargon (cards/SCHEMA.md, «Правила заполнения»: a term is explained at
+  its first use, no English trading words in Russian letters): what it holds, what it buys and
+  sells and when, why it should earn, what it risks, how much money it runs on. Optionally
+  `plain_title`, at most 80 characters. Code checks that it exists and passes the same jargon
+  check the cards pass; a spec without it is rejected. A spec of a catalogue mechanism needs
+  neither: code reads its blocks and numbers and writes the page's sentences itself.
 
 {directions}Reply with one line per spec: idea_id, the mechanism id, and the params_fixed_at you
 wrote (or "no spec: <reason>")."""

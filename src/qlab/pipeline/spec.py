@@ -307,6 +307,18 @@ class StrategySpec(BaseModel):
     with the `# mechanism: own` header; its numbers come from the owner's lists of own
     values (night/own_numbers.yaml), chosen on data before the cut (qlab.own_numbers)."""
 
+    plain_summary: str | None = None
+    """What the strategy does, in plain Russian words (owner, 2026-11-03: «смотрю и не могу понять -
+    а что она вообще делает и как»). The top of the idea's page opens with it (`qlab.plain`,
+    docs/PLAIN_PAGE.md). Required, by the researcher's and the generator's checks, when the spec
+    is a NEW mechanism or a NEW family; a variant of a known strategy needs none, code computes
+    how it differs. Same rules as a card's `plain_summary` (`cards/SCHEMA.md`): no jargon, a term
+    explained where it first appears. Recorded and shown, never routed on."""
+
+    plain_title: str | None = None
+    """A short plain title (at most 80 characters) shown above the long technical one; without it
+    the page takes the first sentence of the text (`plain_summary`)."""
+
     differs_from_source: list[str] = Field(default_factory=list)
     """How a strategy built "after" a published source differs from what the
     source did (market-cap weights vs equal weights, composite prices vs one

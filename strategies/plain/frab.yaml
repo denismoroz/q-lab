@@ -1,0 +1,34 @@
+# FRAB — монета против короткого контракта ради платы по ставке финансирования.
+# Простое описание для страницы идеи (docs/PLAIN_PAGE.md).
+id: frab
+title: "FRAB: монета против короткого контракта ради платы по ставке"
+roots: [frab]
+code_refs:
+  - qlab.strategies.live.frab:LiveFrab
+  - qlab.strategies.frab:FrabFundingHarvest
+base_specs:
+  LiveFrab: specs/frab-live.yaml
+  FrabFundingHarvest: specs/frab.yaml
+base_name: "как на проде"
+checked_against:
+  - "funding-rate-arbitrage/src/frab/engine/two_phase_signals.py (decide_entry: пара открывается, когда сглаженная годовая ставка строго выше порога; decide_pre_breakeven и decide_post_breakeven: условия выхода до и после окупаемости комиссий)"
+  - "funding-rate-arbitrage/src/frab/strategy/two_phase/params.py (TwoPhaseParams: entry_threshold_apr, signal_window_hours, concurrency_cap, budget_cap_usdc, phase1_breakeven_cap_hours = 720 часов = 30 суток, phase1_negative_patience, neg_stop_*)"
+  - "funding-rate-arbitrage/src/frab/strategy/two_phase/evaluators/entry.py (кандидаты по убыванию ставки, места ограничены concurrency_cap и бюджетом)"
+  - "src/qlab/strategies/live/frab.py (стенд вызывает те же решающие функции frab час за часом)"
+  - "specs/frab-live.yaml (прод-числа от 2026-10-28: бюджет 120 долларов, 5 мест)"
+facts_default: {}
+sentences:
+  - >-
+    Зарабатывает на плате между участниками бессрочных контрактов (контракт на монету без даты закрытия): когда
+    желающих поставить на рост больше, тот, кто ставит на падение, получает от них небольшую плату каждый час.
+    Её называют ставкой финансирования.
+  - >-
+    Берёт монету из набора ({frab_universe}), у которой эта ставка за последние {signal_hours} часов в среднем выше
+    {entry_pct}% годовых, покупает саму монету за доллары (покупка на споте) и одновременно продаёт в короткую контракт на
+    столько же: цена монеты на результат почти не влияет, остаётся плата. Держит не больше {slots} таких пар сразу,
+    деньги делятся между местами поровну.
+  - "{exit_sentence}"
+  - >-
+    Рискует так: плата может стать отрицательной (тогда пара платит), на покупку и продажу уходят комиссии, а
+    короткому контракту при резком взлёте цены нужен залог — его пополняют, а если не хватит, биржа закрывает контракт
+    принудительно.

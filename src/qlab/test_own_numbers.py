@@ -92,6 +92,11 @@ OWN_BLOCK = """own_mechanism:
   idea: Short the coins whose perpetual pays a high funding rate and buy those paying little.
   why: Longs who pay a high funding rate overpay for leverage; the carry is earned from them.
   idea_from: A variation of perp-funding-carry in docs/MECHANISMS.md, without its spot leg.
+plain_summary: >-
+  Стратегия продаёт в короткую (продаёт взятое взаймы) монеты, по бессрочным контрактам которых
+  платят самую высокую ставку финансирования, и покупает те, по которым платят мало. Ставка —
+  это плата между участниками контракта: те, кто с плечом ставит на рост, переплачивают, и эту
+  переплату получает продавец. Рискует тем, что монета с высокой ставкой всё равно растёт.
 """
 
 
