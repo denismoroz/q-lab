@@ -1,0 +1,103 @@
+# Stage 2 of gen-funding-tail-rebound-memon (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: gen-funding-tail-rebound-memon-hl
+title: 'Отскок после необычной ставки финансирования: покупать монеты, у которых ставка сегодня среди
+  самых низких 10% за свои же 180 суток, продавать в короткую — среди самых высоких 10%, пересмотр каждый
+  день (второй этап: hyperliquid)'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: funding_tail
+    history_window_days: 180
+    tail_fraction: 0.1
+  portfolio:
+    block: time_series_sign
+  sizing:
+    block: equal
+    gross: 1.0
+  rebalance_days: 1
+  min_history_days: 180
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-11-02'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- The paper tests only Bitcoin (BTCUSDT); this spec applies the rule to every Binance USDT perpetual coin,
+  which the authors name as future work.
+- The paper finds an effect only after extremely low funding (buying) and none after extremely high funding;
+  this spec also sells short the coins in the high tail, a side with no evidence in the paper.
+- The paper looks at each 8-hour funding payment and 24-hour returns from 15-minute prices; this spec
+  works on daily candles, where one candle equals the 24-hour horizon.
+- The paper measures average returns after events without costs, leverage or liquidations and does not
+  claim a profitable strategy; the stand adds costs and judges the strategy.
+- The paper's sample ends 2026-08-10, so part of this spec's history repeats the period on which the number
+  was obtained.
+- The paper requires at least 300 past values besides the 180-day history; the block requires only the
+  full 180 days of daily funding.
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (gen-funding-tail-rebound-memon) on hyperliquid''s own perpetual contracts listed at each bar;
+  nothing was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $10.
+- 'Judged from 2025-06-30: the first day hyperliquid has the 1 coins the portfolio rule needs at once
+  (snapshot 0175a1f353bd4524d50b342066e8128618324408a281a57f08961db5dccf3583); the days before are warm-up
+  with no book.'
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2024-06-14'
+params_fixed_evidence: 'Inherited from stage 1 (gen-funding-tail-rebound-memon): named by code: the start
+  of the last third of the window'
+judged_from: '2025-06-30'
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: universe: all (Memon,
+    Anklesaria-Dalal, Mishra 2026)'
+  signal: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: signal: the position of
+    the current funding rate among the coin''s own previous rates (Memon, Anklesaria-Dalal, Mishra 2026)'
+  signal.history_window_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row signal.history_window_days:
+    180 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  signal.tail_fraction: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row signal.tail_fraction:
+    0.1 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  portfolio: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: portfolio: buy in the
+    low tail, hold 24 hours (Memon, Anklesaria-Dalal, Mishra 2026)'
+  sizing: docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, equal shares (Memon, Anklesaria-Dalal,
+    Mishra 2026)
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row rebalance_days: 1 (Memon,
+    Anklesaria-Dalal, Mishra 2026)'
+  min_history_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row min_history_days:
+    180 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+regime_claim: {}
+choice:
+  axes: {}
+  candidates: {}
+  source: ''
+  nothing_to_choose: the catalogue gives exactly one value for each number this spec uses (history window
+    180, tail fraction 0.1, rebalance 1 day, history 180), and night/own_numbers.yaml declares nothing
+    for the remaining blocks, which take no numbers
+review_answers: {}
+selects_causally: false

@@ -14,6 +14,7 @@ annotation_snapshots:
 - '2026-10-31'
 - '2026-11-01'
 - '2026-11-02'
+- '2026-11-03'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -995,6 +996,17 @@ instruments:
       underlying: 'MAGS references 1 share of the Roundhill Magnificent Seven ETF
         (Cboe BZX: MAGS), quoted in USD. The fund offers approximately equal-weight
         exposure to Alphabet, Amazon, Apple, Meta, Microsoft, NVIDIA, and Tesla.'
+  xyz:MELI:
+    listed_from: '2026-11-03'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-11-03'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-11-03'
+      observed_on: '2026-11-03'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
   xyz:META:
     listed_from: '2025-11-20'
     listed_from_basis: first_candle

@@ -1,0 +1,54 @@
+# mechanism: perp-funding-extreme-rebound
+idea_id: gen-funding-tail-rebound-memon
+title: 'Отскок после необычной ставки финансирования: покупать монеты, у которых ставка сегодня среди самых низких 10% за свои же 180 суток, продавать в короткую — среди самых высоких 10%, пересмотр каждый день'
+code_ref: qlab.strategies.blocks:Composed
+params:
+  universe:
+    rule: all
+  signal:
+    block: funding_tail
+    history_window_days: 180
+    tail_fraction: 0.1
+  portfolio:
+    block: time_series_sign
+  sizing:
+    block: equal
+    gross: 1.0
+  rebalance_days: 1
+  min_history_days: 180
+data:
+  source: binance
+  interval: 1d
+  start: '2019-09-08'
+  end: '2026-11-02'
+costs:
+  taker_fee_bps: 5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+noise_universe: panel
+unexpressed_mechanisms: []
+differs_from_source:
+- The paper tests only Bitcoin (BTCUSDT); this spec applies the rule to every Binance USDT perpetual coin, which the authors name as future work.
+- The paper finds an effect only after extremely low funding (buying) and none after extremely high funding; this spec also sells short the coins in the high tail, a side with no evidence in the paper.
+- The paper looks at each 8-hour funding payment and 24-hour returns from 15-minute prices; this spec works on daily candles, where one candle equals the 24-hour horizon.
+- The paper measures average returns after events without costs, leverage or liquidations and does not claim a profitable strategy; the stand adds costs and judges the strategy.
+- The paper's sample ends 2026-08-10, so part of this spec's history repeats the period on which the number was obtained.
+- The paper requires at least 300 past values besides the 180-day history; the block requires only the full 180 days of daily funding.
+choice:
+  nothing_to_choose: 'the catalogue gives exactly one value for each number this spec uses (history window 180, tail fraction 0.1, rebalance 1 day, history 180), and night/own_numbers.yaml declares nothing for the remaining blocks, which take no numbers'
+params_fixed_at: '2024-06-14'
+params_fixed_evidence: 'named by code: the start of the last third of the window'
+sources:
+  universe: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: universe: all (Memon, Anklesaria-Dalal, Mishra 2026)'
+  signal: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: signal: the position of the current funding rate among the coin''s own previous rates (Memon, Anklesaria-Dalal, Mishra 2026)'
+  signal.history_window_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row signal.history_window_days: 180 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  signal.tail_fraction: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row signal.tail_fraction: 0.1 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  portfolio: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, blocks: portfolio: buy in the low tail, hold 24 hours (Memon, Anklesaria-Dalal, Mishra 2026)'
+  sizing: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, equal shares (Memon, Anklesaria-Dalal, Mishra 2026)'
+  sizing.gross: 'docs/MECHANISMS.md, framework value: gross 1 = the whole capital, no leverage'
+  rebalance_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row rebalance_days: 1 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  min_history_days: 'docs/MECHANISMS.md, mechanism perp-funding-extreme-rebound, row min_history_days: 180 (Memon, Anklesaria-Dalal, Mishra 2026)'
+  costs.taker_fee_bps: 'night/costs.yaml, venue binance, taker_fee_bps'
+  costs.slippage_bps: 'night/costs.yaml, venue binance, slippage_bps'
+  min_leg_notional: 'funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS), min_order_usd: HL''s own minimum order'

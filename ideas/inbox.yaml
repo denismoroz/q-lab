@@ -75,7 +75,7 @@ ideas:
   text: 'Стенд FRAB должен учитывать остаток монеты, который остаётся после продажи из-за округления до
     лота биржи: этот остаток не прикрыт контрактом и двигается с ценой, как на живом счёте; тогда сверка
     живых денег со стендом покажет, сколько он стоит'
-  status: carded
+  status: implemented
   card: cards/frab-lot-leftover.yaml
   notes: карточка написана 2026-11-02; в очереди реализации
   attempts: 3
@@ -100,11 +100,71 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-10-28.md
-  attempts: 1
+  attempts: 2
   problems:
-  - wrote cards/drafts/idea-0004.yaml.fix outside its draft (reverted)
-  - new_block param short_venue meaning_ru is not in Russian
-  review_blocks: []
+  - 'reviewer: baseline-mismatch: the `hyperliquid` variant is not the baseline. `rule_ru` fixes Hyperliquid''s
+    contract fee at 0,045% and the spot fee at 0,070%. `specs/frab-live.yaml` uses a flat 5.25 bp plus
+    0.9 bp slippage, which is 0,070% on the spot and 0,035% on the contract. The control would then differ
+    from the baseline in costs and not only in venue. Its coins (BTC and ETH, against the baseline''s
+    six) and its start (2025-11-01, against 2025-01-01) also differ, and the card does not say how the
+    five slots and 120 USD are used with two coins. The card must say that the control variant keeps the
+    baseline''s costs and parameters. Alternatively it must say the baseline is re-run on the same coins
+    and dates with the same fees.'
+  - 'reviewer: rule-incomplete: for the `best_recent_rate` variant, "FRAB decides entry on the chosen
+    venue''s rate" and "the venue is chosen at entry from the average rate over signal_window_hours" depend
+    on each other. The card does not say which venue''s rate produces the entry signal that triggers the
+    choice. It also does not say whether the choice looks at rates alone or at fees and transfer costs.'
+  - 'reviewer: rule-incomplete: the card does not say which price marks the short leg''s profit and loss.
+    It says the block reads the other venue''s candles but "takes the coin and its price from Hyperliquid".
+    The short leg''s profit and loss, and the basis between venues, depend on that choice.'
+  - 'reviewer: rule-incomplete: several numbers an engineer needs are missing or only point to other files.
+    These are the slippage on Pacifica and Extended, the leverage and margin thresholds on each venue,
+    and the withdrawal and top-up fees on Pacifica and Extended. The card cites the transfer rules of
+    `specs/frab-binance-spot.yaml`, but those are Binance and Hyperliquid fees (0.4 and 1 USDC). Withdrawals
+    from Pacifica and Extended have their own fees.'
+  review_blocks:
+  - kind: baseline-mismatch
+    ref: new
+    text: the `hyperliquid` variant is not the baseline. `rule_ru` fixes Hyperliquid's contract fee at
+      0,045% and the spot fee at 0,070%. `specs/frab-live.yaml` uses a flat 5.25 bp plus 0.9 bp slippage,
+      which is 0,070% on the spot and 0,035% on the contract. The control would then differ from the baseline
+      in costs and not only in venue. Its coins (BTC and ETH, against the baseline's six) and its start
+      (2025-11-01, against 2025-01-01) also differ, and the card does not say how the five slots and 120
+      USD are used with two coins. The card must say that the control variant keeps the baseline's costs
+      and parameters. Alternatively it must say the baseline is re-run on the same coins and dates with
+      the same fees.
+  - kind: rule-incomplete
+    ref: new
+    text: for the `best_recent_rate` variant, "FRAB decides entry on the chosen venue's rate" and "the
+      venue is chosen at entry from the average rate over signal_window_hours" depend on each other. The
+      card does not say which venue's rate produces the entry signal that triggers the choice. It also
+      does not say whether the choice looks at rates alone or at fees and transfer costs.
+  - kind: rule-incomplete
+    ref: new
+    text: the card does not say which price marks the short leg's profit and loss. It says the block reads
+      the other venue's candles but "takes the coin and its price from Hyperliquid". The short leg's profit
+      and loss, and the basis between venues, depend on that choice.
+  - kind: rule-incomplete
+    ref: new
+    text: several numbers an engineer needs are missing or only point to other files. These are the slippage
+      on Pacifica and Extended, the leverage and margin thresholds on each venue, and the withdrawal and
+      top-up fees on Pacifica and Extended. The card cites the transfer rules of `specs/frab-binance-spot.yaml`,
+      but those are Binance and Hyperliquid fees (0.4 and 1 USDC). Withdrawals from Pacifica and Extended
+      have their own fees.
+  review_notes:
+  - '`data.coins` is only BTC and ETH, and the card does not say why SOL and HYPE are left out. They have
+    Hyperliquid spot and appear in the baseline''s universe. The card should state the reason (the length
+    of the free rate history or the depth on the other venues), not outcome knowledge.'
+  - the `vs_tried` differences name Bv2 entries, which are different strategies, so they are real but
+    trivial. The entries closest in substance are `cross-exchange-spread` and `frab-binance-spot-allbinance`.
+    The card mentions them only in `prior`. Adding them to `vs_tried` would be stronger.
+  - the plain summary is long. The first mention of "залог" and "запас до ликвидации" could be explained
+    in one clause.
+  - 'the word "контроль" in the grid is clear, but the title could be shortened to "FRAB: площадка короткого
+    контракта как настройка".'
+  - one dated 90-day rate comparison is quoted as the example. The 365-day figures in `docs/FRAB_VENUES.md`
+    are lower (HL 6,0%, Pacifica 5,5%, Extended 5,6%). Quoting both would keep the example from sounding
+    more favourable than the data.
 - id: idea-0005
   date: '2026-10-28'
   source: agent:researcher
@@ -307,4 +367,14 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-11-02.md
+  attempts: 0
+- id: idea-0025
+  date: '2026-11-03'
+  source: agent:director
+  text: 'Новый сигнал: насколько нынешняя цена монеты ниже её недавнего максимума. Каталог описывает его
+    в разделе о том, что блоками не выражается, с сильным результатом среди крупных оборотистых монет;
+    нужен блок и запись механизма со строками параметров.'
+  status: new
+  card: null
+  notes: из записки docs/research/director-2026-11-03.md
   attempts: 0
