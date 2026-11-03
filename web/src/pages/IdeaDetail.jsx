@@ -775,7 +775,12 @@ function Header({ idea }) {
             <p className="font-mono text-xs text-slate-400">{idea.id}</p>
           </div>
           <div className="text-right">
-            <StatusBadge status={idea.status} />
+            <StatusBadge status={idea.status} bench={idea.bench} />
+            {idea.bench && (
+              <div className="mt-1 max-w-xs text-xs text-slate-500" data-testid="bench-hint">
+                {idea.bench.hint_ru}
+              </div>
+            )}
             {idea.shutdown_cause && (
               <div className="mt-1 text-xs text-stone-600">
                 причина остановки: {label(SHUTDOWN_CAUSE, idea.shutdown_cause)}

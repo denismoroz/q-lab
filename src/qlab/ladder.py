@@ -1317,18 +1317,30 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         "| идея | статус | 1 | 2 Binance | 3 Hyperliquid | 4 деньги B / H | 5 | 6 | 7 | "
         "итог по площадкам | почему площадки расходятся |",
         "|---|---|---|---|---|---|---|---|---|---|---|"]
+    from qlab.bench_label import BENCH_LABEL_RU, bench_reason_of_ladder
+
     reasons: dict[Reason, int] = {}
     for found in ladders:
         s = found.steps
+        # «скамейка» is three different things (owner, 2026-11-03): the label says which
+        bench = bench_reason_of_ladder(found)
+        status = BENCH_LABEL_RU[bench] if bench is not None else found.status
         money = "/".join(SYMBOL[m.outcome] for m in s[3].money)
         cells = [SYMBOL[s[0].outcome], SYMBOL[s[1].outcome], SYMBOL[s[2].outcome], money,
                  SYMBOL[s[4].outcome], SYMBOL[s[5].outcome], SYMBOL[s[6].outcome]]
-        lines.append(f"| {found.idea_id} | {found.status} | " + " | ".join(cells)
+        lines.append(f"| {found.idea_id} | {status} | " + " | ".join(cells)
                      + f" | {found.summary_ru} | "
                      + ("" if found.venue_gap is None else found.venue_gap.short_ru) + " |")
         for step in found.steps:
             if step.reason is not None:
                 reasons[step.reason] = reasons.get(step.reason, 0) + 1
+    benched = [r for r in (bench_reason_of_ladder(f) for f in ladders) if r is not None]
+    if benched:
+        from qlab.bench_label import BENCH_ORDER
+
+        lines.append("")
+        lines.append("Статус «скамейка» по надписям: " + "; ".join(
+            f"{BENCH_LABEL_RU[r]} — {benched.count(r)}" for r in BENCH_ORDER) + ".")
     lines.append("")
     lines.append("Не проводилось, по причинам (ступеней): " + "; ".join(
         f"{REASON_RU[r]} — {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])) + ".")

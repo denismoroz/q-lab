@@ -4,6 +4,9 @@
   q-lab: the console, http://localhost:5890.
   Runs ops/console.sh at login and restarts it if it stops (KeepAlive), so the
   console does not depend on a Claude session's browser pane.
+  Since 2026-11-03 it serves the BUILT page (web/dist, `vite preview`), not the working tree, so
+  an edit or a branch never reaches the page until ops/console-build.sh builds it from main
+  (docs/CONSOLE.md). The plist itself did not change: an installed copy keeps working.
   Install:   cp ops/com.qlab.console.plist ~/Library/LaunchAgents/ &&
              launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.qlab.console.plist
   Restart:   launchctl kickstart -k gui/$(id -u)/com.qlab.console

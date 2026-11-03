@@ -33,7 +33,8 @@ npm install     # один раз
 npm run dev     # http://localhost:5890
 ```
 
-Прод-сборка фронта — `npm run build` в `web/` (кладётся в `web/dist/`).
+Прод-сборка фронта — `npm run build` в `web/` (кладётся в `web/dist/`). Консоль владельца отдаёт
+собранную страницу, а не рабочую папку; как её обновлять — `docs/CONSOLE.md` (`ops/console-build.sh`).
 
 - План и границы — [docs/PLAN.md](docs/PLAN.md)
 - Контракт реестра — [docs/REGISTRY.md](docs/REGISTRY.md)

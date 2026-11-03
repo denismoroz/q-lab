@@ -88,5 +88,44 @@ def strategy_view(session: Session, idea_id: str) -> dict:
             "active_variants": active_variants(session, idea_id) if root == idea_id else []}
 
 
-__all__ = ["ACTIVE_STATUSES", "active_branches", "active_variants", "strategy_root",
-           "strategy_view", "would_make_cycle"]
+# The strategy families the owner filters the registry by (2026-11-03: «почему я не видел этих
+# стратегий в фильтре?» -> «добавь фильтр по семейству»). A family is named by the ROOT of an
+# idea's parent chain, so every variant, twin and second stage follows its strategy. First match
+# wins; `(prefix, key)` pairs are matched against the root's id. The Russian words live in the
+# console (web/src/labels.js, FAMILY); an unmatched root is `other`.
+FAMILY_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("strategy-b-v2", "bv2"),
+    ("bv2", "bv2"),
+    ("bv3", "bv3"),
+    ("trend", "trend"),
+    ("frab-binance-spot", "frab-spot"),
+    ("frab", "frab"),
+    ("xsmom", "xsmom"),
+    ("gen-", "generator"),
+)
+OTHER_FAMILY = "other"
+FAMILY_ORDER: tuple[str, ...] = (
+    "bv2", "bv3", "trend", "frab", "frab-spot", "xsmom", "generator", OTHER_FAMILY)
+
+
+def family_of_root(root_id: str) -> str:
+    """The family key of a strategy root (see `FAMILY_PREFIXES`)."""
+    for prefix, key in FAMILY_PREFIXES:
+        if root_id.startswith(prefix):
+            return key
+    return OTHER_FAMILY
+
+
+def families_of(session: Session) -> dict[str, tuple[str, str]]:
+    """`{idea_id: (root_id, family_key)}` for every idea, from one read of the parent chains."""
+    parents = _parents(session)
+    out: dict[str, tuple[str, str]] = {}
+    for idea_id in parents:
+        root = _root_of(parents, idea_id)
+        out[idea_id] = (root, family_of_root(root))
+    return out
+
+
+__all__ = ["ACTIVE_STATUSES", "FAMILY_ORDER", "OTHER_FAMILY", "active_branches",
+           "active_variants", "families_of", "family_of_root", "strategy_root", "strategy_view",
+           "would_make_cycle"]

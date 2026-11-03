@@ -14,6 +14,9 @@ in the rules engine, never in a view.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -23,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from qlab.api.cards import card_summary, load_cards
 from qlab.api.deps import get_session
+from qlab.api.registry_view import RegistryView
 from qlab.api.serializers import (
     idea_detail_json,
     idea_row_json,
@@ -30,9 +34,10 @@ from qlab.api.serializers import (
     trial_json,
     verdict_json,
 )
+from qlab.bench_label import bench_block, bench_counts, bench_reason_of_ladder
 from qlab.registry.models import Driver, Idea, Spec, Trial, Verdict
 from qlab.registry.queries import funnel_stats
-from qlab.registry.strategies import strategy_view
+from qlab.registry.strategies import FAMILY_ORDER, family_of_root, strategy_view
 
 # The dev frontend runs on port 5890 and the API on 8890 (web/vite.config.js):
 # off Vite's and uvicorn's defaults, which the owner's other projects use
@@ -72,11 +77,39 @@ def _page(session: Session, query: Any, limit: int, offset: int, to_json: Any) -
     }
 
 
-def create_app() -> FastAPI:
+def _warm_in_background(registry_view: RegistryView) -> None:
+    """Build the registry page's cached part on a thread of its own: a few seconds the first
+    visitor would otherwise wait. A failure only leaves the cache to the first request."""
+    import threading
+
+    def build() -> None:
+        gen = get_session()
+        try:
+            registry_view.warm(next(gen))
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("registry view not warmed")
+        finally:
+            gen.close()
+
+    threading.Thread(target=build, name="registry-view-warm", daemon=True).start()
+
+
+def create_app(*, warm: bool = False) -> FastAPI:
+    """`warm=True` (the served `app`) builds the registry page's cache when the server starts; a
+    test's app is made without it, and with its own in-memory registry."""
+    registry_view = RegistryView()  # per app: the cached bench labels and plain titles
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if warm:
+            _warm_in_background(registry_view)
+        yield
+
     app = FastAPI(
         title="q-lab registry console",
         description="Read-only views over the q-lab registry (docs/REGISTRY.md).",
         version="0.1.0",
+        lifespan=lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -118,6 +151,9 @@ def create_app() -> FastAPI:
             if not idea_id.startswith("noise-"):
                 families.setdefault(status.value, set()).add(parent_id or idea_id)
         return {
+            # the bench split in three words (qlab.bench_label); the four counts sum to the
+            # bench's count in `ideas_by_status` (calibration noise is in neither)
+            "bench_by_label": bench_counts(registry_view.bench_reasons(session)),
             "strategies_by_status": {k: len(v) for k, v in families.items()},
             "ideas_by_status": stats.ideas_by_status,
             "verdicts_by_stage": stats.verdicts_by_stage,
@@ -155,7 +191,17 @@ def create_app() -> FastAPI:
             .order_by(Idea.status, Idea.id)
             .all()
         )
-        return {"items": [idea_row_json(idea, driver) for idea, driver in rows]}
+        extras = registry_view.extras(session)
+        items = [{**idea_row_json(idea, driver), **extras.get(idea.id, {})}
+                 for idea, driver in rows]
+        # ideas per strategy family (calibration noise left out), in the fixed order of the filter
+        per_family: dict[str, int] = {}
+        for item in items:
+            if not item["id"].startswith("noise-"):
+                per_family[item["family"]] = per_family.get(item["family"], 0) + 1
+        return {"items": items,
+                "family_counts": [{"family": f, "count": per_family[f]}
+                                  for f in FAMILY_ORDER if f in per_family]}
 
     def _load_idea(session: Session, idea_id: str) -> Idea:
         idea = session.get(Idea, idea_id)
@@ -218,6 +264,8 @@ def create_app() -> FastAPI:
         detail["causal_twin"] = _causal_twin(session, idea)
         detail["anomalies"] = _anomalies(session, idea_id)
         detail["ladder"] = _ladder(session, idea_id)
+        detail["bench"] = (detail["ladder"] or {}).get("bench")
+        detail["family"] = family_of_root(detail["strategy"]["root"])
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
         cards = load_cards()
@@ -314,6 +362,7 @@ def create_app() -> FastAPI:
             if found is None:
                 return None
             out = found.to_dict()
+            out["bench"] = bench_block(bench_reason_of_ladder(found))
             wanted = {s["run"]["trial_id"] for s in out["steps"]
                       if s["run"] and s["number"] in (2, 3)}
             trials = {t.id: t for t in session.query(Trial).filter(Trial.id.in_(wanted))} \
@@ -557,6 +606,6 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app(warm=True)
 
 __all__ = ["app", "create_app"]
