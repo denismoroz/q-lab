@@ -3022,6 +3022,46 @@ def protection_cmd(
                "`--compute` его сделает")
 
 
+scout_app = typer.Typer(help="The scout: the measured history of venue events (docs/SCOUT.md)",
+                        no_args_is_help=True)
+app.add_typer(scout_app, name="scout")
+
+
+@scout_app.command("evidence")
+def scout_evidence(
+        day: str | None = typer.Option(None, help="The night, YYYY-MM-DD (default: today)"),
+        data_root: str | None = typer.Option(
+            None, help="Where data/raw and data/recorded are (default: this checkout)"),
+        write: bool = typer.Option(False, "--write", help="Also write data/events/evidence/<day>"),
+        wake: bool = typer.Option(True, help="Show which measures would call the scout")) -> None:
+    """Measure what followed each kind of venue event, from q-lab's own data (no tokens)."""
+    import json as _json
+    from datetime import date as _date
+    from pathlib import Path as _Path
+
+    from qlab import event_evidence, scout_plan
+    from qlab.pipeline.sources import QLAB_ROOT
+
+    night = _date.fromisoformat(day) if day else _date.today()
+    cfg = scout_plan.load_config()
+    root = _Path(data_root) if data_root else QLAB_ROOT
+    events_file = root / "data/events" / f"{night.isoformat()}.json"
+    events = _json.loads(events_file.read_text()) if events_file.is_file() else []
+    evidence = event_evidence.build(night, root, cfg.get("evidence"), events=events)
+    if write:
+        typer.echo(f"written: {event_evidence.write(night, evidence, QLAB_ROOT)}")
+    typer.echo(event_evidence.format_for_log(evidence))
+    if wake:
+        decision = scout_plan.decide(events, evidence, cfg,
+                                     looked_at=scout_plan.load_looked_at())
+        typer.echo(f"scout would be called: {decision.call} ({decision.reason})")
+        for signal in decision.signals:
+            typer.echo(f"  signal {signal['id']}: n={signal['n']} mean {signal['mean_pct']:+.2f}% "
+                       f"t={signal['t']}")
+        for held in decision.held_back:
+            typer.echo(f"  held by {', '.join(held['carded_by'])}: {held['id']}")
+
+
 from qlab.anomalies.cli import anomalies_app, anomaly_app  # noqa: E402 - registered last
 
 app.add_typer(anomalies_app, name="anomalies")

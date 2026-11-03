@@ -51,11 +51,22 @@ class CallUsage:
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    name: str
+    input: dict
+    refused: bool = False
+    """The tool's result came back as an error (a denied permission is one)."""
+
+
+@dataclass(frozen=True)
 class CallReport:
     usage: CallUsage | None
     reading: UsageReading | None
     text: str | None
     is_error: bool
+    tool_calls: tuple[ToolCall, ...] = ()
+    """Every tool the agent called, in order (`ToolCall`): what the network-reading scout fetched
+    is read from here (docs/SCOUT.md)."""
 
 
 def _window(raw: dict | None) -> Window | None:
@@ -70,6 +81,7 @@ def parse_stream(lines: Iterable[str]) -> CallReport:
     guessed."""
     usage = reading = text = None
     is_error = False
+    calls: dict[str, ToolCall] = {}
     for line in lines:
         try:
             event = json.loads(line)
@@ -83,6 +95,19 @@ def parse_stream(lines: Iterable[str]) -> CallReport:
                 five_hour=_window(windows.get("five_hour")),
                 seven_day=_window(windows.get("seven_day")),
             )
+        elif event.get("type") in ("assistant", "user"):
+            content = (event.get("message") or {}).get("content")
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use" and isinstance(block.get("input"), dict):
+                    calls[str(block.get("id") or len(calls))] = ToolCall(
+                        str(block.get("name")), block["input"])
+                elif block.get("type") == "tool_result" and block.get("is_error"):
+                    held = calls.get(str(block.get("tool_use_id")))
+                    if held is not None:
+                        calls[str(block.get("tool_use_id"))] = ToolCall(
+                            held.name, held.input, refused=True)
         elif event.get("type") == "result":
             u = event.get("usage") or {}
             models = list((event.get("modelUsage") or {}).keys())
@@ -96,7 +121,8 @@ def parse_stream(lines: Iterable[str]) -> CallReport:
             )
             text = event.get("result")
             is_error = bool(event.get("is_error", False))
-    return CallReport(usage=usage, reading=reading, text=text, is_error=is_error)
+    return CallReport(usage=usage, reading=reading, text=text, is_error=is_error,
+                      tool_calls=tuple(calls.values()))
 
 
-__all__ = ["CallReport", "CallUsage", "UsageReading", "Window", "parse_stream"]
+__all__ = ["CallReport", "CallUsage", "ToolCall", "UsageReading", "Window", "parse_stream"]

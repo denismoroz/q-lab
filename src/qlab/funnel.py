@@ -141,11 +141,14 @@ def scout_drafts(night_dir: Path, since: datetime, until: datetime) -> int:
         if not (since - timedelta(days=1) < day <= until):
             continue
         try:
-            scout = json.loads(path.read_text(encoding="utf-8")).get("scout") or {}
+            night = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        scout = night.get("scout") or {}
         if scout.get("draft"):
             count += 1
+        # The cataloguer's new mechanisms the scout turned into drafts (docs/SCOUT.md).
+        count += len((night.get("scout_cards") or {}).get("drafts") or {})
     return count
 
 

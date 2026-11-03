@@ -197,20 +197,30 @@ def _implementer(day: str, st: dict) -> Run | None:
 
 def _scout(day: str, st: dict) -> Run | None:
     s, handoff = st.get("scout"), (st.get("publications") or {}).get("handoff") or {}
-    if not s and not handoff:
+    cards = st.get("scout_cards") or {}
+    if not s and not handoff and not cards.get("ids"):
         return None
     s = s or {}
     papers = handoff.get("papers") or []
-    drafts = [x for x in [s.get("draft")] + list((handoff.get("drafts") or {}).values()) if x]
+    drafts = [x for x in [s.get("draft")] + list((handoff.get("drafts") or {}).values())
+              + list((cards.get("drafts") or {}).values()) if x]
     details = [f"площадки: {s['reply']}"] if s.get("reply") else []
+    if s.get("woken_by"):
+        details.append(f"звали: {s['woken_by']}")
     details += [f"«{p['title']}»: {p['result']}" for p in papers]
+    details += [f"читал в сети: {f.get('url') or f.get('query')}"
+                for f in (s.get("web") or {}).get("fetched") or []]
+    if cards.get("ids"):
+        details.append(
+            f"новые механизмы разборщика: {len(cards['ids'])}; {cards.get('reply') or ''}")
     if s.get("stopped") or handoff.get("stopped"):
         details.append(f"остановлено: {s.get('stopped') or handoff.get('stopped')}")
     return Run(day, "stopped" if s.get("stopped") and not papers else "ran",
                f"события площадок; аннотаций статей: {len(papers)}",
                f"черновиков карточек: {len(drafts)}"
                + (f" ({', '.join(drafts)})" if drafts else ""),
-               details=details, tokens=s.get("tokens", 0) + handoff.get("tokens", 0))
+               details=details,
+               tokens=s.get("tokens", 0) + handoff.get("tokens", 0) + cards.get("tokens", 0))
 
 
 def _cataloguer(day: str, st: dict) -> Run | None:

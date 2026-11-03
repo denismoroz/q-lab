@@ -815,11 +815,7 @@ def write_report(day: date, state: dict) -> Path:
             lines.append("- крайности фандинга: " + "; ".join(
                 f"{e['instrument']} {e['detail'].split(' a year')[0]}" for e in extremes[:6]))
         lines.append("")
-    if sc := state.get("scout"):
-        lines += ["## Разведчик", "", f"{sc.get('reply') or sc.get('stopped') or '—'}"
-                  + (f" ({sc.get('tokens', 0):,} токенов)" if sc.get("tokens") else "")]
-        lines += [f"- проверка не пройдена: {p}" for p in sc.get("problems") or []]
-        lines.append("")
+    lines += _scout_lines(state)
     from qlab.publications.stage import report_lines as publication_lines
 
     lines += publication_lines(state)
@@ -888,6 +884,64 @@ def _paper_rule_lines(replay_lines: list[str]) -> list[str]:
             return report_lines(session, replay_lines=replay_lines)
     except Exception as exc:  # noqa: BLE001
         return [f"**{RULE_TITLE}** не посчитано: {type(exc).__name__}: {exc}"]
+
+
+def _web_lines(web: dict | None) -> list[str]:
+    """The pages the scout read from the network (docs/SCOUT.md): every URL, and every search."""
+    if not web or not web.get("fetched"):
+        return []
+    lines = ["Сеть: разведчик читал страницы (только чтение, адреса из списка night/scout.yaml):"]
+    for f in web["fetched"]:
+        what = f["url"] if f.get("url") else f"поиск «{f.get('query', '')}»"
+        lines.append(f"- {f['day']} {what}" + (" — отказано" if f.get("refused") else ""))
+    return lines
+
+
+def _scout_lines(state: dict) -> list[str]:
+    """The morning report's «Разведчик» (Russian, plain words): why the scout was called or not,
+    what the measured history said, what it read from the network and what it answered."""
+    sc, cards, evidence = state.get("scout"), state.get("scout_cards"), state.get("evidence")
+    if not sc and not cards and not evidence:
+        return []
+    lines = ["## Разведчик", ""]
+    if evidence:
+        if evidence.get("error"):
+            lines.append(f"История событий не посчитана: {evidence['error']}")
+        else:
+            lines.append(f"История событий (что было после таких событий раньше, из своих "
+                         f"данных): {evidence['file']}, образцов-шаблонов {evidence['patterns']}."
+                         + "".join(f" Не прочитано: {s}." for s in evidence.get("skipped") or []))
+    wake = state.get("scout_wake") or {}
+    if wake:
+        lines.append(
+            f"Звать ли разведчика решает код: {'звали' if wake.get('call') else 'не звали'} — "
+            f"{wake.get('reason')}."
+            + (f" Закономерностей прошло правила и не входят в карточки: {len(wake['signals'])}."
+               if wake.get("signals") else "")
+            + (f" Прошли правила, но их механизм уже в карточках: {len(wake['held_back'])}."
+               if wake.get("held_back") else "")
+            + (f" Уже смотрел с этой выборкой: {len(wake['seen'])}." if wake.get("seen") else ""))
+    if sc:
+        lines += ["", f"{sc.get('reply') or sc.get('stopped') or '—'}"
+                  + (f" ({sc.get('tokens', 0):,} токенов)" if sc.get("tokens") else "")]
+        lines += [f"- проверка не пройдена: {p}" for p in sc.get("problems") or []]
+        lines += _web_lines(sc.get("web"))
+    if cards:
+        lines.append("")
+        if cards.get("ids"):
+            lines.append(
+                f"Новые механизмы от разборщика каталога переданы разведчику: {len(cards['ids'])}"
+                f", черновиков карточек: {len(cards.get('drafts') or {})}"
+                + (f" ({cards['tokens']:,} токенов)" if cards.get("tokens") else "")
+                + f". {cards.get('reply') or ''}")
+            lines += [f"- проверка не пройдена: {p}" for p in cards.get("problems") or []]
+            lines += _web_lines(cards.get("web"))
+        else:
+            lines.append("Новые механизмы от разборщика каталога разведчику не переданы: "
+                         + str(cards.get("stopped") or cards.get("error")
+                               or cards.get("skipped") or "—"))
+    lines.append("")
+    return lines
 
 
 CONSOLE_URL = "http://localhost:5890"
@@ -1793,6 +1847,20 @@ CATALOGUER = Path("night/cataloguer.yaml")
 
 
 def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> None:
+    """The cataloguer reads the night's paper (`_catalogue_papers`); a paper it put in the
+    catalogue as a NEW mechanism then goes to the scout for a card (`scout_cards_stage`,
+    docs/SCOUT.md: the boundary between the two agents)."""
+    _catalogue_papers(day, state, config=config)
+    scout_cards_stage(day, state)
+
+
+def _scout_plan(scout_config: Path | None = None) -> dict:
+    from qlab import scout_plan
+
+    return scout_plan.load_config(*([scout_config] if scout_config else []))
+
+
+def _catalogue_papers(day: date, state: dict, *, config: Path = CATALOGUER) -> None:
     """The cataloguer agent (`qlab.agents.cataloguer`, docs/CATALOGUER.md): up to `per_night`
     papers read in full and written into the catalogue when code and the reviewer pass them, in
     the search stage's budget. Resumable: a paper done tonight is not repeated."""
@@ -1815,7 +1883,14 @@ def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> Non
         paper = None
         try:
             with session_scope() as session:
-                paper = cat.next_paper(ledger, session, max_attempts=max_attempts)
+                plan = _scout_plan()
+                # No paper is read by two agents in one night: the ones the scout read tonight
+                # (queue mode) are skipped; the feed is ranked by closeness to q-lab's data.
+                paper = cat.next_paper(
+                    ledger, session, max_attempts=max_attempts,
+                    skip_ids={i for i, who in (state.get("papers_read") or {}).items()
+                              if who != "cataloguer"},
+                    rank_weights=plan["papers"].get("rank") or None)
                 if paper is None or paper.id in done:
                     break
                 stage = NightBudget.open(session, probe(session).report.reading).stage(
@@ -1832,6 +1907,9 @@ def catalogue_stage(day: date, state: dict, *, config: Path = CATALOGUER) -> Non
                 break
             paper.problems.append(f"{type(exc).__name__}: {exc}")
             paper.status = "failed"
+        # A NEW mechanism (not numbers for a known one) goes on to the scout (scout_cards_stage).
+        paper.card_candidate = paper.status == "catalogued" and paper.verdict == "mechanism"
+        state.setdefault("papers_read", {})[paper.id] = "cataloguer"
         entry["entries"].append(asdict(paper))
         done.add(paper.id)
         cat.save_ledger(ledger)
@@ -2582,8 +2660,12 @@ def record_research_note(entry: dict, plan: dict) -> None:
 
 
 def search_stage(day: date, state: dict) -> None:
-    """Stage 3, cut first (CLAUDE.md): the venue watcher's events, then the
-    scout's draft card (if any) inside what tonight's budget has left."""
+    """Stage 3, cut first (CLAUDE.md): the venue watcher's events, the measured history of such
+    events (`qlab.event_evidence`), then the scout's draft card (if any) inside what tonight's
+    budget has left. Whether the scout is called at all is code's decision
+    (`qlab.scout_plan.decide`, docs/SCOUT.md): a structural event, or a measured pattern that
+    no card holds."""
+    from qlab import scout_plan
     from qlab.agents.scout import scout
     from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
     from qlab.publications.stage import fetch_stage, scout_stage
@@ -2601,18 +2683,153 @@ def search_stage(day: date, state: dict) -> None:
     if "scout" in state:
         scout_stage(day, state)
         return
+    plan = scout_plan.load_config()
+    if not plan.get("enabled", True):
+        state["scout"] = {"reply": "разведчик выключен (night/scout.yaml: enabled: false)",
+                          "tokens": 0}
+        save_state(day, state)
+        scout_stage(day, state)
+        return
+    evidence = _evidence_for(day, state, plan)
+    wake = scout_plan.decide(state["events"], evidence, plan,
+                             looked_at=scout_plan.load_looked_at())
+    state["scout_wake"] = wake.to_dict()
+    if not wake.call:
+        # No tokens, not even the probe that opens the budget.
+        state["scout"] = {"reply": f"NO CANDIDATE: {wake.reason}", "tokens": 0, "problems": []}
+        save_state(day, state)
+        scout_stage(day, state)
+        return
     with session_scope() as session:
         try:
             night_budget = NightBudget.open(session, probe(session).report.reading)
-            budget = night_budget.stage(Stage.SEARCH, candidates=1).candidate(None)
-            outcome = scout(day, budget=budget, session=session)
-            state["scout"] = {"reply": outcome.reply, "draft": str(outcome.draft or ""),
-                              "problems": outcome.problems, "tokens": budget.spent_tokens}
+            budget = night_budget.stage(
+                Stage.SEARCH, candidates=int(plan["budget"]["share_divisor"])).candidate(None)
+            if hasattr(budget, "cap_tokens"):
+                scout_plan.cap_budget(budget, plan, spent_tonight=scout_tokens_tonight(state))
+            outcome = scout(day, budget=budget, session=session, cfg=plan, evidence=evidence,
+                            wake=wake)
+            state["scout"] = {
+                "reply": outcome.reply, "draft": str(outcome.draft or ""),
+                "problems": outcome.problems, "tokens": budget.spent_tokens, "calls": 1,
+                "woken_by": wake.reason, "signals": [s["id"] for s in wake.signals],
+                "web": outcome.web.to_dict() if outcome.web else None,
+                "evidence_file": outcome.evidence_file}
+            scout_plan.mark_looked_at(wake.signals, day, outcome.reply)
         except BudgetExhausted as stop:
-            state["scout"] = {"reply": None, "stopped": str(stop)}
+            state["scout"] = {"reply": None, "stopped": str(stop), "woken_by": wake.reason}
         session.commit()
     save_state(day, state)
     scout_stage(day, state)  # then a few abstracts of new papers, in the same share
+
+
+def scout_tokens_tonight(state: dict) -> int:
+    """What the scout's calls have spent tonight (the cap of night/scout.yaml is over all)."""
+    return int((state.get("scout") or {}).get("tokens") or 0) + int(
+        (state.get("scout_cards") or {}).get("tokens") or 0) + int(
+        ((state.get("publications") or {}).get("handoff") or {}).get("tokens") or 0)
+
+
+def _evidence_for(day: date, state: dict, plan: dict) -> dict | None:
+    """Tonight's evidence file (`qlab.event_evidence`), built once; None when the rule that
+    wakes the scout on evidence is off or the build failed (the report says so)."""
+    if not plan["wake"].get("on_evidence"):
+        return None
+    from qlab import event_evidence, scout_plan
+
+    try:
+        _, evidence = event_evidence.ensure(day, scout_plan.QLAB_ROOT, plan.get("evidence"),
+                                            events=state.get("events"))
+        state["evidence"] = {"file": str(event_evidence.path_for(day)),
+                             "patterns": len(evidence["patterns"]),
+                             "skipped": evidence.get("skipped") or []}
+        save_state(day, state)
+        return evidence
+    except Exception as exc:  # noqa: BLE001 - the scout then judges by the events alone
+        state["evidence"] = {"error": f"{type(exc).__name__}: {exc}"}
+        save_state(day, state)
+        return None
+
+
+def scout_cards_stage(day: date, state: dict) -> None:
+    """The cataloguer's new mechanisms to the scout (docs/SCOUT.md, the boundary between the
+    two agents): a paper the cataloguer put in the catalogue as a NEW mechanism tonight is handed
+    to the scout with the cataloguer's own draft and quotes, to decide whether it merits a card.
+    The scout does not read the paper again, and a paper is handed once. Inside the scout's own
+    nightly call and token caps (night/scout.yaml, `budget`)."""
+    from types import SimpleNamespace
+
+    from qlab import scout_plan
+    from qlab.agents import cataloguer as cat
+    from qlab.agents.scout import scout_publications
+    from qlab.budget import BudgetExhausted, NightBudget, Stage, probe
+    from qlab.publications.stage import match_drafts, parse_reply
+    from qlab.registry.db import session_scope
+
+    plan = scout_plan.load_config()
+    if not plan.get("enabled", True) or plan["papers"]["mode"] != "from_cataloguer":
+        return
+    flagged = [e for e in (state.get("catalogue") or {}).get("entries") or []
+               if e.get("card_candidate")]
+    if not flagged or (state.get("scout_cards") or {}).get("ids"):
+        return
+    entry = state.setdefault("scout_cards", {})
+    calls = int((state.get("scout") or {}).get("calls") or 0)
+    if calls >= int(plan["budget"]["max_calls_per_night"]):
+        entry.update(skipped="the scout's calls of the night (night/scout.yaml) are used")
+        save_state(day, state)
+        return
+    ledger = {p.id: p for p in cat.load_ledger()}
+    papers, rows = [], []
+    root = cat.QLAB_ROOT
+
+    def rel(path: Path) -> str:
+        return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+
+    for e in flagged:
+        paper = ledger.get(e["id"]) or cat.Paper.from_dict(e)
+        papers.append({
+            "id": paper.id, "title": paper.title, "link": paper.link, "mechanism": paper.mechanism,
+            "reading": "the cataloguer read this paper in full and catalogued its mechanism; "
+                       "its draft with verbatim quotes is the reading",
+            "cataloguer_draft": rel(cat.draft_path(paper)), "text_file": rel(cat.text_path(paper))})
+        rows.append(SimpleNamespace(id=paper.id, link=paper.link))
+    with session_scope() as session:
+        try:
+            night_budget = NightBudget.open(session, probe(session).report.reading)
+            budget = night_budget.stage(
+                Stage.SEARCH, candidates=int(plan["budget"]["share_divisor"])).candidate(None)
+            if hasattr(budget, "cap_tokens"):
+                scout_plan.cap_budget(budget, plan, spent_tonight=scout_tokens_tonight(state))
+            outcome = scout_publications(day, papers, budget=budget, session=session, cfg=plan,
+                                         origin="cataloguer")
+        except BudgetExhausted as stop:
+            entry.update(stopped=str(stop))
+            session.commit()
+            save_state(day, state)
+            return
+        except Exception as exc:  # noqa: BLE001 - the report says so, the night goes on
+            entry.update(error=f"{type(exc).__name__}: {exc}")
+            session.commit()
+            save_state(day, state)
+            return
+        session.commit()
+    reply = parse_reply(outcome.reply)
+    drafts = match_drafts(rows, outcome.drafts, reply)
+    for key in ("stopped", "error", "skipped"):
+        entry.pop(key, None)
+    entry.update(ids=[p["id"] for p in papers], reply=outcome.reply, problems=outcome.problems,
+                 drafts=drafts, tokens=budget.spent_tokens, papers=papers,
+                 web=outcome.web.to_dict() if outcome.web else None)
+    held = cat.load_ledger()
+    for paper in held:
+        if paper.id in entry["ids"]:
+            kind, rest = reply.get(paper.id, ("", ""))
+            paper.scout = (f"черновик карточки {drafts[paper.id]}" if paper.id in drafts
+                           else f"кандидата нет: {rest}" if kind == "NO CANDIDATE"
+                           else "ответа разведчика нет")
+    cat.save_ledger(held)
+    save_state(day, state)
 
 
 GENERATE = Path("night/generate.yaml")
