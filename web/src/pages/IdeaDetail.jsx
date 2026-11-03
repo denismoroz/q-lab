@@ -22,7 +22,7 @@ import {
   label,
 } from '../labels.js'
 import { daysText, shortForwardReturn } from '../forwardReturn.js'
-import { basisText, powerOf, regimePrefix, standLine } from '../headline.js'
+import { basisText, earningRows, powerOf, regimePrefix, standLine } from '../headline.js'
 
 const PAGE_SIZE = 50
 
@@ -228,6 +228,7 @@ function Outcome({ outcome }) {
     ['худшая просадка', pct(h?.max_dd ?? m.max_dd)],
     ['обгоняет шум той же формы', pct(h?.noise_percentile ?? m.noise_return_percentile)],
     ['хорошая стратегия (+7% в год) обогнала бы шум', pct(powerOf(m, h))],
+    ...earningRows(m),
     ['книга была полной', pct(m.book_coverage)],
   ].filter(([, v]) => v !== null)
   const fitNumbers = [

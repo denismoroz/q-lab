@@ -1,0 +1,51 @@
+# A dead band around the noise bar's line, and no pass where the bar has no power.
+#
+# Owner, 2026-11-03, on the measurement that day of the noise bar (docs/NOISE_BAR.md): «да, делай
+# А+Б+Г». On the registry that day (75 open ideas with a place among the noise books, 200 books
+# each):
+#
+#   * 25 ideas sat between 0.975 and 1.0, where the rank's own error (about +-1.4 points at 0.99;
+#     one of 200 books is half a point) cannot tell them from the 0.99 line;
+#   * 7 of the 40 open ideas with three or more runs crossed the line back and forth. The books are
+#     fixed by their seed, so a flip came from one new day of data, not from a change of mind;
+#   * the bar had the power to pass a strategy truly earning 7% a year (`noise_cap_power`) for only
+#     9 of the 75; the twins of XSMOM with a power of 2-3% sat at 0.995 and read "passed".
+#
+# What changes (and nothing else: no rule row is touched, no threshold moves, no informational
+# reading is added; the line of `shape_aware_edge` is still 0.99):
+#
+#   * А. An idea passes the bar at `pass_at` (0.99); once it has passed it loses the pass only
+#     below `keep_above` (0.975). "Once passed" is exact: the idea's previous routed run on the same
+#     venue, judged by the bar, passed `shape_aware_edge` on its forward test, and the bar had power
+#     on that run. The route's reason says when the band kept a pass.
+#   * Б. Where the bar has no power it decides neither way. A pass of `shape_aware_edge` on a window
+#     where `noise_cap_power` is below `noise_power.min_power` (80%) is not a pass: the idea's
+#     outcome on that rule is «не решён — рано судить» (`needs-forward`), as a failure of it already
+#     was. Every route's reason names the power.
+#   * Stage 2's consistency check with stage 1's history (`stage2_confirmation`) is untouched: it
+#     still replaces a FAILED noise comparison that has no power, and is not asked about a pass.
+#
+# The new reading «заработок отличим от нуля» (`cap_mean_positive_p`, `cap_ann_ci_low`,
+# `cap_ann_ci_high`, qlab.earning_test) is in the stand (STAND_VERSION 2026-11-03.1), is read by no
+# rule and decides nothing (owner: «сначала замер, потом правило»).
+#
+# A verdict stored under 2026-10-30.2 keeps its route; every open idea is measured again under this
+# version (`qlab restamp run --all`) and the report names each idea whose route or status moved.
+
+version: "2026-11-03.1"
+based_on: "2026-10-30.2"
+
+rules: []
+
+noise_bar:
+  rule_id: shape_aware_edge
+  pass_at: 0.99
+  keep_above: 0.975
+  no_power_no_pass: true
+  rationale: >
+    Owner, 2026-11-03 («да, делай А+Б+Г»). pass_at is the line of shape_aware_edge, unchanged.
+    keep_above: the rank among 200 books has a standard error of sqrt(p(1-p)/200), about 0.7 points
+    at 0.99, so a 95% margin is about 1.4 points; the band is 1.5 points wide, the width at which
+    a rank inside it cannot be told from the line. no_power_no_pass: a bar that would pass a
+    strategy truly earning 7% a year less than 80% of the time (noise_power.min_power) says
+    nothing by passing either, just as it said nothing by failing (rules 2026-10-24.2).

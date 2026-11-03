@@ -38,7 +38,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from qlab import forward_series
+from qlab import forward_series, noise_bar
 from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import PANEL_RULES_VERSION, build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
@@ -1007,7 +1007,53 @@ def _failed_for_waiting(ruleset: RuleSet, by_id: Mapping, rows) -> list:
             if (rule := by_id.get(r.rule_id)) is None or rule.kind != RuleKind.INFRASTRUCTURE]
 
 
+PASSING_ROUTES = ("paper", "shelf", "needs-infrastructure")
+"""Routes of a run that failed no strategy rule."""
+
+
+def _power_gate(ruleset: RuleSet, forward: EvaluationResult | None, routing: RoutingDecision,
+                metrics: Mapping[str, float]) -> RoutingDecision:
+    """Where the noise bar has no power it decides neither way (rules 2026-11-03.1,
+    docs/NOISE_BAR.md, Б): a run that passed every rule, the noise bar among them, on a window where
+    the bar's measured power is below `min_power` is not a pass. Its outcome is `needs-forward`,
+    "not decided, too early to judge" -- as a failure of the bar on such a window already was.
+    The numbers and the route it would have had are in the reason."""
+    if routing.route not in PASSING_ROUTES or not noise_bar.gate_applies(ruleset, forward, metrics):
+        return routing
+    setting = ruleset.noise_power
+    power = noise_bar.power_of(ruleset, metrics)
+    rank = metrics.get(setting.percentile_metric)
+    place = f" ({rank:.3f} of the random books)" if isinstance(rank, int | float) else ""
+    how = ("its power on this window was not measured" if power is None else
+           f"a strategy of this shape truly earning {setting.good_return:.0%} a year would pass "
+           f"it only {power:.0%} of the time (it decides from {setting.min_power:.0%})")
+    return RoutingDecision(
+        route="needs-forward",
+        reason=(f"too early to judge: the noise bar passes it{place} but has no power on this "
+                f"window: {how}, so its pass is not evidence either way; every other rule "
+                f"passed; so far it would route {routing.route}"),
+        required_capital_usd=routing.required_capital_usd,
+    )
+
+
 def decide_fit_forward_route(
+    *,
+    ruleset: RuleSet,
+    selection: EvaluationResult | None,
+    forward: EvaluationResult | None,
+    metrics: dict[str, float],
+    params_fixed_at: date | None,
+) -> RoutingDecision:
+    """`_decide_fit_forward` and the regime coverage wait (`_with_regime_coverage`), then, when
+    the ruleset says `noise_bar.no_power_no_pass`, a pass of the noise bar where it has no power
+    is not a pass (`_power_gate`)."""
+    routing = _with_regime_coverage(
+        ruleset=ruleset, selection=selection, forward=forward, metrics=metrics,
+        params_fixed_at=params_fixed_at)
+    return _power_gate(ruleset, forward, routing, metrics)
+
+
+def _with_regime_coverage(
     *,
     ruleset: RuleSet,
     selection: EvaluationResult | None,
@@ -1051,11 +1097,7 @@ def _powerless(ruleset: RuleSet, metrics: dict[str, float]) -> bool:
     """The noise bar cannot tell a good strategy from luck on this run
     (rules 2026-10-24.2): a book of its shape truly earning `good_return`
     would pass it less often than `min_power`, or that was not measured."""
-    setting = ruleset.noise_power
-    if setting is None:
-        return False
-    power = metrics.get(setting.power_metric)
-    return power is None or power != power or power < setting.min_power
+    return noise_bar.powerless(ruleset, metrics)
 
 
 def _power_note(ruleset: RuleSet, metrics: dict[str, float]) -> str:
@@ -1362,6 +1404,7 @@ def evaluate_spec(
     not_evaluable_extra: Sequence[str] = (),
     review_route: Callable[[RoutingContext], RouteReview | None] | None = None,
     spec_row_id: int | None = None,
+    earning_test: bool = True,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
 
@@ -1444,6 +1487,10 @@ def evaluate_spec(
 
     `spec_row_id`, when the caller has already found or created the registry row of this exact
     spec (`ensure_spec_rows`), skips looking for it.
+
+    `earning_test` (docs/NOISE_BAR.md, stand 2026-11-03.1) records the bootstrap reading "can the
+    earning be told from zero?" on the strategy's own money (`qlab.earning_test`); it decides
+    nothing. Calibration noise books pass False: 200 of them per run would only slow it down.
 
     `review_route` (stage 2 of the idea generator, docs/TWO_STAGE.md) is asked once,
     with the route the rules decided, before the trial is written; a `RouteReview`
@@ -1627,6 +1674,14 @@ def evaluate_spec(
                 # The judged part year by year (docs/YEARS.md): a description, read by no rule.
                 measured.update(year_breakdown(result.net_return))
                 measured.update(_protection(spec, result, part_panel, part_weights, capital))
+                if earning_test and capital.refused is None:
+                    # Can the earning be told from zero (docs/NOISE_BAR.md)? A reading on the
+                    # strategy's own money, read by no rule. (Imported here: the module
+                    # shares the overlay comparison's bootstrap, which imports this package.)
+                    from qlab.earning_test import metrics_of as earning_metrics
+
+                    measured.update(earning_metrics(
+                        result.capital_return, additive=not result.capital_reinvested))
             measured.update(hold_benchmark(part_panel.prices, part_weights))
             # How the result splits across BTC's bull / flat / bear days
             # (docs/REGIMES.md): a description, read by no rule.
@@ -1850,7 +1905,18 @@ def evaluate_spec(
     # Rules and route are pure functions of `metrics`, so both are decided
     # before the trial is written: the row carries its route from the moment
     # it exists, and the status change below sees a complete trial.
-    rules_result = evaluate_rules(metrics, ruleset)
+    # The dead band around the noise bar's line (rules 2026-11-03.1, docs/NOISE_BAR.md, А): an idea
+    # that passed the bar on its previous run on this venue keeps the pass down to `keep_above`.
+    # Only a forward test is judged by the bar; the line of the rule is moved for this run, the
+    # engine stays as it is.
+    band: noise_bar.Band | None = None
+    judged_rules = ruleset
+    if ruleset.noise_bar is not None and split_mode and split.forward is not None:
+        band = noise_bar.read_band(session, spec, ruleset, metrics)
+        if band is not None and band.kept:
+            judged_rules = noise_bar.with_kept_line(ruleset, band)
+            metrics["noise_band_kept"] = 1.0
+    rules_result = evaluate_rules(metrics, judged_rules)
     selection_result: EvaluationResult | None = None
     if split_mode:
         if split.forward is None:
@@ -1885,6 +1951,14 @@ def evaluate_spec(
         if review is not None:
             routing = review.routing
             metrics.update(review.metrics)
+    if band is not None and band.kept:
+        routing = dataclasses.replace(routing, reason=f"{routing.reason} [{band.note_ru()}]")
+    if ruleset.noise_bar is not None and ruleset.noise_power is not None:
+        # Every route names the power of the noise bar (rules 2026-11-03.1), unless the reason
+        # already gave it.
+        if not any(t in routing.reason for t in ("decides from", "was not measured")):
+            routing = dataclasses.replace(
+                routing, reason=f"{routing.reason} [{noise_bar.power_note(ruleset, metrics)}]")
     # A failed venue fact says WHICH venue and what is missing, so the verdict
     # row and the route never read as a bare `venue_supported = 0` (the first
     # two generated ideas were read that way, 2026-10-25).
@@ -1949,9 +2023,23 @@ def evaluate_spec(
             pass
 
     decided_at = datetime.now(UTC)
+    judged_forward = split_mode and split.forward is not None
 
     def _venue_note(row) -> str | None:
         return venue_reasons.get(row.metric) if row.passed is False else None
+
+    gated = noise_bar.gate_applies(ruleset, rules_result if judged_forward else None, metrics)
+
+    def _noise_note(row) -> str | None:
+        """What the dead band or the power gate did to the noise rule's verdict."""
+        if band is None or row.rule_id != band.rule_id or not judged_forward:
+            return None
+        if band.kept:
+            return f"dead band (rules {ruleset.version}): {band.note_ru()}"
+        if gated:
+            return (f"not counted as a pass (rules {ruleset.version}): the noise bar has no power "
+                    f"on this window ({noise_bar.power_note(ruleset, metrics)})")
+        return None
 
     def _verdict_rows(result: EvaluationResult, start: date, end: date, period: str | None):
         return [
@@ -1970,7 +2058,10 @@ def evaluate_spec(
                 "data_range_start": start,
                 "data_range_end": end,
                 "decided_at": decided_at,
-                "note": "; ".join(n for n in (period, row.note, _venue_note(row)) if n) or None,
+                "note": "; ".join(
+                    n for n in (period, row.note, _venue_note(row),
+                                _noise_note(row) if period == FORWARD_NOTE else None) if n
+                ) or None,
                 "source": TrialSource.QLAB,
             }
             for row in result.rows

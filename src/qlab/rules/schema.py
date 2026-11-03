@@ -205,6 +205,42 @@ class NoisePower(BaseModel):
     """The key the measured power is stored under in a run's metrics."""
 
 
+class NoiseBar(BaseModel):
+    """Where the noise bar's line is blurred and where it has no power, from 2026-11-03.1
+    (docs/NOISE_BAR.md; owner, 2026-11-03: «да, делай А+Б+Г»).
+
+    Measured on the registry that day: 25 of 75 open ideas sat between 0.975 and 1.0 on a bar of
+    0.99, where the rank's own error (about +-1.4 points at 0.99, one of 200 books being half a
+    point) makes them indistinguishable from the line; 7 of 40 ideas with three or more runs
+    crossed the line back and forth, the books being fixed by their seed, so a flip came from one
+    new day of data; and the bar had the power to pass a strategy truly earning 7% a year for
+    only 9 of 75.
+
+    * **А, the dead band.** An idea passes the bar at `pass_at`; once it has passed, it loses the
+      pass only below `keep_above`. "Once passed" is exact: the idea's previous routed run on the
+      same venue, judged by the bar, passed the rule `rule_id` (and, when `no_power_no_pass`, the
+      bar had power on that run).
+    * **Б, no power, no pass.** With `no_power_no_pass` a pass of the bar on a window where the
+      bar's measured power is below `NoisePower.min_power` is not a pass: the idea's outcome is
+      "not decided, too early to judge" (`needs-forward`), as a failure already was there.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule_id: str
+    """The rule that is the noise bar (`shape_aware_edge`); its threshold must be `pass_at`."""
+    pass_at: float = Field(gt=0.0, le=1.0)
+    keep_above: float = Field(gt=0.0, le=1.0)
+    no_power_no_pass: bool = False
+    rationale: str
+
+    @model_validator(mode="after")
+    def _band_is_below_the_line(self) -> NoiseBar:
+        if self.keep_above > self.pass_at:
+            raise ValueError("keep_above must not be above pass_at")
+        return self
+
+
 class VenueSplit(BaseModel):
     """Binance and Hyperliquid are judged separately, each on its own data, coins, costs and
     minimum leg, from 2026-10-30.1 (docs/VENUE_SPLIT.md; owner, 2026-10-30: «да, делай раздельно
@@ -398,6 +434,9 @@ class RuleSet(BaseModel):
     stage2_confirmation: Stage2Confirmation | None = None
     """From 2026-10-27.1: where the noise bar of stage 2 cannot decide, stage 2
     confirms stage 1's verdict instead (docs/TWO_STAGE.md)."""
+    noise_bar: NoiseBar | None = None
+    """From 2026-11-03.1: a dead band around the noise bar's line, and no pass where the bar has no
+    power (docs/NOISE_BAR.md)."""
     venue_split: VenueSplit | None = None
     """From 2026-10-30.1: Binance and Hyperliquid are judged separately and the idea's route is the
     better of the two (docs/VENUE_SPLIT.md). Absent: both stages must pass, as before."""
@@ -451,6 +490,21 @@ class RuleSet(BaseModel):
     def splits_fit_forward(self) -> bool:
         """The ruleset judges a forward test apart from the selection period."""
         return self.forward_resolution is not None or self.holdout_share is not None
+
+    def check_noise_bar(self) -> None:
+        """The rule the band is about exists, and its line is the band's `pass_at`. Asked of a
+        ruleset after its parents are merged in (a version may set the band and leave the rule to
+        its parent), never of a bare file."""
+        bar = self.noise_bar
+        if bar is None:
+            return
+        rule = next((r for r in self.rules if r.id == bar.rule_id), None)
+        if rule is None:
+            raise ValueError(f"noise_bar names the rule {bar.rule_id!r}, which {self.version} "
+                             "does not have")
+        if rule.comparator != Comparator.GE or rule.threshold != bar.pass_at:
+            raise ValueError(f"noise_bar.pass_at ({bar.pass_at}) must be the line of rule "
+                             f"{rule.id!r} (>= {rule.threshold})")
 
     def version_key(self) -> tuple[date, int]:
         """Sort key for this ruleset's version (date, sequence-number)."""

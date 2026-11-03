@@ -99,6 +99,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
         )
 
     if ruleset.based_on is None:
+        ruleset.check_noise_bar()
         return ruleset
 
     base = _load(ruleset.based_on, directory, chain)
@@ -115,7 +116,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
     for r in ruleset.retired:
         merged_retired[r.id] = r
 
-    return RuleSet(
+    merged = RuleSet(
         version=ruleset.version,
         based_on=ruleset.based_on,
         rules=list(merged_rules.values()),
@@ -127,6 +128,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
                        else ruleset.holdout_share or base.holdout_share),
         noise_power=ruleset.noise_power or base.noise_power,
         stage2_confirmation=ruleset.stage2_confirmation or base.stage2_confirmation,
+        noise_bar=ruleset.noise_bar or base.noise_bar,
         venue_split=ruleset.venue_split or base.venue_split,
         informational=list({r.id: r for r in (*base.informational, *ruleset.informational)}
                            .values()),
@@ -134,6 +136,8 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
                               if ruleset.regime_coverage_days is not None
                               else base.regime_coverage_days),
     )
+    merged.check_noise_bar()
+    return merged
 
 
 def load_latest(rules_dir: Path | str | None = None) -> RuleSet:

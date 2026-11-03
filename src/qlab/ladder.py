@@ -24,7 +24,8 @@ The steps (docs/EVALUATION_PATHS.md, section 6):
 3. the verdict for Hyperliquid, on Hyperliquid's own data, coins, costs and minimum leg, the same
    numbers (the second stage, or the idea's own run);
 4. the strategy's money against the capital each venue's run needed (one line per venue);
-5. readings that decide nothing (years, protection, regimes, anomalies, overlays);
+5. readings that decide nothing (years, protection, regimes, anomalies, whether the earning can be
+   told from zero, overlays);
 6. paper, four to six weeks;
 7. the owner's decision.
 
@@ -705,11 +706,14 @@ def _run_detail(run: _Run, step_run: StepRun) -> str:
     if power is not None and pct is not None:
         text = f"обгоняет шум {pct:.0%}, сила планки {power:.0%}"
         if power < MIN_POWER:
-            text += (" — меньше 80%: планка шума такой длины не различает, и её провал "
-                     "значит «рано судить»")
+            text += (" — меньше 80%: планка шума такой длины не различает, её провал значит "
+                     "«рано судить», а с правил 2026-11-03.1 и её проход (нет силы — нет прохода)")
             if route == "paper" and 0.99 <= pct < 0.995:
                 text += "; пройдена по самой границе"
         parts.append(text)
+    if m.get("noise_band_kept"):
+        parts.append("проход у черты удержан мёртвой зоной: раньше планку проходила, "
+                     "теряет проход только ниже 0.975 (правила 2026-11-03.1)")
     if m.get("stage1_trial_id") is not None:
         parts.append(f"планку заменила сверка с историей первого этапа (прогон "
                      f"{int(m['stage1_trial_id'])})")
@@ -1032,6 +1036,12 @@ def _readings(session: Session, idea: Idea, main: _Run | None, ledgers: Ledgers)
         out.append(Reading("anomalies", False,
                            "аномалии не сканировались: у прогона нет исхода, который сканируют",
                            Reason.NOT_REACHED))
+    from qlab import earning_test
+
+    line = earning_test.line_ru(m) if m else None
+    out.append(Reading("earning_test", line is not None,
+                       line or "заработок отличим от нуля: у этого прогона замера ещё нет "
+                       "(появляется при пересчёте, стенд 2026-11-03.1)"))
     out += _overlay_reading(session, idea)
     return out
 
