@@ -746,7 +746,7 @@ def test_the_page_reads_steps_states_stats_and_history(api, factory) -> None:
     _seed(factory)
     body = api.get("/api/pipeline").json()
     steps = {s["id"]: s for s in body["steps"]}
-    assert len(steps) == 24 and steps["recheck"]["depends_on"][0]["step"] == "detectors"
+    assert len(steps) == 25 and steps["recheck"]["depends_on"][0]["step"] == "detectors"
     assert steps["recheck"]["children"] and steps["recheck"]["wave"] == 1
     assert "waiting" in steps["recheck"]["can_run_with"]
     assert body["states"]["recheck"]["state"] == "failed" and body["running"] is False
@@ -819,7 +819,7 @@ def test_the_page_still_lists_the_steps_before_the_migration(api, factory) -> No
         session.execute(text(f"DROP TABLE {table}"))
     session.commit()
     body = api.get("/api/pipeline").json()
-    assert body["journal_ready"] is False and len(body["steps"]) == 24 and body["run"] is None
+    assert body["journal_ready"] is False and len(body["steps"]) == 25 and body["run"] is None
     assert api.get("/api/pipeline/runs").json() == {"runs": [], "journal_ready": False}
     assert api.get("/api/pipeline/steps/recheck").json()["journal_ready"] is False
 
