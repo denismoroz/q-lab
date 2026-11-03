@@ -393,6 +393,8 @@ def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
         # Noise params (generator, seed) are the instrument's own.
         check_sources=False,
         spec_row_id=spec_row_id,
+        # Nor does a book need the reading "can its earning be told from zero?" (docs/NOISE_BAR.md).
+        earning_test=False,
     )
 
 

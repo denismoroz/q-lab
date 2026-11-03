@@ -2937,6 +2937,44 @@ def year_signs_cmd(
         typer.echo(line)
 
 
+@app.command("earning-test")
+def earning_test_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of tables"),
+    rules_version: str | None = typer.Option(
+        None, "--rules",
+        help="Rules version whose noise bar the cross-table uses (default: latest)"),
+) -> None:
+    """«Заработок отличим от нуля» (docs/NOISE_BAR.md) over the registry: for each idea's latest
+    judged run, the share of resampled average days at or below zero (p) and the 95% interval of
+    the yearly return, then how many ideas would pass and fail at p <= 0.05, split by outcome, by
+    stage and against the noise bar. It decides nothing; the statistics are for choosing, later,
+    whether it should. Reads stored metrics only."""
+    import json
+
+    from qlab import earning_test
+
+    ruleset = load(rules_version) if rules_version is not None else load_latest()
+    with session_scope() as session:
+        rows, missing = earning_test.collect(session, ruleset)
+    summary = earning_test.summarize(rows)
+    if as_json:
+        typer.echo(json.dumps({
+            "rules_version": ruleset.version, "without_reading": missing,
+            "rows": [r.to_json() for r in rows], "summary": summary},
+            ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"rules: {ruleset.version}; latest judged run of each idea, on the strategy's own "
+               f"money; {missing} idea(s) have a run but no reading yet")
+    if not rows:
+        typer.echo("no run with the reading in the registry (it is written by stand 2026-11-03.1)")
+        return
+    for line in earning_test.render_table(rows):
+        typer.echo(line)
+    typer.echo("")
+    for line in earning_test.render_summary(summary):
+        typer.echo(line)
+
+
 @app.command("protection")
 def protection_cmd(
     compute: bool = typer.Option(

@@ -196,6 +196,13 @@ def window_metrics(daily: pd.Series, additive: bool = False) -> dict[str, float]
     }
 
 
+def block_length(n: int) -> int:
+    """The length of the moving blocks for `n` days: `n ** (1/3)`, at least 2 -- the usual rule of
+    thumb for the variance of a mean of dependent days (Hall, Horowitz and Jing, 1995). Shared with
+    `qlab.earning_test`, which resamples one series with the same blocks."""
+    return max(2, round(n ** (1 / 3)))
+
+
 def _block_indices(n: int, block: int, n_boot: int, rng: np.random.Generator) -> np.ndarray:
     """Circular moving blocks: `n_boot` resamples of `n` day positions."""
     count = math.ceil(n / block)
@@ -233,7 +240,7 @@ def bootstrap_difference(base: pd.Series, variant: pd.Series, *, n_boot: int = N
     a = base.to_numpy(dtype=float)
     b = variant.to_numpy(dtype=float)
     n = len(a)
-    block = max(2, round(n ** (1 / 3)))
+    block = block_length(n)
     idx = _block_indices(n, block, n_boot, np.random.default_rng(seed))
     sharpe_d = _sharpe_rows(b[idx]) - _sharpe_rows(a[idx])
     annual_d = _annual_rows(b[idx], additive) - _annual_rows(a[idx], additive)

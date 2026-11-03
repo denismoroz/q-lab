@@ -63,6 +63,7 @@ from qlab.rules.schema import (
     FitPeriodUse,
     ForwardResolution,
     HoldoutShare,
+    NoiseBar,
     NoisePower,
     Rule,
     RuleKind,
@@ -2259,3 +2260,154 @@ def test_a_book_with_no_base_of_percent_is_not_judged_on_the_stand_instead(
     assert "cap_ann_return" in result.routing.reason
     assert "base of percent is undefined" in result.routing.reason
     assert result.rules_result.unknown_metrics == ("cap_ann_return",)
+
+
+# --------------------------------------------------------------------------
+# The dead band and the power gate of the noise bar (rules 2026-11-03.1, docs/NOISE_BAR.md)
+# --------------------------------------------------------------------------
+
+BAND = NoiseBar(rule_id="shape_aware_edge", pass_at=0.99, keep_above=0.975,
+                no_power_no_pass=True, rationale="test")
+
+
+def _band_ruleset(bar: NoiseBar | None = BAND) -> RuleSet:
+    return RuleSet(version="2026-11-03.1", rules=[CAPITAL_FIT_GENEROUS, NOISE_BAR],
+                   holdout_share=HOLDOUT, noise_power=POWER, noise_bar=bar)
+
+
+def _band_spec(session, tmp_path) -> StrategySpec:
+    return _explicit_long(session, tmp_path, params_fit_from=date(2026, 1, 3),
+                          params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test")
+
+
+def _band_run(session, spec, rank: float | None, power: float, *, bar: NoiseBar | None = BAND):
+    extra = {"noise_power": power}
+    if rank is not None:
+        extra["noise_return_percentile"] = rank
+    return evaluate_spec(spec, session=session, ruleset=_band_ruleset(bar), extra_metrics=extra,
+                         check_lookahead=False, check_sources=False)
+
+
+def _noise_verdict(session, trial_id: int):
+    from qlab.registry.models import Verdict
+
+    return (session.query(Verdict).filter(Verdict.trial_id == trial_id,
+                                          Verdict.rule_id == "shape_aware_edge",
+                                          Verdict.note.like("forward test%")).one())
+
+
+def test_a_pass_is_kept_inside_the_band_and_lost_below_it(session, tmp_path) -> None:
+    """А. Passed at 0.995; 0.985 is inside the band, so the pass holds and the route says why;
+    0.97 is below 0.975, so it is lost; and once lost it takes 0.99 again to pass."""
+    spec = _band_spec(session, tmp_path)
+    first = _band_run(session, spec, 0.995, 0.9)
+    assert first.routing.route == "paper", first.routing.reason
+    assert "noise_band_kept" not in first.metrics
+
+    kept = _band_run(session, spec, 0.985, 0.9)
+    assert kept.routing.route == "paper"
+    assert "[у черты: 0.985, проход держится до 0.975]" in kept.routing.reason
+    assert kept.metrics["noise_band_kept"] == 1.0
+    row = _noise_verdict(session, kept.trial_id)
+    assert row.passed is True and row.threshold == 0.975
+    assert "dead band" in row.note and "у черты: 0.985" in row.note
+
+    # The kept pass is a pass: the next run is kept by it again.
+    again = _band_run(session, spec, 0.976, 0.9)
+    assert again.routing.route == "paper"
+    assert again.metrics["noise_band_kept"] == 1.0
+
+    lost = _band_run(session, spec, 0.97, 0.9)
+    assert lost.routing.route == "reject"
+    assert "noise_band_kept" not in lost.metrics
+    assert _noise_verdict(session, lost.trial_id).threshold == 0.99
+
+    # Not passed any more: inside the band is no longer enough.
+    assert _band_run(session, spec, 0.985, 0.9).routing.route == "reject"
+    assert _band_run(session, spec, 0.99, 0.9).routing.route == "paper"
+
+
+def test_inside_the_band_an_idea_that_never_passed_does_not_pass(session, tmp_path) -> None:
+    spec = _band_spec(session, tmp_path)
+    run = _band_run(session, spec, 0.985, 0.9)
+    assert run.routing.route == "reject"
+    assert "у черты" not in run.routing.reason
+    assert _noise_verdict(session, run.trial_id).threshold == 0.99
+
+
+def test_a_pass_the_bar_had_no_power_to_give_is_not_a_pass_to_keep(session, tmp_path) -> None:
+    """The previous run's rank was 0.995 but the bar had no power there (Б): not a pass, so the
+    band has nothing to keep."""
+    spec = _band_spec(session, tmp_path)
+    assert _band_run(session, spec, 0.995, 0.3).routing.route == "needs-forward"
+    assert _band_run(session, spec, 0.985, 0.9).routing.route == "reject"
+
+
+def test_the_band_reads_only_runs_on_the_same_venue(session, tmp_path) -> None:
+    spec = _band_spec(session, tmp_path)
+    from qlab.registry.models import Spec as SpecRow
+
+    first = _band_run(session, spec, 0.995, 0.9)
+    assert first.routing.route == "paper"
+    spec_row = session.query(SpecRow).one()
+    spec_row.data_requirements = {**spec_row.data_requirements, "source": "elsewhere"}
+    session.flush()
+    assert _band_run(session, spec, 0.985, 0.9).routing.route == "reject"
+
+
+def test_where_the_bar_has_no_power_its_pass_decides_nothing(session, tmp_path) -> None:
+    """Б. A pass of the noise bar with a power of 30% is not a pass: needs-forward, with the
+    power in the reason; with a power of 90% it is a pass, and the reason names the power too."""
+    spec = _band_spec(session, tmp_path)
+    weak = _band_run(session, spec, 0.995, 0.3)
+    assert weak.routing.route == "needs-forward"
+    assert "has no power on this window" in weak.routing.reason
+    assert "only 30% of the time (it decides from 80%)" in weak.routing.reason
+    assert "so far it would route paper" in weak.routing.reason
+    assert "not counted as a pass" in _noise_verdict(session, weak.trial_id).note
+
+    strong = _band_run(session, spec, 0.995, 0.9)
+    assert strong.routing.route == "paper"
+    assert "noise bar power 90% (it decides from 80%)" in strong.routing.reason
+
+
+def test_a_failure_of_another_rule_still_rejects_where_the_bar_has_no_power(
+        session, tmp_path) -> None:
+    ruleset = RuleSet(version="2026-11-03.1", rules=[CAPITAL_FIT_TIGHT, NOISE_BAR],
+                      holdout_share=HOLDOUT, noise_power=POWER, noise_bar=BAND)
+    spec = _explicit_long(session, tmp_path, params_fit_from=date(2026, 1, 3),
+                          params_fixed_at=date(2026, 1, 6), params_fixed_evidence="test")
+    run = evaluate_spec(
+        spec, session=session, ruleset=ruleset, check_lookahead=False, check_sources=False,
+        extra_metrics={"noise_return_percentile": 0.995, "noise_power": 0.3})
+    assert run.routing.route == "reject"
+
+
+def test_older_rules_without_the_band_pass_and_gate_nothing(session, tmp_path) -> None:
+    """A ruleset with no `noise_bar` (every version before 2026-11-03.1) is judged as it was."""
+    spec = _band_spec(session, tmp_path)
+    run = _band_run(session, spec, 0.995, 0.3, bar=None)
+    assert run.routing.route == "paper"
+    assert "noise bar power" not in run.routing.reason
+    assert "noise_band_kept" not in run.metrics
+
+
+def test_the_noise_bar_gate_is_a_function_of_the_judged_rows() -> None:
+    ruleset = RuleSet(version="2026-11-03.1", rules=[NET_EDGE, NOISE_BAR], holdout_share=HOLDOUT,
+                      noise_power=POWER, noise_bar=BAND)
+    passing = _rows(("net_edge", True), ("shape_aware_edge", True))
+    base = {"fit_sharpe_net": 1.0, "fit_window_days": 100.0, "forward_days_needed": 50.0,
+            "forward_days": 400.0, "min_capital_usd": 10.0, "noise_return_percentile": 0.995}
+    kwargs = dict(ruleset=ruleset, selection=_rows(("net_edge", True)), forward=passing,
+                  params_fixed_at=date(2025, 6, 1))
+    assert decide_fit_forward_route(**kwargs, metrics={**base, "noise_power": 0.9}).route == "paper"
+    gated = decide_fit_forward_route(**kwargs, metrics={**base, "noise_power": 0.1})
+    assert gated.route == "needs-forward" and gated.required_capital_usd == 10.0
+    # Power not measured cannot show the bar can tell.
+    assert decide_fit_forward_route(**kwargs, metrics=base).route == "needs-forward"
+    assert "was not measured" in decide_fit_forward_route(**kwargs, metrics=base).reason
+    # Stage 2's consistency check asks the ruleset WITHOUT the noise rule: nothing to gate there.
+    without = ruleset.model_copy(update={"rules": [NET_EDGE]})
+    assert decide_fit_forward_route(
+        **{**kwargs, "ruleset": without, "forward": _rows(("net_edge", True))},
+        metrics={**base, "noise_power": 0.1}).route == "paper"

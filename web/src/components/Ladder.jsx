@@ -3,7 +3,7 @@ import YearView from './YearView.jsx'
 import Protection from './Protection.jsx'
 import ForwardCharts from './ForwardCharts.jsx'
 import { Panel } from './ui.jsx'
-import { basisText, standLine } from '../headline.js'
+import { basisText, earningRows, standLine } from '../headline.js'
 
 // The ladder of an idea (docs/LADDER.md; owner, 2026-10-29: «поидее все стратегии должны быть
 // оценены по одному принципу»): the same seven steps for every idea. Every word here is copied
@@ -49,6 +49,7 @@ function RunNumbers({ trial }) {
     ['Шарп после комиссий', typeof lead === 'number' ? lead.toFixed(2) : null],
     ['худшая просадка', pct(h?.max_dd ?? m.max_dd)],
     ['обгоняет шум той же формы', pct(h?.noise_percentile ?? m.noise_return_percentile)],
+    ...earningRows(m),
     ['проверка вперёд, дней', typeof m.forward_days === 'number' ? Math.round(m.forward_days) : null],
   ].filter(([, v]) => v !== null)
   return (

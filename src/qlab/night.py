@@ -825,6 +825,7 @@ def write_report(day: date, state: dict) -> Path:
     lines += publication_lines(state)
     lines += _forward_chart_lines(day)
     lines += _year_signs_lines()
+    lines += _earning_test_lines()
     lines += _protection_lines(day)
     lines += ["## Воронка агентов", "", *_funnel_lines(day), ""]
     tokens = _token_lines(day)
@@ -943,6 +944,24 @@ def _year_signs_lines() -> list[str]:
         return [f"## {year_signs.SECTION_TITLE}", "",
                 f"Не посчитано: {type(exc).__name__}: {exc}", ""]
     return [f"## {year_signs.SECTION_TITLE}", "", *body, ""] if body else []
+
+
+def _earning_test_lines() -> list[str]:
+    """«Заработок отличим от нуля» counted over the registry (`qlab.earning_test`,
+    docs/NOISE_BAR.md): a few lines with the totals and how they sit beside the noise bar; the
+    table is `qlab earning-test`. A recording, not a verdict. Empty when no run has it and no run
+    waits for it; a failure is one line."""
+    from qlab import earning_test
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    try:
+        with session_scope() as session:
+            body = earning_test.report_lines(session, load_latest())
+    except Exception as exc:  # noqa: BLE001 - a report line, not a failed night
+        return [f"## {earning_test.SECTION_TITLE}", "",
+                f"Не посчитано: {type(exc).__name__}: {exc}", ""]
+    return [f"## {earning_test.SECTION_TITLE}", "", *body, ""] if body else []
 
 
 def _protection_lines(day: date) -> list[str]:

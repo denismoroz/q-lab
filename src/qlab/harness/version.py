@@ -63,13 +63,20 @@ History:
   (a pass routes `needs-infrastructure`); the second stage takes Hyperliquid's own minimum leg;
   the idea's route is the better of the two venues (rules 2026-10-30.1); Hyperliquid's consistency
   check reads Binance's history on the coins Hyperliquid also lists.
+* `2026-11-03.1` -- the reading «заработок отличим от нуля» (docs/NOISE_BAR.md; owner 2026-11-03:
+  «да, делай А+Б+Г»): a block bootstrap of the judged part's daily returns on the strategy's own
+  money (`qlab.earning_test`), recorded as `cap_mean_positive_p` (the share of resamples whose
+  average day is at or below zero), `cap_ann_ci_low` and `cap_ann_ci_high` (the 95% interval of the
+  yearly return), with `cap_earning_days` and `cap_earning_block_days`. It decides nothing. Also
+  `noise_band_kept` (1.0 on a run whose pass the dead band of rules 2026-11-03.1 kept). The
+  verdicts themselves are the rules' (2026-11-03.1), not the stand's.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-10-30.1"
+STAND_VERSION = "2026-11-03.1"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 

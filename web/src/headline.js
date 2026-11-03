@@ -40,3 +40,27 @@ export function powerOf(metrics, headline) {
   const m = metrics ?? {}
   return headline?.on_capital && typeof m.noise_cap_power === 'number' ? m.noise_cap_power : m.noise_power
 }
+
+// «Заработок отличим от нуля» (docs/NOISE_BAR.md, stand 2026-11-03.1): the share of resampled
+// average days at or below zero (p) and the 95% interval of the yearly return, on the strategy's
+// own money. Copied from the stored metrics; it decides nothing. Two rows beside the noise bar, or
+// an empty list for a run made before the reading existed.
+export function earningRows(metrics) {
+  const m = metrics ?? {}
+  if (typeof m.cap_mean_positive_p !== 'number') return []
+  const signed = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}%`
+  const p = m.cap_mean_positive_p
+  const rows = [
+    [
+      'заработок отличим от нуля: доля пересчётов со средним днём не выше нуля (p ≤ 0.05 — отличим)',
+      p <= 0 ? 'меньше 1 из 2000' : p.toFixed(3),
+    ],
+  ]
+  if (typeof m.cap_ann_ci_low === 'number' && typeof m.cap_ann_ci_high === 'number') {
+    rows.push([
+      '95% интервал дохода в год на деньгах стратегии',
+      `от ${signed(m.cap_ann_ci_low)} до ${signed(m.cap_ann_ci_high)}`,
+    ])
+  }
+  return rows
+}

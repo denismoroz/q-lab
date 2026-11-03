@@ -111,6 +111,8 @@ def test_the_latest_rules_split_the_venues_and_older_rules_do_not() -> None:
     was, now = decisive_part(load("2026-10-29.3")), decisive_part(latest)
     now.pop("venue_split")
     was.pop("venue_split")
+    now.pop("noise_bar")  # the dead band of 2026-11-03.1 is not about venues
+    was.pop("noise_bar")
     assert was == now
 
 

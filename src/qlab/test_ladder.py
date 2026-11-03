@@ -799,3 +799,32 @@ def test_the_nothing_to_choose_words_are_read_from_the_spec_files_only_where_the
     (tmp_path / "b.yaml").write_text("idea_id: no-words\nparams: {}\n", encoding="utf-8")
     (tmp_path / "c.yaml").write_text("idea_id: [broken\n  nothing_to_choose", encoding="utf-8")
     assert lad.spec_no_choice(tmp_path) == {"with-words": "because there is one value"}
+
+
+# --------------------------------------------------------------------------
+# Rules 2026-11-03.1 (docs/NOISE_BAR.md): the new reading and the words about the band
+
+
+def test_step_five_carries_the_earning_reading_or_says_it_is_not_there_yet(session) -> None:
+    idea(session, "measured", IdeaStatus.VALIDATED)
+    run(session, "measured", TrialRoute.PAPER, metrics={
+        "cap_mean_positive_p": 0.012, "cap_ann_ci_low": 0.031, "cap_ann_ci_high": 0.14,
+        "cap_earning_days": 400.0, "cap_earning_block_days": 7.0})
+    idea(session, "old", IdeaStatus.VALIDATED)
+    run(session, "old", TrialRoute.PAPER)
+
+    reading = next(r for r in ladder(session, "measured").steps[4].readings
+                   if r.name == "earning_test")
+    assert reading.recorded and "заработок отличим от нуля: p = 0.012" in reading.text
+    assert "от +3.1% до +14.0%" in reading.text and "ничего не решает" in reading.text
+    waiting = next(r for r in ladder(session, "old").steps[4].readings
+                   if r.name == "earning_test")
+    assert not waiting.recorded and "замера ещё нет" in waiting.text
+
+
+def test_a_pass_kept_by_the_band_is_named_in_the_step(session) -> None:
+    idea(session, "kept", IdeaStatus.VALIDATED)
+    run(session, "kept", TrialRoute.PAPER, metrics={
+        "noise_cap_return_percentile": 0.985, "noise_cap_power": 0.9, "noise_band_kept": 1.0})
+    step = ladder(session, "kept").steps[1]
+    assert "удержан мёртвой зоной" in step.detail and "0.975" in step.detail
