@@ -10,10 +10,11 @@
 # So the cap counts STRATEGIES, not ideas. A strategy is the root of a parent chain
 # (`idea.parent_id`); an idea with a parent is a variant and takes no place of its own.
 # "Active" = candidate, bench or validated. The researcher's strategies
-# (night/research.yaml; five since 2026-10-25, FRAB with the spot on Binance the fifth) always
-# occupy their places; each active generator idea that is a
-# root of its own is a new strategy and takes a free place. The generator writes new
-# specs only into free places. An idea that only waits for data takes none (owner, 2026-11-01:
+# (night/research.yaml; five since 2026-10-25, FRAB with the spot on Binance the fifth, and six
+# since 2026-11-03, Bv3 the sixth: the owner's «да, делай все четыре») always occupy their places,
+# so with six of six the generator has none free until a strategy leaves; each active generator
+# idea that is a root of its own is a new strategy and takes a free place. The generator writes
+# new specs only into free places. An idea that only waits for data takes none (owner, 2026-11-01:
 # «не считать ждущие»).
 max_active_strategies: 6
 

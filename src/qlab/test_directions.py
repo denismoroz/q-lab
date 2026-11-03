@@ -246,3 +246,99 @@ def test_a_bad_cadence_is_refused(tmp_path) -> None:
     with pytest.raises(ValueError, match="cadence_days"):
         dirs.load_config(config)
     assert dirs.load_config(tmp_path / "missing.yaml") is None
+
+
+# ---- a note directs research, it does not forbid it (owner, 2026-11-03) ---------------------
+
+BLANKET_BANS = [
+    "Новых вариантов до этого не заводить.",
+    "Новых вариантов на отвеченные вопросы не заводить.",
+    "Новых вариантов сигнала не заводить: ответ даст время.",
+    "Новых опытов не ставить.",
+    "Если ответ уже дан, закончить ход без трат.",
+    "Выжившие ждут владельца, новых вариантов не плодить.",
+    "Нельзя запускать новые эксперименты, пока не придёт ответ.",
+    "Do not set new experiments for this strategy.",
+]
+
+
+@pytest.mark.parametrize("ban", BLANKET_BANS)
+def test_a_note_that_forbids_new_work_as_a_whole_is_dropped_with_a_reason(ban) -> None:
+    block = ("researcher:\n  bv2:\n    priority: high\n    note: "
+             + yaml.safe_dump("Свести ответы владельцу. " + ban))
+    result = _parse(block)
+    assert result.directions.researcher["bv2"] == dirs.StrategyDirection("high", None)
+    assert any("researcher.bv2" in p and "forbids" in p or "ends the strategy" in p
+               for p in result.problems), result.problems
+
+
+def test_a_note_that_points_where_to_look_is_kept() -> None:
+    notes = ["Прежде новых вариантов понять, почему живые деньги ведут себя иначе, чем стенд.",
+             "Закончить сверку живых сделок со стендом и назвать, чего стенд не учитывает.",
+             "Ответить владельцу, зачем стратегии такая большая книга, опираясь на правило о "
+             "капитале.",
+             "Начать с вопросов владельца о страховке: они открыты."]
+    for note in notes:
+        result = _parse("researcher:\n  bv2:\n    note: " + yaml.safe_dump(note))
+        assert result.problems == [] and result.directions.researcher["bv2"].note == note
+
+
+def test_a_repeat_names_the_question_and_where_it_was_answered(tmp_path) -> None:
+    memo = tmp_path / "docs/research/bv2-2026-11-01.md"
+    memo.parent.mkdir(parents=True)
+    memo.write_text("# Bv2\n", encoding="utf-8")
+    block = """
+researcher:
+  bv2:
+    priority: normal
+    note: "Начать с оставшихся вопросов владельца."
+    repeats:
+      - question: "Даёт ли ежедневное чтение сигнала лучше почасового"
+        answered_in: "docs/research/bv2-2026-11-01.md#4"
+      - {question: "Нужно ли короткое окно для включения страховки", answered_in: "idea-0006"}
+"""
+    result = _parse(block, root=tmp_path)
+    assert result.problems == []
+    got = result.directions.researcher["bv2"].repeats
+    assert [r.answered_in for r in got] == ["docs/research/bv2-2026-11-01.md#4", "idea-0006"]
+    # the repeat survives the file round trip and reaches the researcher, with the open door
+    dirs.write_directions(result.directions, tmp_path)
+    back = dirs.read_directions(tmp_path).directions
+    assert back.researcher["bv2"].repeats == got
+    focus = dirs.researcher_focus("bv2", back)
+    assert "Даёт ли ежедневное чтение сигнала лучше почасового (answered in docs/research" in focus
+    assert "No direction forbids a new experiment on a question that is still open" in focus
+
+
+def test_a_repeat_that_names_nothing_or_nowhere_is_refused(tmp_path) -> None:
+    block = """
+researcher:
+  bv2:
+    repeats:
+      - {question: "всё", answered_in: "docs/research/bv2-2026-11-01.md"}
+      - {question: "Все вопросы о страховке", answered_in: "docs/research/bv2-2026-11-01.md"}
+      - {question: "Нужно ли короткое окно для включения страховки", answered_in: "docs/nowhere.md"}
+      - {question: "Новых вариантов страховки не заводить совсем", answered_in: "idea-0006"}
+      - {question: "Нужно ли короткое окно для включения страховки"}
+"""
+    result = _parse(block, root=tmp_path)
+    assert result.directions.researcher["bv2"].repeats == ()
+    assert len(result.problems) == 5
+    assert any("is not a file of the repository" in p for p in result.problems)
+    assert any("is a ban, not a question" in p for p in result.problems)
+
+
+def test_a_note_that_bans_a_repeat_without_naming_it_is_sent_to_repeats() -> None:
+    result = _parse('researcher:\n  bv2:\n    note: "Сверку по залогу не повторять."')
+    assert result.directions.researcher["bv2"].note is None
+    assert any("repeats" in p for p in result.problems)
+
+
+def test_the_shipped_directions_forbid_no_research() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    found = dirs.read_directions(repo)
+    assert found.status == "active"
+    for name, direction in found.directions.researcher.items():
+        assert direction.note and dirs.ban_reason(direction.note) is None, name
+    text = (repo / "night/directions.yaml").read_text(encoding="utf-8")
+    assert "да, делай все четыре" in text  # the owner's words

@@ -15,9 +15,15 @@ What a direction can say -- and nothing else:
 * generator: `prefer_mechanisms` (ids that exist in the catalogue), `pause_mechanisms`
   (ids that exist, each with a reason). A spec of a paused mechanism is rejected by the
   generator's guard; the preferred ones are only named in its instructions;
-* researcher: per strategy of `night/research.yaml`, `priority` (high / normal / low)
-  and a plain-text `note`. A note with a digit in it is dropped: the director sets
-  directions, not parameter values (a number in a note is a value to tune to);
+* researcher: per strategy of `night/research.yaml`, `priority` (high / normal / low),
+  a plain-text `note` and `repeats`. A note with a digit in it is dropped: the director sets
+  directions, not parameter values (a number in a note is a value to tune to). **A note may not
+  forbid research** (owner, 2026-11-03, «да, делай все четыре»: for four nights the researcher set
+  no experiment because the notes told every strategy «новых вариантов не заводить» and
+  «новых опытов не ставить»): a note that bans new variants, experiments or families as a whole
+  is dropped with a reason. What the director MAY forbid is a repeat: `repeats` names a question
+  that is already answered and WHERE it was answered (a file that exists), and the researcher is
+  told not to ask it again -- everything else stays open;
 * `catalogue_requests`, `data_requests`: tasks for later; nothing acts on them yet;
 * `code_requests`: code the lab lacks to test a direction (owner, 2026-10-26: «будет дописывать
   код если руководитель посчитает что направление - следует проверить»): which repository
@@ -61,6 +67,35 @@ CODE_REPOS = ("frab", "qlab")
 _FENCE = re.compile(r"^```directions[ \t]*\r?\n(?P<body>.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
 _DIGIT = re.compile(r"\d")
 
+# A note may point where to look; it may not forbid looking (see the module docstring). The check
+# reads one sentence at a time: a ban word together with a word for new work is a blanket ban.
+# The notes are Russian (the director writes for the owner); English forms are kept for the rare
+# note and for the tests.
+_SENTENCES = re.compile(r"[.;!?\n]+")
+_NEW_WORK = re.compile(
+    r"вариант|опыт|эксперимент|семейств|направлен|иде[яйюи]|нов\w+\s+стратеги|проверк|спек|испытан|"
+    r"гипотез|"
+    r"\b(?:variants?|experiments?|famil\w+|ideas?|specs?|tests?|directions?)\b", re.IGNORECASE)
+_BAN_NEW_WORK = re.compile(
+    r"\bне\s+(?:заводи\w*|завест\w*|став\w+|постав\w+|запуска\w+|запуст\w+|созда\w+|"
+    r"предлага\w+|предлож\w+|проводи\w*|провест\w*|открыва\w+|начина\w+|начат\w*|"
+    r"добавля\w+|добав\w+|писа\w+|напис\w+|искат\w+|ищи\w*|плод\w+|множ\w+|нужн\w+|надо)|"
+    r"\b(?:нельзя|запрещ\w+|воздерж\w+)\b|\bбез\s+нов\w+|"
+    r"\b(?:do not|don't|never|must not|no more|no new|stop)\b", re.IGNORECASE)
+_BAN_ANY = re.compile(
+    r"(?:законч\w+|пропуст\w+|прекрат\w+)\s+(?:этот\s+|ночной\s+)?(?:ход|работ\w+)|"
+    r"\bничего\s+(?:нового\s+)?не\s+\w+|\bход\s+не\s+нужен|"
+    r"\bне\s+тратить", re.IGNORECASE)
+_BAN_REPEAT = re.compile(
+    r"\bне\s+(?:повторя\w+|перепровер\w+|пересчит\w+|переспрашив\w+|перезапуска\w+|"
+    r"переделыв\w+|разбира\w+\s+заново)|\b(?:do not|don't|never)\s+(?:repeat|redo|rerun)",
+    re.IGNORECASE)
+_GENERIC_QUESTION = re.compile(
+    r"^(?:все|всё|любые?|any|all|everything)\b|\b(?:все вопросы|всё остальное|everything)\b",
+    re.IGNORECASE)
+MIN_QUESTION_WORDS = 3
+_IDEA_ID = re.compile(r"^idea-\d{4}$")
+
 FILE_HEADER = """\
 # The research director's directions (qlab.directions, docs/DIRECTOR.md).
 # Written by CODE from the director agent's memo after validation -- do not edit the
@@ -82,9 +117,19 @@ class Pause:
 
 
 @dataclass(frozen=True)
+class Repeat:
+    """A question the lab has already answered, and where: the one thing a direction may forbid
+    the researcher to ask again."""
+
+    question: str
+    answered_in: str
+
+
+@dataclass(frozen=True)
 class StrategyDirection:
     priority: str = "normal"
     note: str | None = None
+    repeats: tuple[Repeat, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,6 +159,14 @@ class CloseProposal:
     why: str
 
 
+def _direction_dict(d: StrategyDirection) -> dict:
+    out: dict = {"priority": d.priority, "note": d.note}
+    if d.repeats:  # absent when empty: the files written before `repeats` stay the same shape
+        out["repeats"] = [{"question": r.question, "answered_in": r.answered_in}
+                          for r in d.repeats]
+    return out
+
+
 @dataclass(frozen=True)
 class Directions:
     date: date
@@ -141,8 +194,7 @@ class Directions:
                 "prefer_mechanisms": list(self.prefer_mechanisms),
                 "pause_mechanisms": [{"id": p.id, "why": p.why} for p in self.pause_mechanisms],
             },
-            "researcher": {name: {"priority": d.priority, "note": d.note}
-                           for name, d in self.researcher.items()},
+            "researcher": {name: _direction_dict(d) for name, d in self.researcher.items()},
             "catalogue_requests": [{"family": r.family, "look_for": r.look_for, "why": r.why}
                                    for r in self.catalogue_requests],
             "data_requests": [{"what": r.what, "why": r.why} for r in self.data_requests],
@@ -164,8 +216,10 @@ class Directions:
             prefer_mechanisms=tuple(gen.get("prefer_mechanisms") or ()),
             pause_mechanisms=tuple(Pause(p["id"], p["why"])
                                    for p in gen.get("pause_mechanisms") or ()),
-            researcher={name: StrategyDirection(d.get("priority", "normal"), d.get("note"))
-                        for name, d in (raw.get("researcher") or {}).items()},
+            researcher={name: StrategyDirection(
+                d.get("priority", "normal"), d.get("note"),
+                tuple(Repeat(r["question"], r["answered_in"]) for r in d.get("repeats") or ()))
+                for name, d in (raw.get("researcher") or {}).items()},
             catalogue_requests=tuple(CatalogueRequest(r["family"], r["look_for"], r["why"])
                                      for r in raw.get("catalogue_requests") or ()),
             data_requests=tuple(DataRequest(r["what"], r["why"])
@@ -215,13 +269,55 @@ def _items(value: object, where: str, problems: list[str]) -> list[dict]:
     return out
 
 
+def ban_reason(text: str) -> str | None:
+    """Why `text` forbids research as a whole, or None. A sentence that bans new variants,
+    experiments, ideas or families (a ban word and a word for new work together), a sentence that
+    ends the night's work (`закончить ход без трат`), and a sentence that bans repeating without
+    naming what (a repeat is forbidden through `repeats`, which names the question and where it
+    was answered) all count. A direction points where to look; it never closes a question that
+    is open."""
+    for sentence in _SENTENCES.split(text):
+        if _BAN_REPEAT.search(sentence):
+            return (f"{sentence.strip()!r} forbids a repeat without naming the question and where "
+                    "it was answered: say it in `repeats` (question, answered_in)")
+        if _BAN_ANY.search(sentence):
+            return f"{sentence.strip()!r} ends the strategy's research for the night"
+        if _BAN_NEW_WORK.search(sentence) and _NEW_WORK.search(sentence):
+            return (f"{sentence.strip()!r} forbids new work as a whole (new variants, experiments "
+                    "or families); only a repeat of an answered question may be forbidden, "
+                    "through `repeats`")
+    return None
+
+
+def repeat_problem(item: object, root: Path | None) -> str | None:
+    """Why a `repeats` item does not count, or None when it is a named question with a place
+    where it was answered. The place is a file that exists (a path in the repository, or next to
+    it, `#anchor` allowed) or an idea of the inbox (`idea-0006`)."""
+    if not isinstance(item, dict):
+        return f"{item!r} must be a mapping with `question` and `answered_in`"
+    question, where = _text(item.get("question")), _text(item.get("answered_in"))
+    if question is None or where is None:
+        return f"{item!r} needs `question` and `answered_in`"
+    if len(question.split()) < MIN_QUESTION_WORDS or _GENERIC_QUESTION.search(question):
+        return f"{question!r} does not name one question"
+    if (reason := ban_reason(question)) is not None:
+        return f"{question!r} is a ban, not a question: {reason}"
+    if _IDEA_ID.match(where):
+        return None
+    target = Path(where.split("#", 1)[0])
+    if root is not None and not (target if target.is_absolute() else root / target).is_file():
+        return f"{where!r} (where {question!r} was answered) is not a file of the repository"
+    return None
+
+
 def parse_block(text: str, *, mechanism_ids: set[str] | frozenset[str],
                 strategy_names: set[str] | frozenset[str], family_names: set[str] | frozenset[str],
-                day: date, memo: str | None = None, pending_owner_review: bool = False
-                ) -> ParseResult:
+                day: date, memo: str | None = None, pending_owner_review: bool = False,
+                root: Path | None = None) -> ParseResult:
     """Validate the YAML text of a directions block. A bad item is dropped and
     named in `problems`; a block that is not a mapping (or not YAML) gives no
-    directions at all, so the previous file stays."""
+    directions at all, so the previous file stays. `root` is the repository: a `repeats` item
+    must point at a file that exists in it (without a root the place is not looked up)."""
     problems: list[str] = []
     try:
         raw = yaml.safe_load(text)
@@ -289,7 +385,17 @@ def parse_block(text: str, *, mechanism_ids: set[str] | frozenset[str],
             problems.append(f"researcher.{name}: the note has a digit in it (a direction is not "
                             "a parameter value): the note is dropped")
             note = None
-        researcher[name] = StrategyDirection(priority, note)
+        if note is not None and (reason := ban_reason(note)) is not None:
+            problems.append(f"researcher.{name}: the note forbids research ({reason}): the note "
+                            "is dropped")
+            note = None
+        repeats: list[Repeat] = []
+        for item in _items(entry.get("repeats"), f"researcher.{name}.repeats", problems):
+            if (bad := repeat_problem(item, root)) is not None:
+                problems.append(f"researcher.{name}.repeats: {bad}: ignored")
+            else:
+                repeats.append(Repeat(_text(item["question"]), _text(item["answered_in"])))
+        researcher[name] = StrategyDirection(priority, note, tuple(repeats))
 
     # requests and proposals
     catalogue_requests: list[CatalogueRequest] = []
@@ -451,13 +557,21 @@ def researcher_focus(name: str, directions: Directions | None) -> str | None:
     if directions is None or name not in directions.researcher:
         return None
     d = directions.researcher[name]
-    if d.priority == "normal" and d.note is None:
+    if d.priority == "normal" and d.note is None and not d.repeats:
         return None
     lines = [f"The research director's direction for this strategy (dated "
              f"{directions.date.isoformat()}): priority {d.priority}."]
     if d.note:
         lines.append("Its note -- a direction for where to look, not a value to tune to; "
                      f"treat it as advice, the evidence decides: {d.note}")
+    if d.repeats:
+        lines.append("Questions already answered -- do not ask them again (read the answer where "
+                     "it is):")
+        lines += [f"- {r.question} (answered in {r.answered_in})" for r in d.repeats]
+    lines.append("No direction forbids a new experiment on a question that is still open, or a "
+                 "new family of variants: only the repeats named above are closed. If the "
+                 "owner's questions and the open ones leave something to test, set the "
+                 "experiment.")
     return "\n".join(lines)
 
 
@@ -515,7 +629,8 @@ def load_config(path: Path = CONFIG) -> DirectorConfig | None:
 
 __all__ = ["BLOCK_KEYS", "CONFIG", "DIRECTIONS", "FILE_HEADER", "HISTORY_DIR", "PRIORITIES",
            "CatalogueRequest", "CloseProposal", "DataRequest", "Directions", "DirectionsFile",
-           "DirectorConfig", "ParseResult", "Pause", "StrategyDirection", "active_directions",
-           "approve", "extract_block", "generator_text", "has_previous", "load_config",
-           "order_strategies", "parse_block", "pending_for_new", "priority_rank",
-           "read_directions", "render", "researcher_focus", "write_directions"]
+           "DirectorConfig", "ParseResult", "Pause", "Repeat", "StrategyDirection",
+           "active_directions", "approve", "ban_reason", "extract_block", "generator_text",
+           "has_previous", "load_config", "order_strategies", "parse_block", "pending_for_new",
+           "priority_rank", "read_directions", "render", "repeat_problem", "researcher_focus",
+           "write_directions"]

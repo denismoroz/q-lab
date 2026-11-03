@@ -484,3 +484,55 @@ def test_a_memo_without_a_block_changes_nothing(root) -> None:
     assert result.directions is None and result.written is None
     assert not (root / dirs.DIRECTIONS).exists()
     assert "не принят" in memo.read_text(encoding="utf-8")
+
+
+# ---- the director directs research, it does not stop it (owner, 2026-11-03) ----------------
+
+
+BAN_MEMO = """# Записка руководителя
+
+```directions
+researcher:
+  bv2:
+    priority: high
+    note: "Новых вариантов на отвеченные вопросы не заводить. Начать с вопросов владельца."
+    repeats:
+      - question: "Нужно ли чтение сигнала раз в сутки вместо почасового"
+        answered_in: "docs/research/bv2-2026-10-24.md"
+  trend:
+    priority: low
+    note: "Новых опытов не ставить."
+```
+"""
+
+
+def test_the_code_refuses_a_blanket_ban_and_keeps_a_named_repeat(root) -> None:
+    (root / "docs" / "research" / "bv2-2026-10-24.md").write_text("# Bv2\n", encoding="utf-8")
+    memo = root / "docs" / "research" / "director-2026-10-26.md"
+    memo.write_text(BAN_MEMO, encoding="utf-8")
+    result = _apply(root)
+    bv2, trend = result.directions.researcher["bv2"], result.directions.researcher["trend"]
+    assert bv2.note is None and trend.note is None and trend.priority == "low"
+    assert [r.answered_in for r in bv2.repeats] == ["docs/research/bv2-2026-10-24.md"]
+    assert sum("forbids" in p for p in result.problems) == 2  # both notes, each with its reason
+    text_ = memo.read_text(encoding="utf-8")
+    assert "Отброшено кодом" in text_ and "forbids new work as a whole" in text_
+    assert "уже отвечено, не повторять: 1" in text_
+
+
+def test_the_evidence_lists_each_newest_memo_with_its_section_titles_only(session, root) -> None:
+    (root / "docs" / "research" / "bv2-2026-10-24.md").write_text(
+        "# Bv2\n\n## Вопросы владельца: что уже отвечено\n\nТекст с числом 1.2345\n"
+        "## Просадки 12 месяцев\n", encoding="utf-8")
+    (root / "docs" / "research" / "bv2-second-opinion-2026-10-25.md").write_text(
+        "# Other\n", encoding="utf-8")  # not bv2's own memo
+    evidence = director.build_evidence(session, root=root, config=CONFIG, plan=PLAN, now=NOW)
+    assert "newest memo: docs/research/bv2-2026-10-24.md" in evidence
+    assert "Вопросы владельца: что уже отвечено" in evidence
+    assert "Просадки # месяцев" in evidence  # the numbers of a title are masked
+    assert "1.2345" not in evidence and "second-opinion" not in evidence
+
+
+def test_the_prompt_tells_the_director_to_direct_not_stop() -> None:
+    assert "you never stop it" in director.INSTRUCTIONS and "repeats" in director.INSTRUCTIONS
+    assert "да, делай все четыре" in director.INSTRUCTIONS

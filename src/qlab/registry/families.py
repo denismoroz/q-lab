@@ -28,6 +28,14 @@ _NOT_STRATEGIES = ("qlab.calibration.",)
 # (night/limits.yaml) would see one. Their family is set explicitly instead.
 _NO_FAMILY_BY_MODULE = ("qlab.strategies.blocks",)
 _STATUS_RANK = {IdeaStatus.LIVE: 0, IdeaStatus.PAPER: 1}
+# A family the lab names by hand: an idea whose id starts with the prefix belongs to the family,
+# whatever code its spec runs, and the family's parent is the idea of the family's own name when
+# that idea exists (its card, `cards/<name>.yaml`). Owner, 2026-10-27 and 2026-11-03: Bv2 is the
+# protection and Bv3 is the income strategy -- a new strategy that runs Bv2's code with another
+# hedge rule. By the module name its variants would be filed under Bv2 and take Bv2's places of
+# variants (night/limits.yaml), which are full, so Bv3's experiments would count against the wrong
+# strategy and be stopped by the wrong cap.
+OWN_FAMILIES = {"bv3-": "bv3"}
 
 
 def strategy_key(code_ref: str | None, params: object) -> str | None:
@@ -43,12 +51,18 @@ def strategy_key(code_ref: str | None, params: object) -> str | None:
     return module.rsplit(".", 1)[-1]
 
 
+def own_family(idea_id: str) -> str | None:
+    """The hand-named family an idea id belongs to (`OWN_FAMILIES`), if any."""
+    return next((family for prefix, family in OWN_FAMILIES.items()
+                 if idea_id.startswith(prefix)), None)
+
+
 def family_keys(session: Session) -> dict[str, str]:
     """idea id -> strategy key, from each idea's latest spec."""
     out: dict[str, str] = {}
     specs = session.query(Spec).filter(~Spec.code_ref.like("qlab.calibration.%"))
     for spec in specs.order_by(Spec.idea_id, Spec.version):
-        key = strategy_key(spec.code_ref, spec.params)
+        key = own_family(spec.idea_id) or strategy_key(spec.code_ref, spec.params)
         if key is not None:
             out[spec.idea_id] = key
         else:
@@ -68,10 +82,14 @@ def assign_parents(session: Session) -> dict[str, str]:
         if idea is not None:
             by_key.setdefault(key, []).append(idea)
     changed: dict[str, str] = {}
-    for members in by_key.values():
+    for key, members in by_key.items():
+        root = session.get(Idea, key) if key in OWN_FAMILIES.values() else None
+        if root is not None and root not in members:
+            members = [*members, root]  # the family's own idea is its parent, spec or no spec
         if len(members) < 2:
             continue
-        parent = min(members, key=lambda i: (_STATUS_RANK.get(i.status, 2), i.created_at, i.id))
+        parent = root if root is not None else min(
+            members, key=lambda i: (_STATUS_RANK.get(i.status, 2), i.created_at, i.id))
         if parent.parent_id is not None:
             parent.parent_id = None
         ids = {i.id for i in members}
@@ -86,4 +104,4 @@ def assign_parents(session: Session) -> dict[str, str]:
     return changed
 
 
-__all__ = ["assign_parents", "family_keys", "strategy_key"]
+__all__ = ["OWN_FAMILIES", "assign_parents", "family_keys", "own_family", "strategy_key"]

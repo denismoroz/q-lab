@@ -22,12 +22,13 @@ REPO = Path(__file__).resolve().parents[2]
 # ---- night/research.yaml ----------------------------------------------------------------
 
 
-def test_the_research_plan_has_the_five_strategies_and_runs_nightly() -> None:
+def test_the_research_plan_has_the_six_strategies_and_runs_nightly() -> None:
     from qlab.pipeline.spec import load_spec
 
     plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
     assert plan["cadence"] == "nightly"
-    assert set(plan["strategies"]) == {"bv2", "trend", "frab", "xsmom", "frab-binance-spot"}
+    assert set(plan["strategies"]) == {"bv2", "trend", "frab", "xsmom", "frab-binance-spot",
+                                       "bv3"}
     for name, entry in plan["strategies"].items():
         assert entry["ideas"] and all(isinstance(i, str) for i in entry["ideas"]), name
         assert entry["specs"] and entry["docs"], name
@@ -154,7 +155,7 @@ def _rotation_env(tmp_path, monkeypatch, *, strategies=("s1", "s2", "s3"), high:
         f"  {n}: {{ideas: [i-{n}], specs: []}}\n" for n in strategies), encoding="utf-8")
     fixed = None if high is None else types.SimpleNamespace(
         date=date(2026, 10, 25),
-        researcher={high: types.SimpleNamespace(priority="high", note=None)})
+        researcher={high: types.SimpleNamespace(priority="high", note=None, repeats=())})
     monkeypatch.setattr(directions_module, "active_directions", lambda *a, **kw: fixed)
     return calls, config, db_module
 
@@ -182,9 +183,12 @@ def test_a_rotation_takes_one_strategy_a_night_and_keeps_the_turns(tmp_path, mon
 def test_a_high_importance_strategy_goes_first_but_not_two_nights_running(
         tmp_path, monkeypatch) -> None:
     calls, config, db_module = _rotation_env(tmp_path, monkeypatch, high="s3")
-    for n in range(5):
+    for n in range(6):
         _night(config, date(2026, 10, 26 + n))
-    assert calls == ["s3", "s1", "s3", "s2", "s3"]  # every second night, the others in between
+    # At the start nobody has had a turn, so the importance decides (s3); then each other
+    # strategy has its first turn before s3 comes back (since 2026-11-03 a strategy with no turn
+    # at all goes before the importance order); from then on s3 takes every second night.
+    assert calls == ["s3", "s1", "s2", "s3", "s1", "s3"]
     db_module._engine = None
     db_module._SessionLocal = None
 
@@ -216,7 +220,7 @@ def test_the_research_plan_rotates_one_strategy_a_night_and_the_slots_follow_it(
     plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
     assert plan["rotation"] == {"per_night": 1} and 0 < plan["night_share"] <= 1
     assert night.research_slots(plan) == 1
-    assert night.research_slots({k: v for k, v in plan.items() if k != "rotation"}) == 5
+    assert night.research_slots({k: v for k, v in plan.items() if k != "rotation"}) == 6
 
 
 # ---- DROP proposals ---------------------------------------------------------------------
@@ -453,9 +457,11 @@ def test_the_owners_ideas_reach_the_researcher_verbatim() -> None:
     assert any("хеджирование почаще" in i for i in plan["strategies"]["bv2"]["owner_ideas"])
 
 
-def test_five_researcher_strategies_leave_one_of_the_six_places_free() -> None:
+def test_six_researcher_strategies_fill_the_six_places() -> None:
     """Owner, 2026-10-25: FRAB with the spot on Binance is a new strategy with its
-    own place; the five of night/research.yaml fit under night/limits.yaml's six."""
+    own place; owner, 2026-11-03: Bv3 is the sixth. The six of night/research.yaml fit
+    exactly under night/limits.yaml's six, so the generator has no free place until a strategy
+    leaves (before Bv3 the five left one free)."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
@@ -469,8 +475,8 @@ def test_five_researcher_strategies_leave_one_of_the_six_places_free() -> None:
         free, cap, active = night.strategy_slots(
             session, night.load_research_plan(REPO / "night/research.yaml"),
             REPO / "night/limits.yaml")
-    assert cap == 6 and len(active) == 5 and free == 1
-    assert "frab-binance-spot" in active
+    assert cap == 6 and len(active) == 6 and free == 0
+    assert "frab-binance-spot" in active and "bv3" in active
 
 
 def test_a_decided_focus_is_passed_as_a_rule_not_a_question() -> None:
@@ -503,5 +509,112 @@ def test_experiments_cut_by_the_stop_time_run_first_on_the_next_night(
     assert tuesday["research"][0]["noted"] == 1
     night.research_stage(date(2026, 10, 27), tuesday, noise_trials=1, config=config)
     assert ran == ["m1.md"]  # carried once
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+# ---- Bv3: a new family of the researcher (owner, 2026-10-27 and 2026-11-03) --------------------
+
+
+def test_bv3_carries_the_owners_words_verbatim_and_its_prior_art() -> None:
+    from qlab import ideas
+
+    plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
+    bv3 = plan["strategies"]["bv3"]
+    inbox = yaml.safe_load((REPO / "ideas/inbox.yaml").read_text(encoding="utf-8"))["ideas"]
+    owner = ideas.find(inbox, "idea-0001")
+    assert [ideas.normal(t) for t in bv3["owner_ideas"]] == [ideas.normal(owner["text"])]
+    assert bv3["owner_ideas"][0].startswith("bv2 можно оставить как защита. bv3 - доход.")
+    assert bv3["ideas"] == ["bv3"] and (REPO / "cards/bv3.yaml").is_file()
+    assert "../funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md" in bv3["docs"]
+    assert "docs/ONE_CHECK.md" in bv3["docs"] and "docs/BV2_SIGNAL_SEARCH_REVIEW.md" in bv3["docs"]
+    brief = " ".join(bv3["brief"].split())
+    assert "sections 6 to 9" in brief and "60 to 75 percent" in brief and "ONE check" in brief
+
+
+def test_bv3_has_all_its_variant_places_and_without_it_one_strategy_place_is_free() -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from qlab.registry.models import Base
+
+    plan = yaml.safe_load((REPO / "night/research.yaml").read_text(encoding="utf-8"))
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as session:
+        limits = REPO / "night/limits.yaml"
+        # Bv3's variants are filed under its own root, so Bv2's full places do not touch them
+        assert night.variant_slots(session, plan["strategies"]["bv3"], limits)[:2] == (6, 6)
+        five = {"strategies": {k: v for k, v in plan["strategies"].items() if k != "bv3"}}
+        assert night.strategy_slots(session, five, limits)[0] == 1
+    engine.dispose()
+
+
+def test_a_strategy_with_no_turn_yet_goes_first_even_before_a_high_importance_one(
+        tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _rotation_env(tmp_path, monkeypatch, high="s3")
+    for n in range(3):
+        _night(config, date(2026, 10, 26 + n))
+    assert calls == ["s3", "s1", "s2"]
+    # a new strategy joins the plan (Bv3, owner 2026-11-03): its first turn comes at once, before
+    # s3 whose importance is high and who has waited longer than s2 (the last night's strategy)
+    config.write_text(config.read_text() + "  bv3: {ideas: [i-bv3], specs: []}\n")
+    _night(config, date(2026, 10, 29))
+    assert calls == ["s3", "s1", "s2", "bv3"]
+    _night(config, date(2026, 10, 30))
+    assert calls[-1] == "s3"  # then the rotation goes on as before
+    db_module._engine = None
+    db_module._SessionLocal = None
+
+
+def test_rotation_order_puts_the_unfinished_and_last_nights_strategy_before_the_new_one() -> None:
+    day = date(2026, 11, 3)
+    last = {"a": date(2026, 11, 2), "b": date(2026, 10, 30)}
+    # new strategy `c`: before `b` (older turn), after `a`?  no: `a` was researched last night, so
+    # it waits for everybody; `c` has never had a turn, so it comes before `b`
+    assert night.rotation_order(day, ["a", "b", "c"], None, [], last) == ["c", "b", "a"]
+    assert night.rotation_order(day, ["a", "b", "c"], None, ["b"], last) == ["b", "c", "a"]
+
+
+def test_the_root_card_of_a_new_strategy_is_registered_before_its_first_turn(tmp_path) -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from qlab.registry.models import Base, Idea, IdeaStatus
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    card = yaml.safe_load((REPO / "cards/bv3.yaml").read_text(encoding="utf-8"))
+    card["prior"]["graveyard_matches"] = []  # the registry of this test has no Bv2
+    (cards / "bv3.yaml").write_text(yaml.safe_dump(card, allow_unicode=True), encoding="utf-8")
+    (cards / "other.yaml").write_text(yaml.safe_dump({**card, "idea_id": "other"},
+                                                      allow_unicode=True), encoding="utf-8")
+    plan = {"bv3": {"ideas": ["bv3"]}, "s1": {"ideas": ["s1"]}}  # s1 has no card: left alone
+    with sessionmaker(bind=engine)() as session:
+        assert night.register_strategy_roots(session, plan, cards) == ["bv3"]
+        assert session.get(Idea, "bv3").status == IdeaStatus.CANDIDATE
+        assert session.get(Idea, "other") is None  # only the strategies' roots, not every card
+        assert night.register_strategy_roots(session, plan, cards) == []  # once
+    engine.dispose()
+
+
+def test_a_strategys_brief_reaches_the_researchers_focus(tmp_path, monkeypatch) -> None:
+    calls, config, db_module = _stage_env(tmp_path, monkeypatch)
+    config.write_text("cadence: nightly\nmax_experiments: 2\nstrategies:\n"
+                      "  s1:\n    ideas: [i1]\n    specs: []\n"
+                      "    brief: >-\n      Read the prior art\n      first.\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def fake_research(name, **kw):
+        seen.append(kw["focus"])
+        return researcher.ResearchOutcome(memo=None, specs=[], problems=[])
+
+    monkeypatch.setattr(researcher, "research", fake_research)
+    night.research_stage(date(2026, 11, 3), {"done": {}}, noise_trials=1, config=config)
+    assert ("The standing brief for this strategy (night/research.yaml):\n"
+            "Read the prior art first.") in seen[0]
+    assert night.strategy_brief(None) is None and night.strategy_brief("  ") is None
     db_module._engine = None
     db_module._SessionLocal = None

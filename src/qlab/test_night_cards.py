@@ -18,7 +18,7 @@ import qlab.agents.researcher as researcher
 import qlab.budget as budget_module
 import qlab.night as night
 import qlab.registry.db as registry_db
-from qlab import ideas
+from qlab import carder_order, ideas
 from qlab.budget import NightExhausted
 from qlab.night import cards_stage as real_cards_stage  # the conftest stubs night.cards_stage
 from qlab.test_night_director import _director_env
@@ -335,3 +335,85 @@ def test_a_cut_attempt_keeps_the_remarks_and_the_draft_the_next_attempt_edits(
         assert draft.read_text(encoding="utf-8") == "verdict: card\n"
     finally:
         draft.unlink(missing_ok=True)
+
+
+# ---- the order and the throughput (owner, 2026-11-03) --------------------------------------
+
+
+def test_an_idea_that_fails_tonight_does_not_block_the_ones_behind_it(stage_env, monkeypatch):
+    """Until 2026-11-03 the stage asked for 'the oldest' again after an attempt, found the idea
+    it had just tried, and stopped: one idea a night with `per_night: 3`."""
+    from qlab.budget import Stage
+
+    stage_env.config.write_text(stage_env.config.read_text().replace(
+        "per_night: 1\n", "per_night: 3\nmax_waiting: 3\n").replace(
+        "max_attempts: 2", "max_attempts: 3"))
+    inbox = ideas.load()
+    ideas.add(inbox, "the third idea, long enough to be one", source="owner", day=DAY)
+    ideas.save(inbox)
+    tried: list[str] = []
+
+    def fake_run(idea, inbox, cfg, **kw):
+        tried.append(idea["id"])
+        idea["attempts"] = int(idea.get("attempts") or 0) + 1
+        if idea["id"] == "idea-0001":  # the card is refused: the idea stays new for a retry
+            return {"id": idea["id"], "source": idea["source"], "text": idea["text"],
+                    "status": "new", "problems": ["reviewer: rule-incomplete"], "tokens": 5}
+        ideas.set_status(idea, "carded", "карточка написана")
+        idea["card"] = f"cards/{idea['id']}.yaml"
+        return {"id": idea["id"], "source": idea["source"], "text": idea["text"],
+                "status": "carded", "card": idea["card"], "new_block": "b", "grid": 4,
+                "tried": [], "tokens": 5, "problems": []}
+
+    monkeypatch.setattr(carder, "run_idea", fake_run)
+    state = {"done": {}}
+    real_cards_stage(DAY, state, config=stage_env.config)
+    assert tried == ["idea-0001", "idea-0002", "idea-0003"]  # the failed one did not stop the night
+    assert [e["status"] for e in ideas.load()] == ["new", "carded", "carded"]
+    # the ideas still to be taken tonight share what is left: the first is capped at its part
+    assert stage_env.asked == [(Stage.SEARCH, 3), (Stage.SEARCH, 2), (Stage.SEARCH, 1)]
+
+
+def _need_first_env(stage_env, tmp_path, monkeypatch) -> None:
+    stage_env.config.write_text(stage_env.config.read_text().replace(
+        "per_night: 1\n", "per_night: 2\nmax_waiting: 3\nneed_first: true\n"))
+    memos = tmp_path / "root" / "docs" / "research"
+    memos.mkdir(parents=True)
+    (memos / "bv2-2026-11-01.md").write_text(
+        "## Гипотезы\n\n2. **Быстрое включение** (idea-0003) — новый код\n", encoding="utf-8")
+    monkeypatch.setattr(night, "load_research_plan", lambda *a, **kw: {"strategies": {"bv2": {}}})
+    monkeypatch.setattr(carder_order, "QLAB_ROOT", tmp_path / "root")
+    inbox = ideas.load()
+    ideas.add(inbox, "the third idea, long enough to be one", source="agent:researcher", day=DAY)
+    inbox[0]["source"] = "owner"
+    inbox[1]["source"] = "agent:researcher"
+    ideas.save(inbox)
+
+
+def test_with_need_first_the_idea_a_memo_names_goes_before_the_older_ones(
+        stage_env, tmp_path, monkeypatch) -> None:
+    _need_first_env(stage_env, tmp_path, monkeypatch)
+    state = {"done": {}}
+    real_cards_stage(DAY, state, config=stage_env.config)
+    # idea-0003 is named in the bv2 memo; idea-0001 is the owner's own; idea-0002 is just old
+    assert stage_env.ran == ["idea-0003", "idea-0001"]
+    entries = {e["id"]: e for e in state["cards"]["entries"]}
+    assert "пункт 2 списка гипотез" in entries["idea-0003"]["why"]
+    assert entries["idea-0001"]["why"] == "идея самого владельца"
+    assert [q["id"] for q in state["cards"]["queue"]] == ["idea-0002"]
+
+
+def test_the_report_says_why_each_idea_was_taken_and_what_is_next(
+        stage_env, tmp_path, monkeypatch) -> None:
+    _need_first_env(stage_env, tmp_path, monkeypatch)
+    monkeypatch.setattr(night, "REPORT_DIR", tmp_path / "reports")
+    monkeypatch.setattr(night, "_funnel_lines", lambda day: [])
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")
+    state = {"done": {}}
+    real_cards_stage(DAY, state, config=stage_env.config)
+    text = night.write_report(DAY, state).read_text(encoding="utf-8")
+    assert "    - взята: названа как нужная: в записке исследователя bv2 от 2026-11-01 (пункт 2" \
+        in text
+    assert "    - взята: идея самого владельца" in text
+    assert "Дальше в очереди карточника" in text
+    assert "    - idea-0002: по возрасту (с 2026-10-27); никто не назвал её нужной" in text
