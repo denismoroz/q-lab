@@ -554,7 +554,13 @@ def stored_flags(session: Session, trial_id: int) -> Output:
         lines.append(f"  {f['name']}: {f['state']}{value}{line}{why}")
         if f.get("detail"):
             lines.append("      " + json.dumps(f["detail"], ensure_ascii=False)[:600])
-    return Output(lines, {"fired": row.fired})
+    from qlab.anomalies.report import venue_counterfactual_sentence
+
+    sentence = venue_counterfactual_sentence(row.facts)
+    if sentence:
+        lines.append(f"  {sentence}")
+    return Output(lines, {"fired": row.fired,
+                          "venue_counterfactual": (row.facts or {}).get("venue_counterfactual")})
 
 
 __all__ = ["BATTERY", "LOG_ENV", "MAX_ROWS", "Output", "battery",

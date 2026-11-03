@@ -3,6 +3,7 @@ and the three that read the registry (the idea's other stage, the paper check, t
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime
 
 import pandas as pd
@@ -13,9 +14,11 @@ from sqlalchemy.pool import StaticPool
 
 from qlab import forward_series
 from qlab.anomalies import flags as fl
-from qlab.anomalies import scan, toy
-from qlab.anomalies.rerun import decompose
+from qlab.anomalies import report, scan, store, toy
+from qlab.anomalies.rerun import Rule, decompose
 from qlab.anomalies.test_flags import CFG
+from qlab.harness.costs import CostModel
+from qlab.harness.metrics import periods_per_year
 from qlab.registry import repo
 from qlab.registry.models import (
     AssetClass,
@@ -331,3 +334,178 @@ def test_a_binance_run_is_judged_for_binance_and_not_flagged_for_coins_hyperliqu
 
     assert flag.state == fl.UNDEFINED and not flag.fired
     assert "своей биржи (binance)" in flag.reason
+
+
+# --- the Hyperliquid-only counterfactual ----------------------------------------------------
+
+ON = dataclasses.replace(CFG, scan=dataclasses.replace(CFG.scan, venue_counterfactual=True))
+
+
+def _clean_pump_run(**kw):
+    """The toy book with nothing earning but PUMP: flat prices, no funding, no costs, DEAD kept
+    tradeable. PUMP at weight 0.1 times +200% on bar 20 is +0.2 over the 39 bars; without PUMP the
+    book earns exactly 0."""
+    run = toy.toy_run(**kw)
+    panel = run.panel
+    for name in ["A", "B", "C", "D", "DEAD"]:
+        panel.prices[name] = 100.0
+    panel.funding.loc[:, :] = 0.0
+    panel.tradeable["DEAD"] = True
+    run.costs = CostModel(taker_fee_bps=0.0, slippage_bps=0.0)
+    run.weights = toy.toy_weights(panel)
+    return run
+
+
+def _listed(run, *, without=("PUMP",), blind_bars: int = 0) -> pd.DataFrame:
+    listed = pd.DataFrame(True, index=run.panel.prices.index, columns=run.panel.prices.columns)
+    listed[list(without)] = False
+    listed.iloc[:blind_bars] = False
+    return listed
+
+
+def _hl_trial(session, monkeypatch, *, blind_bars: int = 0):
+    from qlab.anomalies import toolkit
+
+    _idea(session, "hl-idea")
+    t = _trial(session, "hl-idea")
+    run = _clean_pump_run(trial_id=t, idea_id="hl-idea", execution_venue="hyperliquid")
+    listed = _listed(run, blind_bars=blind_bars)
+    monkeypatch.setattr(toolkit, "listed_mask", lambda session, stored: listed)
+    return t, run, listed
+
+
+def test_the_counterfactual_is_stored_beside_the_original_for_a_run_judged_for_hyperliquid(
+        session, monkeypatch) -> None:
+    t, run, _ = _hl_trial(session, monkeypatch)
+
+    result = scan.scan_trial(session, t, ON, run=run)
+
+    fact = result.facts["venue_counterfactual"]
+    index = run.backtest().net_return.index
+    assert fact["state"] == "computed" and fact["basis"] == "judged_for"
+    assert fact["from"] == "2026-01-01" and fact["n_periods"] == 39
+    assert fact["original_total"] == pytest.approx(0.2)
+    assert fact["restricted_total"] == pytest.approx(0.0)
+    assert fact["original_ann"] == pytest.approx(1.2 ** (periods_per_year(index) / 39) - 1)
+    assert fact["restricted_ann"] == pytest.approx(0.0)
+
+
+def test_the_counterfactual_is_compared_from_the_first_day_hyperliquid_lists(
+        session, monkeypatch) -> None:
+    t, run, _ = _hl_trial(session, monkeypatch, blind_bars=10)
+
+    fact = scan.scan_trial(session, t, ON, run=run).facts["venue_counterfactual"]
+
+    assert fact["from"] == "2026-01-11" and fact["n_periods"] == 29  # bars 10 to 38
+    assert fact["original_total"] == pytest.approx(0.2)
+
+
+def test_a_binance_idea_with_a_hyperliquid_second_stage_gets_the_counterfactual(
+        session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    _idea(session, "gen")
+    _idea(session, "gen-hl", parent="gen")
+    t = _trial(session, "gen")
+    run = _clean_pump_run(trial_id=t, idea_id="gen")
+    listed = _listed(run)
+    monkeypatch.setattr(toolkit, "listed_mask", lambda session, stored: listed)
+
+    fact = scan.scan_trial(session, t, ON, run=run).facts["venue_counterfactual"]
+
+    assert fact["basis"] == "stage2" and fact["state"] == "computed"
+
+
+def test_runs_it_does_not_apply_to_have_no_counterfactual(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    monkeypatch.setattr(toolkit, "counterfactual", lambda *a, **k: pytest.fail("must not run"))
+    _idea(session, "lone")
+    t = _trial(session, "lone")
+    lone = toy.toy_run(trial_id=t, idea_id="lone")  # Binance, no second stage
+    assert "venue_counterfactual" not in scan.scan_trial(session, t, ON, run=lone).facts
+
+    hl = _clean_pump_run(trial_id=t, idea_id="lone", execution_venue="hyperliquid")
+    assert scan.venue_counterfactual(session, hl, "reject", ON) is None  # not a scanned route
+
+    own = toy.toy_run(trial_id=t, idea_id="lone", venue="hyperliquid",
+                      execution_venue="hyperliquid")  # already the venue's data
+    assert scan.venue_counterfactual(session, own, "paper", ON) is None
+
+
+def test_the_default_config_computes_nothing(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    t, run, _ = _hl_trial(session, monkeypatch)
+    monkeypatch.setattr(toolkit, "counterfactual", lambda *a, **k: pytest.fail("must not run"))
+
+    assert "venue_counterfactual" not in scan.scan_trial(session, t, CFG, run=run).facts
+
+
+def test_a_book_with_a_spot_leg_is_not_counted(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    run = _clean_pump_run(execution_venue="hyperliquid")
+    run.weights = run.weights.rename(columns={"A": "A-SPOT"})
+    monkeypatch.setattr(toolkit, "listed_mask", lambda *a: pytest.fail("must not be asked"))
+
+    fact = scan.venue_counterfactual(session, run, "paper", ON)
+
+    assert fact["state"] == "unavailable" and "спотовая" in fact["reason"]
+
+
+def test_no_listing_and_a_listing_that_covers_nothing_say_so(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    run = _clean_pump_run(execution_venue="hyperliquid")
+    monkeypatch.setattr(toolkit, "listed_mask", lambda session, stored: None)
+    none = scan.venue_counterfactual(session, run, "paper", ON)
+    empty = _listed(run, without=list(run.panel.prices.columns))
+    monkeypatch.setattr(toolkit, "listed_mask", lambda session, stored: empty)
+    nothing = scan.venue_counterfactual(session, run, "paper", ON)
+
+    assert none["state"] == "unavailable" and "нет снимка" in none["reason"]
+    assert nothing["state"] == "unavailable" and "не покрывает" in nothing["reason"]
+
+
+def test_a_failing_counterfactual_leaves_the_flags_alone(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    t, run, _ = _hl_trial(session, monkeypatch)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(toolkit, "counterfactual", boom)
+
+    result = scan.scan_trial(session, t, ON, run=run)
+
+    fact = result.facts["venue_counterfactual"]
+    assert fact["state"] == "unavailable" and "boom" in fact["reason"]
+    assert [f.name for f in result.flags] == list(CFG.flags)
+    assert "rerun_error" not in result.facts
+
+
+def test_the_counterfactual_changes_no_flag_and_survives_the_store(session, monkeypatch) -> None:
+    t, run, _ = _hl_trial(session, monkeypatch)
+
+    plain = scan.scan_trial(session, t, CFG, run=run)
+    result = scan.scan_trial(session, t, ON, run=run)
+    row = store.save_scan(session, result, ON.version)
+
+    assert result.fired == plain.fired
+    assert row.facts["venue_counterfactual"] == result.facts["venue_counterfactual"]
+    text = "\n".join(report.scan_lines(row))
+    assert "Только монеты Hyperliquid" in text and "ничего не решает" in text
+
+
+def test_the_stored_number_equals_the_investigators_command(session, monkeypatch) -> None:
+    from qlab.anomalies import toolkit
+
+    _, run, listed = _hl_trial(session, monkeypatch)
+
+    fact = scan.venue_counterfactual(session, run, "paper", ON)
+    direct = toolkit.counterfactual(None, 1, Rule(only_listed=listed), run=run,
+                                    reselect_book=True).data
+
+    assert fact["restricted_ann"] == direct["with_rule"]["ann_return_net"]

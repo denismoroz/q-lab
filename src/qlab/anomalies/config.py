@@ -61,6 +61,10 @@ class Scan:
     routes: tuple[str, ...]
     latest_only: bool
     max_scans_per_night: int
+    venue_counterfactual: bool = False
+    """Store, beside a scan of a run that belongs to Hyperliquid, its yearly return when the
+    strategy may trade only Hyperliquid's coins and chooses again (docs/ANOMALIES.md). Off: the
+    strategy is not run again, and the scan is what it always was."""
 
 
 @dataclass(frozen=True)
@@ -128,7 +132,8 @@ def parse_config(raw: Mapping[str, Any], *, source: str = "night/anomalies.yaml"
         enabled=bool(need(raw, "enabled", "the file")),
         scan=Scan(routes=tuple(str(r) for r in need(scan, "routes", "scan")),
                   latest_only=bool(need(scan, "latest_only", "scan")),
-                  max_scans_per_night=int(need(scan, "max_scans_per_night", "scan"))),
+                  max_scans_per_night=int(need(scan, "max_scans_per_night", "scan")),
+                  venue_counterfactual=bool(scan.get("venue_counterfactual", False))),
         flags=flags,
         investigator=Investigator(
             model=str(inv["model"]), max_turns=int(inv["max_turns"]),

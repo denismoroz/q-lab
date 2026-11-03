@@ -117,10 +117,28 @@ def flag_sentence(f: FlagResult) -> str:
     return head
 
 
+def venue_counterfactual_sentence(facts: Mapping[str, Any] | None) -> str | None:
+    """The stored "only Hyperliquid's coins" number as a plain sentence; None when the scan has
+    none."""
+    fact = (facts or {}).get("venue_counterfactual")
+    if not fact:
+        return None
+    if fact.get("state") != "computed":
+        return f"Только монеты Hyperliquid: не посчитано — {fact.get('reason')}"
+    return (f"Только монеты Hyperliquid, стратегия выбирает заново: с {fact.get('from')} "
+            f"{_pct(fact.get('restricted_ann'))} в год против {_pct(fact.get('original_ann'))} в "
+            f"исходном прогоне на тех же днях ({fact.get('n_periods')} тактов), на деньгах "
+            f"стратегии; доля баланса книги — {_pct(fact.get('restricted_stand_ann'))} против "
+            f"{_pct(fact.get('original_stand_ann'))}. Это показание, оно ничего не решает")
+
+
 def scan_lines(scan: Any) -> list[str]:
     lines = [f"прогон {scan.trial_id} ({scan.idea_id}), маршрут {scan.route}; границы версии "
              f"{scan.config_version}; сработало: {', '.join(scan.fired) or 'ничего'}"]
     lines += [f"  - {flag_sentence(FlagResult.from_json(f))}" for f in scan.flags]
+    extra = venue_counterfactual_sentence(getattr(scan, "facts", None))
+    if extra:
+        lines.append(f"  - {extra}")
     return lines
 
 
@@ -273,4 +291,4 @@ def report_lines(block: Mapping[str, Any] | None, session: Session | None = None
 
 __all__ = ["INTRO", "SECTION_TITLE", "entry_lines", "flag_sentence", "idea_block",
            "investigation_lines", "learning_lines", "render_summary", "render_table",
-           "report_lines", "scan_lines"]
+           "report_lines", "scan_lines", "venue_counterfactual_sentence"]
