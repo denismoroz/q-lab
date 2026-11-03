@@ -201,7 +201,7 @@ def test_how_many_would_pass_and_fail_at_the_line(registry):
 def test_the_morning_report_section(registry):
     lines = earning_test.report_lines(registry, RULES)
     text = "\n".join(lines)
-    assert "ничего не решает" in text and "ещё 1 ждут пересчёта" in text
+    assert "ничего не решает" in text and "у ещё 1 замера нет" in text
     assert "отличимы от нуля 2, не отличимы 2" in text
     assert "пропускает планка шума: отличимы от нуля 1, не отличимы 1" in text
     assert "qlab earning-test" in text
