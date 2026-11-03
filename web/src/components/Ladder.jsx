@@ -177,6 +177,93 @@ function Venues({ ladder }) {
   )
 }
 
+const fmtPct = (v, digits = 1, sign = false) =>
+  v === null || v === undefined
+    ? '—'
+    : `${sign && v > 0 ? '+' : ''}${(v * 100).toFixed(digits)}`.replace('-', '−') + '%'
+const usd = (v) => `$${Math.round(v).toLocaleString('ru-RU').replace(/\u00a0/g, ' ')}`
+const MODE_RU = {
+  skip: 'что площадка не берёт — пропускаем',
+  fewer: 'меньше позиций, только те, что влезают',
+  book: 'как делает сама книга',
+}
+
+// How the strategy works on other money (docs/MONEY_LADDER.md; owner, 2026-11-03: «а на меньших
+// деньгах - не работает? можно добавить как работает на 1к 3к?»). A reading: it decides nothing.
+function MoneyLadderTable({ reading }) {
+  if (!reading) return null
+  const rows = reading.rows.filter((r) => r.available)
+  const ref = reading.reference
+  return (
+    <details className="mt-2" data-testid={`money-ladder-${reading.venue}`}>
+      <summary className="cursor-pointer text-xs text-sky-700">
+        как работает на разных деньгах ({reading.venue === 'binance' ? 'Binance' : 'Hyperliquid'})
+      </summary>
+      <div className="mt-1 overflow-x-auto">
+        <table className="min-w-full text-xs text-slate-700">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-slate-500">
+              <th className="py-1 pr-3">деньги</th>
+              <th className="pr-3">как исполняем</th>
+              <th className="pr-3">доход в год</th>
+              <th className="pr-3">худшее падение</th>
+              <th className="pr-3">позиций в среднем</th>
+              <th className="pr-3">ордеров не отправлено</th>
+              <th className="pr-3">позиций нет</th>
+              <th className="pr-3">совпадение с полной книгой</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-slate-100 text-slate-500">
+              <td className="py-1 pr-3">без ограничения</td>
+              <td className="pr-3">
+                {reading.basis === 'book' ? `та же книга на ${usd(100000)}` : 'как на стенде'}
+              </td>
+              <td className="pr-3">{fmtPct(ref.ann_return, 1, true)}</td>
+              <td className="pr-3">{fmtPct(ref.max_dd)}</td>
+              <td className="pr-3">{ref.avg_positions?.toFixed(1) ?? '—'}</td>
+              <td className="pr-3">—</td>
+              <td className="pr-3">—</td>
+              <td className="pr-3">—</td>
+            </tr>
+            {rows.map((r) => (
+              <tr key={`${r.usd}-${r.mode}`} className="border-b border-slate-100"
+                  data-testid={`money-ladder-row-${r.usd}-${r.mode}`}>
+                <td className="py-1 pr-3 tabular-nums">
+                  {usd(r.usd)}
+                  {r.own && <span className="text-slate-500"> (деньги стратегии)</span>}
+                </td>
+                <td className="pr-3">{MODE_RU[r.mode]}</td>
+                <td className="pr-3">{fmtPct(r.ann_return, 1, true)}</td>
+                <td className="pr-3">{fmtPct(r.max_dd)}</td>
+                <td className="pr-3">{r.avg_positions?.toFixed(1) ?? '—'}</td>
+                <td className="pr-3">
+                  {fmtPct(r.not_sent_share)}
+                  {r.not_sent_volume_share !== null && r.not_sent_volume_share !== undefined && (
+                    <span className="text-slate-500"> ({fmtPct(r.not_sent_volume_share)} объёма)</span>
+                  )}
+                </td>
+                <td className="pr-3">{fmtPct(r.missing_position_share)}</td>
+                <td className="pr-3">
+                  {r.correlation === null || r.correlation === undefined
+                    ? '—'
+                    : r.correlation.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {reading.note && <p className="mt-1 text-xs text-slate-500">{reading.note}</p>}
+      <p className="mt-1 text-xs text-slate-500">
+        Это показание, а не вердикт: оно ничего не решает. «Меньше позиций» — другая стратегия, не
+        та, что измерена; если она выглядит хорошо, её надо описать отдельным спеком и судить
+        правилами.
+      </p>
+    </details>
+  )
+}
+
 function MoneyLines({ money }) {
   if (!money?.length) return null
   return (
@@ -187,6 +274,17 @@ function MoneyLines({ money }) {
           {m.outcome_ru}
           {m.reason_ru && <span className="italic text-slate-500"> ({m.reason_ru})</span>}
           {m.detail ? ` — ${m.detail}` : ''}
+          {m.money_line_ru && (
+            <span className="block text-xs text-slate-600" data-testid={`money-line-${m.venue}`}>
+              {m.money_line_ru}
+            </span>
+          )}
+          {m.money_ladder?.why_strict_ru && (
+            <span className="block text-xs text-slate-600" data-testid={`money-why-${m.venue}`}>
+              {m.money_ladder.why_strict_ru}
+            </span>
+          )}
+          <MoneyLadderTable reading={m.money_ladder} />
         </li>
       ))}
     </ul>

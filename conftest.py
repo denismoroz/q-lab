@@ -188,3 +188,14 @@ def _no_real_failures_ledger(monkeypatch, tmp_path_factory) -> None:
 
     monkeypatch.setattr(stage2, "FAILURES",
                         tmp_path_factory.mktemp("stage2-failures") / "failures.json")
+
+
+@pytest.fixture(autouse=True)
+def _no_money_ladder_on_the_owners_registry(monkeypatch) -> None:
+    """The night's step «как работает на разных деньгах» (`qlab.money_ladder`) re-runs the stored
+    trials of the owner's registry and writes `ml_*` keys onto them; a whole-night test must not
+    reach it (it did, 2026-11-03, before this fixture). The tests of the stage call
+    `qlab.money_ladder.money_ladder_stage` itself with their own registry."""
+    import qlab.night as night
+
+    monkeypatch.setattr(night, "money_ladder_stage", lambda *a, **k: None)

@@ -308,6 +308,23 @@ steps:
     depends_on:
       - {step: restamp, kind: fresh, why: "Выбирает идеи по их последнему исходу, а его обновляют шаги пересчёта."}
 
+  # 2026-11-03, owner: «а на меньших деньгах - не работает? можно добавить как работает на 1к 3к?»
+  # (docs/MONEY_LADDER.md). A reading of the latest run of every open idea on each venue: the venue's
+  # minimum orders applied to the book on $1 000, $3 000, $10 000 and the strategy's own money. It
+  # re-runs a stored trial's book (up to a minute for a re-tuned one), so it has the calc lane's
+  # time limit and a nightly cap; the rest waits for the next night.
+  - id: money_ladder
+    title: Как работает на разных деньгах
+    description: Для открытых идей, чей последний прогон на площадке ещё не читали, считает доход и падение на 1 000, 3 000, 10 000 и на деньгах стратегии (только чтение, ничего не решает).
+    kind: code
+    lane: calc
+    tokens: false
+    items: прогон
+    state_keys: [money_ladder]
+    depends_on:
+      - {step: second_venue, kind: fresh, why: "Читает последние прогоны идей; закрытые идеи получают вторую площадку на предыдущем шаге."}
+      - {step: restamp, kind: fresh, why: "Идея, пересчитанная этой ночью, имеет новый прогон, его и читаем."}
+
   - id: ladder
     title: Лестница оценки
     description: Собирает таблицу семи ступеней каждой открытой идеи для отчёта; чтение, без токенов.
@@ -326,6 +343,7 @@ steps:
       - {step: implement, kind: fresh, why: "То же."}
       - {step: generate, kind: fresh, why: "То же."}
       - {step: second_venue, kind: fresh, why: "То же."}
+      - {step: money_ladder, kind: fresh, why: "Показывает рядом с деньгами стратегии то, как она работает на других суммах."}
 
   - id: report
     title: Утренний отчёт

@@ -71,6 +71,11 @@ class VenueConfig(BaseModel):
     #: the perpetual's.
     min_leg_notional_spot_usd: float | None = None
 
+    #: What the venue lets through below its minimum order when the order is reduce-only
+    #: (`qlab.money_ladder`, docs/MONEY_LADDER.md): "full_close" -- only exactly closing a position;
+    #: "any_reduction" -- every reduce-only order. None reads as the stricter "full_close".
+    reduce_only_exempt: str | None = None
+
     #: Is market and funding data available for this venue without API
     #: keys, both historically and going forward (not merely a historical
     #: dump)? Feeds `data_forward_available`
@@ -92,6 +97,13 @@ class VenueConfig(BaseModel):
     #: `qlab.venues.derive.atomic_execution` for exactly how this and
     #: `supports_atomic_multileg` combine.
     uncovered_leg_recovery: str | None = None
+
+    @field_validator("reduce_only_exempt")
+    @classmethod
+    def _known_exemption(cls, value: str | None) -> str | None:
+        if value not in (None, "full_close", "any_reduction"):
+            raise ValueError("must be 'full_close' or 'any_reduction'")
+        return value
 
     @field_validator("id", "title")
     @classmethod

@@ -249,6 +249,9 @@ class VenueMoney:
     outcome: Outcome
     detail: str
     reason: Reason | None = None
+    money_ladder: Any = None
+    """`qlab.money_ladder.MoneyLadder` of this venue's run when it was measured (a reading: how
+    the strategy works on $1 000, $3 000, $10 000 and its own money; docs/MONEY_LADDER.md)."""
 
     @property
     def outcome_ru(self) -> str:
@@ -258,10 +261,26 @@ class VenueMoney:
     def reason_ru(self) -> str | None:
         return None if self.reason is None else REASON_RU[self.reason]
 
+    @property
+    def money_line_ru(self) -> str | None:
+        """The reading as one sentence at the strategy's own money (None: not measured)."""
+        from qlab import money_ladder
+
+        return None if self.money_ladder is None else money_ladder.money_line_ru(self.money_ladder)
+
     def to_dict(self) -> dict[str, Any]:
+        from qlab import money_ladder
+
+        found = self.money_ladder
         return {"venue": self.venue, "outcome": self.outcome.value, "outcome_ru": self.outcome_ru,
                 "reason": None if self.reason is None else self.reason.value,
-                "reason_ru": self.reason_ru, "detail": self.detail}
+                "reason_ru": self.reason_ru, "detail": self.detail,
+                "money_line_ru": self.money_line_ru,
+                "money_ladder": None if found is None else {
+                    **found.to_dict(), "why_strict_ru": money_ladder.why_strict_ru(found),
+                    "sentences_ru": [s for s in (money_ladder.sentence_ru(found, usd)
+                                                 for usd, _ in money_ladder.ladder_sums(
+                                                     found.own_usd)) if s]}}
 
 
 @dataclass(frozen=True)
@@ -953,7 +972,17 @@ def strategy_money(idea: Idea | str, ledgers: Ledgers) -> float | None:
     return found
 
 
-def _venue_money(idea: Idea, step: Step, money: float | None) -> VenueMoney:
+def _stored_money_ladder(step: Step, money: float | None, ledgers: Ledgers):
+    """The stored reading of the venue's run (`qlab.money_ladder`), or None."""
+    if ledgers.root is None or step.run is None:
+        return None
+    from qlab import money_ladder
+
+    return money_ladder.load_stored(step.run.trial_id, money, ledgers.root)
+
+
+def _venue_money(idea: Idea, step: Step, money: float | None, ledgers: Ledgers | None = None
+                 ) -> VenueMoney:
     """The money check of one venue (step 2 or 3 is the venue's run): the capital that run needed
     against the strategy's own money. A venue with no run has nothing to check."""
     venue = step.venue or ""
@@ -970,7 +999,8 @@ def _venue_money(idea: Idea, step: Step, money: float | None) -> VenueMoney:
         note = "" if need is None else f"прогону нужно ${need:,.0f}; сравнить не с чем"
         return VenueMoney(venue, Outcome.NOT_RUN, note, Reason.NO_STRATEGY_MONEY)
     outcome, detail = capital_fit(need, money)
-    return VenueMoney(venue, outcome, detail)
+    return VenueMoney(venue, outcome, detail,
+                      money_ladder=_stored_money_ladder(step, money, ledgers or Ledgers()))
 
 
 def _step4(idea: Idea, steps: list[Step], ledgers: Ledgers) -> Step:
@@ -978,12 +1008,13 @@ def _step4(idea: Idea, steps: list[Step], ledgers: Ledgers) -> Step:
     step's own outcome is the venue where the lab can execute (Hyperliquid) when it has a line,
     else Binance's; the lines are what the page and the report show."""
     money = strategy_money(idea, ledgers)
-    lines = tuple(_venue_money(idea, s, money) for s in (steps[1], steps[2]))
+    lines = tuple(_venue_money(idea, s, money, ledgers) for s in (steps[1], steps[2]))
     binance, hl = lines
     lead = hl if hl.outcome != Outcome.NOT_RUN else binance
     detail = " · ".join(f"{VENUE_TITLE[m.venue]}: {m.outcome_ru}"
                         + (f" ({m.reason_ru})" if m.reason_ru else "")
-                        + (f", {m.detail}" if m.detail else "") for m in lines)
+                        + (f", {m.detail}" if m.detail else "")
+                        + (f" ({m.money_line_ru})" if m.money_line_ru else "") for m in lines)
     if lead.outcome == Outcome.NOT_RUN:
         reasons = [m.reason for m in lines]
         reason = (Reason.NO_STRATEGY_MONEY if Reason.NO_STRATEGY_MONEY in reasons
@@ -1301,6 +1332,9 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
     lines.append("")
     lines.append("Не проводилось, по причинам (ступеней): " + "; ".join(
         f"{REASON_RU[r]} — {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])) + ".")
+    from qlab import money_ladder
+
+    lines += money_ladder.report_lines(ladders)
     return lines
 
 
