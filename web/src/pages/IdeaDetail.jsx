@@ -11,6 +11,7 @@ import ForwardCharts from '../components/ForwardCharts.jsx'
 import OverlayPanels from '../components/OverlayPanels.jsx'
 import Anomalies from '../components/Anomalies.jsx'
 import Ladder from '../components/Ladder.jsx'
+import PlainTop from '../components/PlainTop.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -90,6 +91,7 @@ export default function IdeaDetail() {
       <QueryState query={ideaQuery}>
         {ideaQuery.data && (
           <>
+            <PlainTop plain={ideaQuery.data.plain} />
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />

@@ -220,13 +220,29 @@ def create_app() -> FastAPI:
         detail["ladder"] = _ladder(session, idea_id)
         # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
         # карточку описание метода как хеджирование включается»).
-        card = next((c for c in load_cards() if c["idea_id"] == idea_id), None)
+        cards = load_cards()
+        card = next((c for c in cards if c["idea_id"] == idea_id), None)
         detail["how_it_works"] = None if card is None else {
             "plain_summary": card["plain_summary"],
             "signal": card["parts"]["signal"]["fields"],
             "sizing": card["parts"]["sizing"]["fields"],
         }
+        detail["plain"] = _plain_page(session, idea, {c["idea_id"]: c for c in cards})
         return detail
+
+    def _plain_page(session: Session, idea: Idea, cards: dict[str, Any]) -> dict[str, Any] | None:
+        """The plain-Russian top of the page: what the strategy does, how this variant differs,
+        how its numbers were chosen, where it was checked (qlab.plain, docs/PLAIN_PAGE.md). A
+        reading of files and stored rows; never fails the page."""
+        import logging
+
+        from qlab.plain import plain_page
+
+        try:
+            return plain_page(session, idea, cards=cards)
+        except Exception:  # noqa: BLE001 - a view must not fail over a text it cannot build
+            logging.getLogger(__name__).exception("plain page of %s not built", idea.id)
+            return None
 
     def _two_stage(session: Session, idea: Idea) -> dict[str, Any] | None:
         """Both stages of a generated idea's evaluation side by side

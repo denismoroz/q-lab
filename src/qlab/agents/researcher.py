@@ -30,7 +30,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from qlab import fixation
+import yaml
+
+from qlab import fixation, plain
 from qlab.agents.implementer import _changed_paths, _revert
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.capital_text import basis_ru, headline, min_capital_ru, numbers_ru
@@ -244,6 +246,17 @@ Write two kinds of files and nothing else:
    the cut of the evidence, but its held-out part is short: say in the memo that the result is
    preliminary. A preliminary result does not block anything; you keep working.
 
+   PLAIN WORDS (owner, 2026-11-03: «смотрю и не могу понять - а что она вообще делает и как»).
+   The idea's page opens with what the strategy does in plain Russian. For a variant of a
+   strategy whose code already has a text in strategies/plain/ (Bv2, Trend, FRAB, XSMOM, ...)
+   you write nothing: code computes how the variant differs from its base from the two specs.
+   When your experiment is a NEW mechanism or a NEW family -- code no text in strategies/plain/
+   covers -- add `plain_summary` to the spec: 3 to 6 short sentences in Russian, no jargon
+   (cards/SCHEMA.md, «Правила заполнения»: a term is explained at its first use, no English
+   trading words in Russian letters): what it holds, what it buys and sells and when, why it
+   should earn, what it risks, how much money it runs on. Optionally `plain_title`, at most 80
+   characters. Code checks that it exists and passes the same jargon check the cards pass.
+
 {focus}Reply with one line: the memo path and the experiment spec paths."""
 
 
@@ -343,6 +356,10 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
         try:
             spec = load_spec(QLAB_ROOT / spec_path)
             problems = [*source_problems(spec), *one_check.declaration_problems(spec)]
+            # the page opens with plain words: a new mechanism or family carries its own
+            spec_text = (QLAB_ROOT / spec_path).read_text(encoding="utf-8")
+            problems += [f"plain words: {p}" for p in plain.spec_problems(
+                yaml.safe_load(spec_text) or {}, spec_text)]
             outcome.problems += [f"{spec_path}: {p}" for p in problems]
         except Exception as exc:  # noqa: BLE001
             outcome.problems.append(f"{spec_path} does not load: {exc}")
