@@ -78,7 +78,7 @@ year would pass it only 3% of the time (it decides from 80%) ...» и то, ку
 **Сверка второго этапа с историей первого** (`docs/TWO_STAGE.md`, `qlab.pipeline.confirm`)
 остаётся как есть. Она заменяет **проваленное** сравнение с шумом на короткой истории Hyperliquid,
 когда у планки там нет силы: итог 2-го этапа тогда считается по сверке с историей Binance. Проход
-без силы она не трогает, и теперь он значит «рано судить», а не `paper`; то есть на Hyperliquid:
+без силы она не трогает; он теперь значит «рано судить», а не `paper`. На Hyperliquid:
 
 | сравнение с шумом | сила | прежний исход | исход сейчас |
 |---|---|---|---|
@@ -87,10 +87,17 @@ year would pass it only 3% of the time (it decides from 80%) ...» и то, ку
 | провал | < 80% | сверка с историей решает | сверка с историей решает (как было) |
 | провал | ≥ 80% | отказ | отказ |
 
-Заметьте несимметрию: провал без силы может быть подтверждён сверкой с историей Binance (и тогда
-`paper`), а проход без силы — нет. Это следствие того, что владелец велел сверку не менять; если
-хочется, чтобы проход без силы тоже шёл на сверку с историей, это одна строка в
-`review_stage2` — решение владельца.
+Два следствия, которые видно в пересчёте (раздел 6).
+
+1. **Несимметрия.** Провал без силы может быть подтверждён сверкой с историей Binance (и тогда
+   `paper`), а проход без силы — нет. Это следствие того, что владелец велел сверку не менять; если
+   хочется, чтобы проход без силы тоже шёл на сверку, это одна строка в `review_stage2` — решение
+   владельца.
+2. **Сверка берёт только решившую Binance.** Она спрашивается, лишь когда Binance решила
+   (`paper` или `needs-infrastructure`, `STAGE1_CONFIRMS`). Проход Binance без силы по Б больше не
+   решение, а «рано судить»; значит, у таких идей (близнецы XSMOM: сила планки на Binance 2–3%)
+   сверка с историей уже не спрашивается, и их Hyperliquid, который держался на этой сверке, тоже
+   «рано судить». Правило сверки не менялось: изменилось то, что считается решением Binance.
 
 ## 4. Г: «заработок отличим от нуля»
 
@@ -148,9 +155,95 @@ year would pass it only 3% of the time (it decides from 80%) ...» и то, ку
 - пересчёт всего открытого (`docs/RESTAMP.md`): правила изменили то, что решает (`noise_bar` в
   `decisive_part`), стенд поднят — устарел каждый прогон.
 
-## 6. Числа до и после
+## 6. Числа до и после (пересчёт 3 ноября, `qlab restamp run --all`)
 
-(Заполняется после пересчёта, см. ниже.)
+Пересчёт сделан после слияния и копии реестра (`data/qlab.db.bak-2026-11-03-noise-bar`), двумя
+запусками (у этапа предел 60 минут на запуск): всего 54 идеи, около 80 минут, каждый прогон —
+новое испытание, старые не тронуты. Не пересчитаны 7 идей: 6 вторых этапов, чей первый этап
+закрыт (`bv2-research-graded-hedge-hl`, пять `bv2-research-headroom-causal-ov-*-hl`; второй этап
+двигает статус первого, сам по себе не пересчитывается), и `frab-lot-leftover-base` (нет файла
+спека). Одна идея дала сбой, как и раньше: `frab-binance-spot-five-coins-causal` («FRAB-on-Binance
+runs on a mixed panel…»), её исход `error` не изменился. Тяжёлых идей, пропущенных по времени
+скачивания, не было.
+
+| что | число |
+|---|---|
+| открытых идей с местом среди шума (последний прогон) | 76 |
+| из них у черты, между 0.975 и 1.0 | **28** |
+| из них с силой планки не меньше 80% | 9 |
+| проходов, которые снял Б | **12** (8 бумага, 4 «нужна инфраструктура») |
+| ещё проходов Hyperliquid, потерянных не на планке шума: 3 держались на сверке с историей Binance, а решение Binance теперь «рано судить», сверка не спрашивается; 1 (`bv2-research-shared-pool-causal-ov-own-hl`) — место на пересчёте сместилось с 0.99 на 0.98 при силе 5% | 4 |
+| исход «прошла» → «рано судить» всего | **16** |
+| проходов, которые удержала мёртвая зона | **0** |
+| идей, сменивших статус | **20**: 18 проверена → ждёт, 2 проверена → отвергнута |
+
+Мёртвая зона сегодня ничего не удержала, и это не поломка: у всех девяти идей, у которых планка
+имеет силу (trend и его варианты), место 0.995–1.0, то есть далеко от черты; а идеи у черты, у
+которых был проход, почти все слабые — их проход теперь «рано судить», и держать нечего. Зона
+работает, когда у планки есть сила и место опускается к 0.98 (так устроены тесты в
+`src/qlab/pipeline/test_evaluate.py`).
+
+Статусы: проверена (`validated`) было 26, стало 6; ждёт (`bench`) было 46, стало 64. Две идеи,
+`bv2-research-shared-pool-causal-ov-own` и её второй этап, закрыты: на Binance у неё отказ по
+доходности (это не планка шума), а удерживал её открытой только проход Hyperliquid при силе планки
+12%, которого больше нет.
+
+Каждая идея, у которой сменился исход или статус (22; «место» — место среди шума, «сила» — сила
+планки):
+
+| идея | статус | исход | место | сила |
+|---|---|---|---|---|
+| `bv2-research-headroom-causal` | validated → bench | needs-infrastructure → needs-forward | 0.990 → 0.990 | 34% → 34% |
+| `bv2-research-headroom-causal-hl` | validated → bench | paper → needs-forward | 0.990 → 0.990 | 10% → 10% |
+| `bv2-research-headroom-causal-ov-gate-vol` | validated → bench | needs-forward → needs-forward | 0.875 → 0.875 | 12% → 12% |
+| `bv2-research-headroom-causal-ov-gate-vol-hl` | validated → bench | paper → needs-forward | 1.000 → 1.000 | 62% → 62% |
+| `bv2-research-headroom-retune-binance` | validated → bench | needs-infrastructure → needs-forward | 0.990 → 0.990 | 36% → 36% |
+| `bv2-research-headroom-retune-binance-hl` | validated → bench | paper → needs-forward | 0.985 → 0.985 | 11% → 11% |
+| `bv2-research-partial-hedge-causal` | validated → bench | needs-forward → needs-forward | 0.985 → 0.985 | 28% → 28% |
+| `bv2-research-partial-hedge-causal-hl` | validated → bench | paper → needs-forward | 1.000 → 1.000 | 10% → 10% |
+| `bv2-research-shared-pool-causal` | validated → bench | needs-forward → needs-forward | 0.980 → 0.980 | 28% → 28% |
+| `bv2-research-shared-pool-causal-hl` | rejected → rejected | paper → needs-forward | 1.000 → 1.000 | 18% → 18% |
+| `bv2-research-shared-pool-causal-ov-gate` | validated → bench | needs-forward → needs-forward | 0.970 → 0.970 | 33% → 33% |
+| `bv2-research-shared-pool-causal-ov-gate-hl` | validated → bench | paper → needs-forward | 0.990 → 0.990 | 18% → 18% |
+| `bv2-research-shared-pool-causal-ov-own` | validated → rejected | reject → reject | 0.735 → 0.735 | 16% → 16% |
+| `bv2-research-shared-pool-causal-ov-own-hl` | validated → rejected | paper → needs-forward | 0.990 → 0.980 | 12% → 6% |
+| `bv2-research-shared-pool-hl-causal` | validated → bench | needs-forward → needs-forward | 0.980 → 0.980 | 27% → 27% |
+| `bv2-research-shared-pool-hl-causal-hl` | validated → bench | paper → needs-forward | 1.000 → 1.000 | 20% → 20% |
+| `trend-research-flat-choice-hl` | validated → bench | paper → needs-forward | 0.995 → 0.995 | 76% → 76% |
+| `trend-research-flat-choice-hl-ov-gate` | bench → bench | paper → needs-forward | 1.000 → 1.000 | 70% → 70% |
+| `xsmom-research-liq1m-causal` | validated → bench | needs-infrastructure → needs-forward | 0.995 → 0.995 | 2% → 2% |
+| `xsmom-research-liq1m-causal-hl` | validated → bench | paper → needs-forward | 0.780 → 0.780 | 2% → 2% |
+| `xsmom-research-nobull-causal` | validated → bench | needs-infrastructure → needs-forward | 0.995 → 0.995 | 2% → 2% |
+| `xsmom-research-nobull-causal-hl` | validated → bench | paper → needs-forward | 0.750 → 0.750 | 3% → 3% |
+
+Строки без смены исхода, но со сменой статуса (например, `bv2-research-headroom-causal-ov-gate-vol`):
+статус идеи — лучшее из двух площадок, а её Hyperliquid потерял проход.
+
+### Показание «заработок отличим от нуля» на пересчитанных идеях
+
+`uv run qlab earning-test`: 69 идей с показанием (остальные 104 — закрытые и не пересчитанные,
+показания у них нет). При p ≤ 0.05 отличимы от нуля **3 из 69**, не отличимы 66. Рядом с планкой
+шума: из 21 идеи, которых планка пропускает по месту, отличимы 3; из 48, которых не пропускает, —
+ни одной.
+
+| идея | дней | p | 95% интервал дохода в год | место среди шума |
+|---|---|---|---|---|
+| `bv2-binance` (Binance) | 519 | 0.316 | от −19.3% до +35.2% | 0.985 |
+| `bv2-research-headroom-causal` | 513 | 0.325 | от −19.3% до +36.6% | 0.990 |
+| `bv2-research-headroom-causal-hl` (Hyperliquid) | 174 | 0.226 | от −21.1% до +65.7% | 0.990 |
+| `strategy-b-v2` | 180 | 0.237 | от −30.2% до +81.7% | 0.980 |
+| `trend-binance-cap-gated-causal` | 2406 | 0.089 | от −2.3% до +11.8% | 1.000 |
+| `trend-binance-cap-gated-causal-ov-gate` | 2315 | 0.019 | от 0.0% до +13.8% | 1.000 |
+| `trend-research-flat-choice` | 2404 | 0.092 | от −2.8% до +12.2% | 1.000 |
+| `xsmom-research-liq1m-causal` | 2493 | 0.0075 | от +9.5% до +78.6% | 0.995 |
+| `xsmom-research-nobull-causal` | 2496 | 0.011 | от +5.2% до +75.9% | 0.995 |
+
+Что из этого видно (ничего не решается, это чтение). **Показания расходятся в обе стороны.** У
+близнецов XSMOM планка шума не различает ничего (сила 2–3%), а заработок от нуля отличим (p меньше
+0.01, интервал целиком выше нуля): первое — о планке, второе — о ряде дней. У trend на Binance
+место 1.000 и сила 100%, а заработок от нуля не отличим (p около 0.09, интервал захватывает ноль):
+стратегия обогнала все случайные книги своей формы, но средний день за 2400 дней не уверенно выше
+нуля. У Bv2 и то и другое плохо: p 0.2–0.3, интервал от −20% до +35%.
 
 ## 7. Чего это не делает
 
