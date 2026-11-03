@@ -368,6 +368,12 @@ export default function Ladder({ ladder }) {
       title="Лестница проверки"
       subtitle="Одни и те же семь ступеней для каждой идеи; Binance и Hyperliquid — две площадки, у каждой свой вердикт, свои монеты, издержки и минимальная ножка. У ступени, которую не проводили, названа причина. «Не решён» — ступень проведена, но данных пока мало для ответа. Решает код по правилам; показания пятой ступени ничего не решают."
     >
+      {ladder.bench && (
+        <p className="mb-3 text-sm text-slate-700" data-testid="ladder-bench">
+          <span className="font-medium">Статус «скамейка» здесь значит: {ladder.bench.label_ru}.</span>{' '}
+          {ladder.bench.hint_ru}
+        </p>
+      )}
       <Venues ladder={ladder} />
       <ol className="space-y-3">
         {ladder.steps.map((step) => (

@@ -90,7 +90,8 @@ function FunnelBody({ stats }) {
   const chartData = LIFECYCLE.filter((status) => stats.ideas_by_status[status] != null).map(
     (status) => ({
       status,
-      name: label(IDEA_STATUS, status),
+      // the bench is a total of the labels listed under it (qlab.bench_label), not one thing
+      name: status === 'bench' ? 'скамейка, всего' : label(IDEA_STATUS, status),
       count: stats.ideas_by_status[status],
     }),
   )
@@ -103,6 +104,16 @@ function FunnelBody({ stats }) {
     const note = n != null && n < row.count ? ` · стратегий: ${n}` : ''
     return [row.status, `${row.name}${note}`, row.count]
   })
+  // The bench is three different things and an unnamed rest (owner, 2026-11-03): each on its own
+  // line under the bench's total, in the words the API gives (qlab.bench_label).
+  const benchRows = (stats.bench_by_label ?? []).map((b) => [
+    b.key,
+    `— ${b.label_ru}`,
+    b.count,
+  ])
+  const statusRows = statusEntries.flatMap((entry) =>
+    entry[0] === 'bench' ? [entry, ...benchRows] : [entry],
+  )
   const stageEntries = Object.entries(stats.verdicts_by_stage)
     .sort((a, b) => b[1] - a[1])
     .map(([stage, count]) => [stage, label(VERDICT_STAGE, stage), count])
@@ -174,7 +185,7 @@ function FunnelBody({ stats }) {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Panel title="Идеи по статусам — счётчики">
-          <CountList entries={statusEntries} />
+          <CountList entries={statusRows} />
         </Panel>
 
         <Panel title="Вердикты по стадиям">

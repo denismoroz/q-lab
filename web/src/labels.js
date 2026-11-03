@@ -9,12 +9,45 @@ export const IDEA_STATUS = {
   speccing: 'формализация',
   implemented: 'реализована',
   validated: 'прошла, ждёт решения',
+  // The registry status stays `bench`; the words the owner reads come from the API (`idea.bench`,
+  // qlab.bench_label), which splits it in three (2026-11-03). This is only the fallback.
   bench: 'скамейка',
   paper: 'бумажная торговля',
   live: 'в бою',
   rejected: 'отвергнута',
   decayed: 'выдохлась',
   retired: 'выведена',
+}
+
+// The four labels «скамейка» stands for, by the key the API sends (`status_key`), in the order of
+// the filter. The words come with the data; only the colours live here.
+export const BENCH_KEYS = [
+  'bench-too-early',
+  'bench-passed-no-execution',
+  'bench-awaits-second-venue',
+  'bench-undetermined',
+]
+
+export const BENCH_STYLE = {
+  'bench-too-early': 'bg-sky-50 text-sky-900 ring-sky-300',
+  'bench-passed-no-execution': 'bg-emerald-50 text-emerald-900 ring-emerald-300',
+  'bench-awaits-second-venue': 'bg-amber-50 text-amber-900 ring-amber-300',
+  'bench-undetermined': 'bg-slate-50 text-slate-600 ring-slate-400 italic',
+}
+
+// Filter order of every status the registry filters by: the lifecycle with the bench split in four.
+export const STATUS_KEYS = Object.keys(IDEA_STATUS).flatMap((s) => (s === 'bench' ? BENCH_KEYS : [s]))
+
+// Strategy families (qlab.registry.strategies.FAMILY_ORDER): the root of an idea's parent chain.
+export const FAMILY = {
+  bv2: 'Bv2',
+  bv3: 'Bv3',
+  trend: 'Тренд',
+  frab: 'FRAB',
+  'frab-spot': 'FRAB на споте',
+  xsmom: 'XSMOM',
+  generator: 'Механизмы генератора',
+  other: 'Прочее',
 }
 
 // Terminal states get a muted, distinct treatment: the graveyard is not a

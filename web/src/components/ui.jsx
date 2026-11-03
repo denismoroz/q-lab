@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { STATUS_STYLE, IDEA_STATUS, label } from '../labels.js'
+import { BENCH_STYLE, STATUS_STYLE, IDEA_STATUS, label } from '../labels.js'
 
 // Shared primitives. Deliberately plain: Tailwind defaults plus what
 // legibility needs, nothing more.
@@ -45,13 +45,17 @@ export function QueryState({ query, children }) {
   return children
 }
 
-export function StatusBadge({ status }) {
-  const style = STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-700 ring-slate-300'
+// `bench` is the API's split of «скамейка» (qlab.bench_label): its own words, colour and hint.
+export function StatusBadge({ status, bench = null }) {
+  const key = bench?.key
+  const style =
+    (key && BENCH_STYLE[key]) ?? STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-700 ring-slate-300'
   return (
     <span
+      title={bench?.hint_ru}
       className={`inline-block whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${style}`}
     >
-      {label(IDEA_STATUS, status)}
+      {bench ? bench.label_ru : label(IDEA_STATUS, status)}
     </span>
   )
 }
