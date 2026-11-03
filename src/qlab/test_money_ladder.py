@@ -302,3 +302,27 @@ def test_the_trial_gets_only_the_ml_keys_and_a_stale_reading_is_replaced() -> No
     assert trial.metrics["ml_3000_skip_ann_return"] == 0.0388 and "ml_old" not in trial.metrics
     assert ml._metrics_current(_Session(trial), ladder)
     assert not ml._metrics_current(_Session(_Trial({"ann_return_net": 0.04})), ladder)
+
+
+def test_the_morning_table_leaves_out_a_mode_a_book_does_not_have() -> None:
+    index = pd.date_range("2026-01-01", periods=4, freq="1D", tz="UTC")
+    panel = _panel({"A": [100, 110, 121, 133.1]})
+    weights = pd.DataFrame({"A": 0.5}, index=index)
+
+    def run_at(usd):
+        return ml.run_weights(panel, weights, CostModel(0, 0), None, {}), weights, None
+
+    book = ml.measure_book(trial_id=1, idea_id="book", venue="hyperliquid", interval="1d",
+                           window=("2026-01-01", "2026-01-04"), own_usd=257.0, run_at=run_at)
+
+    class Money:
+        money_ladder = book
+
+    class Step:
+        money = (Money(),)
+
+    class Found:
+        idea_id, status, steps = "book", "paper", [None, None, None, Step()]
+
+    rows = [line for line in ml.report_lines([Found()]) if line.startswith("| book |")]
+    assert len(rows) == 1 and "книга сама" in rows[0] and "$257:" in rows[0]

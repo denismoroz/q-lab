@@ -631,8 +631,9 @@ def report_lines(ladders: Sequence[Any]) -> list[str]:
             for mode in ("skip", "fewer", "book"):
                 parts = [_cell(reading.row(usd, mode)) for usd in SUMS]
                 own = reading.own_usd
-                parts.append("—" if own is None or float(own) in SUMS
-                             else f"{_usd(own)}: {_cell(reading.row(float(own), mode))}")
+                own_cell = "—" if own is None or float(own) in SUMS \
+                    else _cell(reading.row(float(own), mode))
+                parts.append(own_cell if own_cell == "—" else f"{_usd(own)}: {own_cell}")
                 if all(p == "—" for p in parts):
                     continue
                 label = {"skip": "пропускаем отказ площадки", "fewer": "меньше позиций",

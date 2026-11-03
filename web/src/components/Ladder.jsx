@@ -199,9 +199,6 @@ function MoneyLadderTable({ reading }) {
       <summary className="cursor-pointer text-xs text-sky-700">
         как работает на разных деньгах ({reading.venue === 'binance' ? 'Binance' : 'Hyperliquid'})
       </summary>
-      <p className="mt-1 break-words text-xs text-slate-700" data-testid="money-ladder-why">
-        {reading.why_strict_ru}
-      </p>
       <div className="mt-1 overflow-x-auto">
         <table className="min-w-full text-xs text-slate-700">
           <thead>
@@ -280,6 +277,11 @@ function MoneyLines({ money }) {
           {m.money_line_ru && (
             <span className="block text-xs text-slate-600" data-testid={`money-line-${m.venue}`}>
               {m.money_line_ru}
+            </span>
+          )}
+          {m.money_ladder?.why_strict_ru && (
+            <span className="block text-xs text-slate-600" data-testid={`money-why-${m.venue}`}>
+              {m.money_ladder.why_strict_ru}
             </span>
           )}
           <MoneyLadderTable reading={m.money_ladder} />
