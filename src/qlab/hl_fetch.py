@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
 CONFIG = Path("night/hyperliquid_fetch.yaml")
@@ -135,19 +136,6 @@ def _cache_dir() -> Path:
     return Path(DEFAULT_RAW_CACHE_DIR)
 
 
-def _stems(folder: Path) -> dict[str, list[str]]:
-    """The cached columns of a folder: ``{column: [end date, ...]}`` per start date, as
-    ``{f"{column}__{start}": [end, ...]}``, read from the file names alone."""
-    found: dict[str, list[str]] = {}
-    if not folder.is_dir():
-        return found
-    for path in folder.glob("*.parquet"):
-        parts = path.stem.split("__")
-        if len(parts) == 3:
-            found.setdefault(f"{parts[0]}__{parts[1]}", []).append(parts[2])
-    return found
-
-
 def _listing(folder: Path) -> tuple[set[str], set[str]]:
     perps, spots = set(), set()
     if folder.is_dir():
@@ -170,22 +158,24 @@ class _Tally:
 def _count(venue: str, interval: str, columns: Sequence[str], start: date, end: date,
            cache_dir: Path) -> dict[bool, _Tally]:
     """Tally the named columns of `venue` (False: perpetuals, True: spot) against the cache."""
-    stems = _stems(cache_dir / venue / interval)
+    from qlab.data.sources.base import missing_ranges
+
     hours = hours_between(start, end)
     out = {False: _Tally(), True: _Tally()}
     for column in columns:
         spot = column.endswith(SPOT_SUFFIX)
         tally = out[spot]
-        ends = stems.get(f"{column}__{start.isoformat()}", [])
-        if end.isoformat() in ends:
+        # Any cached window of the column answers the part it covers (owner, 2026-11-04); the
+        # file names say which, so a listing of hundreds is priced without reading a file.
+        ranges = missing_ranges(cache_dir, venue, column, interval, start, end)
+        if not ranges:
             tally.held += 1
             continue
-        earlier = sorted(e for e in ends if e < end.isoformat())
-        if earlier:
-            last = date.fromisoformat(earlier[-1])
-            gap = hours_between(last, end) + 24  # the refetch begins a day before the old end
+        if (ranges[0][0], ranges[0][1]) != (pd.Timestamp(start, tz="UTC"),
+                                            pd.Timestamp(end, tz="UTC")):
             tally.gap += 1
-            tally.requests += requests_gap(venue, spot, gap)
+            tally.requests += sum(
+                requests_gap(venue, spot, max(1, (b - a).days) * 24) for a, b in ranges)
             continue
         tally.whole += 1
         n = requests_whole(venue, spot, hours)
@@ -294,6 +284,61 @@ def estimate(spec, session, cost: FetchCost, *, cache_dir: Path | None = None) -
     return Estimate(minutes, cached, why, fetch_minutes=minutes)
 
 
+@dataclass(frozen=True)
+class ColumnCoverage:
+    """What the raw cache holds of one column for a request, and what is left to fetch."""
+
+    column: str
+    source: str
+    spot: bool
+    windows: tuple[tuple[date, date], ...]
+    head_days: int
+    gap_days: int
+    tail_days: int
+    requests: int
+
+    @property
+    def complete(self) -> bool:
+        return self.head_days + self.gap_days + self.tail_days == 0
+
+
+def coverage(spec, cost: FetchCost, *, cache_dir: Path | None = None) -> list[ColumnCoverage]:
+    """The cache's coverage of every column of the spec's hourly (or any) data request, entries
+    read for real (metadata and columns, `qlab.data.sources.base.cached_windows` with `verify`):
+    the cached windows, the days of head (before the earliest entry), of gap (between entries) and
+    of tail (after the latest one, a day of it the refetch of an entry's last bars) still to fetch,
+    and the requests they cost. A tail of a delisted instrument is not counted."""
+    from qlab.data.sources.base import cached_windows, missing_ranges
+
+    data = spec.data
+    cache_dir = cache_dir or _cache_dir()
+    perps, spots, venue, spot_venue = _plan(data, cost, cache_dir)
+    start, end = pd.Timestamp(data.start, tz="UTC"), pd.Timestamp(data.end, tz="UTC")
+    rows = []
+    for source, names in ((venue, perps), (spot_venue, spots)):
+        for name in names:
+            spot = name.endswith(SPOT_SUFFIX)
+            windows = cached_windows(cache_dir, source, name, data.interval, verify=True)
+            ranges = missing_ranges(cache_dir, source, name, data.interval, start, end,
+                                    verify=True)
+            head = gap = tail = requests = 0
+            for a, b in ranges:
+                days = max(1, (b - a).days)
+                if not windows:
+                    head += days
+                elif a <= start:
+                    head += days
+                elif b >= end:
+                    tail += days
+                else:
+                    gap += days
+                requests += requests_whole(source, spot, days * 24)
+            rows.append(ColumnCoverage(
+                name, source, spot, tuple((w.start.date(), w.end.date()) for w in windows),
+                head, gap, tail, requests))
+    return rows
+
+
 def total(estimates: Sequence[Estimate], last_seconds: float | None) -> Estimate:
     """One estimate for an item that runs several data requests one after another, and the time
     the item took last time when that is known: the fetch cannot be seen from the time, nor the
@@ -331,6 +376,6 @@ def heavy_reason(est: Estimate, limit_minutes: float) -> str | None:
             f"{limit_minutes:g} ({est.why}); вручную: --allow-heavy")
 
 
-__all__ = ["CONFIG", "Estimate", "FetchCost", "HEAVY_RU", "estimate", "heavy_reason",
-           "hours_between", "last_seconds", "load_config", "requests_gap", "requests_whole",
-           "total"]
+__all__ = ["CONFIG", "ColumnCoverage", "Estimate", "FetchCost", "HEAVY_RU", "coverage", "estimate",
+           "heavy_reason", "hours_between", "last_seconds", "load_config", "requests_gap",
+           "requests_whole", "total"]

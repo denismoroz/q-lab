@@ -12,6 +12,7 @@ import types
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -381,6 +382,35 @@ def test_an_hourly_list_is_heavy_past_the_columns_the_night_allows_and_costs_the
     # the daily panel of the whole universe is cached: a long list costs nothing there
     daily = _plain_spec("daily", source="binance", instruments=[f"C{i}" for i in range(99)])
     assert twin_stage.heavy_data(daily, 20, 40, 25.0) is None
+
+
+def test_hourly_data_the_raw_cache_holds_is_not_counted_as_heavy(tmp_path) -> None:
+    """Owner, 2026-11-04: the data is already in the base, why fetch it again. A list over the
+    night's bound is not heavy once the cache holds most of it (any window of an instrument
+    answers the part it covers); the same list on an empty cache still is."""
+    from qlab.data.sources.base import InstrumentHistory, store_cached_history
+
+    hourly = _plain_spec("hourly", interval="1h", source="binance",
+                         instruments=[f"C{i}" for i in range(50)])
+    assert twin_stage.heavy_data(hourly, 20, 40, 25.0, tmp_path) is not None
+    start, end = pd.Timestamp("2025-01-01", tz="UTC"), pd.Timestamp("2026-09-20", tz="UTC")
+    index = pd.date_range("2025-06-01", "2026-09-20", freq="1D", tz="UTC")
+    prices = pd.Series(1.0, index=index)
+    held = InstrumentHistory(
+        instrument="C0", prices=prices, funding=prices * 0, volume=prices,
+        trade_count=prices.astype("int64"), first_seen=index[0], last_seen=index[-1],
+        is_delisted=False, high=prices)
+    for i in range(30):  # 30 of 50 cached for the whole window; the rest is a fetch of 20
+        store_cached_history(tmp_path, "binance", "1h", start, end,
+                             held.__class__(**{**held.__dict__, "instrument": f"C{i}"}))
+    assert twin_stage.heavy_data(hourly, 20, 40, 25.0, tmp_path) is None  # 20 left, under 40
+    # a window cached from ANOTHER start counts too
+    other = _plain_spec("hourly", interval="1h", source="binance",
+                        instruments=[f"C{i}" for i in range(50)])
+    other = other.model_copy(update={"data": other.data.model_copy(
+        update={"start": date(2025, 3, 1)})})
+    assert twin_stage.heavy_data(other, 20, 40, 25.0, tmp_path) is None
+    assert "holds" in twin_stage.heavy_data(hourly, 20, 10, 25.0, tmp_path)
 
 
 def test_the_real_config_carries_the_threshold_the_seconds_and_the_coin_parameters() -> None:
