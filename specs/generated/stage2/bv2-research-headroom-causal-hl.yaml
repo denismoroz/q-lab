@@ -93,6 +93,9 @@ differs_from_source:
   stage 1 (bv2-research-headroom-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- 'Knowable-coins check on hyperliquid''s own listing and volumes: Монета AVAX за всю историю данных не
+  была в первой десятке по обороту на Hyperliquid: список считается выбранным вручную и оценивается со
+  дня, когда его записали.'
 - Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
   it are warm-up.
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
@@ -243,6 +246,8 @@ sources:
     lines 14-15 audited it 2026-05-19 as not 1:1 with the perp, and docs/TASKS.md line 670 counts its
     bars at 21.3% of the window: the lab''s price-parity check (src/qlab/data/snapshot.py spot_is_another_asset)
     keeps only the bars where it is 1:1'
+  coins_knowable: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded
+    value of the previous 30 days, hyperliquid candles in data/raw'
 strategy_capital_usd: 257.0
 regime_claim:
   bull: earns
@@ -250,3 +255,23 @@ regime_claim:
 review_answers: {}
 selects_causally: true
 instruments_chosen_at: '2025-06-01'
+coins_knowable:
+  venue: hyperliquid
+  top_k: 10
+  window_days: 30
+  checked_from: '2025-01-31'
+  from_start: false
+  coins:
+    BTC: '2025-01-31'
+    ETH: '2025-01-31'
+    SOL: '2025-01-31'
+    AVAX: null
+  listed:
+    BTC: '2025-01-01'
+    ETH: '2025-01-01'
+    SOL: '2025-01-01'
+    AVAX: '2025-01-01'
+  plain: 'Монета AVAX за всю историю данных не была в первой десятке по обороту на Hyperliquid: список
+    считается выбранным вручную и оценивается со дня, когда его записали.'
+  source: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded value
+    of the previous 30 days, hyperliquid candles in data/raw'

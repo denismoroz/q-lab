@@ -80,9 +80,10 @@ differs_from_source:
   the data is Binance''s history, a proxy for binance''s market, judged for Binance itself: Binance''s
   costs and minimum leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
 - 'The twin trades only 4 named columns (BTC, BTC-SPOT, ETH, ETH-SPOT), the data.instruments of bv2-fast-release-by-own-trend,
-  not the whole market: the list was chosen by 2025-06-01 and would know which coins survived if applied
-  to the history before it (survivorship), so the twin is judged only from 2025-06-01 (judged_from = instruments_chosen_at);
-  the days from 2019-09-08 are warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+  not the whole market: the list was knowable only from 2019-12-27 (night/knowable_coins.yaml: top 10
+  of the venue''s perpetuals by the mean daily traded value of the previous 30 days, binance candles in
+  data/raw), so the twin is judged only from 2019-12-27 (judged_from = instruments_chosen_at); the days
+  before are warm-up for the choice.'
 - 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
   the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
   minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
@@ -93,8 +94,9 @@ differs_from_source:
   stage 1 (bv2-fast-release-by-own-trend) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
-- Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
-  it are warm-up.
+- 'Knowable-coins check on hyperliquid''s own listing and volumes: Монеты BTC, ETH были в первой десятке
+  по обороту на Hyperliquid (за предыдущие 30 дней) на каждый день с 2025-01-31 — история честная, оценка
+  идёт с начала данных.'
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 - 'BTC-SPOT is hyperliquid''s UBTC/USDC spot token (docs/TASKS.md line 635 (spotMeta read 2026-09-22):
   BTC is UBTC (@142), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
@@ -121,16 +123,16 @@ params_fixed_evidence: 'Inherited from stage 1 (bv2-fast-release-by-own-trend): 
   it are judged as flat days. The grid is the idea''s declared lists (fast_window_hours, fast_entry),
   6 candidates. What this does not prove: the lists were declared with the idea before its check ran;
   what was seen of the history when they were declared is not recorded, so the choice is only as honest
-  as the lists are (the spec''s own date for its numbers: 2026-10-30). The instrument list is not point-in-time
-  before 2025-06-01. The twin trades only the 4 columns BTC, BTC-SPOT, ETH, ETH-SPOT (data.instruments
-  of bv2-fast-release-by-own-trend) (hourly candles of every Binance perpetual take hours; these take
-  about 2 minutes). A list chosen by hand and applied to history from 2019-09-08 knows which coins existed
-  and survived, which the days before it was chosen did not; a coin Binance listed later has no candles
-  before its listing day and enters then. The earliest documented day the list existed is 2025-06-01 (data.honest_from
-  of bv2-fast-release-by-own-trend), so the twin is judged only from that day (`judged_from` = `instruments_chosen_at`
-  = 2025-06-01): the history before it is warm-up for the code''s monthly choice (more data to choose
-  with), not judged, and from that day the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
-judged_from: '2025-06-01'
+  as the lists are (the spec''s own date for its numbers: 2026-10-30). The twin trades only the 4 columns
+  BTC, BTC-SPOT, ETH, ETH-SPOT (data.instruments of bv2-fast-release-by-own-trend) (hourly candles of
+  every Binance perpetual take hours; these take about 2 minutes). Every coin of the list was knowable
+  as a pick on the days it is judged: listed for 30 days and among the venue''s top 10 perpetuals by trailing
+  traded value, looking only at earlier days (night/knowable_coins.yaml: top 10 of the venue''s perpetuals
+  by the mean daily traded value of the previous 30 days, binance candles in data/raw); Монета ETH появилась
+  на Binance только 2019-11-27; с 2019-12-27 все монеты (BTC, ETH) были в первой десятке по обороту (за
+  предыдущие 30 дней) — история честная с этого дня, раньше — разгон. The list is knowable only from 2019-12-27,
+  so the twin is judged from that day (`judged_from` = `instruments_chosen_at` = 2019-12-27): the history
+  before it is warm-up for the code''s monthly choice, not judged..'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
@@ -191,10 +193,10 @@ sources:
     one idea, one check -- code chooses among the declared values every month from the past only (docs/ONE_CHECK.md)'
   data.instruments: 'docs/RETUNE.md: data.instruments of bv2-fast-release-by-own-trend, the coins its
     book trades'
-  instruments_chosen_at: 'cards/bv2-fast-release-by-own-trend.yaml: data.honest_from = 2025-06-01 of bv2-fast-release-by-own-trend,
-    the earliest documented day the list of bv2-fast-release-by-own-trend existed'
-  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
-    = 2025-06-01); the days before are warm-up'
+  coins_knowable: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded
+    value of the previous 30 days, hyperliquid candles in data/raw'
+  judged_from: 'docs/RETUNE.md: a list is judged only from the day it was known (instruments_chosen_at
+    = 2019-12-27); the days before are warm-up'
   score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
     spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
     (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
@@ -233,4 +235,20 @@ regime_claim:
   bear: beats_market
 review_answers: {}
 selects_causally: true
-instruments_chosen_at: '2025-06-01'
+coins_knowable:
+  venue: hyperliquid
+  top_k: 10
+  window_days: 30
+  checked_from: '2025-01-31'
+  known_from: '2025-01-31'
+  from_start: true
+  coins:
+    BTC: '2025-01-31'
+    ETH: '2025-01-31'
+  listed:
+    BTC: '2025-01-01'
+    ETH: '2025-01-01'
+  plain: Монеты BTC, ETH были в первой десятке по обороту на Hyperliquid (за предыдущие 30 дней) на каждый
+    день с 2025-01-31 — история честная, оценка идёт с начала данных.
+  source: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded value
+    of the previous 30 days, hyperliquid candles in data/raw'

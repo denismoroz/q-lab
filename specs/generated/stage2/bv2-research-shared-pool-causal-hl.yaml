@@ -88,6 +88,9 @@ differs_from_source:
   stage 1 (bv2-research-shared-pool-causal) on hyperliquid''s own perpetual contracts listed at each bar;
   nothing was refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- 'Knowable-coins check on hyperliquid''s own listing and volumes: Монета AVAX за всю историю данных не
+  была в первой десятке по обороту на Hyperliquid: список считается выбранным вручную и оценивается со
+  дня, когда его записали.'
 - Judged from 2025-06-01, the day the instrument list was known (instruments_chosen_at); the days before
   it are warm-up.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
@@ -231,9 +234,31 @@ sources:
     production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
   data.spot_legs.SOL: 'docs/TASKS.md line 637 (spotMeta read 2026-09-22): SOL is USOL (@156), the token
     production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+  coins_knowable: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded
+    value of the previous 30 days, hyperliquid candles in data/raw'
 regime_claim:
   bull: earns
   bear: beats_market
 review_answers: {}
 selects_causally: true
 instruments_chosen_at: '2025-06-01'
+coins_knowable:
+  venue: hyperliquid
+  top_k: 10
+  window_days: 30
+  checked_from: '2025-01-31'
+  from_start: false
+  coins:
+    AVAX: null
+    BTC: '2025-01-31'
+    ETH: '2025-01-31'
+    SOL: '2025-01-31'
+  listed:
+    AVAX: '2025-01-01'
+    BTC: '2025-01-01'
+    ETH: '2025-01-01'
+    SOL: '2025-01-01'
+  plain: 'Монета AVAX за всю историю данных не была в первой десятке по обороту на Hyperliquid: список
+    считается выбранным вручную и оценивается со дня, когда его записали.'
+  source: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded value
+    of the previous 30 days, hyperliquid candles in data/raw'
