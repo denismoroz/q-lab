@@ -16,6 +16,7 @@ import StandardPanel from '../components/StandardPanel.jsx'
 import CardBody from '../components/CardBody.jsx'
 import {
   ASSET_CLASS,
+  IDEA_STATUS,
   PROFILE,
   SHUTDOWN_CAUSE,
   SOURCE_TYPE,
@@ -100,7 +101,7 @@ export default function IdeaDetail() {
             {!ideaQuery.data.plain && <StandardPanel standard={ideaQuery.data.standard} />}
             <DuplicateMark mark={ideaQuery.data.duplicate} />
             <CardSection card={ideaQuery.data.card} />
-            <Outcome outcome={ideaQuery.data.latest_outcome} />
+            <Outcome outcome={ideaQuery.data.latest_outcome} idea={ideaQuery.data} />
             <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
             <OverlayPanels ideaId={ideaQuery.data.id} />
@@ -203,7 +204,37 @@ function pct(value) {
 // The one question the idea page must answer first (owner, 2026-10-01):
 // what did q-lab itself conclude, and why. Statuses can come from imports
 // or from people; this block is only q-lab's own latest decision.
-function Outcome({ outcome }) {
+// The idea's standing over both venues, above the detail of one run (owner, 2026-11-04, on
+// bv2-research-graded-hedge: «статус рано судить а на странице - отвергнута»): the block below is
+// the run of the idea's own venue; the status comes from the best of the two (docs/VENUE_SPLIT.md).
+const VENUE_NAME = { binance: 'Binance', hyperliquid: 'Hyperliquid' }
+
+function VenueStanding({ idea }) {
+  const ts = idea?.two_stage
+  const stages = [ts?.stage1, ts?.stage2].filter((st) => st?.trial)
+  if (stages.length < 2) return null
+  const status = idea.bench?.label_ru ?? label(IDEA_STATUS, idea.status)
+  return (
+    <div className="mb-3 rounded border border-slate-200 bg-white/70 p-2 text-sm">
+      <div>
+        <span className="text-slate-500">Статус идеи по двум площадкам: </span>
+        <span className="font-semibold text-slate-900">{status}</span>
+        {idea.bench?.hint_ru && <span className="text-slate-600"> — {idea.bench.hint_ru}</span>}
+      </div>
+      <ul className="mt-1 space-y-0.5 text-slate-700">
+        {stages.map((st) => (
+          <li key={st.idea_id}>
+            {VENUE_NAME[st.venue] ?? st.venue}: {routeTitle(st.trial)}{' '}
+            <span className="text-xs text-slate-400">(прогон #{st.trial.id})</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-xs text-slate-500">Ниже — подробно прогон площадки этой идеи.</p>
+    </div>
+  )
+}
+
+function Outcome({ outcome, idea }) {
   const trial = outcome?.trial
   if (!trial) {
     return (
@@ -255,7 +286,10 @@ function Outcome({ outcome }) {
     : []
   return (
     <section className={`rounded border p-4 ${OUTCOME_STYLE[trial.route] ?? 'border-slate-200'}`}>
-      <div className="text-xs uppercase tracking-wide text-slate-500">Что говорит q-lab</div>
+      <VenueStanding idea={idea} />
+      <div className="text-xs uppercase tracking-wide text-slate-500">
+        Что говорит q-lab{idea?.two_stage?.stage1?.venue ? ` — ${VENUE_NAME[idea.two_stage.stage1.venue] ?? idea.two_stage.stage1.venue}` : ''}
+      </div>
       <div className="mt-1 text-lg font-semibold text-slate-900">{routeTitle(trial)}</div>
       <p className="text-sm text-slate-700">{routeHint(trial)}</p>
       <p className="mt-2 text-xs text-slate-500">
