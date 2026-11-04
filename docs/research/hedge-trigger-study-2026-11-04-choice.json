@@ -1,0 +1,212 @@
+{
+ "cut": "2024-06-12",
+ "sets": {
+  "set_a": {
+   "production_first": {
+    "money_pct_coin_year": -19.426302943415404,
+    "on_per_coin_year": 21.891767719659736,
+    "coin_years": 16.398858447488585,
+    "false_on_1d": 0.520891364902507,
+    "n_on_1d": 359,
+    "wrong_off_1d": 0.48746518105849584,
+    "n_off_1d": 359,
+    "false_on_3d": 0.5153203342618384,
+    "n_on_3d": 359,
+    "wrong_off_3d": 0.4596100278551532,
+    "n_off_3d": 359,
+    "false_on_7d": 0.5069637883008357,
+    "n_on_7d": 359,
+    "wrong_off_7d": 0.4456824512534819,
+    "n_off_7d": 359,
+    "false_on_14d": 0.48746518105849584,
+    "n_on_14d": 359,
+    "wrong_off_14d": 0.4456824512534819,
+    "n_off_14d": 359
+   },
+   "best_filter": {
+    "variant": "veto_on fund_level above 0.1",
+    "money_first": 7.336463856094763
+   },
+   "best_trigger": {
+    "variant": "hedge while btc_30d not up",
+    "money_first": 6.3725065000656755
+   },
+   "per_family": {
+    "F1 filter": {
+     "variant": "veto_on fund_level above 0.1",
+     "money_first": 7.336463856094763
+    },
+    "F1 trigger": {
+     "variant": "hedge while fund_level above 0.3",
+     "money_first": -38.58524738494153
+    },
+    "F2 filter": {
+     "variant": "veto_on fund_pct above 0.6",
+     "money_first": 5.714281569320297
+    },
+    "F2 trigger": {
+     "variant": "hedge while fund_pct below 0.2",
+     "money_first": -48.54804539539001
+    },
+    "F3 filter": {
+     "variant": "veto_on basis_pct above 0.4",
+     "money_first": 6.32235832238438
+    },
+    "F3 trigger": {
+     "variant": "hedge while basis_pct above 0.8",
+     "money_first": -35.317780917834526
+    },
+    "F4 filter": {
+     "variant": "veto_on vol_pct above 0.2",
+     "money_first": 1.5286368420668108
+    },
+    "F4 trigger": {
+     "variant": "hedge while vol_pct below 0.2",
+     "money_first": -2.889131149976514
+    },
+    "F5 filter": {
+     "variant": "veto_on surge_pct below 0.6",
+     "money_first": -4.451749938877787
+    },
+    "F5 trigger": {
+     "variant": "hedge while surge_pct below 0.2",
+     "money_first": -14.943565547103228
+    },
+    "F6 filter": {
+     "variant": "veto_on drawdown below -0.025",
+     "money_first": -3.7703289503598083
+    },
+    "F6 trigger": {
+     "variant": "hedge while drawdown below -0.2",
+     "money_first": -27.53107299456626
+    },
+    "F7 filter": {
+     "variant": "veto_on btc_14d above 0",
+     "money_first": 6.287963487356125
+    },
+    "F7 trigger": {
+     "variant": "hedge while btc_30d not up",
+     "money_first": 6.3725065000656755
+    },
+    "F8 filter": {
+     "variant": "veto_on own_7d above 0",
+     "money_first": -1.6359816139931003
+    },
+    "F8 trigger": {
+     "variant": "hedge while own return not up on (7,) days",
+     "money_first": -27.007077757577623
+    }
+   },
+   "trials": 169,
+   "meta": {}
+  },
+  "set_b": {
+   "production_first": {
+    "money_pct_coin_year": -3.036672445094519,
+    "on_per_coin_year": 24.755771873384425,
+    "coin_years": 42.61632420091324,
+    "false_on_1d": 0.4938388625592417,
+    "n_on_1d": 1055,
+    "wrong_off_1d": 0.5062761506276151,
+    "n_off_1d": 956,
+    "false_on_3d": 0.5109004739336492,
+    "n_on_3d": 1055,
+    "wrong_off_3d": 0.49267782426778245,
+    "n_off_3d": 956,
+    "false_on_7d": 0.5118483412322274,
+    "n_on_7d": 1055,
+    "wrong_off_7d": 0.4560669456066946,
+    "n_off_7d": 956,
+    "false_on_14d": 0.46919431279620855,
+    "n_on_14d": 1055,
+    "wrong_off_14d": 0.49267782426778245,
+    "n_off_14d": 956
+   },
+   "best_filter": {
+    "variant": "veto_on btc_14d above 0",
+    "money_first": 14.753615494635783
+   },
+   "best_trigger": {
+    "variant": "hedge while btc_30d not up",
+    "money_first": 19.451847000744458
+   },
+   "per_family": {
+    "F1 filter": {
+     "variant": "veto_on fund_level above 0.1",
+     "money_first": 7.490189089168356
+    },
+    "F1 trigger": {
+     "variant": "hedge while fund_level above 0.3",
+     "money_first": -24.67693100842175
+    },
+    "F2 filter": {
+     "variant": "veto_on fund_pct above 0.2",
+     "money_first": 6.1909489557258714
+    },
+    "F2 trigger": {
+     "variant": "hedge while fund_pct below 0.6",
+     "money_first": -28.896246355591547
+    },
+    "F3 filter": {
+     "variant": "veto_on basis_pct above 0.4",
+     "money_first": 9.461231661225016
+    },
+    "F3 trigger": {
+     "variant": "hedge while basis_pct above 0.8",
+     "money_first": -20.67843504194078
+    },
+    "F4 filter": {
+     "variant": "veto_on vol_pct above 0.2",
+     "money_first": 14.400242880633563
+    },
+    "F4 trigger": {
+     "variant": "hedge while vol_pct below 0.2",
+     "money_first": 1.6498161572325305
+    },
+    "F5 filter": {
+     "variant": "veto_on surge_pct below 0.6",
+     "money_first": 5.76932707509715
+    },
+    "F5 trigger": {
+     "variant": "hedge while surge_pct below 0.2",
+     "money_first": -2.232681447911491
+    },
+    "F6 filter": {
+     "variant": "veto_on drawdown above -0.1",
+     "money_first": 3.8015731148095324
+    },
+    "F6 trigger": {
+     "variant": "hedge while drawdown below -0.1",
+     "money_first": -16.888667473972827
+    },
+    "F7 filter": {
+     "variant": "veto_on btc_14d above 0",
+     "money_first": 14.753615494635783
+    },
+    "F7 trigger": {
+     "variant": "hedge while btc_30d not up",
+     "money_first": 19.451847000744458
+    },
+    "F8 filter": {
+     "variant": "veto_on own_7d above 0",
+     "money_first": 5.57977143517067
+    },
+    "F8 trigger": {
+     "variant": "hedge while own return not up on (7,) days",
+     "money_first": -12.408832418306192
+    }
+   },
+   "trials": 169,
+   "meta": {
+    "wanted_coins": 129,
+    "loaded_coins": 128,
+    "used_coins": 84,
+    "top_coin_days": 24706,
+    "covered_coin_days": 24101,
+    "missing_hourly": [
+     "OM"
+    ]
+   }
+  }
+ }
+}
