@@ -144,28 +144,40 @@ HEAVY_REASON = (
     "cached panel, or a hand run with --allow-heavy")
 BIG_LIST_REASON = (
     "the twin carries {columns} instruments and its hourly candles since 2019 take about "
-    "{minutes:.0f} minutes to fetch at {seconds:g} seconds each, more than the {limit} "
+    "{minutes:.0f} minutes to fetch at {seconds:g} seconds each (the raw cache already holds "
+    "{cached} of them), more than the {limit} "
     "instruments night/twins.yaml allows a night (max_hourly_instruments) against its "
     "{bound:g}-minute bound for one twin; a hand run with --allow-heavy")
 
 
 def heavy_data(spec: StrategySpec, minutes: float, max_instruments: int | None = None,
-               seconds_per_instrument: float = SECONDS_PER_INSTRUMENT) -> str | None:
+               seconds_per_instrument: float = SECONDS_PER_INSTRUMENT,
+               cache_dir: Path | None = None) -> str | None:
     """Why the twin's data is too heavy to fetch within a night, or None. Binance's candles
     are fetched one instrument at a time (data/raw/binance); a daily panel of the whole
     universe is cached and quick, an hourly one of the whole universe is not, and an hourly
-    one of a named list costs `qlab.twin.fetch_estimate` -- heavy past `max_instruments`
-    columns (a spot column counts as one)."""
+    one of a named list costs `qlab.twin.fetch_estimate` of the columns the raw cache does not
+    hold -- heavy past `max_instruments` of them (a spot column counts as one; an instrument
+    cached for part of the window, from any start, counts for the share it lacks:
+    `qlab.data.sources.base.missing_share`, owner 2026-11-04)."""
+    from qlab.data.sources.base import DEFAULT_RAW_CACHE_DIR, missing_share
+
     data = spec.data
     if data.source != BINANCE or data.interval == "1d":
         return None
     if not data.instruments:
         return HEAVY_REASON.format(minutes=minutes)
-    if max_instruments is not None and len(data.instruments) > max_instruments:
+    if max_instruments is None:
+        return None
+    folder = cache_dir if cache_dir is not None else DEFAULT_RAW_CACHE_DIR
+    to_fetch = sum(missing_share(folder, BINANCE, name, data.interval, data.start, data.end)
+                   for name in data.instruments)
+    if to_fetch > max_instruments:
         return BIG_LIST_REASON.format(
             columns=len(data.instruments), limit=max_instruments, bound=minutes,
-            minutes=fetch_estimate(len(data.instruments), seconds_per_instrument) / 60,
-            seconds=seconds_per_instrument)
+            minutes=fetch_estimate(to_fetch, seconds_per_instrument) / 60,
+            seconds=seconds_per_instrument,
+            cached=f"{len(data.instruments) - to_fetch:.1f} of {len(data.instruments)}")
     return None
 
 

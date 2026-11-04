@@ -8,6 +8,7 @@ from.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import time
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import httpx
 import pandas as pd
+import pyarrow.parquet as pq
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 # Fixed delay between successive HTTP requests to a free public endpoint.
@@ -293,19 +295,14 @@ def fetch_universe_resumable(
         cached = load_cached_history(cache_dir, source, instrument, interval, start, end)
         if cached is not None and (accept_cached is None or accept_cached(cached)):
             return cached
-        if funding_end_pad is not None:
-            cut = _cut_later_cache(cache_dir, source, instrument, interval, start, end,
-                                   funding_end_pad, accept_cached)
-            if cut is not None:
-                store_cached_history(cache_dir, source, interval, start, end, cut)
-                return cut
-        if fetch_range is not None:
-            extended = _extend_earlier_cache(cache_dir, source, instrument, interval, start, end,
-                                             fetch_range, accept_cached)
-            if extended is not None:
-                store_cached_history(cache_dir, source, interval, start, end, extended)
-                _drop_superseded(cache_dir, source, instrument, interval, start, end)
-                return extended
+        assembled = _assemble_from_cache(cache_dir, source, instrument, interval, start, end,
+                                         fetch_range, accept_cached, funding_end_pad)
+        if assembled is not None:
+            history, used = assembled
+            store_cached_history(cache_dir, source, interval, start, end, history)
+            _drop_superseded(cache_dir, source, instrument, interval, start, end)
+            _drop_contained(cache_dir, source, instrument, interval, start, end, used)
+            return history
         try:
             history = fetch_one(instrument)
         except ValueError:
@@ -373,79 +370,254 @@ def _drop_superseded(cache_dir, source, instrument, interval, start, end) -> Non
     folder = Path(cache_dir) / source / interval
     prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
     keep = str(pd.Timestamp(end).date())
-    for path in folder.glob(f"{prefix}*"):
+    for path in folder.glob(f"{glob.escape(prefix)}*"):
         stem = path.name[len(prefix):].split(".")[0]
         if stem < keep:
             path.unlink()
 
 
-def _cut_later_cache(cache_dir, source, instrument, interval, start, end, funding_end_pad,
-                     accept_cached) -> InstrumentHistory | None:
-    """The same instrument cached from the same start to a LATER end, cut back to `end`: bars
-    up to `end`, funding up to `end + funding_end_pad`. None when there is no such entry, the
-    bars are not daily, or nothing of the instrument is left by `end` (the fetch then says what
-    a window without data means)."""
-    if interval != "1d":
-        return None
-    folder = Path(cache_dir) / source / interval
-    prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
-    wanted = str(pd.Timestamp(end).date())
-    later = sorted(
-        p.stem[len(prefix):] for p in folder.glob(f"{prefix}*.parquet")
-         if p.stem[len(prefix):] > wanted)
-    end_ts = pd.Timestamp(end)
-    end_ts = end_ts.tz_localize("UTC") if end_ts.tzinfo is None else end_ts.tz_convert("UTC")
-    for later_end in later:  # the nearest end first: the least to cut
-        cached = load_cached_history(cache_dir, source, instrument, interval, start, later_end)
-        if cached is None or (accept_cached is not None and not accept_cached(cached)):
-            continue
-        if not cached.has_funding:
-            continue
-        prices = cached.prices[cached.prices.index <= end_ts]
-        if prices.empty:
-            return None
-        return InstrumentHistory(
-            instrument=instrument,
-            prices=prices,
-            funding=cached.funding[cached.funding.index <= end_ts + funding_end_pad],
-            volume=cached.volume[cached.volume.index <= end_ts],
-            trade_count=cached.trade_count[cached.trade_count.index <= end_ts],
-            first_seen=prices.index.min(),
-            last_seen=prices.index.max(),
-            is_delisted=cached.is_delisted,
-            has_funding=cached.has_funding,
-            high=None if cached.high is None else cached.high[cached.high.index <= end_ts],
-        )
-    return None
+# --------------------------------------------------------------------------
+# Any cached window of an instrument answers a request (owner, 2026-11-04: "why re-download the
+# same data all the time -- why can't we use what is already in the base?"). A file is keyed by
+# (instrument, start, end), but what it HOLDS is every bar of that window the venue had, so a
+# request is answered by the union of the instrument's entries plus a fetch of what the union
+# does not cover: a head before the earliest entry, a gap between two entries, a tail after the
+# latest one.
 
 
-def _extend_earlier_cache(cache_dir, source, instrument, interval, start, end, fetch_range,
-                          accept_cached) -> InstrumentHistory | None:
-    """The same instrument cached from the same start to an EARLIER end, with
-    only the gap fetched -- so a nightly run adds a day instead of refetching
-    years (and keeps history the venue no longer serves, such as Hyperliquid's
-    candles beyond its last 5000). None when there is no such entry."""
+@dataclass(frozen=True)
+class CachedWindow:
+    """One cache entry of an instrument, as its file name and metadata say."""
+
+    start: pd.Timestamp
+    end: pd.Timestamp
+    is_delisted: bool = False
+
+
+def _utc(value) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _day(value) -> pd.Timestamp:
+    return _utc(value).normalize()
+
+
+def cached_windows(
+    cache_dir: Path | str, source: str, instrument: str, interval: str, *, verify: bool = False
+) -> list[CachedWindow]:
+    """The instrument's cache entries, earliest end last. By file name alone (fast, the estimate
+    of a fetch); with `verify`, an entry must also have both its files, readable metadata and the
+    volume and trade-count columns (an entry from before volume support is unknown volume, not
+    zero, and is refetched -- see `load_cached_history`), and carries its `is_delisted`."""
     folder = Path(cache_dir) / source / interval
-    prefix = f"{instrument}__{pd.Timestamp(start).date()}__"
-    ends = sorted(
-        pd.Timestamp(p.stem[len(prefix):], tz="UTC") for p in folder.glob(f"{prefix}*.parquet")
-        if p.stem[len(prefix):] < str(pd.Timestamp(end).date())
-    )
-    for earlier_end in reversed(ends):
-        cached = load_cached_history(cache_dir, source, instrument, interval, start, earlier_end)
-        if cached is None or (accept_cached is not None and not accept_cached(cached)):
+    out = []
+    for path in folder.glob(f"{glob.escape(instrument)}__*.parquet"):
+        parts = path.stem.rsplit("__", 2)
+        if len(parts) != 3 or parts[0] != instrument:
             continue
-        # Refetch from one day before the old end: its last bars may have
-        # been written before they closed.
-        gap_start = max(pd.Timestamp(start), earlier_end - pd.Timedelta(days=1))
-        if gap_start.tzinfo is None:
-            gap_start = gap_start.tz_localize("UTC")
         try:
-            fresh = fetch_range(instrument, gap_start, end)
+            first, last = _day(parts[1]), _day(parts[2])
         except ValueError:
-            return cached  # nothing new in the gap (e.g. delisted since)
-        return merge_histories(cached, fresh, gap_start)
-    return None
+            continue
+        delisted = False
+        if verify:
+            try:
+                meta = json.loads(path.with_suffix(".json").read_text())
+                names = pq.read_schema(path).names
+            except (OSError, ValueError):
+                continue
+            if "volume" not in names or "trade_count" not in names:
+                continue
+            delisted = bool(meta.get("is_delisted", False))
+        out.append(CachedWindow(first, last, delisted))
+    return sorted(out, key=lambda w: (w.end, w.start))
+
+
+# A source that serves only its most recent candles (Hyperliquid, `SERVED_CANDLES_CAP`): an old
+# hourly entry may hold bars a fetch would not return now, so a window ending before an entry's
+# end is fetched, not cut from it. Daily bars are not capped.
+_CAPPED_SOURCE_PREFIX = "hyperliquid"
+
+
+def _cut_later_allowed(source: str, interval: str) -> bool:
+    return interval == "1d" or not source.startswith(_CAPPED_SOURCE_PREFIX)
+
+
+def missing_ranges(
+    cache_dir: Path | str, source: str, instrument: str, interval: str, start, end, *,
+    verify: bool = False, windows: list[CachedWindow] | None = None,
+    cut_later: bool | None = None,
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """The parts of [start, end] that no cached window of the instrument covers, as the ranges
+    to fetch. A window covers from the START it was requested from, not from its first bar: an
+    entry requested from S whose first bar is later proves the venue had nothing in between, so
+    a request from before S needs a head only for [start, S). A range that begins where an entry
+    ends begins a day earlier (the entry's last bars may have been written before they closed).
+    A delisted instrument has no tail to fetch. Nothing cached: the whole of [start, end]."""
+    start_ts, end_ts = _utc(start), _utc(end)
+    first, last = start_ts.normalize(), end_ts.normalize()
+    if windows is None:
+        windows = cached_windows(cache_dir, source, instrument, interval, verify=verify)
+    if cut_later is None:
+        cut_later = _cut_later_allowed(source, interval)
+    usable = [w for w in windows if cut_later or w.end <= last]
+    ranges: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    cursor, from_entry = first, False
+    for w in sorted(usable, key=lambda w: (w.start, w.end)):
+        if w.start > cursor:
+            if w.start >= last:
+                break
+            ranges.append(_range(cursor, w.start, first, last, start_ts, end_ts, from_entry))
+            cursor, from_entry = w.start, False
+        if w.end > cursor:
+            cursor, from_entry = w.end, True
+    if cursor < last:
+        delisted_tail = from_entry and any(
+            w.is_delisted for w in usable if w.end == cursor)
+        if not delisted_tail:
+            ranges.append(_range(cursor, last, first, last, start_ts, end_ts, from_entry))
+    return ranges
+
+
+def _range(a, b, first, last, start_ts, end_ts, from_entry):
+    begin = a - pd.Timedelta(days=1) if from_entry else a
+    begin = start_ts if begin <= first else begin
+    return begin, end_ts if b >= last else b
+
+
+def missing_share(
+    cache_dir: Path | str, source: str, instrument: str, interval: str, start, end, *,
+    verify: bool = False,
+) -> float:
+    """What share of [start, end] has to be fetched, 0..1 (by days): 0 when the cache covers the
+    window, 1 when it holds nothing of the instrument. A day-long refetch before an entry's end
+    counts as missing, so a window cached to yesterday still costs a little. File names alone by
+    default, so a whole listing is priced quickly (`verify` also reads the metadata)."""
+    total = (_day(end) - _day(start)).days
+    ranges = missing_ranges(cache_dir, source, instrument, interval, start, end, verify=verify)
+    if not ranges:
+        return 0.0
+    if total <= 0:
+        return 1.0
+    days = sum(max(1, (_day(b) - _day(a)).days) for a, b in ranges)
+    return min(1.0, days / total)
+
+
+def _stack(parts: list[pd.Series | None]) -> pd.Series:
+    """Series joined in order, the LAST one winning where a timestamp is in more than one (the
+    later entry or the fresh fetch: a bar written before it closed is replaced)."""
+    parts = [p for p in parts if p is not None and len(p)]
+    if not parts:
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([], tz="UTC"))
+    merged = pd.concat(parts)
+    return merged[~merged.index.duplicated(keep="last")].sort_index()
+
+
+def _assemble_from_cache(
+    cache_dir, source, instrument, interval, start, end, fetch_range, accept_cached,
+    funding_end_pad,
+) -> tuple[InstrumentHistory, list[CachedWindow]] | None:
+    """The instrument's history for [start, end] built from its cache entries of ANY window plus
+    a fetch of the missing ranges (`missing_ranges`), cut to the request: bars from `start` to
+    `end`, funding to `end + funding_end_pad`. Also the plain cases: a window ending earlier is
+    extended by its gap, one ending later is cut. None when nothing usable is cached, a range is
+    missing and there is no `fetch_range`, or nothing of the instrument is left in the window
+    (the fetch then says what that means: a typo, or a coin that was not listed yet).
+
+    An entry ending after `end` is cut from only when the source says how its funding window ends
+    (`funding_end_pad`) and does not serve a capped number of recent candles at this interval
+    (`_cut_later_allowed`)."""
+    cut_later = funding_end_pad is not None and _cut_later_allowed(source, interval)
+    first_day, last_day = _day(start), _day(end)
+    loaded: list[tuple[CachedWindow, InstrumentHistory]] = []
+    for window in cached_windows(cache_dir, source, instrument, interval, verify=True):
+        if (window.end > last_day and not cut_later) or window.end < first_day \
+                or window.start > last_day:
+            continue
+        cached = load_cached_history(
+            cache_dir, source, instrument, interval, window.start, window.end)
+        if cached is None or (accept_cached is not None and not accept_cached(cached)):
+            continue
+        loaded.append((window, cached))
+    if not loaded:
+        return None
+    windows = [w for w, _ in loaded]
+    ranges = missing_ranges(cache_dir, source, instrument, interval, start, end,
+                            windows=windows, cut_later=cut_later)
+    if ranges and fetch_range is None:
+        return None
+    fresh: list[tuple[pd.Timestamp, InstrumentHistory]] = []
+    for a, b in ranges:
+        try:
+            fresh.append((b, fetch_range(instrument, a, b)))
+        except ValueError:
+            continue  # nothing in that range (not listed yet, or delisted since)
+    pieces = [h for _, h in loaded] + [h for _, h in sorted(fresh, key=lambda f: f[0])]
+    tail = [h for b, h in fresh if b >= _utc(end)]
+    newest = tail[-1] if tail else loaded[-1][1]
+
+    start_ts, end_ts = _utc(start), _utc(end)
+    prices = _stack([p.prices for p in pieces])
+    # A window requested from the same start keeps every bar a fetch returned (a source pads its
+    # window by a bar); only a request that begins later than the earliest window is cut at its
+    # start.
+    cut_low = start_ts.normalize() > min(w.start for w in windows)
+    keep = prices.index <= end_ts
+    if cut_low:
+        keep &= prices.index >= start_ts
+    prices = prices[keep]
+    if prices.empty:
+        return None
+
+    def bars(series: list[pd.Series | None]) -> pd.Series:
+        return _stack(series).reindex(prices.index).dropna()
+
+    funding = _stack([p.funding for p in pieces])
+    if funding_end_pad is not None:
+        funding = funding[funding.index <= end_ts + funding_end_pad]
+    if cut_low:
+        funding = funding[funding.index >= start_ts - pd.Timedelta(days=1)]
+    high = None
+    if any(p.high is not None for p in pieces):
+        high = bars([p.high if p.high is not None else p.prices * float("nan")
+                     for p in pieces])
+    history = InstrumentHistory(
+        instrument=instrument,
+        prices=prices,
+        funding=funding,
+        volume=bars([p.volume for p in pieces]),
+        trade_count=bars([p.trade_count for p in pieces]).astype("int64"),
+        first_seen=max(min(p.first_seen for p in pieces), prices.index.min()),
+        last_seen=prices.index.max(),
+        is_delisted=newest.is_delisted,
+        has_funding=pieces[0].has_funding,
+        high=high,
+    )
+    return history, windows
+
+
+def _drop_contained(cache_dir, source, instrument, interval, start, end,
+                    used: list[CachedWindow]) -> None:
+    """Remove the entries just merged into the one stored for [start, end] that lie wholly
+    inside its window: it holds everything they did, so a copy is not kept for every start ever
+    asked. Entries reaching beyond the window stay (they hold more), and so does everything of
+    Hyperliquid, whose hourly fetch reads another interval's entry by its exact name
+    (`reusable_funding`). Snapshots keep their own copy of the data and point at no file here."""
+    if source.startswith(_CAPPED_SOURCE_PREFIX):
+        return
+    first, last = _day(start), _day(end)
+    for window in used:
+        if window.start >= first and window.end <= last and (window.start, window.end) != (
+                first, last):
+            for path in _entry_files(cache_dir, source, instrument, interval, window):
+                path.unlink(missing_ok=True)
+
+
+def _entry_files(cache_dir, source, instrument, interval, window: CachedWindow) -> list[Path]:
+    return list(_cache_paths(cache_dir, source, instrument, interval, window.start, window.end))
+
+
 
 
 # Instruments of a source fetched at the same time (`QLAB_FETCH_WORKERS`, default 1: one after

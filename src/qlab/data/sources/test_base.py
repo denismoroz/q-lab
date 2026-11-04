@@ -501,31 +501,40 @@ def test_a_window_ending_earlier_is_cut_from_the_cache_of_a_later_end(tmp_path) 
     assert load_cached_history(tmp_path, "t", "X", "1d", start, late).prices.index.max() == late
 
 
-def test_a_later_cache_is_cut_only_for_daily_bars_and_only_with_the_source_asking(tmp_path) -> None:
-    """Hourly bars: the source serves only its last N candles, so an old entry may hold history
-    a fetch would not return now. Without `funding_end_pad` the source did not say how its
-    funding window ends, so nothing is cut."""
-    from qlab.data.sources.base import _cut_later_cache, fetch_universe_resumable
+def test_hourly_bars_are_cut_from_a_later_entry_except_for_a_capped_source(tmp_path) -> None:
+    """Hourly bars of a source that serves its whole history are cut like daily ones; a source
+    that serves only its last N candles (Hyperliquid) may have written an old entry that holds
+    bars a fetch would not return now, so it fetches; and a source that did not say how its
+    funding window ends (`funding_end_pad`) is never cut from."""
+    from qlab.data.sources.base import fetch_universe_resumable
 
     hour = pd.Timedelta(hours=1)
     start = pd.Timestamp("2025-01-01", tz="UTC")
     late, early = pd.Timestamp("2025-01-20", tz="UTC"), pd.Timestamp("2025-01-10", tz="UTC")
-    stored = _daily_history("X", start, late, funding_to=late + hour)
-    fetch_universe_resumable(["X"], start, late, "1d", source="t", cache_dir=tmp_path,
-                             fetch_one=lambda i: stored)
-    assert _cut_later_cache(tmp_path, "t", "X", "1h", start, early, hour, None) is None
-    asked = []
-    fetch_universe_resumable(["X"], start, early, "1d", source="t", cache_dir=tmp_path,
-                             fetch_one=lambda i: asked.append(i) or _daily_history(
-                                 "X", start, early, funding_to=early + hour))
-    assert asked == ["X"]
+    for source, pad, fetched in (("binance", hour, False), ("hyperliquid", hour, True),
+                                 ("binance", None, True)):
+        folder = tmp_path / source / str(pad)
+        stored = _hist("X", start, late, "1h")
+        fetch_universe_resumable(["X"], start, late, "1h", source=source, cache_dir=folder,
+                                 fetch_one=lambda i, stored=stored: stored)
+        asked = []
+
+        def fetch_one(i, asked=asked):
+            asked.append(i)
+            return _hist("X", start, early, "1h")
+
+        out = fetch_universe_resumable(["X"], start, early, "1h", source=source, cache_dir=folder,
+                                       fetch_one=fetch_one, funding_end_pad=pad)["X"]
+        assert bool(asked) == fetched, (source, pad)
+        assert out.prices.index.max() == early
 
 
-def test_a_cut_that_leaves_no_bar_is_a_fetch_and_a_later_end_is_not_cut_earlier(tmp_path) -> None:
+def test_a_cut_that_leaves_no_bar_is_a_fetch_and_a_later_end_needs_the_gap_fetcher(
+        tmp_path) -> None:
     """An instrument that listed after the window's end has nothing in it: the fetch decides
     what that means (a typo, or a coin that did not exist yet). A request for a LATER end than
-    the cache holds is the extend path's, not the cut's."""
-    from qlab.data.sources.base import _cut_later_cache, fetch_universe_resumable
+    the cache holds needs `fetch_range` for the gap; without it the whole is fetched."""
+    from qlab.data.sources.base import fetch_universe_resumable
 
     hour = pd.Timedelta(hours=1)
     start = pd.Timestamp("2025-01-01", tz="UTC")
@@ -534,10 +543,213 @@ def test_a_cut_that_leaves_no_bar_is_a_fetch_and_a_later_end_is_not_cut_earlier(
     stored = _daily_history("X", listed, late, funding_to=late + hour)
     fetch_universe_resumable(["X"], start, late, "1d", source="t", cache_dir=tmp_path,
                              fetch_one=lambda i: stored)
-    early = pd.Timestamp("2025-02-01", tz="UTC")
-    assert _cut_later_cache(tmp_path, "t", "X", "1d", start, early, hour, None) is None
-    assert _cut_later_cache(tmp_path, "t", "X", "1d", start, late + pd.Timedelta(days=5),
-                            hour, None) is None
+    asked = []
+
+    def fetch_one(i):
+        asked.append(i)
+        raise ValueError("no data")
+
+    for end in (pd.Timestamp("2025-02-01", tz="UTC"), late + pd.Timedelta(days=5)):
+        with pytest.raises(ValueError):
+            fetch_universe_resumable(["X"], start, end, "1d", source="t", cache_dir=tmp_path,
+                                     fetch_one=fetch_one, funding_end_pad=hour)
+    assert asked == ["X", "X"]
+
+
+def _hist(name, first, last, freq, value=1.0, *, delisted=False):
+    """A history of `name` from `first` to `last` at `freq`, every price `value`."""
+    index = pd.date_range(first, last, freq=freq)
+    prices = pd.Series(value, index=index, dtype=float)
+    funding = pd.Series(0.0001, index=pd.date_range(first, last, freq="8h"))
+    return InstrumentHistory(
+        instrument=name, prices=prices, funding=funding, volume=prices * 2,
+        trade_count=pd.Series(5, index=index, dtype="int64"), first_seen=index[0],
+        last_seen=index[-1], is_delisted=delisted, high=prices + 0.5)
+
+
+def _put(cache, history, start, end, interval="1h", source="t") -> None:
+    store_cached_history(cache, source, interval, start, end, history)
+
+
+def _utc(text):
+    return pd.Timestamp(text, tz="UTC")
+
+
+def test_a_request_with_another_start_fetches_only_the_head_and_the_tail(tmp_path) -> None:
+    """The real cache holds ADA hourly from three starts; a new spec from an earlier start used
+    to fetch all of it again. Now the entries are joined and only what none of them covers is
+    asked for: the head before the earliest entry and the tail after the latest one (from a day
+    before its end, the last bars may have been written before they closed)."""
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    a_start, a_end = _utc("2025-03-01"), _utc("2025-03-10")
+    b_start, b_end = _utc("2025-03-05"), _utc("2025-03-12")
+    _put(tmp_path, _hist("X", a_start, a_end, "1h", 1.0), a_start, a_end)
+    _put(tmp_path, _hist("X", b_start, b_end, "1h", 2.0), b_start, b_end)
+    asked = []
+
+    def fetch_range(name, a, b):
+        asked.append((a, b))
+        return _hist(name, a, b, "1h", 3.0)
+
+    def fetch_one(name):
+        raise AssertionError("the cache holds most of it")
+
+    start, end = _utc("2025-02-20"), _utc("2025-03-14")
+    out = fetch_universe_resumable(["X"], start, end, "1h", source="t", cache_dir=tmp_path,
+                                   fetch_one=fetch_one, fetch_range=fetch_range)["X"]
+    assert asked == [(start, _utc("2025-03-01")), (_utc("2025-03-11"), end)]
+    index = out.prices.index
+    assert index.is_unique and index.is_monotonic_increasing
+    assert index.min() == start and index.max() == end
+    assert len(index) == len(pd.date_range(start, end, freq="1h"))
+    # where two entries overlap the later-ending one wins; the fresh tail wins over both
+    assert out.prices[_utc("2025-03-03")] == 1.0
+    assert out.prices[_utc("2025-03-07")] == 2.0
+    assert out.prices[_utc("2025-03-13")] == 3.0
+    assert out.first_seen == start and out.last_seen == end and not out.is_delisted
+    assert out.high is not None and out.volume.index.equals(index)
+    assert out.trade_count.dtype == "int64" and out.has_funding
+    # the two entries lie inside the new one's window and are merged into it: no copies kept
+    left = sorted(p.name for p in (tmp_path / "t" / "1h").glob("*.parquet"))
+    assert left == ["X__2025-02-20__2025-03-14.parquet"]
+
+
+def test_an_entry_reaching_beyond_the_request_is_cut_and_kept(tmp_path) -> None:
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    s, e = _utc("2025-01-01"), _utc("2025-02-01")
+    _put(tmp_path, _hist("X", s, e, "1h"), s, e)
+    start, end = _utc("2025-01-10"), _utc("2025-01-20")
+    out = fetch_universe_resumable(
+        ["X"], start, end, "1h", source="t", cache_dir=tmp_path,
+        fetch_one=lambda n: pytest.fail("cached"), funding_end_pad=pd.Timedelta(0))["X"]
+    assert out.prices.index.min() == start and out.prices.index.max() == end
+    assert out.funding.index.max() <= end and out.first_seen == start
+    assert len(list((tmp_path / "t" / "1h").glob("*.parquet"))) == 2  # the wider one stays
+
+
+def test_a_spot_entry_without_funding_is_joined_and_cut_like_any_other(tmp_path) -> None:
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    s, e = _utc("2025-01-01"), _utc("2025-02-01")
+    spot = _hist("X-SPOT", s, e, "1h")
+    spot = InstrumentHistory(**{**spot.__dict__, "funding": pd.Series(dtype=float),
+                                "has_funding": False})
+    _put(tmp_path, spot, s, e)
+    out = fetch_universe_resumable(
+        ["X-SPOT"], _utc("2025-01-10"), _utc("2025-01-20"), "1h", source="t", cache_dir=tmp_path,
+        fetch_one=lambda n: pytest.fail("cached"), funding_end_pad=pd.Timedelta(0))["X-SPOT"]
+    assert out.funding.empty and not out.has_funding and len(out.prices) == 10 * 24 + 1
+
+
+def test_the_venue_having_nothing_earlier_costs_no_head_fetch(tmp_path) -> None:
+    """An entry requested from S whose first bar is later than S proves there is no data
+    between S and that bar: a request from before S needs a head only for [start, S)."""
+    from qlab.data.sources.base import fetch_universe_resumable, missing_ranges
+
+    s, e = _utc("2025-01-01"), _utc("2025-02-01")
+    _put(tmp_path, _hist("X", _utc("2025-01-15"), e, "1h"), s, e)
+    asked = []
+
+    def fetch_range(name, a, b):
+        asked.append((a, b))
+        raise ValueError("listed later than that")
+
+    start = _utc("2024-12-01")
+    assert missing_ranges(tmp_path, "t", "X", "1h", start, e) == [(start, s)]
+    assert missing_ranges(tmp_path, "t", "X", "1h", s, e) == []
+    out = fetch_universe_resumable(["X"], _utc("2025-01-05"), e, "1h", source="t",
+                                   cache_dir=tmp_path, fetch_one=lambda n: pytest.fail("cached"),
+                                   fetch_range=fetch_range)
+    assert asked == [] and out["X"].prices.index.min() == _utc("2025-01-15")
+
+
+def test_a_head_the_venue_does_not_have_is_not_an_error_and_is_remembered(tmp_path) -> None:
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    s, e = _utc("2025-03-01"), _utc("2025-03-10")
+    _put(tmp_path, _hist("X", s, e, "1h"), s, e)
+
+    def fetch_range(name, a, b):
+        raise ValueError("no kline data")
+
+    out = fetch_universe_resumable(["X"], _utc("2019-09-08"), e, "1h", source="t",
+                                   cache_dir=tmp_path, fetch_one=lambda n: pytest.fail("whole"),
+                                   fetch_range=fetch_range)["X"]
+    assert out.prices.index.min() == s and out.prices.index.max() == e
+    # stored under the requested key, the empty head is known: the same request fetches nothing
+    asked = []
+    fetch_universe_resumable(["X"], _utc("2019-09-08"), e, "1h", source="t",
+                             cache_dir=tmp_path, fetch_one=lambda n: pytest.fail("whole"),
+                             fetch_range=lambda n, a, b: asked.append(a))
+    assert asked == []
+
+
+def test_a_delisted_instrument_has_no_tail_to_fetch(tmp_path) -> None:
+    from qlab.data.sources.base import missing_ranges
+
+    s, e = _utc("2025-03-01"), _utc("2025-03-10")
+    _put(tmp_path, _hist("X", s, e - pd.Timedelta(days=3), "1h", delisted=True), s, e)
+    assert missing_ranges(tmp_path, "t", "X", "1h", s, _utc("2025-04-01"), verify=True) == []
+    # by file name alone it is not known: the tail is counted (the estimate stays cautious)
+    assert missing_ranges(tmp_path, "t", "X", "1h", s, _utc("2025-04-01")) == [
+        (e - pd.Timedelta(days=1), _utc("2025-04-01"))]
+
+
+def test_a_middle_gap_between_two_entries_is_fetched(tmp_path) -> None:
+    from qlab.data.sources.base import missing_ranges
+
+    for s, e in (("2025-01-01", "2025-01-10"), ("2025-01-20", "2025-01-31")):
+        _put(tmp_path, _hist("X", _utc(s), _utc(e), "1h"), _utc(s), _utc(e))
+    got = missing_ranges(tmp_path, "t", "X", "1h", _utc("2025-01-01"), _utc("2025-01-31"))
+    assert got == [(_utc("2025-01-09"), _utc("2025-01-20"))]
+
+
+def test_entries_before_volume_support_or_rejected_by_the_source_are_not_used(tmp_path) -> None:
+    from qlab.data.sources.base import fetch_universe_resumable
+
+    s, e = _utc("2025-03-01"), _utc("2025-03-10")
+    history = _hist("X", s, e, "1h")
+    _put(tmp_path, history, s, e)
+    old = tmp_path / "t" / "1h" / "X__2025-03-02__2025-03-20.parquet"
+    pd.DataFrame({"price": history.prices, "funding": 0.0}).to_parquet(old)
+    old.with_suffix(".json").write_text(json.dumps({
+        "first_seen": s.isoformat(), "last_seen": e.isoformat(), "is_delisted": False}))
+    asked = []
+
+    def fetch_range(name, a, b):
+        asked.append((a, b))
+        return _hist(name, a, b, "1h")
+
+    out = fetch_universe_resumable(["X"], s, _utc("2025-03-12"), "1h", source="t",
+                                   cache_dir=tmp_path, fetch_one=lambda n: pytest.fail("whole"),
+                                   fetch_range=fetch_range)["X"]
+    # the pre-volume entry would have covered the whole request; it is not trusted
+    assert asked == [(_utc("2025-03-09"), _utc("2025-03-12"))] and out.volume.notna().all()
+    # a source that rejects the entry (bar highs missing, say) gets its own fetch
+    taken = []
+    fetch_universe_resumable(["X"], s, _utc("2025-03-14"), "1h", source="t", cache_dir=tmp_path,
+                             fetch_one=lambda n: taken.append(n) or _hist(n, s, _utc("2025-03-14"),
+                                                                          "1h"),
+                             accept_cached=lambda h: False, fetch_range=fetch_range)
+    assert taken == ["X"]
+
+
+def test_missing_share_is_the_share_of_the_window_to_fetch(tmp_path) -> None:
+    from qlab.data.sources.base import missing_share
+
+    s, e = _utc("2025-01-01"), _utc("2025-04-11")  # 100 days
+    assert missing_share(tmp_path, "t", "X", "1h", s, e) == 1.0  # nothing cached
+    _put(tmp_path, _hist("X", _utc("2025-01-21"), e, "1h"), _utc("2025-01-21"), e)
+    assert missing_share(tmp_path, "t", "X", "1h", s, e) == pytest.approx(0.20)
+    assert missing_share(tmp_path, "t", "X", "1h", _utc("2025-01-21"), e) == 0.0
+    assert missing_share(tmp_path, "t", "X", "1h", _utc("2025-02-01"), _utc("2025-03-01")) == 0.0
+    # a day more at the end: the refetch begins a day before the entry's end, so two days
+    assert missing_share(tmp_path, "t", "X", "1h", _utc("2025-01-21"),
+                         e + pd.Timedelta(days=1)) == pytest.approx(2 / 81)
+    assert missing_share(tmp_path, "t", "Y", "1h", s, e) == 1.0  # another instrument
+    assert missing_share(tmp_path, "other", "X", "1h", s, e) == 1.0  # another source
 
 
 def test_instruments_of_a_threaded_source_are_fetched_at_once_with_the_same_answer(

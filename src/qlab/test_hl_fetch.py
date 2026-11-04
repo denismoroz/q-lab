@@ -231,3 +231,43 @@ def test_the_last_time_comes_from_the_ledger_then_from_the_journal(monkeypatch) 
     assert hl_fetch.last_seconds({"seconds": 12.5}, "restamp", "i") == 12.5
     assert hl_fetch.last_seconds({"seconds": None}, "restamp", "i") == 4793.7
     assert hl_fetch.last_seconds(None, "restamp", "other") is None
+
+
+# ---- any cached window answers the part it covers (owner, 2026-11-04) ----------------------------
+
+
+def test_a_column_cached_from_another_start_costs_only_the_head(uncached, tmp_path) -> None:
+    spec = _spec(source="binance", instruments=["ADA", "NEW"], start="2026-01-01",
+                 end="2026-10-30")
+    _cache(tmp_path, "binance", "1h", "ADA__2026-03-08__2026-10-31")
+    est = hl_fetch.estimate(spec, None, COST, cache_dir=tmp_path)
+    head_hours = (date(2026, 3, 8) - date(2026, 1, 1)).days * 24
+    whole_hours = (date(2026, 10, 30) - date(2026, 1, 1)).days * 24
+    want = hl_fetch.requests_whole("binance", False, head_hours) + hl_fetch.requests_whole(
+        "binance", False, whole_hours)
+    assert est.minutes == pytest.approx(want * 0.5 / 60)
+    assert "1 докачать" in est.why and "1 целиком" in est.why
+
+
+def test_the_coverage_report_reads_the_entries_and_counts_head_and_requests(tmp_path) -> None:
+    import pandas as pd
+
+    from qlab.data.sources.base import InstrumentHistory, store_cached_history
+
+    index = pd.date_range("2026-03-08", "2026-04-08", freq="1D", tz="UTC")
+    prices = pd.Series(1.0, index=index)
+    held = InstrumentHistory(
+        instrument="ADA", prices=prices, funding=prices * 0, volume=prices,
+        trade_count=prices.astype("int64"), first_seen=index[0], last_seen=index[-1],
+        is_delisted=False)
+    store_cached_history(tmp_path, "binance", "1h", pd.Timestamp("2026-03-08"),
+                         pd.Timestamp("2026-04-08"), held)
+    spec = _spec(source="binance", instruments=["ADA", "NEW"], start="2026-03-01",
+                 end="2026-04-08")
+    ada, new = hl_fetch.coverage(spec, COST, cache_dir=tmp_path)
+    assert ada.column == "ADA" and ada.windows == ((date(2026, 3, 8), date(2026, 4, 8)),)
+    assert (ada.head_days, ada.gap_days, ada.tail_days) == (7, 0, 0) and not ada.complete
+    assert ada.requests == hl_fetch.requests_whole("binance", False, 7 * 24)
+    assert new.windows == () and new.head_days == 38
+    covered = _spec(source="binance", instruments=["ADA"], start="2026-03-10", end="2026-04-01")
+    assert hl_fetch.coverage(covered, COST, cache_dir=tmp_path)[0].complete

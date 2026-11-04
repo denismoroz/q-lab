@@ -544,3 +544,18 @@ def test_standard_filters_by_family_and_rejects_an_unknown_idea(cli_db, tmp_path
     assert empty.exit_code == 0 and "cross-exchange-spread" not in empty.output
     missing = runner.invoke(app, ["standard", "--idea", "nobody"])
     assert missing.exit_code == 1
+
+
+def test_cache_coverage_prints_per_column_and_the_totals(tmp_path) -> None:
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(
+        "idea_id: cov\ntitle: cov\ncode_ref: a:b\nparams: {}\n"
+        "data: {source: binance, interval: 1h, start: 2026-03-01, end: 2026-04-01, "
+        "instruments: [ADA]}\n"
+        "costs: {taker_fee_bps: 1.0, slippage_bps: 1.0}\nmin_leg_notional: 10.0\n"
+        "unexpressed_mechanisms: []\n", encoding="utf-8")
+    result = runner.invoke(app, ["data", "cache-coverage", str(spec), "--cache-dir",
+                                 str(tmp_path / "raw")])
+    assert result.exit_code == 0, result.output
+    assert "ADA" in result.output and "nothing cached" in result.output
+    assert "fully cached: 0" in result.output and "requests:" in result.output

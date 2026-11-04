@@ -548,7 +548,7 @@ def fetch_spot_universe(
         return fetch_universe_resumable(
             [f"{c}{SPOT_COLUMN_SUFFIX}" for c in coins], start, end, interval, source=VENUE,
             fetch_one=lambda name: fetch_range(name, start, end), fetch_range=fetch_range,
-            on_missing=on_missing,
+            on_missing=on_missing, funding_end_pad=pd.Timedelta(0),
         )
 
 
@@ -582,6 +582,8 @@ def fetch_universe(
                 client, symbol, interval, a, b, exchange_info
             ),
             on_missing=on_missing,
+            # Funding is fetched to `end` exactly, so a longer entry is cut at `end`.
+            funding_end_pad=pd.Timedelta(0),
         )
 
 

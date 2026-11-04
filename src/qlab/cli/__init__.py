@@ -428,6 +428,45 @@ def data_coin_attributes_cmd(
         raise typer.Exit(code=1)
 
 
+# Binance, measured (docs/NIGHT_SPEED.md): about 30 requests a minute per fetch thread; funding
+# history is limited to 500 requests per 5 minutes from one address.
+REQUESTS_PER_MINUTE_PER_WORKER = 30
+FUNDING_LIMIT_PER_MINUTE = 100
+
+
+@data_app.command("cache-coverage")
+def data_cache_coverage_cmd(
+    spec_path: Path = typer.Argument(..., metavar="SPEC"),  # noqa: B008
+    cache_dir: Path | None = typer.Option(  # noqa: B008
+        None, "--cache-dir", help="The raw cache (default: data/raw of this checkout)"),
+    workers: int = typer.Option(2, "--workers", help="Fetch threads, for the time estimate"),
+) -> None:
+    """What the raw cache already holds of a spec's data, per instrument, and what is left to
+    fetch (read-only, nothing is fetched). Any cached window of an instrument answers the part
+    it covers (docs/HL_FETCH.md)."""
+    from qlab import hl_fetch
+
+    spec = load_spec(spec_path)
+    rows = hl_fetch.coverage(spec, hl_fetch.load_config(), cache_dir=cache_dir)
+    typer.echo(f"{spec.idea_id}: {spec.data.source} {spec.data.interval} "
+               f"{spec.data.start} -> {spec.data.end}, {len(rows)} columns")
+    for row in rows:
+        held = ", ".join(f"{a}..{b}" for a, b in row.windows) or "nothing cached"
+        left = (f"head {row.head_days} d, gap {row.gap_days} d, tail {row.tail_days} d, "
+                f"{row.requests} requests" if not row.complete else "complete")
+        typer.echo(f"  {row.column:<14} {held:<60} {left}")
+    full = sum(1 for r in rows if r.complete)
+    heads = [r for r in rows if r.head_days]
+    none = sum(1 for r in rows if not r.windows)
+    requests = sum(r.requests for r in rows)
+    rate = min(REQUESTS_PER_MINUTE_PER_WORKER * max(1, workers), FUNDING_LIMIT_PER_MINUTE)
+    typer.echo(f"fully cached: {full}; needing a head: {len(heads)} "
+               f"({sum(r.head_days for r in heads)} days in all); nothing cached: {none}; "
+               f"tails/gaps only: {len(rows) - full - len(heads)}")
+    typer.echo(f"requests: {requests}; about {requests / rate:.0f} minutes at {rate} a minute "
+               f"({workers} workers)")
+
+
 @data_app.command("asset-classes")
 def data_asset_classes_cmd(
     fetch: bool = typer.Option(

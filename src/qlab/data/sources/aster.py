@@ -423,6 +423,7 @@ def fetch_universe(
                 client, name, interval, a, b, exchange_info
             ),
             on_missing=on_missing,
+            funding_end_pad=pd.Timedelta(0),  # funding is fetched to `end` exactly
         )
 
 
