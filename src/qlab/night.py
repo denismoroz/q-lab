@@ -564,6 +564,24 @@ def _duplicates_lines() -> list[str]:
         return []
 
 
+def _standard_lines() -> list[str]:
+    """One line on the standard of the strategy pages (docs/IDEA_STANDARD.md): how many ideas lack
+    something and what is lacking most; empty when nothing is lacking or the registry cannot be
+    read: the report does not fail for a reading."""
+    from qlab import idea_standard
+    from qlab.registry.db import get_db_path, session_scope
+
+    # opening a registry that is not there would create an empty file: no file, no line
+    if get_db_path() != ":memory:" and not Path(get_db_path()).exists():
+        return []
+    try:
+        with session_scope() as session:
+            line = idea_standard.report_line(idea_standard.standard_all(session))
+    except Exception:  # noqa: BLE001
+        return []
+    return [line] if line else []
+
+
 def write_report(day: date, state: dict) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [f"# Ночной прогон {day.isoformat()}", ""]
@@ -636,6 +654,8 @@ def write_report(day: date, state: dict) -> Path:
         from qlab.duplicates import SECTION_TITLE as DUPLICATES_TITLE
 
         lines += [f"## {DUPLICATES_TITLE}", "", *body, ""]
+    if body := _standard_lines():
+        lines += ["## Стандарт страницы стратегии", "", *body, ""]
     if state.get("waiting") or state.get("waiting_notes"):
         from qlab.waiting import SECTION_TITLE as WAITING_TITLE
         from qlab.waiting import report_lines as waiting_lines

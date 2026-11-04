@@ -12,6 +12,7 @@ import OverlayPanels from '../components/OverlayPanels.jsx'
 import Anomalies from '../components/Anomalies.jsx'
 import Ladder from '../components/Ladder.jsx'
 import PlainTop from '../components/PlainTop.jsx'
+import StandardPanel from '../components/StandardPanel.jsx'
 import CardBody from '../components/CardBody.jsx'
 import {
   ASSET_CLASS,
@@ -92,7 +93,10 @@ export default function IdeaDetail() {
       <QueryState query={ideaQuery}>
         {ideaQuery.data && (
           <>
-            <PlainTop plain={ideaQuery.data.plain} />
+            <PlainTop plain={ideaQuery.data.plain}>
+              <StandardPanel standard={ideaQuery.data.standard} />
+            </PlainTop>
+            {!ideaQuery.data.plain && <StandardPanel standard={ideaQuery.data.standard} />}
             <DuplicateMark mark={ideaQuery.data.duplicate} />
             <CardSection card={ideaQuery.data.card} />
             <Outcome outcome={ideaQuery.data.latest_outcome} />

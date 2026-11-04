@@ -151,6 +151,15 @@ def _forward_series_in_tmp(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _duplicates_ledger_in_tmp(monkeypatch, tmp_path_factory) -> None:
+    """`evaluate_spec` records every check for doubles in data/duplicates/ledger.json
+    (docs/DUPLICATES.md, docs/IDEA_STANDARD.md): a test that runs it writes into a temporary file
+    instead of the owner's real one. A test of the ledger sets its own over this."""
+    monkeypatch.setenv("QLAB_DUPLICATES",
+                       str(tmp_path_factory.mktemp("duplicates") / "ledger.json"))
+
+
+@pytest.fixture(autouse=True)
 def _overlay_files_in_tmp(monkeypatch, tmp_path_factory) -> None:
     """The overlays' stored comparisons and diagnostics (data/overlays, docs/OVERLAYS.md) go to a
     temporary folder in tests. A test of the stage sets its own over this."""

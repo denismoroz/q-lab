@@ -417,3 +417,23 @@ def test_the_report_says_why_each_idea_was_taken_and_what_is_next(
     assert "    - взята: идея самого владельца" in text
     assert "Дальше в очереди карточника" in text
     assert "    - idea-0002: по возрасту (с 2026-10-27); никто не назвал её нужной" in text
+
+
+def test_the_report_has_one_line_on_the_page_standard_when_something_is_lacking(monkeypatch):
+    """docs/IDEA_STANDARD.md: «стандарт страницы: у N идей не хватает пунктов, чаще всего — …»."""
+    from qlab import idea_standard
+
+    monkeypatch.setattr(night, "_token_lines", lambda day: "")  # not under test; needs a registry
+    monkeypatch.setenv("QLAB_DB", ":memory:")
+    monkeypatch.setattr(idea_standard, "standard_all", lambda session: {"rows": []})
+    monkeypatch.setattr(idea_standard, "report_line", lambda data: "стандарт страницы: у 3 из 9 "
+                        "идей не хватает пунктов, чаще всего — «График» — у 3.")
+
+    text = night.write_report(DAY, {"done": {}}).read_text(encoding="utf-8")
+
+    assert "## Стандарт страницы стратегии" in text
+    assert "стандарт страницы: у 3 из 9 идей не хватает пунктов" in text
+
+    monkeypatch.setattr(idea_standard, "report_line", lambda data: None)
+    quiet = night.write_report(DAY, {"done": {}}).read_text(encoding="utf-8")
+    assert "Стандарт страницы стратегии" not in quiet

@@ -380,6 +380,9 @@ def test_a_new_run_with_the_same_money_under_other_numbers_is_marked(session, tm
     assert "other" not in dup.load_ledger(ledger)["results"]
     # the older idea is never marked against the newer one
     assert dup.mark_by_results(session, "old", old, store=store, path=ledger) is None
+    # every check is remembered, a double or not: «not a double» differs from «not checked yet»
+    checked = dup.load_ledger(ledger)["checked"]
+    assert set(checked) == {"new", "other", "old"} and checked["new"]["trial_id"] == new
 
     # a later run of "new" that no longer matches takes the mark off
     again = add_idea_run(session, "new", 9)

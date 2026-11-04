@@ -281,7 +281,41 @@ def create_app(*, warm: bool = False) -> FastAPI:
         cards = load_cards()
         detail["card"] = next((c for c in cards if c["idea_id"] == idea_id), None)
         detail["plain"] = _plain_page(session, idea, {c["idea_id"]: c for c in cards})
+        detail["standard"] = _standard(session, idea)
         return detail
+
+    def _standard(session: Session, idea: Idea) -> dict[str, Any] | None:
+        """The fourteen things every strategy page has, checked by code (qlab.idea_standard,
+        docs/IDEA_STANDARD.md): null for an idea put away or a calibration book. A reading of
+        stored rows and files; never fails the page."""
+        import logging
+
+        from qlab import idea_standard
+
+        if idea_standard.skipped(idea):
+            return None
+        try:
+            return idea_standard.standard_for(session, idea)
+        except Exception:  # noqa: BLE001 - a view must not fail over a check that cannot read
+            logging.getLogger(__name__).exception("standard of %s not built", idea.id)
+            return None
+
+    standard_cache: dict[str, Any] = {"at": 0.0, "data": None}
+
+    @app.get("/api/standard")
+    def standard(session: SessionDep, fresh: bool = False) -> dict[str, Any]:
+        """Every idea that is not put away, against the fourteen things every strategy page has:
+        per idea a state and the words per item, and totals per item (qlab.idea_standard,
+        docs/IDEA_STANDARD.md). It reads the whole registry, so the answer is kept for a minute."""
+        import time
+
+        from qlab import idea_standard
+
+        now = time.monotonic()
+        if fresh or standard_cache["data"] is None or now - standard_cache["at"] > 60:
+            standard_cache["data"] = idea_standard.standard_all(session)
+            standard_cache["at"] = now
+        return standard_cache["data"]
 
     def _plain_page(session: Session, idea: Idea, cards: dict[str, Any]) -> dict[str, Any] | None:
         """The plain-Russian top of the page: what the strategy does, how this variant differs,

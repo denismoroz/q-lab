@@ -490,3 +490,57 @@ def test_evaluate_refuses_a_new_idea_that_doubles_an_open_one(tmp_path, monkeypa
     assert refused.exit_code == 1
     assert "дубль идеи old" in refused.output and "--allow-duplicate" in refused.output
     assert noted == ["qlab evaluate"]
+
+
+def _registry_with_graveyard(cli_db, tmp_path) -> None:
+    runner.invoke(app, ["init-db"])
+    yaml_path = tmp_path / "graveyard.yaml"
+    yaml_path.write_text(_SAMPLE_GRAVEYARD_YAML, encoding="utf-8")
+    runner.invoke(app, ["import-graveyard", "--file", str(yaml_path)])
+
+
+def test_standard_prints_a_row_per_idea_and_the_totals(cli_db, tmp_path) -> None:
+    """docs/IDEA_STANDARD.md: the table of the console's «Стандарт» page as text."""
+    _registry_with_graveyard(cli_db, tmp_path)
+
+    result = runner.invoke(app, ["standard"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0].startswith("идея")
+    assert "cross-exchange-spread" in result.output
+    assert "нет у скольких идей" in result.output
+    assert " 1. Слова" in result.output and "14. Двойник" in result.output
+
+
+def test_standard_for_one_idea_lists_the_items_with_the_reasons(cli_db, tmp_path) -> None:
+    _registry_with_graveyard(cli_db, tmp_path)
+
+    result = runner.invoke(app, ["standard", "--idea", "cross-exchange-spread"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("cross-exchange-spread: на странице ")
+    assert " из 14" in result.output.splitlines()[0]
+    marks = [line for line in result.output.splitlines() if line[:2] in (" +", " -", " .")]
+    assert len(marks) == 14
+
+
+def test_standard_as_json_is_the_api_answer(cli_db, tmp_path) -> None:
+    import json
+
+    _registry_with_graveyard(cli_db, tmp_path)
+
+    result = runner.invoke(app, ["standard", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert [r["id"] for r in data["rows"]] == ["cross-exchange-spread"]
+    assert len(data["totals"]) == 14 and len(data["rows"][0]["items"]) == 14
+
+
+def test_standard_filters_by_family_and_rejects_an_unknown_idea(cli_db, tmp_path) -> None:
+    _registry_with_graveyard(cli_db, tmp_path)
+
+    empty = runner.invoke(app, ["standard", "--family", "bv2"])
+    assert empty.exit_code == 0 and "cross-exchange-spread" not in empty.output
+    missing = runner.invoke(app, ["standard", "--idea", "nobody"])
+    assert missing.exit_code == 1

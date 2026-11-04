@@ -495,7 +495,8 @@ def load_ledger(path: Path | None = None) -> dict[str, dict[str, Any]]:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    return {"results": dict(data.get("results") or {}), "refused": dict(data.get("refused") or {})}
+    return {"results": dict(data.get("results") or {}), "refused": dict(data.get("refused") or {}),
+            "checked": dict(data.get("checked") or {})}
 
 
 def save_ledger(ledger: Mapping[str, Any], path: Path | None = None) -> None:
@@ -648,10 +649,13 @@ def mark_by_results(session: Any, idea_id: str, trial_id: int, *, store: Path | 
     it changes no status. Returns the record, or None."""
     record = find_same_results(session, idea_id, trial_id, store=store)
     ledger = load_ledger(path)
+    # `checked`: the run the check was made on, so a page can tell «not a double» from «not
+    # checked yet» (docs/IDEA_STANDARD.md, item 14)
+    ledger["checked"][idea_id] = {"trial_id": trial_id,
+                                  "at": datetime.now(UTC).isoformat(timespec="seconds")}
     if record is None:
-        if idea_id in ledger["results"]:
-            del ledger["results"][idea_id]
-            save_ledger(ledger, path)
+        ledger["results"].pop(idea_id, None)
+        save_ledger(ledger, path)
         return None
     ledger["results"][idea_id] = record
     save_ledger(ledger, path)

@@ -6,12 +6,14 @@ import { CardRedirect, Inbox, InboxCard } from './pages/Inbox.jsx'
 import Trials from './pages/Trials.jsx'
 import Agents from './pages/Agents.jsx'
 import Pipeline from './pages/Pipeline.jsx'
+import Standard from './pages/Standard.jsx'
 
 const NAV = [
   { to: '/funnel', text: 'Воронка' },
   { to: '/agents', text: 'Агенты' },
   { to: '/pipeline', text: 'Пайплайн' },
   { to: '/ideas', text: 'Реестр и кладбище' },
+  { to: '/standard', text: 'Стандарт' },
   { to: '/inbox', text: 'Входящие' },
   { to: '/trials', text: 'Прогоны' },
 ]
@@ -52,6 +54,7 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/ideas" element={<Registry />} />
+          <Route path="/standard" element={<Standard />} />
           <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/inbox/:ideaId" element={<InboxCard />} />
