@@ -172,15 +172,16 @@ class Choice(BaseModel):
     Owner, 2026-10-31, on the causal twin that doubled every idea: «не уверен что нам нужна вот
     такая дубликация. поидее просто для стратегии достаточна проверка. так мы гоняем все 2х хотя
     все равно судим по двойнику». An idea is one idea with ONE check: the numbers it leaves open
-    are a declared list, code chooses among the values every month from the past only
-    (`qlab.strategies.retune.Retune`), and the verdict comes at once on the whole history
+    are a declared list, code chooses among the values once, on the first 2/3 of the window
+    (`qlab.strategies.retune.Retune`, rules 2026-11-04.1), and the verdict comes at once on the
+    whole history
     (`qlab.one_check`). Exactly one of the three is given:
 
     - `axes`: a parameter path -> the WHOLE list of its values (the product of the lists is the
       grid). The spec's own `params` carry the FIRST value of every list.
     - `candidates`: named sets of overrides (a card's named variants).
-    - `nothing_to_choose`: the reason there is no list. The idea is then judged after its
-      fixation date, as an idea always was, and the page says why.
+    - `nothing_to_choose`: the reason there is no list. The idea is then judged with the numbers
+      it gives, on the last third of its window like every spec, and the page says why.
 
     `source` is where the lists come from: `night/own_numbers.yaml` (the lab's declared lists) or
     the file that holds the sourced values (the catalogue row, the card). Every value must

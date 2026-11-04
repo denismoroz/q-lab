@@ -105,6 +105,7 @@ def prepare(spec: StrategySpec, session, ruleset=None) -> Prepared:
         judged_rows,
         resolve_cached_panel,
         resolve_strategy,
+        with_split_day,
     )
     from qlab.rules.loader import load_latest
 
@@ -117,6 +118,7 @@ def prepare(spec: StrategySpec, session, ruleset=None) -> Prepared:
     coverage = (complete_book_window(panel, spec.required_instruments)
                 if spec.required_instruments is not None else None)
     rows = judged_rows(spec, panel, coverage, ruleset or load_latest())
+    spec = with_split_day(spec, panel.prices.index, rows)  # a choice made at the cut
     strategy = resolve_strategy(spec.code_ref)
     weights = strategy.target_weights(panel, spec.params)
     costs = CostModel(taker_fee_bps=spec.costs.taker_fee_bps,

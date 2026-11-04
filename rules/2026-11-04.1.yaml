@@ -1,0 +1,63 @@
+# One forward-test rule for every strategy: the first 2/3 of the data selects, the last 1/3 judges.
+#
+# Owner, 2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу»
+# (docs/IDEA_STANDARD.md, «Правило 2/3 и 1/3»).
+#
+# Up to 2026-11-03.1 the forward test began at the spec's `params_fixed_at`, the day somebody wrote
+# the numbers down. The share 1/3 (`holdout_share`, rules 2026-10-24.1) only said how long that
+# forward test had to grow before it decided. An idea whose numbers a person fixed on 2026-10-03 had
+# 27 days of forward test and sat in `needs-forward` for months; an idea fixed in 2024 had two
+# years. Ideas side by side were judged on forward tests of unrelated lengths.
+#
+# What changes (and nothing else: no rule row is touched, no threshold moves):
+#
+#   * `split_by_data`: the judged window (`qlab.pipeline.evaluate.judged_rows`: the complete-book
+#     stretch, the warm-up before `judged_from`, the knowable-coins start) is cut by its days, the
+#     first 2/3 the selection period, the last 1/3 (`holdout_share`) the forward test, for EVERY
+#     spec: agent ideas, researcher experiments, ideas fixed by a person, books on paper or live on
+#     the stand, second stages (each venue on its own window).
+#   * An idea that declares lists of values (`choice`, docs/ONE_CHECK.md) is no longer re-chosen
+#     every month: code chooses ONCE, at the cut, on the first 2/3 (`Retune`, `refit_every: once`,
+#     `choose_at: split`, after-cost Sharpe on the strategy's own money) and holds it on the last
+#     third. Every value is still a trial of its own; deflation is unchanged.
+#   * The forward test is a third by construction, so its length is no reason to wait any more:
+#     `forward_days_needed` is not written and the "forward test too short" wait is gone. The
+#     other waits stay as they were: regime coverage, a noise bar without power («рано судить»).
+#   * The day a person fixed the numbers is a reading, not a rule: `params_fixed_in_forward` is 1
+#     when it falls inside the forward third (the numbers were chosen while part of it was already
+#     visible), `params_fixed_overlap_days` says by how many days. It decides nothing (owner:
+#     «сначала замер, потом правило»).
+#   * A hand-picked coin list of ANY spec gets the knowable-coins check from the stand (owner
+#     2026-11-04, «где дырка во фреймворке?», night/knowable_coins.yaml): a list that was the
+#     obvious pick (listed 30 days, top 10 by trailing turnover, computed from the venue's data) is
+#     point-in-time from the first day all its coins pass, whoever wrote it down when. Only a list
+#     that fails the check is dated by hand as before (`instruments_chosen_at`, else
+#     `params_fixed_at`): written down after the third began, it knows who survived in it.
+#
+# A verdict stored under 2026-11-03.1 keeps its route; every open idea is measured again under this
+# version (`qlab restamp run --all`) and the report names each idea whose route or status moved.
+
+version: "2026-11-04.1"
+based_on: "2026-11-03.1"
+
+rules: []
+
+split_by_data:
+  rationale: >
+    Owner, 2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу». The
+    share is the ruleset's holdout_share (1/3, owner 2026-10-24: «данные которые доступны для
+    стратегии поделить 2/3 и 1/3. первую часть использовать для тестирования подбора а оставшуюся
+    1/3 для прогона вперед»), cut by whole days of the judged window as qlab.fixation.named_date
+    cuts it, so the day is reproducible. No new number is introduced.
+
+informational:
+  - id: params_fixed_before_forward
+    metric: params_fixed_in_forward
+    comparator: "=="
+    threshold: 0.0
+    rationale: >
+      Holds when the day the spec's numbers were fixed (params_fixed_at) is on or before the first
+      day of the forward third; fails when they were chosen while part of that third was already
+      visible («числа выбраны, когда эта треть уже была известна — проверка вперёд не чистая»).
+      Not defined for a spec without that day or one whose numbers code chooses at the cut. Decides
+      nothing (owner: «сначала замер, потом правило»); params_fixed_overlap_days is beside it.

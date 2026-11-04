@@ -15,6 +15,12 @@ that selects causally (`selects_causally`) names its first choice instead and is
 a spec that declares lists of values to choose among (`choice`, docs/ONE_CHECK.md): its check names
 its own first choice.
 
+From rules 2026-11-04.1 (owner, 2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и
+1/3 правилу») the day no longer cuts anything: the stand cuts EVERY spec's judged window by its days
+(`qlab.pipeline.evaluate.split_by_share`, the same `named_date` arithmetic on the window the stand
+actually judges). The named day stays in the spec as a record of when the numbers were chosen; the
+stand only reads it (`params_fixed_in_forward`: chosen while part of the forward third was visible).
+
 Pure functions plus one file rewrite (`normalise_file`): code corrects an agent's date to the named
 one rather than throwing the spec away, and says so.
 """

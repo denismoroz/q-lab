@@ -85,6 +85,7 @@ from qlab.rules.schema import (
 )
 from qlab.spot_declaration import spot_declaration_problems
 from qlab.spot_fallback import spot_fallback_metrics
+from qlab.strategies.retune import AT_SPLIT
 from qlab.venues.config import leg_floors, load_venue
 from qlab.venues.derive import (
     derive_cross_venue_metrics,
@@ -972,6 +973,25 @@ def split_at_fixed_date(
     return PeriodSplit(selection=selection, forward=forward, before=before)
 
 
+def split_by_share(
+    index: pd.DatetimeIndex, first: int, last: int, share: float,
+    params_fit_from: date | None = None,
+) -> PeriodSplit:
+    """Split rows `first..last` by the window's DAYS (rules 2026-11-04.1, owner 2026-11-04: «все
+    стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу»): the forward test starts at
+    the first bar on or after the day `qlab.fixation.named_date` names for the window's first and
+    last day and `share` (the last `share` of its days), the selection period is every row before.
+    The day is a pure function of the two dates and the share, so whoever cuts the same window
+    gets the same day. `params_fit_from`, when given, still splits off the data before the fit
+    inside the selection period (`PeriodSplit.before`)."""
+    from qlab.fixation import named_date
+
+    start, end = index[first].date(), index[last].date()
+    if end <= start:
+        return PeriodSplit(selection=(first, last), forward=None)
+    return split_at_fixed_date(index, first, last, named_date(start, end, share), params_fit_from)
+
+
 def forward_years_needed(
     selection_sharpe: float | None, resolution: ForwardResolution
 ) -> float | None:
@@ -1163,7 +1183,9 @@ def _decide_fit_forward(
        days of trend once read +446% a year, passed every rule and would have
        gone to `paper`. Once long enough, its route stands. With no selection
        period (parameters fixed before the data began) the forward route
-       stands as is.
+       stands as is. Under rules 2026-11-04.1 (`split_by_data`) the forward test is the last third
+       of the window, so step 3's wait for length never applies; the waits for regime coverage
+       and for a noise bar without power stay.
     """
     assert ruleset.splits_fit_forward
     by_id = {rule.id: rule for rule in ruleset.rules}
@@ -1220,7 +1242,10 @@ def _decide_fit_forward(
             else "no rule failed on the selection period"
         )
         waiting = (
-            f"no forward test yet ({when})"
+            "no forward test: the judged window is too short to cut its last third off "
+            "(rules 2026-11-04.1)"
+            if ruleset.splits_by_data
+            else f"no forward test yet ({when})"
             if params_fixed_at is not None
             else "no forward test is possible until params_fixed_at is declared: the date "
             "the parameters were fixed is unknown, so the whole window is the selection period"
@@ -1269,7 +1294,9 @@ def _decide_fit_forward(
 
     days = metrics.get("forward_days", 0.0)
     needed = metrics.get("forward_days_needed")
-    if needed is None or days < needed:
+    # Under rules 2026-11-04.1 the forward test is the last third of the window by construction:
+    # its length is never a reason to wait.
+    if not ruleset.splits_by_data and (needed is None or days < needed):
         sharpe = metrics.get("fit_sharpe_net")
         if holdout is not None:
             how_long = _holdout_length(holdout, metrics)
@@ -1328,7 +1355,11 @@ def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage |
         # Warm-up before the first judged day (StrategySpec.judged_from).
         first = max(first, min(
             int(index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC"))), last))
-    if ruleset.splits_fit_forward:
+    if ruleset.splits_by_data:
+        # Rules 2026-11-04.1: the last third of the window's days, whoever fixed the numbers when.
+        split = split_by_share(index, first, last, ruleset.holdout_share.share,
+                               spec.params_fit_from)
+    elif ruleset.splits_fit_forward:
         split = split_at_fixed_date(index, first, last, spec.params_fixed_at,
                                     spec.params_fit_from)
     else:
@@ -1337,12 +1368,86 @@ def judged_rows(spec: StrategySpec, panel: MarketPanel, coverage: BookCoverage |
     if ruleset.splits_fit_forward and spec.selects_causally:
         # The strategy picks its own parameters causally (T38): before its
         # first choice it is warming up, not fitted -- nothing to judge
-        # there, and no selection period to protect.
+        # there, and no selection period to protect. Under rules 2026-11-04.1 the part before the
+        # cut is that warm-up: an idea's check chooses once, at the cut (`choose_at: split`), and a
+        # chooser that re-chooses every month is judged on the same last third as everyone.
         warmup, split = split.selection, PeriodSplit(selection=None, forward=split.forward)
     judged = split.forward if split.forward is not None else split.selection
     if judged is None:  # the whole window is shorter than two bars
         judged = (first, last)
     return JudgedRows(first=first, last=last, split=split, warmup=warmup, judged=judged)
+
+
+def split_day(index: pd.DatetimeIndex, rows: JudgedRows) -> date | None:
+    """The first day of the forward part `rows` cut, or None when there is none."""
+    return None if rows.split.forward is None else index[rows.split.forward[0]].date()
+
+
+def _bind_choose_at(node: object, day: str) -> tuple[object, bool]:
+    if isinstance(node, Mapping):
+        out, changed = {}, False
+        for key, value in node.items():
+            if key == "choose_at" and value == AT_SPLIT:
+                out[key], changed = day, True
+            else:
+                out[key], sub = _bind_choose_at(value, day)
+                changed = changed or sub
+        return out, changed
+    if isinstance(node, list):
+        items = [_bind_choose_at(v, day) for v in node]
+        return [v for v, _ in items], any(c for _, c in items)
+    return node, False
+
+
+def binds_split(params: Mapping[str, object]) -> bool:
+    """Whether `params` (at any depth: a wrapper's inner params, a noise book's reference) hold a
+    choice made at the stand's cut (`choose_at: split`, `qlab.strategies.retune.AT_SPLIT`)."""
+    return _bind_choose_at(params, "")[1]
+
+
+def with_split_day(spec: StrategySpec, index: pd.DatetimeIndex, rows: JudgedRows
+                   ) -> StrategySpec:
+    """`spec` with every `choose_at: split` in its params replaced by the first day of the forward
+    part `rows` cut (rules 2026-11-04.1: an idea's declared values are chosen once, at the cut, on
+    the selection period). A spec without one comes back as it is. Raises when there is a choice
+    to bind and no forward part to bind it to."""
+    if not binds_split(spec.params):
+        return spec
+    day = split_day(index, rows)
+    if day is None:
+        raise ValueError("choose_at: split, but the judged window is too short to cut a forward "
+                         "part off: there is no day to choose at")
+    params, _ = _bind_choose_at(spec.params, day.isoformat())
+    return spec.model_copy(update={"params": params})
+
+
+def stand_knowable_list(spec: StrategySpec, index: pd.DatetimeIndex, first: int, last: int,
+                        ruleset: RuleSet):
+    """The knowable-coins check of a plain spec's hand-picked list, made by the stand (rules
+    2026-11-04.1), or None when it does not apply or cannot be made.
+
+    Owner, 2026-11-04 («где дырка во фреймворке?», night/knowable_coins.yaml, docs/ONE_CHECK.md):
+    a list that was the obvious pick on every past day -- listed long enough and among the venue's
+    top coins by trailing turnover, computed by code from the venue's data -- is judged from the
+    start of the data, not from the day somebody wrote it down. A choice form or a second stage
+    carries its own check (`coins_knowable`); a spec that chooses causally keeps the old reading.
+    The check is the same code (`qlab.knowable_coins.check` on `raw_volume`, the raw cache of the
+    venue), on the judged window; no cache means no check, and the list is dated by hand."""
+    if (not ruleset.splits_by_data or spec.data.instruments is None
+            or spec.coins_knowable is not None or spec.selects_causally):
+        return None
+    from qlab import knowable_coins
+
+    try:
+        config = knowable_coins.load_config()
+        volume = knowable_coins.raw_volume(spec.data.source, config)
+        if volume is None or volume.empty:
+            return None
+        return knowable_coins.check(volume, spec.data.instruments, venue=spec.data.source,
+                                    start=index[first].date(), end=index[last].date(),
+                                    config=config)
+    except Exception:  # noqa: BLE001 - a check that cannot be made leaves the list dated by hand
+        return None
 
 
 def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
@@ -1615,6 +1720,14 @@ def evaluate_spec(
         )
 
     try:
+        # A choice made at the stand's cut (`choose_at: split`, rules 2026-11-04.1: an idea's
+        # declared values are chosen once on the selection period) is given its day before the
+        # strategy runs: the first day of the forward part of THIS window, so each venue chooses
+        # on its own. The cut does not depend on the params, so it is known already. The trial
+        # stores the params with the day in; the registry's spec row keeps `split`.
+        spec = with_split_day(spec, panel.prices.index,
+                              judged_rows(spec, panel, coverage, ruleset))
+        config_hash = _config_hash(spec.params)
         strategy = resolve_strategy(spec.code_ref)
         valid = getattr(strategy, "valid_intervals", None)
         if valid is not None and spec.data.interval not in valid:
@@ -1732,7 +1845,24 @@ def evaluate_spec(
                 spec.instruments_chosen_at is None
                 or index[lo].date() >= spec.instruments_chosen_at
             )
-            honest = bool(panel.meta.get("universe_complete")) or (
+            obvious = False
+            if ruleset.splits_by_data and not spec.selects_causally:
+                # Rules 2026-11-04.1: the forward third may begin before the list was written
+                # down. A list that passes the knowable-coins check (the obvious pick, computed by
+                # code from the venue's data; owner 2026-11-04) is point-in-time from the first
+                # day all its coins pass, whoever wrote it when. Only a list that fails it falls
+                # back to its own date (`instruments_chosen_at`, else the day the numbers were
+                # fixed).
+                known = spec.coins_knowable or knowable_list
+                if known is not None and known.known_from is not None:
+                    list_precedes = index[lo].date() >= known.known_from
+                    # an obvious pick knows nothing of the future on any part from that day,
+                    # the selection period included
+                    obvious = list_precedes and spec.data.instruments is not None
+                else:
+                    listed = spec.instruments_chosen_at or spec.params_fixed_at
+                    list_precedes = listed is not None and index[lo].date() >= listed
+            honest = bool(panel.meta.get("universe_complete")) or obvious or (
                 forward_part and spec.data.instruments is not None and list_precedes
             )
             measured["point_in_time_universe"] = 1.0 if honest else 0.0
@@ -1794,15 +1924,18 @@ def evaluate_spec(
         split_mode = ruleset.splits_fit_forward
         rows = judged_rows(spec, panel, coverage, ruleset)
         first, split, warmup, judged = rows.first, rows.split, rows.warmup, rows.judged
+        # Read by `_measure` (point-in-time of a hand-picked list, rules 2026-11-04.1).
+        knowable_list = stand_knowable_list(spec, index, rows.first, rows.last, ruleset)
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None,
                            years=True)
         if spec.judged_from is not None and first > 0:
             metrics["skipped_warmup_days"] = _days((0, first - 1))
-        if spec.coins_knowable is not None:
+        if (checked_list := spec.coins_knowable or knowable_list) is not None:
             # The knowable-coins check of the list (qlab.knowable_coins): 1 when every coin was a
-            # knowable pick from some day, and whether that day is the start of the data.
-            metrics["coins_knowable"] = float(spec.coins_knowable.known_from is not None)
-            metrics["coins_knowable_from_start"] = float(spec.coins_knowable.from_start)
+            # knowable pick from some day, and whether that day is the start of the data. For a
+            # plain spec the stand makes it (rules 2026-11-04.1, `stand_knowable_list`).
+            metrics["coins_knowable"] = float(checked_list.known_from is not None)
+            metrics["coins_knowable_from_start"] = float(checked_list.from_start)
         if spec.measure_hedge_timing:
             # Does the book pick WHEN to hedge better than chance, on the
             # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.
@@ -1841,7 +1974,20 @@ def evaluate_spec(
             metrics["judged_on_forward"] = 1.0 if split.forward is not None else 0.0
             metrics["selection_days"] = _days(split.selection) if split.selection else 0.0
             metrics["forward_days"] = _days(split.forward) if split.forward else 0.0
-            if split.forward is not None and ruleset.holdout_share is not None:
+            if ruleset.splits_by_data:
+                # Rules 2026-11-04.1: the forward test IS the last third of the window, so its
+                # length is no reason to wait and nothing is "needed". The day the numbers were
+                # fixed is a reading: inside the forward third, the numbers were chosen while part
+                # of it was visible. It decides nothing (owner: «сначала замер, потом правило»).
+                metrics["split_by_data"] = 1.0
+                fixed = spec.params_fixed_at
+                if split.forward is not None and fixed is not None and not spec.selects_causally:
+                    # The days of the forward third that were already data when they were fixed.
+                    overlap = max(0, min((fixed - index[split.forward[0]].date()).days,
+                                         int(round(metrics["forward_days"]))))
+                    metrics["params_fixed_in_forward"] = 1.0 if overlap > 0 else 0.0
+                    metrics["params_fixed_overlap_days"] = float(overlap)
+            elif split.forward is not None and ruleset.holdout_share is not None:
                 # The forward test must be a share of the fitting window plus
                 # itself (rules 2026-10-24.1): the window the spec declares,
                 # else the run's own data before the fix date. A causal
@@ -1954,7 +2100,9 @@ def evaluate_spec(
         # Facts for whoever reads the run, read by no rule: whether a forward
         # test can ever start, and how many rules failed on the selection
         # period (they may not decide there, but they are not "nothing").
-        metrics["fix_date_known"] = 1.0 if spec.params_fixed_at is not None else 0.0
+        # Under rules 2026-11-04.1 the cut needs no date, so a forward test always can start.
+        metrics["fix_date_known"] = (1.0 if spec.params_fixed_at is not None
+                                     or ruleset.splits_by_data else 0.0)
         if selection_result is not None:
             metrics["selection_rules_failed"] = float(
                 sum(1 for row in selection_result.rows if row.passed is False))
@@ -2139,6 +2287,11 @@ __all__ = [
     "decide_fit_forward_route",
     "forward_years_needed",
     "split_at_fixed_date",
+    "split_by_share",
+    "split_day",
+    "binds_split",
+    "with_split_day",
+    "stand_knowable_list",
     "Evaluation",
     "JudgedRows",
     "RouteReview",

@@ -105,6 +105,7 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
         cut_truncated_history,
         judged_rows,
         resolve_strategy,
+        with_split_day,
     )
     from qlab.pipeline.spec import load_spec
     from qlab.registry.models import Spec, Trial
@@ -136,6 +137,7 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
                 if spec.required_instruments is not None else None)
     rows = judged_rows(spec, panel, coverage, ruleset)
     try:
+        spec = with_split_day(spec, panel.prices.index, rows)  # a choice made at the cut
         strategy = resolve_strategy(spec.code_ref)
         weights = strategy.target_weights(panel, spec.params)
         extra = own_costs(strategy, panel, spec.params)

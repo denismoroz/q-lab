@@ -258,6 +258,16 @@ function Outcome({ outcome }) {
         <span className="font-mono">{trial.route_reason}</span>
       </p>
       {periods.length > 0 && <NumberList title="Данные" numbers={periods} />}
+      {m.params_fixed_in_forward === 1 && (
+        // Rules 2026-11-04.1: a reading, not a rule (owner: «сначала замер, потом правило»).
+        <p className="mt-1 text-xs text-amber-700" data-testid="params-fixed-in-forward">
+          Числа выбраны, когда эта треть уже была известна — проверка вперёд не чистая
+          {typeof m.params_fixed_overlap_days === 'number'
+            ? ` (к дню выбора из неё прошло ${Math.round(m.params_fixed_overlap_days)} дн.)`
+            : ''}
+          . Это замер, он ничего не решает.
+        </p>
+      )}
       {numbers.length > 0 && (
         <NumberList title={split ? `${judged} — по ней решение` : null} numbers={numbers} />
       )}

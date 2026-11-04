@@ -52,7 +52,7 @@ from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, p
 from qlab.pipeline.sources import QLAB_ROOT, covering_key
 from qlab.pipeline.spec import CoinsKnowable, SpecData, StrategySpec
 from qlab.regimes import WINDOW_DAYS
-from qlab.strategies.retune import expand_grid
+from qlab.strategies.retune import AT_SPLIT, ONCE, expand_grid
 
 TWIN_SUFFIX = "-causal"
 BINANCE_ARCHIVE_START = date(2019, 9, 8)
@@ -907,6 +907,36 @@ def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: 
         + (f" {listed}." if listed else ""))
 
 
+def _once_evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: str,
+                   dates: tuple[date, date, date], refit_every: str,
+                   listed: str | None = None) -> str:
+    """`params_fixed_evidence` of a check that chooses once, at the cut (rules 2026-11-04.1)."""
+    active, _, cut = dates
+    return (
+        "The numbers are chosen once by code (qlab.strategies.retune, refit_every: once, "
+        f"choose_at: split; {RETUNE_DOC}), at the stand's cut: the first day of the last third of "
+        "the judged window (rules 2026-11-04.1; owner 2026-11-04: «все стратегии должны проходить "
+        "проверку вперед по 2/3 и 1/3 правилу»), by the after-cost Sharpe each value realised on "
+        "the strategy's own money before that day, and held to the end. The stand puts the day in "
+        "for the window it runs on, so this date is the cut of the spec's own window "
+        f"({start}..{spec.data.end}): {cut}. The data starts {start}; the longest warm-up read "
+        f"from the parameters is {_plain(warm)} days ({label}), so the book can first trade on "
+        f"{active}. The grid is " + grid.description + ". What this does not prove: "
+        + grid.caveat + (f" (the spec's own date for its numbers: {spec.params_fixed_at})"
+                         if spec.params_fixed_at else "") + "."
+        + (f" {listed}." if listed else ""))
+
+
+def _once_sources() -> dict[str, str]:
+    rule = ("rules/2026-11-04.1.yaml (split_by_data); owner 2026-11-04: «все стратегии должны "
+            "проходить проверку вперед по 2/3 и 1/3 правилу»")
+    return {
+        "refit_every": f"{rule}: the declared values are chosen once, on the first 2/3",
+        "choose_at": f"{rule}: at the stand's cut, the first day of the last third "
+                     "(qlab.pipeline.evaluate.with_split_day)",
+    }
+
+
 def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
              chosen: ChosenList | None = None, start_cite: str | None = None,
              day: date | None = None, known: CoinsKnowable | None = None) -> dict[str, str]:
@@ -962,7 +992,8 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 honest_from: tuple[date, str] | None = None,
                 execution_venue: str | None = None, keep_id: bool = False,
                 volume_of: Callable[[str], pd.DataFrame | None] | None = None,
-                knowable_config: knowable_coins.KnowableConfig | None = None) -> TwinResult:
+                knowable_config: knowable_coins.KnowableConfig | None = None,
+                choose_once: bool = False, share: float | None = None) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
@@ -989,7 +1020,15 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     `keep_id` (owner, 2026-10-31, docs/ONE_CHECK.md): the result keeps the idea's own `idea_id`
     instead of the `-causal` twin's. It is then not a second idea beside the first but the form in
     which the idea's one check runs, built from the lists the idea declares (`grid` from
-    `choice_grid`); `qlab.one_check` is the caller."""
+    `choice_grid`); `qlab.one_check` is the caller.
+
+    `choose_once` (rules 2026-11-04.1, owner 2026-11-04: «все стратегии должны проходить проверку
+    вперед по 2/3 и 1/3 правилу»): the numbers are chosen ONCE, at the stand's cut, on the first
+    2/3 of the judged window, and held on the last third (`refit_every: once`, `choose_at: split`;
+    the stand puts the day in, `qlab.pipeline.evaluate.with_split_day`, so each venue chooses on
+    its own window). `params_fixed_at` is then the cut as the spec's own window puts it (`share`,
+    by default the latest rules' `holdout_share`): what older rules split at, never what the new
+    ones do."""
     if refit_every not in PERIODS:
         raise ValueError(f"refit_every must be one of {sorted(PERIODS)}, got {refit_every!r}")
     refusal = _refusal(spec)
@@ -1047,7 +1086,18 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                                                          seconds_per_instrument)
     warm, label = warmup_days(grid.trees, spec.data.interval)
     dates = first_choice(data.start, warm, refit_every)
-    if dates[2] >= data.end:
+    if choose_once and (day or data.start) < data.end:
+        from qlab import fixation
+
+        cut = fixation.named_date(day or data.start, data.end,
+                                  fixation.holdout_share() if share is None else share)
+        if dates[0] >= cut:
+            return TwinResult(None, (
+                f"the strategy's warm-up ({_plain(warm)} days, {label}) ends on {dates[0]}, on "
+                f"or after the cut of the window at its last third ({cut}): no value would have "
+                "traded on the first 2/3, so none could be chosen there"))
+        dates = (dates[0], cut, cut)
+    elif not choose_once and dates[2] >= data.end:
         return TwinResult(None, f"the first causal choice ({dates[2]}) falls on or after the end "
                                 f"of the data ({data.end}): no day would be a forward test")
 
@@ -1055,17 +1105,21 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "inner_code_ref": grid.inner_code_ref,
         "base_params": grid.base_params,
         "grid": grid.grid,
-        "refit_every": refit_every,
+        "refit_every": ONCE if choose_once else refit_every,
+        **({"choose_at": AT_SPLIT} if choose_once else {}),
         "window": "expanding",
         "objective": "sharpe_net",
         "score_costs": {"taker_fee_bps": spec.costs.taker_fee_bps,
                         "slippage_bps": spec.costs.slippage_bps},
     }
     made = "One check of" if keep_id else "Causal twin of"
+    how = ("once, at the cut of the window at its last third, from returns realised on the first "
+           "2/3, and held on the last third" if choose_once else
+           f"every {PERIODS[refit_every][0]}, from returns realised before the choice")
     notes = [
         f"{made} {spec.idea_id}: the numbers it trades are "
-        f"chosen by code, every {PERIODS[refit_every][0]}, from returns realised before the "
-        f"choice ({grid.differs}); the data is Binance's history, a proxy for {spec.data.source}'s "
+        f"chosen by code, {how} ({grid.differs}); the data is Binance's history, a proxy for "
+        f"{spec.data.source}'s "
         "market, judged for Binance itself: Binance's costs and minimum leg and Binance's facts "
         "about execution (docs/VENUE_SPLIT.md).",
     ]
@@ -1109,8 +1163,10 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
             "list is judged only from the day it was known, and no such day is left"))
     update = {
         "idea_id": spec.idea_id if keep_id else f"{spec.idea_id}{TWIN_SUFFIX}",
-        "title": f"{spec.title}: числа выбирает код {PERIODS[refit_every][1]} только по "
-                 f"прошлому, история Binance с {data.start.year}",
+        "title": (f"{spec.title}: числа выбирает код один раз, на первых 2/3 данных, история "
+                  f"Binance с {data.start.year}" if choose_once else
+                  f"{spec.title}: числа выбирает код {PERIODS[refit_every][1]} только по "
+                  f"прошлому, история Binance с {data.start.year}"),
         "choice": None,
         "code_ref": RETUNE,
         "params": params,
@@ -1120,7 +1176,7 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "judged_from": day,
         "params_fit_from": None,
         "params_fixed_at": dates[2],
-        "params_fixed_evidence": _evidence(
+        "params_fixed_evidence": (_once_evidence if choose_once else _evidence)(
             spec, grid, data.start, warm, label, dates, refit_every,
             None if chosen is None else _list_evidence(chosen, data.start, seconds, day, known,
                                                        by_code)),
@@ -1134,6 +1190,8 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "coins_knowable": known,
         "differs_from_source": [*spec.differs_from_source, *notes],
     }
+    if choose_once:
+        update["sources"] = {**update["sources"], **_once_sources()}
     update["data"] = data.model_dump(mode="python")
     twin = StrategySpec.model_validate({**spec.model_dump(mode="python"), **update})
     # Venue split (docs/VENUE_SPLIT.md, owner 2026-10-30): the twin is the idea's verdict for

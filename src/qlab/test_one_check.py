@@ -1,5 +1,6 @@
 """One idea, one check (`qlab.one_check`, docs/ONE_CHECK.md): the idea declares the values it leaves
-open, code chooses among them month by month from the past, and the verdict is the idea's own
+open, code chooses among them once, at the cut of the window at its last third (rules
+2026-11-04.1; month by month before), and the verdict is the idea's own
 under its own id -- there is no `-causal` idea beside it.
 
 The stand is replaced by a recorder; the specs are built in the test, and the lab's own lists
@@ -141,10 +142,14 @@ def test_the_check_is_the_same_idea_with_its_numbers_chosen_by_code_on_binance()
     assert checked.data.source == "binance" and checked.data.start == date(2019, 9, 8)
     assert checked.choice is None  # the check form declares nothing more
     assert len(result.candidates) == 8
-    assert checked.params["refit_every"] == "M" and checked.params["window"] == "expanding"
+    # rules 2026-11-04.1: chosen once, at the stand's cut, on the first 2/3 of the window
+    assert checked.params["refit_every"] == "once" and checked.params["choose_at"] == "split"
+    assert checked.params["window"] == "expanding"
     assert checked.params["grid"] and checked.params["inner_code_ref"] == spec.code_ref
-    # the first choice is the warm-up arithmetic of the twin's, not a day anybody picked
-    assert checked.params_fixed_at and checked.params_fixed_at > date(2019, 9, 8)
+    # the date is the cut of the spec's own window (what older rules split at), not a day
+    # anybody picked: 2019-09-08 + 2/3 of the days to 2026-10-26
+    assert checked.params_fixed_at == date(2024, 6, 10)
+    assert "choose_at" in checked.sources and "2/3" in checked.title
     assert "docs/ONE_CHECK.md" in checked.sources["grid"]
     assert "One check of new-idea" in " ".join(checked.differs_from_source)
     # the venue split: Binance's own costs, not the original venue's

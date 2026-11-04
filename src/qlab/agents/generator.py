@@ -32,8 +32,9 @@ values it leaves open -- the several values a mechanism's row gives, or, where t
 the whole list `night/own_numbers.yaml` declares (owner, 2026-10-26, «Разрешить с этими
 четырьмя ограничениями ... - еще я бы довавил правило - придумать свой механизм основываясь на
 идее»; `qlab.own_numbers`, docs/OWN_NUMBERS.md) -- or says why there is nothing to choose.
-Code chooses among the values every month from the past only and judges at once on Binance's
-whole history (`qlab.one_check`); every value is a trial. A spec may also carry `# mechanism:
+Code chooses among the values once, on the first 2/3 of the window, and judges on the last third
+of Binance's whole history (`qlab.one_check`, rules 2026-11-04.1); every value is a trial. A spec
+may also carry `# mechanism:
 own` with `own_mechanism` (the idea, why it should earn, where it came from) when no catalogue
 mechanism expresses the idea -- all its numbers are then lists of the lab's own values.
 
@@ -619,9 +620,13 @@ Rules:
 - noise_universe: "panel" (the strategy chooses its coins by its own universe rule, so its
   random books may choose among the whole panel); "held" only for a fixed instrument list,
   which is not allowed here.
-- params_fixed_at is the day after the last data the numbers could have been fitted to
-  (docs/FIT_VS_FORWARD.md): data BEFORE it is a selection period where a pass proves nothing,
-  data FROM it is a forward test. Code names it (owner, 2026-10-29, docs/FIXATION.md): the
+- The stand cuts EVERY spec's window by its days: the first 2/3 is the selection period where a
+  pass proves nothing, the last 1/3 the forward test that decides (rules 2026-11-04.1, owner
+  2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу»;
+  docs/FIT_VS_FORWARD.md). params_fixed_at does NOT move that cut: it records the day after the
+  last data the numbers could have been fitted to, and the page shows when it falls inside the
+  last third (the forward test is then not clean). Code names it (owner, 2026-10-29,
+  docs/FIXATION.md): the
   start of the LAST THIRD of the spec's window -- {fixation_rule} for data.start..data.end as
   you write them. Write that day, with params_fixed_evidence "named by code: the start of the
   last third of the window". You may write a LATER day only with a source: a catalogue source
@@ -632,8 +637,9 @@ Rules:
 
 ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). A spec does not get a
 "twin" and you do not write a causal wrapper. It declares up front the values of the numbers it
-leaves open, in a `choice` block; code chooses among them every month from the past only and
-judges at once on Binance's whole history. `params` holds the FIRST value of every list. There are
+leaves open, in a `choice` block; code chooses among them ONCE, on the first 2/3 of the window,
+holds that choice on the last third, and judges at once on Binance's whole history. `params` holds
+the FIRST value of every list. There are
 three kinds of axis, and only these:
 - A parameter whose row in the mechanism's table gives SEVERAL values: the axis is that row's
   values (the whole row; for a row in percent that reads as shares, any of its values), e.g.
@@ -652,11 +658,12 @@ three kinds of axis, and only these:
   row and {own_numbers} declares nothing for the others -- and then you SAY WHY, in a sentence:
     choice:
       nothing_to_choose: "<why the catalogue gives one value for every number this spec uses>"
-  Such a spec is judged after its fixation date, as before, and the page shows your sentence.
+  Such a spec is judged on the last third of its window like every spec, and the page shows
+  your sentence.
 The product of the lists' lengths may not exceed max_candidates of {own_numbers}; every value is a
 trial of its own, so a long list raises the bar the best of them has to clear. A spec with no
 `choice` block is rejected. For a spec with lists leave out params_fixed_at and
-params_fixed_evidence: its check names its own first choice.
+params_fixed_evidence: code makes its choice at the cut itself.
 
 AN OWN MECHANISM. If an idea is worth a trial but no catalogue mechanism expresses it, write
 the first line `# mechanism: {own}` and the field

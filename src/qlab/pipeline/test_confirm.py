@@ -283,8 +283,14 @@ class _Session:
         return self.trial if key == 7 else None
 
 
-def _stage1_world(monkeypatch, *, fixed_at: date | None = date(2026, 2, 1)):
+def _stage1_world(monkeypatch, *, fixed_at: date | None = date(2026, 2, 1),
+                  rules: str = "2026-11-03.1"):
+    """Stage 1's world; `rules` is the version its trial was judged by (up to 2026-11-03.1 the
+    forward test starts at the fix date, from 2026-11-04.1 at the last third of the window)."""
+    import qlab.forward_series as forward_series
     from qlab.data.panel import MarketPanel
+
+    monkeypatch.setattr(forward_series, "_rules_version", lambda session, trial_id: rules)
 
     index = pd.date_range("2026-01-01", periods=100, freq="D", tz="UTC")
     prices = pd.DataFrame({"BTC": 100.0 * 1.01 ** np.arange(100)}, index=index)
@@ -305,7 +311,7 @@ def _stage1_world(monkeypatch, *, fixed_at: date | None = date(2026, 2, 1)):
     monkeypatch.setattr(evaluate, "resolve_strategy", lambda ref: Strategy())
     spec = types.SimpleNamespace(
         idea_id="x", data=object(), required_instruments=None, code_ref="x:y", params={},
-        params_fixed_at=fixed_at,
+        params_fixed_at=fixed_at, judged_from=None, params_fit_from=None, selects_causally=False,
         costs=types.SimpleNamespace(taker_fee_bps=0.0, slippage_bps=0.0))
     trial = types.SimpleNamespace(snapshot_id="snap-1", metrics={"noise_power": 0.93})
     return spec, _Session(trial)
@@ -318,6 +324,17 @@ def test_stage_1s_history_is_its_strategy_on_its_trials_snapshot_from_the_fix_da
     assert history.trial_id == 7 and history.noise_power == 0.93
     assert history.net_return.index[0] == pd.Timestamp("2026-02-01", tz="UTC")  # forward only
     assert history.net_return.index[-1] < pd.Timestamp("2026-04-10", tz="UTC")
+
+
+def test_under_the_new_rules_stage_1s_history_is_its_last_third_whatever_the_fix_date(
+        monkeypatch) -> None:
+    """Rules 2026-11-04.1 (owner, 2026-11-04: «все стратегии должны проходить проверку вперед по
+    2/3 и 1/3 правилу»): stage 1's forward test is the last third of its own window."""
+    for fixed_at in (date(2026, 2, 1), None):
+        spec, session = _stage1_world(monkeypatch, fixed_at=fixed_at, rules="2026-11-04.1")
+        history = confirm.load_stage1_history(session, spec, 7)
+        # 2026-01-01 .. 2026-04-10: 99 days, the cut 2026-01-01 + round(99 * 2/3) = 2026-03-08
+        assert history.net_return.index[0] == pd.Timestamp("2026-03-08", tz="UTC")
 
 
 @pytest.mark.parametrize("trial_id,fixed_at,expect", [

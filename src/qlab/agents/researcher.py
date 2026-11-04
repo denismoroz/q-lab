@@ -64,8 +64,9 @@ def drawdown_evidence(specs: list[Path], session) -> list[str]:
         ruleset = load_latest()
         share = ruleset.holdout_share.share if ruleset.holdout_share is not None else None
         rules_version = ruleset.version
+        by_data = ruleset.splits_by_data
     except Exception:  # noqa: BLE001 - the section says what is missing
-        share, rules_version = None, "unknown"
+        share, rules_version, by_data = None, "unknown", False
     regimes = load_regimes()
     for path in specs:
         full = path if path.is_absolute() else QLAB_ROOT / path
@@ -73,11 +74,12 @@ def drawdown_evidence(specs: list[Path], session) -> list[str]:
             spec = load_spec(full)
             lines += [f"## Drawdown evidence: {path} (idea {spec.idea_id}, data source "
                       f"{spec.data.source}, window {spec.data.start}..{spec.data.end})"]
-            found = diagnose_spec(spec, session, share=share, regimes=regimes)
+            found = diagnose_spec(spec, session, share=share, regimes=regimes, by_data=by_data)
             if found is None:  # the nightly recheck keeps the panel of the extended window
                 extended = with_end(spec, last_closed_day())
                 if extended is not spec:
-                    found = diagnose_spec(extended, session, share=share, regimes=regimes)
+                    found = diagnose_spec(extended, session, share=share, regimes=regimes,
+                                          by_data=by_data)
                     lines[-1] += f" -- panel of the window extended to {extended.data.end}"
         except Exception as exc:  # noqa: BLE001 - one broken spec must not stop the research
             lines += [f"evidence not built: {type(exc).__name__}: {exc}", ""]
@@ -87,7 +89,7 @@ def drawdown_evidence(specs: list[Path], session) -> list[str]:
                       "evidence is not built (nothing is fetched for it)", ""]
             continue
         lines += [CUT_SENTENCE.format(cut=found.cut.day), *render(found)]
-        if "holdout_share" in found.cut.source:
+        if "holdout_share" in found.cut.source or "the stand's cut" in found.cut.source:
             lines.append(f"(the held-out share is read from ruleset {rules_version})")
         lines.append("")
     return lines
@@ -229,8 +231,10 @@ Write two kinds of files and nothing else:
 
    ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). An experiment does not
    get a "twin" any more and you do not write a causal wrapper: the idea declares up front the
-   values of the numbers it changes, code chooses among them every month from the past only, on
-   the venue's whole history, and the verdict comes at once. So every experiment spec carries a
+   values of the numbers it changes, code chooses among them ONCE, on the first 2/3 of the
+   venue's whole history, holds the choice on the last third, and the verdict comes at once
+   (rules 2026-11-04.1: every spec's window is cut 2/3 selection, 1/3 forward test, by its days). So
+   every experiment spec carries a
    `choice` block. `params` holds the FIRST value of every list; the block holds the lists:
 
      choice:
@@ -252,8 +256,8 @@ Write two kinds of files and nothing else:
          base: {{hedge_margin_headroom: 1.0}}
        source: "specs/bv2-live.yaml, docs/research/<the document that gives 1.5>"
 
-   Do not set params_fixed_at, params_fixed_evidence or selects_causally for such a spec: its
-   check names its own first choice. Every value of every list is a trial of its own, so a long
+   Do not set params_fixed_at, params_fixed_evidence or selects_causally for such a spec: code
+   makes its choice at the cut itself. Every value of every list is a trial of its own, so a long
    list raises the bar the best of them has to clear.
 
    A spec with no list is refused, unless it says why there is nothing to choose from:
@@ -262,12 +266,15 @@ Write two kinds of files and nothing else:
        nothing_to_choose: "<a sentence: why no number of this fix has an alternative the lab
                            has declared or a source gives>"
 
-   Then it is judged after its fixation date as before (params_fixed_at is the day the code names,
+   Then it is judged on the last third of its window, as every spec is (rules 2026-11-04.1: the
+   cut is always 2/3 and 1/3 of the data, never params_fixed_at). Still write params_fixed_at, the
+   day the code names (it is a record, and the page shows when it falls inside the last third;
    owner 2026-10-29, docs/FIXATION.md: the start of the LAST THIRD of the spec's own window, with
    params_fixed_evidence "declared by the researcher on {today}: fix designed on the data before
    <that day>; <hypothesis>"; a LATER day only with a source cited under sources.params_fixed_at).
-   Never set params_fixed_at to {today} for a fixed-parameter fix on history: it has no forward
-   test until data after today accumulates. Use this only when it is true: the stand shows the
+   Never set params_fixed_at to {today} for a fixed-parameter fix on history: it would record
+   that the numbers saw the whole last third, and the page marks such a forward test as not
+   clean. Use this only when it is true: the stand shows the
    sentence on the idea's page.
    Where only a short history exists (Hyperliquid only, as for FRAB), the same applies with
    the cut of the evidence, but its held-out part is short: say in the memo that the result is

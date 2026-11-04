@@ -126,6 +126,7 @@ def _load(version: str, directory: Path, chain: tuple[str, ...]) -> RuleSet:
                             else ruleset.forward_resolution or base.forward_resolution),
         holdout_share=(None if ruleset.forward_resolution is not None
                        else ruleset.holdout_share or base.holdout_share),
+        split_by_data=ruleset.split_by_data or base.split_by_data,
         noise_power=ruleset.noise_power or base.noise_power,
         stage2_confirmation=ruleset.stage2_confirmation or base.stage2_confirmation,
         noise_bar=ruleset.noise_bar or base.noise_bar,

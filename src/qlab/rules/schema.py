@@ -177,6 +177,24 @@ class HoldoutShare(BaseModel):
         return float(math.ceil(round(fit_days * self.share / (1.0 - self.share), 6)))
 
 
+class SplitByData(BaseModel):
+    """Where the forward test starts (docs/FIT_VS_FORWARD.md), from 2026-11-04.1.
+
+    Owner, 2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу».
+    Before, the forward test started at the spec's `params_fixed_at`: an idea whose numbers a
+    person wrote down a month ago had a month of forward test and waited for months, and two ideas
+    side by side were judged on forward tests of unrelated lengths. With this block the judged
+    window (`qlab.pipeline.evaluate.judged_rows`) is cut by its DAYS: the first `1 - share` of it
+    is the selection period, the last `share` (the ruleset's `holdout_share`) the forward test,
+    for every spec. The forward test is then a third by construction, so its length is never a
+    reason to wait; `params_fixed_at` stays a reading (`params_fixed_in_forward`), not the cut.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rationale: str
+
+
 class NoisePower(BaseModel):
     """When the noise bar can tell a good strategy from luck on THIS run
     (docs/FIT_VS_FORWARD.md), from 2026-10-24.2.
@@ -428,6 +446,10 @@ class RuleSet(BaseModel):
     """From 2026-10-24.1, replacing `forward_resolution`: how long a forward
     test must be, as a share of the data, rather than the years it takes to
     resolve a Sharpe."""
+    split_by_data: SplitByData | None = None
+    """From 2026-11-04.1: the forward test is the last `holdout_share` of the judged window by
+    days, for every spec, not the data from `params_fixed_at` on (docs/FIT_VS_FORWARD.md). It
+    needs `holdout_share`."""
     noise_power: NoisePower | None = None
     """From 2026-10-24.2: a `wait` rule's failure counts only where the noise
     bar can tell a good strategy from luck."""
@@ -485,6 +507,18 @@ class RuleSet(BaseModel):
         if self.forward_resolution is not None and self.holdout_share is not None:
             raise ValueError("a ruleset sets forward_resolution or holdout_share, not both")
         return self
+
+    @model_validator(mode="after")
+    def _split_by_data_needs_a_share(self) -> RuleSet:
+        if self.split_by_data is not None and self.forward_resolution is not None:
+            raise ValueError("split_by_data cuts the window by holdout_share, not by "
+                             "forward_resolution")
+        return self
+
+    @property
+    def splits_by_data(self) -> bool:
+        """The forward test is the last `holdout_share` of the window (from 2026-11-04.1)."""
+        return self.split_by_data is not None and self.holdout_share is not None
 
     @property
     def splits_fit_forward(self) -> bool:

@@ -229,7 +229,8 @@ def rerun_spec(spec: StrategySpec) -> StrategySpec:
     night of 2026-10-27 passed such specs to the stand as they were and both failed.
 
     An idea that declares lists of values (`StrategySpec.choice`, docs/ONE_CHECK.md) is its one
-    check: the same idea, the numbers chosen by code every month from the past only, on Binance's
+    check: the same idea, the numbers chosen by code once at the cut (rules 2026-11-04.1), on
+    Binance's
     history (`qlab.one_check`). An idea that says there is nothing to choose runs as it is."""
     from qlab import one_check, own_numbers
 
