@@ -463,6 +463,62 @@ def test_a_required_spot_leg_hyperliquid_lacks_is_unavailable_with_a_cited_reaso
     assert "LINK-SPOT" in result.spec.required_instruments
 
 
+TOPK_CANDIDATES = ["BTC", "ETH", "1000PEPE", "HYPE", "LINK", "1000BONK"]
+
+
+def _topk_shaped(wrapped: bool) -> StrategySpec:
+    """A coin-list rule as the Bv3 top-K experiment states it: candidates named in Binance's
+    columns, some of which Hyperliquid lacks (1000PEPE has only a perpetual there, kPEPE; LINK and
+    1000BONK nothing); `wrapped` puts it under a `Retune`'s `base_params`, as the one check does."""
+    universe = {"rule": "top_liquid", "n": 2, "rebalance": "1d", "by": "perp_dollar_volume",
+                "window_days": 30, "candidates": list(TOPK_CANDIDATES)}
+    inner = {"universe": universe, "fast_window_hours": 12}
+    params = ({"inner_code_ref": "qlab.strategies.agent.fast_release_gate:FastReleaseGate",
+               "base_params": inner} if wrapped else inner)
+    instruments = sorted([*TOPK_CANDIDATES, *(f"{c}-SPOT" for c in TOPK_CANDIDATES)])
+    spec = _bv2_shaped()
+    return spec.model_copy(update={
+        "code_ref": ("qlab.strategies.retune:Retune" if wrapped
+                     else "qlab.strategies.agent.fast_release_gate:FastReleaseGate"),
+        "params": params, "required_instruments": None,
+        "data": spec.data.model_copy(update={"instruments": instruments})})
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_a_coin_list_rule_keeps_only_the_candidates_the_venue_can_hold(wrapped: bool) -> None:
+    """bv3-research-topk-coins-hl, 2026-11-04: the candidates went to Hyperliquid as Binance
+    named them and the run crashed («Bv2 needs column '1000BONK'; this panel has none»). Like
+    the instrument list, they are translated: renamed to the venue's coin, kept only with both
+    legs there, the rest counted and named."""
+    result = stage2.translate(_topk_shaped(wrapped), _shipped(), venue_names=HL_LISTING)
+
+    child = result.spec
+    params = child.params["base_params"] if wrapped else child.params
+    assert params["universe"]["candidates"] == ["BTC", "ETH", "HYPE"]
+    assert result.dropped_candidates == ["1000PEPE", "LINK", "1000BONK"]
+    for coin in params["universe"]["candidates"]:  # every kept candidate has both columns
+        assert {coin, f"{coin}-SPOT"} <= set(child.data.instruments)
+    assert "3 candidate(s) of the coin-list rule" in " ".join(child.differs_from_source)
+    # every other value is stage 1's, untouched
+    assert {k: v for k, v in params["universe"].items() if k != "candidates"} == {
+        "rule": "top_liquid", "n": 2, "rebalance": "1d", "by": "perp_dollar_volume",
+        "window_days": 30}
+    assert params["fast_window_hours"] == 12
+
+
+def test_a_coin_list_rule_with_no_candidate_on_the_venue_makes_no_spec() -> None:
+    result = stage2.translate(_topk_shaped(wrapped=True), _shipped(),
+                              venue_names={"BTC", "ETH", "LINK", "kPEPE"})  # no spot leg at all
+    assert result.spec is None
+    assert "none of the 6 candidates of params.base_params.universe" in result.problems[0]
+
+
+def test_the_report_counts_the_candidates_the_venue_cannot_hold() -> None:
+    lines = stage2.report_lines({"route": "paper"}, {
+        "status": "evaluated", "route": "reject", "dropped_candidates": ["LINK", "1000BONK"]})
+    assert any(line.endswith("в выбор не берём: 2") for line in lines)
+
+
 def test_a_required_perpetual_the_venue_lacks_is_unavailable_too() -> None:
     spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
                        "end": LAST_DAY, "instruments": ["BTC", "LUNA2"]},

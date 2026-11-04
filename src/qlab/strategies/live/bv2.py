@@ -102,9 +102,15 @@ pre-switch driver (`_bv2_reference.py`) to the last bit.
   present: a coin without a perp that bar cannot be hedged, so it is not held at all, never
   held unhedged). A coin that leaves the list has its book closed at that bar's close: the hedge
   bought back and the spot sold, at frab's costs. A coin that joins starts a new book at once.
-  Capital: the strategy has `n` equal slots. A staying book is not touched (its size drifts from
-  an equal share by the book's own rules -- the ratchet trims growth); the money of the books that
-  left, plus any idle cash, is split equally over the free slots, one share per joining book. A
+  Capital: the strategy has `n` equal slots of `capital_usd / n` each. A staying book is not
+  touched (its size drifts from an equal share by the book's own rules -- the ratchet trims
+  growth); the money of the books that left, plus any idle cash, is split equally over the free
+  slots, one share per joining book, but a share is never more than a slot's money: what a leaver
+  brings back above it (its gains and the cash its ratchet set aside) stays cash and does not go
+  back to work, exactly as the set-aside cash of a book that stays (`reinvests_profit` is False:
+  the book's profit is summed over the money it started with, so the money at work must not grow
+  with it). A leaver that lost money hands on less; cash kept from earlier leavers tops a later
+  share up to the slot's money, as frab's refill buys a fixed book's spot back from its cash. A
   slot nobody fills (fewer than `n` coins can open a book) stays cash.
 - **One margin pool for all coins** -- frab's `shared_margin` (needs a frab with it; the driver
   refuses to run without rather than silently use one pool per coin): the books' USDC backs all
@@ -647,7 +653,10 @@ class _Driver:
         joiners = [c for c in chosen if c not in held]
         free = self.rule.n - len(stay)
         if joiners and free > 0:
-            share = self.idle / free
+            # A slot's money is the strategy's over n, never more (module docstring, "Capital");
+            # new money paid in before this bar is the strategy's money too.
+            money = float(self.p.capital_usd) + float(self.deposits[:i].sum())
+            share = min(self.idle / free, money / self.rule.n)
             for coin in joiners[:free]:
                 self.slots.append(_Slot(self.feeds[coin], share, self._external(coin)))
                 self.idle -= share
