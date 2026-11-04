@@ -148,6 +148,9 @@ def _assessor(day: str, st: dict) -> Run | None:
                details=details, tokens=sum(e.get("tokens", 0) for e in entries))
 
 
+_PROGRAMMER_SEVERITY = {"MEDIUM": "среднее", "LOW": "низкое"}
+
+
 def _programmer(day: str, st: dict) -> Run | None:
     p = st.get("programmer")
     if p is None:
@@ -160,6 +163,9 @@ def _programmer(day: str, st: dict) -> Run | None:
     for e in entries:
         details += [f"{e['id']}: {line.splitlines()[0]}" for line in e.get("problems") or []]
         details += [f"{e['id']}: проверяющий — {g}" for g in e.get("review") or []]
+        details += [f"{e['id']}: не мешает "
+                    f"({_PROGRAMMER_SEVERITY.get(f['severity'], f['severity'])}) — {f['text']}"
+                    for f in e.get("followups") or []]
     return Run(day, "ran", "; ".join(f"{e['id']} ({e['repo']}): {e['what']}" for e in entries),
                "; ".join(_PROGRAMMER_RU.get(e["status"], e["status"]) for e in entries),
                details=details, tokens=sum(e.get("tokens", 0) for e in entries))

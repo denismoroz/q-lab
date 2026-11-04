@@ -56,6 +56,26 @@ row stops the loop early (`blocked`); seven iterations without acceptance end it
 the last remarks, for the owner. A stop of the budget in the middle keeps the worktree and the
 remarks, and the next night goes on from there.
 
+Severity (owner, 2026-11-04: «делай все три по порядку разделяя находки на Critical, hight,
+medium, low. цикл останавливать когда все critical and hight пофикшены»). On the night of
+2026-11-04 both requests ran all seven iterations and failed, the reviewer finding a new, smaller
+remark every round (a missing plain phrase, a prompt that did not name a new block), and the step
+took 178.7 minutes. Now every finding of the reviewer is one line with a severity -- CRITICAL,
+HIGH, MEDIUM or LOW -- and:
+
+* the loop is accepted when code's checks pass and no CRITICAL or HIGH finding is open (a failing
+  check counts as CRITICAL); MEDIUM and LOW are recorded on the request as a follow-up list
+  (`followups`; `qlab code list`, the report, the agents page) and do not block;
+* a line without a recognised severity is HIGH and counted as unparsed, so nothing is dropped;
+* the writer is sent only the open CRITICAL and HIGH findings (and the MEDIUM ones that sit in
+  files it has changed already, as optional);
+* from the second review on, a finding that is not CRITICAL and names only files nobody has named
+  (not changed, not named by an earlier finding or the request) is outside the change: it goes
+  to the follow-up list and blocks nothing;
+* the same remark three times still stops the loop early;
+* `max_minutes_per_night` limits the whole step: a request in progress stops before its next
+  writer pass, worktree and findings kept, and the next night resumes it.
+
 The agent's spending goes through the budget guard (`qlab.budget.run_agent`)."""
 
 from __future__ import annotations
@@ -67,6 +87,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
@@ -151,6 +172,15 @@ class Request:
     history: list[dict] = field(default_factory=list)  # {"n", "result", "remarks"} per iteration
     replan: bool = False  # the owner asked for another try: the planner revises its plan first
     stopped: str | None = None  # why the last session stopped before the loop ended (budget)
+    # Severity (owner, 2026-11-04). `findings`: the in-scope findings of the last review, each
+    # {"severity", "text", "unparsed"}; `followups`: the MEDIUM and LOW ones (and those outside
+    # the change) that do not block, kept on the request for the owner; `raised_files`: the base
+    # names of files any finding has named, which is what makes a later finding "new".
+    findings: list[dict] = field(default_factory=list)
+    followups: list[dict] = field(default_factory=list)
+    raised_files: list[str] = field(default_factory=list)
+    followed_up: str | None = None  # the request `qlab code followup` made from this one
+    minutes: float = 0.0  # wall-clock minutes the loop has run, over all sessions
 
 
 def load_queue(path: Path = QUEUE) -> list[Request]:
@@ -669,10 +699,16 @@ FRAB_RULE = """
 - This repository trades real money. Touch only the pure strategy modules allowed above: their
   signals, books and parameters. Never an engine, the exchange, order placement or the database."""
 
+SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+BLOCKING = ("CRITICAL", "HIGH")  # the loop stops when none of these is open
+SEVERITY_RU = {"CRITICAL": "критическое", "HIGH": "высокое", "MEDIUM": "среднее", "LOW": "низкое"}
+
 REVIEW = """You review a change the programmer agent made in `{repo}` (working directory: the
 copy with the change, branch {branch}). The request was:
   what: {what}
   why: {why}
+
+The files the change touches: {files}
 
 The diff:
 
@@ -686,13 +722,39 @@ Check, reading the code around the change as needed:
 4. Anything that could reach order placement, an engine, the exchange or stored state in a way
    the old code would read differently?
 
-Your remarks go straight back to the writer, who fixes them in this same working directory and
-sends the work to you again, so say exactly what to change and where. Name a gap only when
-something is wrong or missing (a wrong behaviour, a missing test, a leftover file, an unrelated
-change, an entry missing from a list that must name every member); a taste in style is not one.
+Every finding is ONE line with a severity from this closed set, and the severity decides what
+happens to it:
+  CRITICAL -- wrong results; existing behaviour or data broken; a safety rule broken (a default
+              changed, a path to orders, an engine or the exchange); the code does not do what
+              the request asks.
+  HIGH     -- a real defect in the requested behaviour; a missing test for the requested
+              behaviour; a rule of the project's CLAUDE.md broken (code, comments and test names
+              in English, no hand-edited verdicts).
+  MEDIUM   -- incomplete but working: a documentation line missing; a plain-language phrase
+              missing for a new block (strategies/plain/blocks.yaml); a new block that a prompt
+              or a list does not name yet (the generator's prompt).
+  LOW      -- style, wording, naming, a leftover comment.
+CRITICAL and HIGH go back to the writer and the work is not accepted while one is open. MEDIUM and
+LOW do NOT block: they are recorded for the owner as a follow-up list. So give each finding the
+severity it honestly has -- not a higher one to get it fixed now.
+{earlier}
+Scope: raise a finding only about the files above and the behaviour the request touches, or about
+the files an earlier finding named. Something wrong elsewhere that you noticed on the way is
+reported only when it is CRITICAL. Do not repeat a finding already listed above in other words.
 
-Reply with lines only: `GAP: <what is wrong, where, and what to do>` for every problem you are
-sure of, then a last line `VERDICT: OK` if there is none or `VERDICT: GAP` if there is any."""
+Your findings go straight back to the writer, who fixes the CRITICAL and HIGH ones in this same
+working directory and sends the work to you again, so say exactly what to change and where. Name a
+finding only when something is wrong or missing; a taste is at most LOW.
+
+Reply with lines only: `GAP: <SEVERITY>: <what is wrong, where, and what to do>` for every finding
+you are sure of (for example `GAP: HIGH: pkg/a.py:12 ...`), then a last line `VERDICT: OK` if
+there is no CRITICAL or HIGH finding, or `VERDICT: GAP` if there is any."""
+
+EARLIER_NOTE = """
+Findings the earlier rounds already raised (the writer has had them; judge only whether each is
+fixed now, and do not raise new ones outside the scope below):
+{lines}
+"""
 
 
 RETRY_NOTE = """
@@ -706,11 +768,18 @@ everything that is right, and fix exactly what is named below.
 ROUND_NOTE = """
 This is round {n} of at most {limit}. The work of the earlier rounds is in your working directory;
 the files changed so far: {files}. Do NOT write it again from scratch: read what is there, keep
-everything that is right, and fix exactly what is named below -- every remark, the small ones too,
-because the work is accepted only when the checks pass and the reviewer has no remark left.
+everything that is right, and fix exactly what is named below. The work is accepted when the
+checks pass and no CRITICAL or HIGH finding is left; MEDIUM and LOW findings do not block and are
+kept for the owner, so do not spend the round on anything else.
 {reverted}
 Remarks, numbered:
 {remarks}
+{optional}"""
+
+OPTIONAL_NOTE = """
+Optional -- MEDIUM findings in files you have changed already. Fix them only if each is a small
+change in those same files that does not grow the change; skip any that would:
+{lines}
 """
 
 FIX_NOTE = """
@@ -743,21 +812,62 @@ def continuation(kind: str, problems: list[str], files: list[str], *,
 
 
 def round_note(n: int, limit: int, remarks: list[str], files: list[str], *,
-               reverted: tuple[str, ...] | list[str] = ()) -> str:
-    """The prompt's note for round `n` of the loop, when earlier rounds left remarks."""
+               reverted: tuple[str, ...] | list[str] = (),
+               optional: list[str] = ()) -> str:
+    """The prompt's note for round `n` of the loop, when earlier rounds left remarks. `remarks`
+    are the open CRITICAL and HIGH ones (or the checks' problems); `optional` the MEDIUM ones in
+    files the writer has changed already."""
     note = ("Files outside what you may change were found and deleted or restored by code: "
             + ", ".join(reverted) + ".") if reverted else ""
-    return ROUND_NOTE.format(n=n, limit=limit, files=", ".join(files) if files else "none",
-                             reverted=note, remarks=_numbered(remarks))
+    return ROUND_NOTE.format(
+        n=n, limit=limit, files=", ".join(files) if files else "none", reverted=note,
+        remarks=_numbered(remarks),
+        optional=OPTIONAL_NOTE.format(lines=_numbered(list(optional))) if optional else "")
+
+
+# --------------------------------------------------------------------------
+# Severity of the reviewer's findings (owner, 2026-11-04: «делай все три по порядку разделяя
+# находки на Critical, hight, medium, low. цикл останавливать когда все critical and hight
+# пофикшены»)
+
+_FINDING = re.compile(r"^GAP:\s*(.+)$", re.MULTILINE)
+_SEVERITY_HEAD = re.compile(
+    r"^[\[(*\s]*(CRITICAL|HIGH|MEDIUM|LOW)\b[\])*]*\s*[:\-\u2013\u2014]?\s*(.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def parse_finding(line: str) -> dict:
+    """{"severity", "text", "unparsed"} from the text after `GAP:`. A line without a recognised
+    severity is HIGH and `unparsed`: a gap the reviewer could not grade is never dropped."""
+    m = _SEVERITY_HEAD.match(line.strip())
+    if m and m.group(2).strip():
+        return {"severity": m.group(1).upper(), "text": m.group(2).strip(), "unparsed": False}
+    return {"severity": "HIGH", "text": line.strip(), "unparsed": True}
+
+
+def parse_review(text: str) -> list[dict]:
+    """The findings of the reviewer's reply. No verdict line, or `VERDICT: GAP` with no CRITICAL
+    or HIGH finding named, is itself one HIGH finding."""
+    findings = [parse_finding(m.group(1)) for m in _FINDING.finditer(text)]
+    verdict = re.findall(r"^VERDICT:\s*(OK|GAP)\s*$", text, re.MULTILINE)
+    if not verdict:
+        findings.append({"severity": "HIGH", "text": "the reviewer gave no verdict",
+                         "unparsed": True})
+    elif verdict[-1] == "GAP" and not any(f["severity"] in BLOCKING for f in findings):
+        findings.append({"severity": "HIGH", "unparsed": True, "text":
+                         "the reviewer said VERDICT: GAP and named no CRITICAL or HIGH finding"})
+    return findings
+
+
+def is_blocking(finding: dict) -> bool:
+    return finding["severity"] in BLOCKING
 
 
 def review_lines(text: str) -> tuple[bool, list[str]]:
-    """(passed, the gaps) from the reviewer's reply. No verdict line is a failed review."""
-    gaps = [m.group(1).strip() for m in re.finditer(r"^GAP:\s*(.+)$", text, re.MULTILINE)]
-    verdict = re.findall(r"^VERDICT:\s*(OK|GAP)\s*$", text, re.MULTILINE)
-    if not verdict:
-        return False, [*gaps, "the reviewer gave no verdict"]
-    return verdict[-1] == "OK" and not gaps, gaps
+    """(passed, the open CRITICAL and HIGH gaps) from the reviewer's reply. No verdict line is a
+    failed review; MEDIUM and LOW findings do not fail it."""
+    gaps = [f["text"] for f in parse_review(text) if is_blocking(f)]
+    return not gaps, gaps
 
 
 @dataclass
@@ -925,7 +1035,8 @@ def environment_stop(req: Request, exc: Exception, limit: int = 3) -> Request:
 
 def run_request(req: Request, config: dict, *, budget: CandidateBudget | ExplicitNoBudget,
                 session, worktrees: Path = WORKTREES, plans: Path = PLANS,
-                checkpoint: Callable[[Request], None] | None = None) -> Request:
+                checkpoint: Callable[[Request], None] | None = None,
+                time_up: Callable[[], bool] | None = None) -> Request:
     """One session at one request: the loop of the writer, code's checks and the reviewer in one
     worktree until the checks pass and the reviewer accepts, `max_iterations` times at most.
 
@@ -936,12 +1047,20 @@ def run_request(req: Request, config: dict, *, budget: CandidateBudget | Explici
     stop (BudgetExhausted) in the middle leaves the worktree, the remarks and the count of
     finished iterations as they are, and the next night continues in them. A session the
     environment ended (EnvironmentFailure) does not count. `checkpoint(req)` is called after every
-    finished iteration, so a crash cannot lose them."""
+    finished iteration, so a crash cannot lose them.
+
+    `time_up()` is the programmer step's time limit for the night (`max_minutes_per_night`): it is
+    asked before every writer pass, and when it says yes the request stops where it is -- queued,
+    worktree, findings and count kept -- and the next night goes on. A pass that has begun
+    finishes. The minutes the loop has run are kept on the request (`minutes`)."""
+    started = time.monotonic()
     try:
         return _attempt(req, config, budget=budget, session=session, worktrees=worktrees,
-                        plans=plans, checkpoint=checkpoint)
+                        plans=plans, checkpoint=checkpoint, time_up=time_up)
     except EnvironmentFailure as exc:
         return environment_stop(req, exc)
+    finally:
+        req.minutes = round(req.minutes + (time.monotonic() - started) / 60, 2)
 
 
 _NAMED_FILE = re.compile(r"[\w./-]*[\w-]\.(?:py|md|yaml|yml|json|toml|txt|rst|cfg|ini)\b")
@@ -993,8 +1112,76 @@ def iteration_signature(problems: list[str], gaps: list[str],
     return hashlib.sha1(basis.encode()).hexdigest()[:12]
 
 
+def _base_names(paths: Collection[str]) -> set[str]:
+    return {Path(p).name for p in paths}
+
+
+def split_scope(findings: list[dict], req: Request, touched: list[str]
+                ) -> tuple[list[dict], list[dict]]:
+    """(in scope, outside) among a review's findings. From the second review on, a finding that is
+    not CRITICAL and names only files nobody has named before -- not a file the change touches, not
+    one an earlier finding named, not one the request itself names -- is a new finding outside the
+    files and behaviour the request touches (2026-11-04: each round found a smaller thing in a new
+    place and the loop never converged). It does not block; it goes to the follow-up list. A
+    finding that names no file cannot be placed and stays in scope."""
+    if not (req.iterations or req.raised_files):
+        return list(findings), []
+    known = _base_names(touched) | set(req.raised_files) | {
+        Path(m.group(0).strip("./")).name for m in _NAMED_FILE.finditer(f"{req.what} {req.why}")}
+    inside: list[dict] = []
+    outside: list[dict] = []
+    for f in findings:
+        named = remark_files([f["text"]])
+        if f["severity"] != "CRITICAL" and named and not (set(named) & known):
+            outside.append(f)
+        else:
+            inside.append(f)
+    return inside, outside
+
+
+def earlier_findings_note(req: Request) -> str:
+    lines = [f"  - [{f['severity']}] {f['text']}" for f in req.findings]
+    lines += [f"  - [{f['severity']}] {f['text']}" for f in req.followups
+              if f.get("outside")]
+    return EARLIER_NOTE.format(lines="\n".join(lines)) if lines else ""
+
+
+def optional_remarks(req: Request, touched: list[str]) -> list[str]:
+    """The MEDIUM findings of the last review that sit in files the writer has changed already:
+    the writer may fix them in the same round if that does not grow the change."""
+    changed = _base_names(touched)
+    out = []
+    for f in req.findings:
+        named = remark_files([f["text"]])
+        if f["severity"] == "MEDIUM" and named and set(named) <= changed:
+            out.append(f"reviewer [MEDIUM]: {f['text']}")
+    return out
+
+
+def record_review(req: Request, findings: list[dict], touched: list[str], n: int) -> list[dict]:
+    """Grade a review into the request: `findings` (in scope), `followups` (the MEDIUM and LOW
+    ones, and those outside the change, carried over), `raised_files`. Returns the open CRITICAL
+    and HIGH findings, which are all that blocks."""
+    inside, outside = split_scope(findings, req, touched)
+    carried = [f for f in req.followups if f.get("outside")]
+    new_follow = [{**f, "round": n, "outside": False} for f in inside if not is_blocking(f)]
+    new_follow += [{**f, "round": n, "outside": True} for f in outside]
+    seen: set[str] = set()
+    req.followups = []
+    for f in [*new_follow, *carried]:
+        key = normalized_remark(f["text"])
+        if key not in seen:
+            seen.add(key)
+            req.followups.append(f)
+    req.findings = inside
+    req.raised_files = sorted(set(req.raised_files)
+                              | set(remark_files([f["text"] for f in findings])))
+    return [f for f in inside if is_blocking(f)]
+
+
 def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, plans: Path,
-             checkpoint: Callable[[Request], None] | None) -> Request:
+             checkpoint: Callable[[Request], None] | None,
+             time_up: Callable[[], bool] | None = None) -> Request:
     repo_cfg = config["repos"][req.repo]
     repo_path = _abs(Path(repo_cfg["path"]))
     base = repo_cfg.get("base", "main")
@@ -1066,8 +1253,16 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
 
     reverted: list[str] = []
     while True:
+        if time_up is not None and time_up():
+            req.status = "queued"
+            req.stopped = (f"время шага «Программист» на эту ночь вышло после {req.iterations} "
+                           "итераций; рабочая копия и замечания сохранены, продолжит в "
+                           "следующую ночь")
+            return req
         n = req.iterations + 1
-        note = (round_note(n, limit, req.remarks, changed_paths(worktree), reverted=reverted)
+        touched_now = changed_paths(worktree)
+        note = (round_note(n, limit, req.remarks, touched_now, reverted=reverted,
+                           optional=optional_remarks(req, touched_now))
                 if req.remarks else "")
         exit_code = call(note, n)
         check = check_worktree(worktree, repo_cfg, config, worktrees)
@@ -1077,19 +1272,32 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
                    if exit_code != 0 else [])
         problems = stopped + check.problems
         gaps: list[str] = []
+        blocking: list[dict] = []
+        extra: dict = {}
         if not problems:
             diff, req.diffstat = diff_text(worktree)
+            touched = changed_paths(worktree)
             review = run_agent(
                 budget, REVIEW.format(repo=req.repo, branch=req.branch, what=req.what,
-                                      why=req.why, diff=diff[:60_000]),
+                                      why=req.why, diff=diff[:60_000],
+                                      files=", ".join(touched) or "none",
+                                      earlier=earlier_findings_note(req)),
                 session=session, agent="programmer-review",
                 model=config.get("reviewer_model", "sonnet"), max_turns=20, cwd=worktree,
                 extra_args=("--allowedTools", REVIEW_TOOLS, "--disallowedTools", "Bash,Write,Edit"))
             req.tokens = getattr(budget, "spent_tokens", 0)
-            accepted, gaps = review_lines(review.text or "")
-            if accepted:
+            raw = parse_review(review.text or "")
+            blocking = record_review(req, raw, touched, n)
+            gaps = [f["text"] for f in blocking]
+            counts = {sev: sum(1 for f in req.findings if f["severity"] == sev)
+                      for sev in SEVERITIES}
+            counts = {sev: n_found for sev, n_found in counts.items() if n_found}
+            unparsed = sum(1 for f in raw if f.get("unparsed"))
+            extra = {k: v for k, v in (("by_severity", counts), ("followups", len(req.followups)),
+                                       ("unparsed", unparsed)) if v}
+            if not blocking:
                 req.iterations, req.env_stops = n, 0
-                req.history.append({"n": n, "result": "accepted", "remarks": 0})
+                req.history.append({"n": n, "result": "accepted", "remarks": 0, **extra})
                 req.problems, req.review, req.remarks = [], [], []
                 _git(worktree, "commit", "-q", "-m",
                      f"{req.what[:60]} (programmer agent, request {req.id})\n\n"
@@ -1103,9 +1311,10 @@ def _attempt(req: Request, config: dict, *, budget, session, worktrees: Path, pl
         req.iterations, req.env_stops = n, 0
         req.fix_passes += 1 if problems else 0
         req.problems, req.review = problems, gaps
-        req.remarks = (stopped + check.detail) if problems else [f"reviewer: {g}" for g in gaps]
+        req.remarks = (stopped + check.detail) if problems else [
+            f"reviewer [{f['severity']}]: {f['text']}" for f in blocking]
         req.history.append({"n": n, "result": "checks" if problems else "review",
-                            "remarks": len(problems) or len(gaps)})
+                            "remarks": len(problems) or len(gaps), **extra})
         req.failures.append({"attempt": req.attempts, "iteration": n, "plan": req.plan_hash,
                              "sig": iteration_signature(problems, gaps, worktree)})
         if checkpoint is not None:
@@ -1210,6 +1419,7 @@ def answer(req: Request, text: str) -> None:
     req.questions, req.plan, req.plan_file, req.plan_hash = [], None, None, None
     req.failures, req.problems, req.attempts, req.env_stops = [], [], 0, 0
     req.iterations, req.remarks, req.replan = 0, [], False
+    req.findings, req.followups, req.raised_files = [], [], []
     req.status = "queued"
 
 
@@ -1232,6 +1442,34 @@ def retry(req: Request, text: str | None = None) -> None:
     req.status = "queued"
 
 
+def followup_text(items: list[dict]) -> str:
+    """The recorded MEDIUM and LOW findings as numbered lines, for a follow-up request."""
+    return "\n".join(f"{n}. [{f['severity']}] {f['text']}" for n, f in enumerate(items, 1))
+
+
+def followup(queue: list[Request], req: Request, day: date) -> Request:
+    """THE OWNER'S COMMAND (`qlab code followup <id>`): a new queued request from the MEDIUM and
+    LOW findings recorded on a request the owner has merged, so they are fixed on top of its work.
+    Never automatic. A request that is not merged yet is merged (or rejected) first: a follow-up
+    would start from the base branch, which does not have the work yet."""
+    if req.status != "merged":
+        raise ValueError(f"request {req.id} is {req.status}: merge it first, a follow-up starts "
+                         "from the base branch")
+    if not req.followups:
+        raise ValueError(f"request {req.id} has no recorded follow-up remarks")
+    if req.followed_up:
+        raise ValueError(f"request {req.id} has its follow-up already: {req.followed_up}")
+    made = enqueue(queue, repo=req.repo, what=f"Follow-up of request {req.id}: {req.what[:80]}",
+                   why="Fix these remarks the reviewer recorded on request "
+                       f"{req.id} (they did not block it):\n{followup_text(req.followups)}",
+                   source=f"owner, follow-up of {req.id}", day=day, strategy=req.strategy)
+    if made is None:
+        raise ValueError("the same follow-up is in the queue already")
+    made.kind = "other"
+    req.followed_up = made.id
+    return made
+
+
 _RESULT_RU = {"checks": "проверки кодом не прошли", "review": "замечания проверяющего",
               "accepted": "принято"}
 
@@ -1240,7 +1478,16 @@ def _iterations_ru(history: list[dict]) -> str:
     """`1 проверки кодом не прошли (2) → 2 принято`: how each finished iteration ended."""
     return " → ".join(
         f"{h['n']} {_RESULT_RU.get(h['result'], h['result'])}"
-        + (f" ({h['remarks']})" if h.get("remarks") else "") for h in history)
+        + (f" ({h['remarks']})" if h.get("remarks") else "")
+        + (f" [не мешают: {h['followups']}]" if h.get("followups") else "") for h in history)
+
+
+def _findings_ru(findings: list[dict]) -> list[str]:
+    """Report lines for findings, each with its severity in words."""
+    return [f"{SEVERITY_RU.get(f['severity'], f['severity'])}"
+            + (" (оценки важности не было, считается высоким)" if f.get("unparsed") else "")
+            + (" (вне затронутых файлов)" if f.get("outside") else "") + f": {f['text']}"
+            for f in findings]
 
 
 def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
@@ -1251,8 +1498,9 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
              "пишет по плану; вопрос о поведении стратегии, на который никто не ответил, "
              "останавливает запрос до того, как потрачены токены на код. Дальше цикл: писатель, "
              "проверка кодом, проверяющий; замечания возвращаются писателю в ту же рабочую "
-             "копию, пока проверки не пройдут и проверяющий не примет, но не больше 7 итераций "
-             "на запрос.", ""]
+             "копию, пока проверки не пройдут и не останется замечаний критических или высоких "
+             "(среднее и низкое записываются списком и не мешают), но не больше 7 итераций на "
+             "запрос и не дольше времени шага на ночь.", ""]
     for e in entries:
         lines.append(f"- **{e['id']}** ({e['repo']}): {e['what']} — "
                      f"{_STATUS_RU.get(e['status'], e['status'])}; {e.get('tokens', 0):,} "
@@ -1266,6 +1514,9 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
         if e.get("history"):
             lines.append("    - итерации (писатель, проверка кодом, проверяющий): "
                          + _iterations_ru(e["history"]) + f"; всего {e.get('iterations', 0)}")
+        if e.get("minutes"):
+            lines.append(f"    - работа над запросом шла {e['minutes']:g} минут (всего, по всем "
+                         "ночам)")
         if e.get("stopped"):
             lines.append(f"    - {e['stopped']}")
         if e.get("env_failures"):
@@ -1274,7 +1525,17 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
                          f"{len(e['env_failures'])}. Должно быть 0: на чистой основной ветке "
                          "тесты зелёные, так что среда проверки неисправна, и её нужно чинить")
         lines += [f"    - {p}" for p in e.get("problems") or []]
-        lines += [f"    - проверяющий: {g}" for g in e.get("review") or []]
+        blocking = [f for f in e.get("findings") or [] if f["severity"] in BLOCKING]
+        if blocking and e.get("review"):
+            lines += [f"    - проверяющий, {line}" for line in _findings_ru(blocking)]
+        else:
+            lines += [f"    - проверяющий: {g}" for g in e.get("review") or []]
+        if e.get("followups"):
+            lines.append(f"    - замечания, которые не мешают принять работу (среднее и низкое), "
+                         f"{len(e['followups'])}; список остаётся на запросе: "
+                         f"`qlab code list`, отдельной заявкой после слияния — "
+                         f"`qlab code followup {e['id']}`")
+            lines += [f"        - {line}" for line in _findings_ru(e["followups"])]
         if e.get("status") == "ready":
             lines.append(f"    - ветка `{e['branch']}`; изменения: "
                          f"{(e.get('diffstat') or '').strip().splitlines()[-1:]}")
@@ -1283,6 +1544,9 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
         lines += ["", "Ждут вашего решения:"]
         for r in waiting:
             lines.append(f"- {r.id} ({r.repo}): {r.what} — {_STATUS_RU[r.status]}")
+            if r.status == "ready" and r.followups:
+                lines.append(f"    - к слиянию приложен список замечаний, которые не мешали "
+                             f"(среднее и низкое): {len(r.followups)}")
             lines += [f"    - вопрос: {q} (ответ: `qlab code answer {r.id} --text \"...\"`)"
                       for q in r.questions]
             if r.status == "failed":
@@ -1304,7 +1568,9 @@ def report_lines(entries: list[dict], queue: list[Request]) -> list[str]:
 
 __all__ = ["CONFIG", "DEFAULT_MAX_ITERATIONS", "DELETE_COMMAND", "PLANS", "QUEUE",
            "EnvironmentFailure", "Request",
-           "answer", "changed_paths", "diff_text", "drop_worktree", "enqueue", "environment_stop",
+           "BLOCKING", "SEVERITIES", "answer", "followup", "parse_review", "record_review",
+           "split_scope", "changed_paths", "diff_text", "drop_worktree", "enqueue",
+           "environment_stop",
            "failure_signature", "iteration_signature", "judge_tests", "load_config", "load_queue",
            "make_worktree", "merge", "next_request", "parse_plan", "path_problems", "plan_request",
            "reject", "report_lines", "request_kind", "retry", "reuse_worktree", "review_lines",

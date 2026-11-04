@@ -67,7 +67,7 @@ def _stage_world(tmp_path, monkeypatch, texts, **config):
         def tokens_left(self) -> int:
             return 1_000_000
 
-    def fake_run_request(req, cfg, *, budget, session, checkpoint=None):
+    def fake_run_request(req, cfg, *, budget, session, checkpoint=None, **_kw):
         seen.append({"id": req.id, "cap": budget.cap_tokens})
         req.attempts += 1
         req.status, req.tokens = "ready", 100_000
@@ -120,7 +120,7 @@ def test_a_budget_stop_keeps_the_request_for_the_next_night(tmp_path, monkeypatc
 
     cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Блок сигнала: x", "Add a flag"])
 
-    def stopped(req, cfg, *, budget, session, checkpoint=None):
+    def stopped(req, cfg, *, budget, session, checkpoint=None, **_kw):
         raise NightExhausted("the night's budget is spent")
 
     monkeypatch.setattr(prog, "run_request", stopped)
@@ -149,7 +149,7 @@ def test_a_request_whose_share_runs_out_stops_where_it_is_and_the_other_one_goes
     cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Блок сигнала: x", "Add a flag"])
     checkpoints: list[str] = []
 
-    def run(req, cfg, *, budget, session, checkpoint=None):
+    def run(req, cfg, *, budget, session, checkpoint=None, **_kw):
         seen.append({"id": req.id, "cap": budget.cap_tokens})
         checkpoint(req)  # the stage saves the queue after every finished iteration
         checkpoints.append(req.id)
@@ -180,7 +180,7 @@ def test_an_unexpected_crash_is_not_a_failed_attempt_and_the_request_waits_for_t
         tmp_path, monkeypatch) -> None:
     cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Add a flag"])
 
-    def crash(req, cfg, *, budget, session, checkpoint=None):
+    def crash(req, cfg, *, budget, session, checkpoint=None, **_kw):
         req.attempts += 1
         raise OSError("disk full")
 
@@ -190,3 +190,92 @@ def test_an_unexpected_crash_is_not_a_failed_attempt_and_the_request_waits_for_t
     (request,) = held["queue"]
     assert request.status == "queued" and request.attempts == 0 and request.env_stops == 1
     assert "OSError: disk full" in request.problems[0]
+
+
+class _Clock:
+    """A clock the test moves by hand, in place of `time` inside qlab.night."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, minutes: float) -> None:
+        self.now += minutes * 60
+
+
+def test_the_programmer_step_has_a_time_limit_for_the_night() -> None:
+    cfg = prog.load_config()
+    assert cfg["max_minutes_per_night"] == 60
+
+
+def test_a_request_in_progress_gets_the_time_check_and_nothing_new_starts_after_the_limit(
+        tmp_path, monkeypatch) -> None:
+    """The night's step has `max_minutes_per_night`: the request that is running is handed the
+    check (it stops before its next writer pass, worktree and findings kept), the second request
+    of the night does not start, and the minutes are in the state for the report and the page."""
+    cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Блок сигнала: x", "Add a flag"],
+                                   max_minutes_per_night=60)
+    clock = _Clock()
+    monkeypatch.setattr(night, "time", clock)
+
+    def run(req, cfg, *, budget, session, checkpoint=None, time_up=None):
+        seen.append({"id": req.id, "up_at_start": time_up()})
+        clock.advance(40)
+        seen[-1]["up_after_40"] = time_up()
+        clock.advance(30)  # the writer pass in progress goes on past the limit
+        seen[-1]["up_after_70"] = time_up()
+        req.worktree, req.remarks = "/w", ["reviewer [HIGH]: x"]
+        req.iterations = 2
+        req.stopped = "время шага «Программист» на эту ночь вышло после 2 итераций"
+        return req
+
+    monkeypatch.setattr(prog, "run_request", run)
+    state: dict = {"done": {}}
+    real_programmer_stage(DAY, state, config=cfg)
+    assert [s["id"] for s in seen] == ["2026-10-30-1"]  # the second one did not start
+    assert (seen[0]["up_at_start"], seen[0]["up_after_40"], seen[0]["up_after_70"]) == (
+        False, False, True)
+    block = state["programmer_time"]
+    assert block["limit_minutes"] == 60 and block["minutes_spent"] == 70.0
+    assert block["time_up"] is True and block["deferred"] == ["2026-10-30-1"]
+    assert [r.status for r in held["queue"]] == ["queued", "queued"]
+    line = night.programmer_time_line(block)
+    assert "Шаг шёл 70 минут из 60 на ночь" in line and "2026-10-30-1" in line
+    # the pipeline page shows the same note under the step
+    from qlab.stage_time import page_note
+
+    assert "Время шага (60 минут на ночь) вышло" in page_note(block)
+
+
+def test_a_rerun_of_the_stage_keeps_the_minutes_already_spent_tonight(
+        tmp_path, monkeypatch) -> None:
+    cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Add a flag"],
+                                   max_minutes_per_night=60)
+    clock = _Clock()
+    monkeypatch.setattr(night, "time", clock)
+    state: dict = {"done": {}, "programmer": {"entries": [], "minutes_spent": 61.0}}
+    real_programmer_stage(DAY, state, config=cfg)
+    assert seen == []  # the 61 minutes of the first run are counted: nothing starts
+    assert state["programmer_time"]["time_up"] is True
+
+
+def test_without_a_time_limit_the_step_is_not_cut_and_says_so(tmp_path, monkeypatch) -> None:
+    cfg, seen, held = _stage_world(tmp_path, monkeypatch, ["Add a flag"])
+    clock = _Clock()
+    monkeypatch.setattr(night, "time", clock)
+    flags = []
+
+    def run(req, cfg, *, budget, session, checkpoint=None, time_up=None):
+        clock.advance(500)
+        flags.append(time_up())
+        req.attempts += 1
+        req.status = "ready"
+        return req
+
+    monkeypatch.setattr(prog, "run_request", run)
+    state: dict = {"done": {}}
+    real_programmer_stage(DAY, state, config=cfg)
+    assert flags == [False]
+    assert "предела по времени нет" in night.programmer_time_line(state["programmer_time"])
