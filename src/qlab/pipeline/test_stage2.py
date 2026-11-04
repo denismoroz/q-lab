@@ -1194,7 +1194,9 @@ def test_a_binance_reject_does_not_stop_a_hyperliquid_pass_from_passing_the_idea
     assert (result.route, result.combined_route) == ("paper", "paper")
     assert _status(PARENT) == IdeaStatus.VALIDATED and _status(CHILD) == IdeaStatus.VALIDATED
     assert _reason_of_last_transition(PARENT).startswith("trial ")
-    assert "passed on Hyperliquid (paper); Binance reject" in _reason_of_last_transition(PARENT)
+    # the venues are read from the registry since 2026-11-04 (qlab.pipeline.venue_status); this
+    # fixture passes Binance's reject as an argument and stores no Binance trial
+    assert "passed on Hyperliquid (paper)" in _reason_of_last_transition(PARENT)
     text = "\n".join(stage2.report_lines({"route": "reject"}, stage2_dict(result)))
     assert "прошла на Hyperliquid, на Binance отвергнута" in text
 
@@ -1226,8 +1228,9 @@ def test_a_binance_reject_with_hyperliquid_undecided_leaves_the_idea_open(
     assert result.route == "needs-forward" and result.confirmation is None
     assert result.combined_route == "needs-forward"
     assert _status(PARENT) == IdeaStatus.BENCH  # open, undecided: Hyperliquid has not spoken
-    assert "one venue rejected and the other has not decided yet" in _reason_of_last_transition(
-        PARENT)
+    # since 2026-11-04 Binance's reject already leaves it open (Hyperliquid is owed), so stage 2's
+    # undecided answer writes no second transition (qlab.pipeline.venue_status)
+    assert "the second venue is owed" in _reason_of_last_transition(PARENT)
     text = "\n".join(stage2.report_lines({"route": "reject"}, stage2_dict(result)))
     assert "на Binance отвергнута, на Hyperliquid ещё не решила" in text
 
