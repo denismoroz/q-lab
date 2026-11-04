@@ -66,8 +66,8 @@ TITLE_RU = {
     "gradual_exit": "постепенный выход из позиции",
 }
 _SPEC_LEVEL = ("data", "costs", "regime_claim", "min_leg_notional", "judged_from",
-               "instruments_chosen_at", "code_ref", "params_fixed_at", "execution_venue",
-               "strategy_capital_usd")
+               "instruments_chosen_at", "coins_knowable", "code_ref", "params_fixed_at",
+               "execution_venue", "strategy_capital_usd")
 
 
 def is_variant_id(idea_id: str) -> bool:

@@ -1798,6 +1798,11 @@ def evaluate_spec(
                            years=True)
         if spec.judged_from is not None and first > 0:
             metrics["skipped_warmup_days"] = _days((0, first - 1))
+        if spec.coins_knowable is not None:
+            # The knowable-coins check of the list (qlab.knowable_coins): 1 when every coin was a
+            # knowable pick from some day, and whether that day is the start of the data.
+            metrics["coins_knowable"] = float(spec.coins_knowable.known_from is not None)
+            metrics["coins_knowable_from_start"] = float(spec.coins_knowable.from_start)
         if spec.measure_hedge_timing:
             # Does the book pick WHEN to hedge better than chance, on the
             # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.

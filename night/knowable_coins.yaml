@@ -1,0 +1,33 @@
+# Which days a hand-picked coin list may be judged on (qlab.knowable_coins, docs/ONE_CHECK.md,
+# «Почему опыт ждал 27 дней и что исправлено»).
+#
+# Owner, 2026-11-04: «опять таже история с проверкой вперед - почему нельзя использовать
+# существующие данные с бинанса и HL - деля периоды на test and forward test? мы уже от этом 1000
+# раз говорили. где дырка во фрейморке?». The hole: a coin list written on one day (BTC and ETH,
+# 2026-10-03) was judged only from that day, as a guard against survivorship (a list picked
+# knowing which coins did well later). That guard is right for a list that is a lucky pick, and
+# wrong for a list that anybody could have written on every past day. Code decides which it is,
+# from the venue's own volumes and listing dates, point-in-time only.
+#
+# A coin is KNOWABLE on a day when, looking only at the days before it,
+#   1. it had been listed for at least `window_days` days (it has candles for the whole trailing
+#      window: a coin listed inside the window is not a pick anybody could have made), and
+#   2. its mean daily traded value (close * volume) over those `window_days` days was among the
+#      `top_k` largest of the venue's perpetuals.
+# A list is knowable from the first day on which every coin of it is knowable. Falling out of the
+# top later does not matter: survivorship is choosing coins that rose into view, not coins that
+# faded out of it.
+
+# 10: «первая десятка по обороту», the example line the owner's complaint asked the page to be
+# able to say; it is the strict end of what the lab already uses (the trend books pick the top 25,
+# specs/trend-live-top25.yaml), so a coin passes here only if it was an obvious pick.
+top_k: 10
+
+# 30: the lab's one trailing window for "what the market was doing", owner 2026-10-02:
+# «окно 30 дней» (qlab.regimes.WINDOW_DAYS); a month of turnover is long enough not to be one
+# day's spike and short enough to follow a coin that was becoming big.
+window_days: 30
+
+# The raw daily candles the volumes are read from, per venue (qlab.data.sources.base cache).
+raw_dir: data/raw
+interval: 1d

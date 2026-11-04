@@ -43,12 +43,14 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from qlab import own_numbers, twin
+import pandas as pd
+
+from qlab import knowable_coins, own_numbers, twin
 from qlab.pipeline.spec import Choice, StrategySpec
 
 STORE = Path("data/one_check")
@@ -224,7 +226,9 @@ def check_spec(spec: StrategySpec, *, config_path: Path = own_numbers.CONFIG,
                peers: list[tuple[StrategySpec, str]] | None = None,
                spec_path: Path | str | None = None,
                honest_from: tuple[date, str] | None = None,
-               execution_venue: str | None = None) -> twin.TwinResult:
+               execution_venue: str | None = None,
+               volume_of: Callable[[str], pd.DataFrame | None] | None = None,
+               knowable_config: knowable_coins.KnowableConfig | None = None) -> twin.TwinResult:
     """The form in which the idea's one check runs: the same idea (same id), the numbers chosen by
     code every month from the past only among the values it declares, on Binance's history. A
     result with a `reason` instead of a spec says why the check cannot be made.
@@ -232,7 +236,10 @@ def check_spec(spec: StrategySpec, *, config_path: Path = own_numbers.CONFIG,
     Pure but for two reads: Binance's listing when the spec names coins of another venue
     (`binance_listing`, kept a month) and the lab's specs when it names a hand-picked coin list
     (`peers_of`). `honest_from` is a card's statement of the first day its data honestly exists
-    (`qlab.twin.causal_twin`)."""
+    (`qlab.twin.causal_twin`). `volume_of` gives a venue's daily traded value for the
+    knowable-coins check (`qlab.knowable_coins`: a hand-picked list that was knowable on every
+    past day is judged from the start of the data); by default the raw cache is read, and
+    without it the list is dated by hand."""
     if not declares_lists(spec):
         return twin.TwinResult(None, nothing_to_choose(spec) or NO_DECLARATION)
     config = own_numbers.load_config(config_path)
@@ -247,7 +254,8 @@ def check_spec(spec: StrategySpec, *, config_path: Path = own_numbers.CONFIG,
     return twin.causal_twin(
         spec, spec_path=spec_path, venue_names=names, coin_params=coin_params,
         seconds_per_instrument=seconds_per_instrument, peers=peers, grid=grid, keep_id=True,
-        config_path=config_path, honest_from=honest_from, execution_venue=execution_venue)
+        config_path=config_path, honest_from=honest_from, execution_venue=execution_venue,
+        volume_of=volume_of or knowable_coins.raw_volume, knowable_config=knowable_config)
 
 
 def rerun_form(spec: StrategySpec) -> StrategySpec:
@@ -256,6 +264,11 @@ def rerun_form(spec: StrategySpec) -> StrategySpec:
     result = check_spec(spec)
     if result.spec is None:
         raise OneCheckRefused(result.reason or NO_DECLARATION)
+    if result.spec.coins_knowable is not None:
+        try:
+            knowable_coins.remember(spec.idea_id, result.spec.coins_knowable)
+        except OSError:  # the page line is a convenience; a night without it still judges
+            pass
     return result.spec
 
 

@@ -70,13 +70,20 @@ History:
   yearly return), with `cap_earning_days` and `cap_earning_block_days`. It decides nothing. Also
   `noise_band_kept` (1.0 on a run whose pass the dead band of rules 2026-11-03.1 kept). The
   verdicts themselves are the rules' (2026-11-03.1), not the stand's.
+* `2026-11-04.1` -- which days a hand-picked coin list is judged on (`qlab.knowable_coins`,
+  docs/ONE_CHECK.md, owner 2026-11-04: «где дырка во фрейморке?»). A list every coin of which was
+  knowable as a pick on every past day (listed, and in the top ten by trailing volume of the venue,
+  point-in-time) is judged from the start of the data, not from the day somebody wrote it down; a
+  list that was knowable only from a day is judged from that day. The judged window of every idea
+  with a coin list (Bv3, Bv2 and their relatives) grows from weeks to years, so their numbers,
+  verdicts and routes move. Recorded on the spec as `coins_knowable`.
 """
 
 from __future__ import annotations
 
 import re
 
-STAND_VERSION = "2026-11-03.1"
+STAND_VERSION = "2026-11-04.1"
 
 _FORMAT = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 
