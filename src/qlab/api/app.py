@@ -78,6 +78,55 @@ def _page(session: Session, query: Any, limit: int, offset: int, to_json: Any) -
     }
 
 
+class FunnelCounts:
+    """The funnel's verdict counts (a scan of millions of rows) kept between requests and refreshed
+    on a thread of their own: a request never waits for a refresh once a first count exists (the
+    owner, 2026-11-04: «страница воронка - очень долго грузится»). Counts may be a minute old."""
+
+    MAX_AGE_S = 60.0
+
+    def __init__(self) -> None:
+        import threading
+
+        self.data: Any = None
+        self.at = 0.0
+        self._lock = threading.Lock()
+        self._refreshing = False
+
+    def _build(self) -> None:
+        import time
+
+        gen = get_session()
+        try:
+            data = funnel_stats(next(gen))
+            with self._lock:
+                self.data, self.at = data, time.monotonic()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("funnel counts not built")
+        finally:
+            gen.close()
+            with self._lock:
+                self._refreshing = False
+
+    def refresh_in_background(self) -> None:
+        import threading
+
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+        threading.Thread(target=self._build, name="funnel-counts", daemon=True).start()
+
+    def get(self, session: Any) -> Any:
+        import time
+
+        if self.data is None:  # nothing yet (a test's app, or the warm-up still running)
+            self.data, self.at = funnel_stats(session), time.monotonic()
+        elif time.monotonic() - self.at > self.MAX_AGE_S:
+            self.refresh_in_background()
+        return self.data
+
+
 def _warm_in_background(registry_view: RegistryView) -> None:
     """Build the registry page's cached part on a thread of its own: a few seconds the first
     visitor would otherwise wait. A failure only leaves the cache to the first request."""
@@ -99,11 +148,13 @@ def create_app(*, warm: bool = False) -> FastAPI:
     """`warm=True` (the served `app`) builds the registry page's cache when the server starts; a
     test's app is made without it, and with its own in-memory registry."""
     registry_view = RegistryView()  # per app: the cached bench labels and plain titles
+    funnel_counts = FunnelCounts()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if warm:
             _warm_in_background(registry_view)
+            funnel_counts.refresh_in_background()
         yield
 
     app = FastAPI(
@@ -146,20 +197,11 @@ def create_app(*, warm: bool = False) -> FastAPI:
         return inbox_view(inbox_module.load(get_inbox_path()), load_cards(),
                           _registered_ids(session))["counts"]
 
-    funnel_cache: dict[str, Any] = {"at": 0.0, "data": None}
-
     @app.get("/api/funnel")
     def funnel(session: SessionDep) -> dict[str, Any]:
-        """The counts `queries.funnel_stats` computes — no extra aggregation. The counts scan the
-        whole verdict table (millions of rows), so they are kept for a minute: the owner,
-        2026-11-04, «страница воронка - очень долго грузится»."""
-        import time
-
-        now = time.monotonic()
-        if funnel_cache["data"] is None or now - funnel_cache["at"] > 60:
-            funnel_cache["data"] = funnel_stats(session)
-            funnel_cache["at"] = now
-        stats = funnel_cache["data"]
+        """The counts `queries.funnel_stats` computes — no extra aggregation; kept and refreshed
+        in the background (`FunnelCounts`)."""
+        stats = funnel_counts.get(session)
         # How many STRATEGIES stand behind each status's count: variants of
         # one strategy share a parent (qlab.registry.families), and thirty
         # bench ideas were three strategies.
