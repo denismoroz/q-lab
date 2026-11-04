@@ -108,6 +108,11 @@ Rules:
   list, nothing to date. A card that names its coins gets them in `data.instruments`; code
   then checks from the venue's listing dates and volumes whether they were obvious picks on every
   past day, and judges from the start of the data if they were. Do not shorten the window yourself.
+- Never narrow a strategy's coin list (owner, 2026-11-04, docs/COIN_SCOPE.md). Use the coins the
+  card names, all of them. If the card leaves the coins open, prefer a rule of code
+  (`params.universe`: each day the first K coins by traded value) with K declared as a choice; a
+  list that is a strict part of the parent strategy's list needs the owner's word quoted in
+  `sources["coins"]`, or code refuses the spec.
 - If the card needs something the data cannot give, do NOT fake it with a proxy the card
   does not name: list it in `unexpressed_mechanisms` (one sentence each). An honest "not
   evaluable" is a valid outcome; a strategy that quietly does something else is not.
@@ -247,6 +252,7 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
 
     import yaml
 
+    from qlab import coin_scope
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
     from qlab.spot_declaration import spot_declaration_problems
@@ -324,6 +330,7 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
         return outcome
     outcome.problems += [f"source: {p}" for p in source_problems(spec)]
     outcome.problems += [f"spot prices: {p}" for p in spot_declaration_problems(spec)]
+    outcome.problems += [f"coins: {p}" for p in coin_scope.problems(spec, root=QLAB_ROOT)]
     # One idea, one check: the lists come from the card (code writes them into the spec); a card
     # with no grid needs the spec to say why there is nothing to choose.
     if fields.grid is not None and spec.choice is not None:

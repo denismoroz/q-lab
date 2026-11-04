@@ -439,12 +439,13 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
     if open_ideas is not None and (double := duplicates.refusal(spec, open_ideas)):
         problems.append(double.text())
 
-    from qlab import one_check, own_numbers
+    from qlab import coin_scope, one_check, own_numbers
 
     own_config = own_numbers.load_config()
     # One idea, one check (docs/ONE_CHECK.md): the idea declares the lists code chooses among, or
     # says why there is nothing to choose; either way before the stand sees it.
     problems += one_check.declaration_problems(spec)
+    problems += coin_scope.problems(spec, root=QLAB_ROOT)
     opened = _own_axes(spec, mechanism, own_config, problems, catalogue_path)
     if own and not opened:
         problems.append("an own mechanism leaves its numbers open: `choice.axes` with the lists of "

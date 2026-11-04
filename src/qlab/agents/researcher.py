@@ -211,12 +211,21 @@ Write two kinds of files and nothing else:
    COINS (owner, 2026-11-04, docs/ONE_CHECK.md, «Почему опыт ждал 27 дней»). Prefer a RULE to a
    coin list: let the book take the venue's listing under the trailing volume floor
    (`data.min_daily_volume_usd`, `data.instruments` unset), so no list is written by hand and
-   there is nothing to date. Write a list only when the idea is about NAMED coins (Bv2's BTC and
-   ETH). Then you need no hedge about it: code checks, from the venue's own listing dates and
+   there is nothing to date. Write a list only when the idea is about NAMED coins (the coins of
+   the strategy's production book, all of them). Then you need no hedge about it: code checks,
+   from the venue's own listing dates and
    volumes, whether each coin was among the top ten by trailing volume on every past day
    (night/knowable_coins.yaml); if so the list is judged from the start of the data, if not
    only from the day it was knowable. Never shorten the data window to "the day the list was
    written".
+
+   NEVER NARROW A COIN LIST (owner, 2026-11-04, docs/COIN_SCOPE.md). Do not cut the coins of the
+   strategy you work on, and do not copy the coin list of an earlier experiment of your own: the
+   parent's list is the production book's (specs/bv2-live.yaml for Bv2 and Bv3). If the coins
+   matter, prefer a rule of code (`params.universe`: each day the first K coins by traded value;
+   see specs/research/bv3/bv3-research-topk-coins.yaml) and declare K as a `choice` axis. A list
+   that is a strict part of the parent's needs the owner's word (a quotation with his name in
+   `sources["coins"]`), otherwise code refuses the spec: «список монет сужен без источника».
 
    ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). An experiment does not
    get a "twin" any more and you do not write a causal wrapper: the idea declares up front the
@@ -317,7 +326,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
              budget: CandidateBudget | ExplicitNoBudget, session, max_experiments: int = 3,
              model: str = MODEL, max_turns: int = 60, focus: str | None = None
              ) -> ResearchOutcome:
-    from qlab import duplicates, one_check
+    from qlab import coin_scope, duplicates, one_check
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
     from qlab.spot_declaration import spot_declaration_problems
@@ -379,7 +388,8 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
         try:
             spec = load_spec(QLAB_ROOT / spec_path)
             problems = [*source_problems(spec), *one_check.declaration_problems(spec),
-                        *spot_declaration_problems(spec)]
+                        *spot_declaration_problems(spec),
+                        *coin_scope.problems(spec, root=QLAB_ROOT)]
             # the page opens with plain words: a new mechanism or family carries its own
             spec_text = (QLAB_ROOT / spec_path).read_text(encoding="utf-8")
             problems += [f"plain words: {p}" for p in plain.spec_problems(
@@ -441,7 +451,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
     unless it says why there is nothing to choose. An experiment that survives stage 1 goes on to
     the second stage on Hyperliquid at once (`second_stage_lines`); its lines follow the
     experiment's, indented."""
-    from qlab import duplicates, one_check
+    from qlab import coin_scope, duplicates, one_check
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
@@ -473,6 +483,11 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
         if declared := one_check.declaration_problems(experiment):
             lines.append(f"- `{spec_path}`: не запущен — у идеи один способ проверки, и он не "
                          f"объявлен: {'; '.join(declared)}")
+            continue
+        # No silent narrowing of the coin list (owner, 2026-11-04, docs/COIN_SCOPE.md): the
+        # refusal is written to the ledger the console reads, with its reason in Russian.
+        if narrowed := coin_scope.refuse(experiment, str(spec_path)):
+            lines.append(f"- `{spec_path}`: не запущен — {'; '.join(narrowed)}")
             continue
         try:
             with session_scope() as session:

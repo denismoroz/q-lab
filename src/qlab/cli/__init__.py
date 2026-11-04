@@ -2216,7 +2216,9 @@ def check_cmd(
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: invalid spec: {exc}", err=True)
         raise typer.Exit(code=1) from exc
-    problems = one_check.declaration_problems(spec)
+    from qlab import coin_scope
+
+    problems = [*one_check.declaration_problems(spec), *coin_scope.problems(spec)]
     for line in problems:
         typer.echo(f"refused: {line}")
     if problems:
