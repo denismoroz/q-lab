@@ -451,7 +451,7 @@ def test_check_prints_what_code_chooses_among_or_the_reason_for_nothing(tmp_path
     done = runner.invoke(app, ["check", str(lists)])
     assert done.exit_code == 0, done.output
     assert "one check, 4 values, each a trial of its own" in done.output
-    assert "the first choice is" in done.output
+    assert "code chooses once, at the cut of the window at its last third" in done.output
     as_yaml = runner.invoke(app, ["check", str(lists), "--yaml"])
     assert as_yaml.exit_code == 0 and "idea_id: cli-idea" in as_yaml.output
     assert "cli-idea-causal" not in as_yaml.output  # one idea, no twin

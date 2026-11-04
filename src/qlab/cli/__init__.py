@@ -2223,7 +2223,7 @@ def check_cmd(
         raise typer.Exit(code=1)
     if not one_check.declares_lists(spec):
         typer.echo(f"{spec.idea_id}: nothing to choose -- {one_check.nothing_to_choose(spec)}")
-        typer.echo("judged after its fixation date, as an idea always was")
+        typer.echo("judged on the last third of its window, as every spec (rules 2026-11-04.1)")
         return
     config = twin_stage.load_config() or twin_stage.Config(True, 4, 20.0)
     try:
@@ -2243,8 +2243,8 @@ def check_cmd(
     typer.echo(f"{spec.idea_id}: one check, {len(result.candidates)} values, each a trial of its "
                f"own: {', '.join(result.candidates)}")
     typer.echo(f"data: {checked.data.source} {checked.data.interval} "
-               f"{checked.data.start} .. {checked.data.end}; code chooses every month from the "
-               f"past only; the first choice is {checked.params_fixed_at}")
+               f"{checked.data.start} .. {checked.data.end}; code chooses once, at the cut of "
+               f"the window at its last third (about {checked.params_fixed_at} on this window)")
     heavy = twin_stage.heavy_data(checked, config.slow_twin_minutes,
                                   config.max_hourly_instruments, config.seconds_per_instrument)
     if heavy:

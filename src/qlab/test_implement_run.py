@@ -285,7 +285,9 @@ def test_a_card_goes_from_idea_to_verdicts_in_the_order_the_stage_promises(world
                                                     "window_days=30"]
     assert entry["runs"]["check"]["candidate_trials"] == [101, 102, 103]
     assert world.recorded == ["toy-idea"]  # every value is a trial, once
-    assert check.params["refit_every"] == "M" and check.params["window"] == "expanding"
+    # rules 2026-11-04.1: chosen once, at the stand's cut
+    assert check.params["refit_every"] == "once" and check.params["choose_at"] == "split"
+    assert check.params["window"] == "expanding"
     assert check.params["objective"] == "sharpe_net"
     assert check.data.source == "binance" and check.data.interval == "1d"
     # the hand-picked coins are judged from the day the card says they were known

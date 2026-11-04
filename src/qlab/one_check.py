@@ -13,9 +13,12 @@ twin. Now an idea is ONE idea with ONE check:
 1. it declares up front the values of the numbers it leaves open (`StrategySpec.choice`: the lab's
    lists of `night/own_numbers.yaml` or a list a source gives), or says why there is nothing to
    choose (`choice.nothing_to_choose`);
-2. code chooses among the values every month from the past only (`qlab.strategies.retune.Retune`,
-   expanding window, after-cost Sharpe), and the verdict comes at once on the whole history of the
-   venue (Binance, since 2019): `check_spec` builds that form with the SAME machinery that built a
+2. code chooses among the values from the past only (`qlab.strategies.retune.Retune`, expanding
+   window, after-cost Sharpe on the strategy's own money) -- since rules 2026-11-04.1 ONCE, at the
+   stand's cut, on the first 2/3 of the window, held on the last third (owner 2026-11-04: «все
+   стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу»; until then every month) --
+   and the verdict comes at once on the whole history of the venue (Binance, since 2019):
+   `check_spec` builds that form with the SAME machinery that built a
    twin (`qlab.twin.causal_twin`), but under the idea's own id, so there is no second idea and no
    second page;
 3. the Binance verdict is the idea's own run, the Hyperliquid verdict is its second stage
@@ -28,8 +31,9 @@ Three things are NOT checked this way, and say so:
 
 - books on paper or live (`night/paper_books.yaml`): their numbers are fixed on production, and
   their check is real trading against the stand;
-- an idea with nothing to choose from: it is judged after its fixation date, as an idea always was
-  (`qlab.fixation`), and `choice.nothing_to_choose` is the reason the page shows;
+- an idea with nothing to choose from: it is judged with the numbers it gives, on the last third
+  of its window like every spec (rules 2026-11-04.1), and `choice.nothing_to_choose` is the reason
+  the page shows;
 - an idea that existed before this rule has no `choice` and is judged as it was (its twin, if it
   has one, is an ordinary idea).
 
@@ -230,8 +234,10 @@ def check_spec(spec: StrategySpec, *, config_path: Path = own_numbers.CONFIG,
                volume_of: Callable[[str], pd.DataFrame | None] | None = None,
                knowable_config: knowable_coins.KnowableConfig | None = None) -> twin.TwinResult:
     """The form in which the idea's one check runs: the same idea (same id), the numbers chosen by
-    code every month from the past only among the values it declares, on Binance's history. A
-    result with a `reason` instead of a spec says why the check cannot be made.
+    code ONCE among the values it declares, at the stand's cut, on the first 2/3 of the window,
+    and held on the last third (rules 2026-11-04.1; `refit_every: once`, `choose_at: split`), on
+    Binance's history. A result with a `reason` instead of a spec says why the check cannot be
+    made.
 
     Pure but for two reads: Binance's listing when the spec names coins of another venue
     (`binance_listing`, kept a month) and the lab's specs when it names a hand-picked coin list
@@ -255,7 +261,8 @@ def check_spec(spec: StrategySpec, *, config_path: Path = own_numbers.CONFIG,
         spec, spec_path=spec_path, venue_names=names, coin_params=coin_params,
         seconds_per_instrument=seconds_per_instrument, peers=peers, grid=grid, keep_id=True,
         config_path=config_path, honest_from=honest_from, execution_venue=execution_venue,
-        volume_of=volume_of or knowable_coins.raw_volume, knowable_config=knowable_config)
+        volume_of=volume_of or knowable_coins.raw_volume, knowable_config=knowable_config,
+        choose_once=True)
 
 
 def rerun_form(spec: StrategySpec) -> StrategySpec:

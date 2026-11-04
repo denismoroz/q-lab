@@ -13,7 +13,11 @@ of the data before a cut, and the part after it stays untouched for judging the 
   end of its warm-up, not a cut between seen and unseen data;
 - otherwise the cut is the point after which the ruleset's `holdout_share` of the
   window lies (the 2/3 : 1/3 split of rules 2026-10-24.1; the share is read from the
-  ruleset, never written here).
+  ruleset, never written here);
+- under rules that cut the window by its days for every spec (2026-11-04.1, `by_data`) the
+  cut is always the stand's: the first day of the last `holdout_share` of the window's days
+  (`qlab.fixation.named_date`), whatever `params_fixed_at` says -- the stand judges that last
+  third, so the evidence must end before it.
 
 **This is not a new selection.** `diagnose_spec` re-runs a strategy that is already
 recorded, on the panel that is already cached, to describe its history; it chooses
@@ -96,15 +100,24 @@ class Diagnosis:
 
 
 def choose_cut(index: pd.DatetimeIndex, *, params_fixed_at: date | None, share: float | None,
-               selects_causally: bool = False) -> Cut:
+               selects_causally: bool = False, by_data: bool = False) -> Cut:
     """The first held-out row of a window of bars `index`.
 
     `params_fixed_at` wins when the spec has one and the window has bars on or
     after it (not a causal chooser's warm-up end). Otherwise `share` (the
     ruleset's `holdout_share`) is the held-out part of the window: the cut falls
     after `1 - share` of its bars.
+    With `by_data` (rules 2026-11-04.1) the cut is the stand's: the first bar on or after the
+    day `qlab.fixation.named_date` names for the window and `share`, `params_fixed_at` aside.
     Raises ValueError when neither is available."""
     n = len(index)
+    if by_data and share is not None and n >= 2 and index[-1].date() > index[0].date():
+        from qlab.fixation import named_date
+
+        day = named_date(index[0].date(), index[-1].date(), share)
+        row = min(max(int(index.searchsorted(pd.Timestamp(day, tz="UTC"))), 1), n)
+        return Cut(row, _day(index, row), f"the stand's cut: the last {share:.0%} of the "
+                   "window's days is the forward test (rules 2026-11-04.1)")
     after_window = False
     if params_fixed_at is not None and not selects_causally:
         row = int(index.searchsorted(pd.Timestamp(params_fixed_at, tz="UTC")))
@@ -260,8 +273,8 @@ def diagnose_returns(net_return: pd.Series, *, idea_id: str, params_fixed_at: da
                     reinvested=reinvested)
 
 
-def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries | None
-                  ) -> Diagnosis | None:
+def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries | None,
+                  by_data: bool = False) -> Diagnosis | None:
     """Run the recorded strategy of `spec` on its cached panel, truncated at the
     cut, and describe it. None when the panel is not cached (nothing is
     fetched). No trial is written -- see the module docstring."""
@@ -284,8 +297,11 @@ def diagnose_spec(spec, session, *, share: float | None, regimes: RegimeSeries |
         coverage = complete_book_window(panel, spec.required_instruments)
         if coverage.window is not None:  # the window the verdict is rendered on
             first, last = coverage.window
+    if by_data and spec.judged_from is not None:  # the stand's window starts after the warm-up
+        first = max(first, min(
+            int(index.searchsorted(pd.Timestamp(spec.judged_from, tz="UTC"))), last))
     cut = choose_cut(index[first:last + 1], params_fixed_at=spec.params_fixed_at, share=share,
-                     selects_causally=spec.selects_causally)
+                     selects_causally=spec.selects_causally, by_data=by_data)
     cut_row = first + cut.row  # the first held-out row of the whole panel
     if cut_row - first < 3:
         return Diagnosis(spec.idea_id, None, None, cut, 0, 0,

@@ -121,7 +121,8 @@ Rules:
   unexpressed_mechanisms, sources, params_fixed_at {today}, params_fixed_evidence
   "written by the implementer agent from {card_path} on {today}".
 - One idea, one check (owner, 2026-10-31, docs/ONE_CHECK.md): the idea is checked by code choosing
-  among declared values every month from the past only. If the card has a GRID part below, you
+  among declared values once, on the first 2/3 of the window, and judging on the last third. If the
+  card has a GRID part below, you
   write NO `choice` block: code writes the card's grid into the spec. If the card has no grid, you
   must say why there is nothing to choose, in the spec, exactly:
     choice:
@@ -167,7 +168,8 @@ def card_brief(fields: CardFields, code_path: Path, *, block_exists: bool,
         first = ", ".join(f"{p} = {v!r}" for p, v in fields.grid.first_variant().items())
         parts.append(
             f"\nGRID. Code runs the strategy over the card's variants ({fields.grid.count}), "
-            "choosing between them every month from the past only. You do NOT write the grid, no "
+            "choosing between them once, on the first 2/3 of the window. You do NOT write "
+            "the grid, no "
             "`choice` block, and you do NOT write a Retune spec. Your spec's `params` carry the "
             f"first variant: {first}. Each of these paths ({', '.join(fields.grid.paths)}) must "
             "be a key of `params` (nested by dots) that the class reads. A grid parameter the "

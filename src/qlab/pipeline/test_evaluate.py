@@ -27,6 +27,7 @@ from qlab.pipeline.evaluate import (
     FORWARD_NOTE,
     NOISE_UNMATCHED_REASON,
     SELECTION_NOTE,
+    JudgedRows,
     PeriodSplit,
     StrategyResolutionError,
     _find_matching_snapshot,
@@ -35,8 +36,11 @@ from qlab.pipeline.evaluate import (
     decide_route,
     evaluate_spec,
     forward_years_needed,
+    judged_rows,
     resolve_strategy,
     split_at_fixed_date,
+    split_by_share,
+    with_split_day,
 )
 from qlab.pipeline.spec import StrategySpec
 from qlab.registry import repo
@@ -69,6 +73,7 @@ from qlab.rules.schema import (
     RuleKind,
     RuleSet,
     ShortForwardUse,
+    SplitByData,
     Stage,
 )
 
@@ -2496,3 +2501,227 @@ def test_binance_data_with_a_hyperliquid_execution_venue_is_still_a_binance_verd
 
     assert evaluation.routing.route == "reject"
     assert session.get(Idea, IDEA_ID).status == IdeaStatus.BENCH  # Hyperliquid has not spoken
+
+
+# --------------------------------------------------------------------------
+# One forward-test rule for every strategy: 2/3 selects, 1/3 judges (rules 2026-11-04.1)
+# --------------------------------------------------------------------------
+
+BY_DATA = SplitByData(rationale="test")
+MONTH_END = date(2026, 1, 31)  # thirty days of hourly bars: the cut falls on 2026-01-21
+CUT = date(2026, 1, 21)
+
+
+def _by_data_ruleset(rules: list[Rule], **extra) -> RuleSet:
+    return RuleSet(version="2026-11-04.1", rules=rules, holdout_share=HOLDOUT,
+                   split_by_data=BY_DATA, **extra)
+
+
+def _month(session, tmp_path, **spec_overrides) -> StrategySpec:
+    from qlab.registry.models import DataSnapshot
+
+    if session.get(DataSnapshot, "snap-month") is None:
+        _register_snapshot(session, tmp_path, snapshot_id="snap-month", instruments=INSTRUMENTS,
+                           universe_complete=False, end=MONTH_END)
+    data = {"source": SOURCE, "interval": INTERVAL, "start": START, "end": MONTH_END,
+            "instruments": INSTRUMENTS}
+    spec_overrides.setdefault("params", {"weight": 0.4})
+    return _make_spec(data=data, **spec_overrides)
+
+
+def _bare_panel(index: pd.DatetimeIndex):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(prices=SimpleNamespace(index=index))
+
+
+def test_the_window_is_cut_at_two_thirds_of_its_days() -> None:
+    """Owner, 2026-11-04: «все стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу».
+    The cut is a day, the window's first day plus 2/3 of its days (qlab.fixation.named_date), so
+    daily and hourly bars of one window are cut on the same day."""
+    days = pd.date_range("2025-01-01", "2025-12-31", freq="1D", tz="UTC")
+    split = split_by_share(days, 0, len(days) - 1, 1 / 3)
+    assert days[split.forward[0]].date() == date(2025, 9, 1)  # 2025-01-01 + round(364 * 2/3)
+    assert split.selection == (0, split.forward[0] - 1) and split.forward[1] == len(days) - 1
+    hours = pd.date_range("2025-01-01", "2025-12-31", freq="1h", tz="UTC")
+    by_hour = split_by_share(hours, 0, len(hours) - 1, 1 / 3)
+    assert hours[by_hour.forward[0]] == pd.Timestamp("2025-09-01", tz="UTC")
+    # a window that starts later (its warm-up, its complete book) is cut on its own days
+    later = split_by_share(days, 90, len(days) - 1, 1 / 3)
+    assert days[later.forward[0]].date() == date(2025, 10, 1)  # 2025-04-01 + round(274 * 2/3)
+
+
+def test_the_new_rules_cut_by_data_and_the_old_ones_still_at_the_fixation_day() -> None:
+    from qlab.rules.loader import load
+
+    index = pd.date_range("2024-01-01", "2026-10-30", freq="1D", tz="UTC")
+    spec = _make_spec(data={"source": SOURCE, "interval": "1d", "start": date(2024, 1, 1),
+                            "end": date(2026, 10, 30)},
+                      params_fixed_at=date(2026, 10, 3), params_fixed_evidence="a person, test")
+    new = judged_rows(spec, _bare_panel(index), None, load("2026-11-04.1"))
+    assert index[new.split.forward[0]].date() == date(2025, 11, 20)  # + round(1033 * 2/3)
+    assert new.judged == new.split.forward and new.warmup is None
+    old = judged_rows(spec, _bare_panel(index), None, load("2026-11-03.1"))
+    assert index[old.split.forward[0]].date() == date(2026, 10, 3)  # 27 days, as before
+    # no fixation day at all: the new rules still hold a third out; the old ones could not
+    bare = spec.model_copy(update={"params_fixed_at": None, "params_fixed_evidence": None})
+    assert judged_rows(bare, _bare_panel(index), None, load("2026-11-04.1")).split.forward
+    assert judged_rows(bare, _bare_panel(index), None, load("2026-11-03.1")).split.forward is None
+
+
+def test_the_window_is_the_one_judged_rows_already_cuts_its_warm_up_included() -> None:
+    from qlab.rules.loader import load
+
+    index = pd.date_range("2024-01-01", "2026-10-30", freq="1D", tz="UTC")
+    spec = _make_spec(data={"source": SOURCE, "interval": "1d", "start": date(2024, 1, 1),
+                            "end": date(2026, 10, 30)},
+                      judged_from=date(2025, 1, 1),
+                      sources={"weight": "owner 2026-01-01: test fixture",
+                               "costs": "owner 2026-01-01: test fixture",
+                               "min_leg_notional": "owner 2026-01-01: test fixture",
+                               "judged_from": "owner 2026-01-01: test fixture"})
+    rows = judged_rows(spec, _bare_panel(index), None, load("2026-11-04.1"))
+    assert index[rows.first].date() == date(2025, 1, 1)
+    assert index[rows.split.forward[0]].date() == date(2026, 3, 22)  # + round(667 * 2/3)
+
+
+def test_the_latest_rules_cut_by_data_and_inherit_everything_else() -> None:
+    from qlab.rules.loader import load, load_latest
+
+    latest, before = load_latest(), load("2026-11-03.1")
+    assert latest.version == "2026-11-04.1" and latest.splits_by_data
+    assert latest.holdout_share.share == pytest.approx(1 / 3)
+    assert {r.id for r in latest.rules} == {r.id for r in before.rules}
+    assert latest.noise_bar == before.noise_bar and not before.splits_by_data
+    assert "params_fixed_before_forward" in {r.id for r in latest.informational}
+
+
+def test_a_choice_made_at_the_cut_is_given_the_cut_day_at_any_depth() -> None:
+    index = pd.date_range("2025-01-01", "2025-12-31", freq="1D", tz="UTC")
+    rows = JudgedRows(first=0, last=len(index) - 1,
+                      split=split_by_share(index, 0, len(index) - 1, 1 / 3), warmup=None,
+                      judged=(0, len(index) - 1))
+    spec = _make_spec(params={"reference_params": {"refit_every": "once", "choose_at": "split"},
+                              "weight": 0.4})
+    bound = with_split_day(spec, index, rows)
+    assert bound.params["reference_params"]["choose_at"] == "2025-09-01"
+    assert spec.params["reference_params"]["choose_at"] == "split"  # the spec is not changed
+    plain = _make_spec(params={"weight": 0.4})
+    assert with_split_day(plain, index, rows) is plain
+    short = JudgedRows(first=0, last=0, split=PeriodSplit(selection=(0, 0), forward=None),
+                       warmup=None, judged=(0, 0))
+    with pytest.raises(ValueError, match="no day to choose at"):
+        with_split_day(spec, index, short)
+
+
+def test_a_retune_never_guesses_the_cut() -> None:
+    from qlab.strategies.retune import refit_rows
+
+    index = pd.date_range("2025-01-01", "2025-03-01", freq="1D", tz="UTC")
+    with pytest.raises(ValueError, match="stand's cut"):
+        refit_rows(index, "once", "split")
+
+
+def _choice_check(**over) -> StrategySpec:
+    params = {"inner_code_ref": "qlab.pipeline.test_evaluate:ToyStrategy",
+              "base_params": {"weight": 0.4},
+              "grid": {"weight": {"w4": {"weight": 0.4}, "w2": {"weight": 0.2}}},
+              "refit_every": "once", "choose_at": "split", "window": "expanding",
+              "objective": "sharpe_net", "score_costs": {"taker_fee_bps": 1.0, "slippage_bps": 1.0}}
+    return dict(code_ref="qlab.strategies.retune:Retune", params=params, selects_causally=True,
+                params_fixed_at=CUT, params_fixed_evidence="test: the cut of the window", **over)
+
+
+def test_an_idea_with_a_choice_is_chosen_once_on_the_first_two_thirds(session, tmp_path) -> None:
+    spec = _month(session, tmp_path, **_choice_check())
+    result = evaluate_spec(spec, session=session, ruleset=_by_data_ruleset([CAPITAL_FIT_GENEROUS]),
+                           check_lookahead=False, check_sources=False)
+    assert result.error is None, result.error
+    trial = session.get(Trial, result.trial_id)
+    assert trial.params["choose_at"] == CUT.isoformat()  # the day the stand cut, stored
+    assert session.get(SpecRow, trial.spec_id).params["choose_at"] == "split"  # the spec as written
+    m = result.metrics
+    assert m["retune_refits"] == 1.0 and m["retune_refits_with_choice"] == 1.0
+    # the first 2/3 chose (warm-up, not judged), the last third is the forward test
+    assert m["warmup_days"] == pytest.approx(20.0)
+    assert m["forward_days"] == pytest.approx(10 + 1 / 24)
+    assert "forward_days_needed" not in m and m["split_by_data"] == 1.0
+    assert "params_fixed_in_forward" not in m  # code chose at the cut: nothing to read
+    assert result.routing.route == "paper"
+
+
+def test_the_fixation_day_inside_the_forward_third_is_a_reading_not_a_rule(session, tmp_path
+                                                                           ) -> None:
+    from qlab.rules.engine import read_informational
+    from qlab.rules.loader import load
+
+    ruleset = _by_data_ruleset([CAPITAL_FIT_GENEROUS])
+    kwargs = dict(session=session, ruleset=ruleset, check_lookahead=False, check_sources=False)
+    late = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 25),
+                                params_fixed_evidence="a person, test"), **kwargs)
+    assert late.metrics["params_fixed_in_forward"] == 1.0
+    assert late.metrics["params_fixed_overlap_days"] == 4.0  # 2026-01-21 .. 01-25 were visible
+    early = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 5),
+                                 params_fixed_evidence="a person, test"), **kwargs)
+    assert early.metrics["params_fixed_in_forward"] == 0.0
+    assert early.metrics["params_fixed_overlap_days"] == 0.0
+    # it decides nothing: the same route, the same forward test
+    assert late.routing.route == early.routing.route
+    assert late.metrics["forward_days"] == early.metrics["forward_days"]
+    reading = {r.rule_id: r for r in read_informational(late.metrics, load("2026-11-04.1"))}
+    assert reading["params_fixed_before_forward"].holds is False
+
+
+def test_a_hand_picked_list_written_inside_the_forward_third_is_not_point_in_time(
+        session, tmp_path) -> None:
+    ruleset = _by_data_ruleset([CAPITAL_FIT_GENEROUS])
+    kwargs = dict(session=session, ruleset=ruleset, check_lookahead=False, check_sources=False)
+    late = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 25),
+                                params_fixed_evidence="a person, test"), **kwargs)
+    early = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 5),
+                                 params_fixed_evidence="a person, test"), **kwargs)
+    undated = evaluate_spec(_month(session, tmp_path), **kwargs)
+    assert late.metrics["point_in_time_universe"] == 0.0
+    assert early.metrics["point_in_time_universe"] == 1.0
+    assert undated.metrics["point_in_time_universe"] == 0.0
+
+
+def test_the_forward_length_is_never_a_reason_to_wait_under_the_new_rules() -> None:
+    passing = _rows(("net_edge", True))
+    metrics = {"fit_sharpe_net": 0.5, "forward_days": 5.0, "selection_days": 10.0,
+               "min_capital_usd": 10.0}
+    kwargs = dict(selection=passing, forward=passing, metrics=metrics, params_fixed_at=None)
+    assert decide_fit_forward_route(ruleset=_by_data_ruleset([NET_EDGE]), **kwargs).route == "paper"
+    # the same numbers under the older rules wait for length, as they did
+    old = decide_fit_forward_route(ruleset=_holdout_ruleset([NET_EDGE]), **kwargs)
+    assert old.route == "needs-forward" and "too short" in old.reason
+    # a failure on a long-enough third rejects
+    failing = decide_fit_forward_route(ruleset=_by_data_ruleset([NET_EDGE]), selection=passing,
+                                       forward=_rows(("net_edge", False)), metrics=metrics,
+                                       params_fixed_at=None)
+    assert failing.route == "reject"
+
+
+def test_the_other_waits_stay_under_the_new_rules() -> None:
+    passing = _rows(("net_edge", True), ("shape_aware_edge", True))
+    base = {"fit_sharpe_net": 0.5, "forward_days": 400.0, "min_capital_usd": 10.0,
+            "noise_return_percentile": 0.995, "noise_power": 0.2}
+    powerless = decide_fit_forward_route(
+        ruleset=_by_data_ruleset([NET_EDGE, NOISE_BAR], noise_power=POWER,
+                                 noise_bar=NoiseBar(rule_id="shape_aware_edge", pass_at=0.99,
+                                                    keep_above=0.975, no_power_no_pass=True,
+                                                    rationale="test")),
+        selection=passing, forward=passing, metrics=base, params_fixed_at=None)
+    assert powerless.route == "needs-forward" and "too early to judge" in powerless.reason
+    regimes = decide_fit_forward_route(
+        ruleset=_by_data_ruleset([NET_EDGE], regime_coverage_days=30),
+        selection=_rows(("net_edge", True)), forward=_rows(("net_edge", True)),
+        metrics={**base, "regime_bull_days": 200.0, "regime_flat_days": 190.0,
+                 "regime_bear_days": 10.0}, params_fixed_at=None)
+    assert regimes.route == "needs-forward" and "market regime" in regimes.reason
+
+
+def test_a_split_by_data_needs_a_share_not_a_resolution() -> None:
+    with pytest.raises(ValueError, match="split_by_data"):
+        RuleSet(version="2026-01-01.1", forward_resolution=RESOLUTION, split_by_data=BY_DATA)
+    assert not RuleSet(version="2026-01-01.1", split_by_data=BY_DATA).splits_by_data

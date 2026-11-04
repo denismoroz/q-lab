@@ -14,6 +14,7 @@ import yaml
 
 import qlab.agents.researcher as researcher
 import qlab.night as night
+from qlab import fixation
 from qlab.harness.panel import MarketPanel
 
 REPO = Path(__file__).resolve().parents[2]
@@ -396,7 +397,8 @@ def test_context_carries_the_drawdown_evidence_and_the_cut_sentence(
     monkeypatch.setattr(qlab.regimes, "load", lambda: None)
     text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path)])
     share = load_latest().holdout_share.share  # read from the rules, not written in the code
-    cut = DAYS[int(round(300 * (1 - share)))].date()
+    # rules 2026-11-04.1: the stand's cut, the last third of the window's DAYS
+    cut = fixation.named_date(DAYS[0].date(), DAYS[-1].date(), share)
     assert (f"До даты отреза {cut}; данные после неё — для проверки исправлений, "
             "на них не смотреть.") in text
     assert "## Drawdown evidence:" in text and "idea fake" in text
@@ -405,15 +407,20 @@ def test_context_carries_the_drawdown_evidence_and_the_cut_sentence(
     assert f"held-out share is read from ruleset {load_latest().version}" in text
 
 
-def test_context_uses_the_specs_params_fixed_at_as_the_cut(tmp_path, monkeypatch) -> None:
+def test_context_cuts_where_the_stand_cuts_whatever_params_fixed_at_says(tmp_path,
+                                                                          monkeypatch) -> None:
+    """Rules 2026-11-04.1: the stand judges the last third of every window, so the evidence ends
+    there; a later fixation day would let the researcher look at the days that judge the fix."""
     import qlab.pipeline.evaluate as evaluate
     import qlab.regimes
+    from qlab.rules.loader import load_latest
 
     monkeypatch.setattr(evaluate, "resolve_cached_panel", lambda session, spec: _fake_panel())
     monkeypatch.setattr(qlab.regimes, "load", lambda: None)
-    text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path, "2025-06-01")])
-    assert "До даты отреза 2025-06-01;" in text
-    assert "params_fixed_at 2025-06-01" in text
+    cut = fixation.named_date(DAYS[0].date(), DAYS[-1].date(), load_latest().holdout_share.share)
+    for fixed in ("2025-06-01", "2025-10-01"):
+        text = researcher.build_context("t", [], _session(), [_write_spec(tmp_path, fixed)])
+        assert f"До даты отреза {cut};" in text and "the stand's cut" in text
 
 
 def test_context_says_so_when_the_panel_is_not_cached(tmp_path, monkeypatch) -> None:

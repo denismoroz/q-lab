@@ -19,7 +19,9 @@ choice made at bar tau sees only rows < tau. What is NOT forward is the grid
 itself -- the spec author chose which candidates to offer, knowing what they
 know -- which is why a retune spec still carries its own `params_fixed_at`
 (the day the grid was declared) and is judged by the selection/forward split
-like any other (docs/FIT_VS_FORWARD.md).
+like any other (docs/FIT_VS_FORWARD.md). Since rules 2026-11-04.1 that split is
+the last third of the judged window for every spec, and an idea's declared values
+are chosen once, at that cut (`refit_every: once`, `choose_at: split`).
 
 Rules this wrapper keeps:
 
@@ -71,6 +73,11 @@ _PERIODS = {"D": "D", "W": "W-SUN", "M": "M"}
 #: `refit_every: once` -- one choice, at the first bar on or after `choose_at`, held to the
 #: end (qlab.own_numbers: a value chosen on data before the cut, judged after it).
 ONCE = "once"
+#: `choose_at: split` -- the one choice is made at the stand's cut: the first day of the forward
+#: part `qlab.pipeline.evaluate.judged_rows` cuts (rules 2026-11-04.1, the last third of the
+#: judged window). The stand puts the day in before the strategy runs
+#: (`qlab.pipeline.evaluate.with_split_day`); the wrapper never guesses it.
+AT_SPLIT = "split"
 _OBJECTIVES = ("sharpe_net", "total_return_net")
 
 _CACHE_SIZE = 8
@@ -128,6 +135,9 @@ def refit_rows(index: pd.DatetimeIndex, refit_every: str,
     if refit_every == ONCE:
         if choose_at is None:
             raise ValueError("refit_every: once needs choose_at")
+        if choose_at == AT_SPLIT:
+            raise ValueError("choose_at: split is the stand's cut, and the day was not put in "
+                             "(qlab.pipeline.evaluate.with_split_day binds it before a run)")
         at = pd.Timestamp(str(choose_at), tz="UTC")
         rows = np.zeros(len(index), dtype=bool)
         first = int(index.searchsorted(at))
@@ -306,4 +316,4 @@ class Retune:
         return result
 
 
-__all__ = ["Retune", "RetuneRun", "expand_grid", "refit_rows"]
+__all__ = ["AT_SPLIT", "ONCE", "Retune", "RetuneRun", "expand_grid", "refit_rows"]

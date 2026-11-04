@@ -133,6 +133,39 @@ def _run_on_shared_coins(spec, panel, venue_names):
     return run, len(keep), len(columns), None
 
 
+def _stage1_forward(session, spec, trial_id: int, panel) -> tuple[object, date | None]:
+    """(stage 1's spec as it ran, the first day of its forward test). Under rules that cut the
+    window by its days (2026-11-04.1) the forward test is the last third of stage 1's own window
+    and a choice made at the cut is given that day (`with_split_day`); under older rules it starts
+    at the spec's `params_fixed_at`. The rules are the ones stage 1's trial was judged by."""
+    from qlab.forward_series import _rules_version
+    from qlab.pipeline.evaluate import (
+        complete_book_window,
+        cut_truncated_history,
+        judged_rows,
+        split_day,
+        with_split_day,
+    )
+    from qlab.rules import loader
+
+    version = _rules_version(session, trial_id)
+    try:
+        ruleset = loader.load(version) if version else loader.load_latest()
+    except Exception:  # noqa: BLE001 - a retired ruleset file: the latest cuts rows the same way
+        ruleset = loader.load_latest()
+    if not ruleset.splits_by_data:
+        return spec, spec.params_fixed_at
+    cut = cut_truncated_history(panel) if panel.meta.get("history_truncated") else panel
+    coverage = (complete_book_window(cut, spec.required_instruments)
+                if spec.required_instruments is not None else None)
+    rows = judged_rows(spec, cut, coverage, ruleset)
+    try:
+        spec = with_split_day(spec, cut.prices.index, rows)
+    except ValueError as exc:
+        raise Stage1HistoryMissing(str(exc)) from exc
+    return spec, split_day(cut.prices.index, rows)
+
+
 def load_stage1_history(session, spec, trial_id: int | None, *,
                         venue_names=None) -> Stage1History:
     """Stage 1's forward net returns: its strategy run again on the data snapshot its
@@ -156,14 +189,15 @@ def load_stage1_history(session, spec, trial_id: int | None, *,
         raise Stage1HistoryMissing(f"stage 1 trial {trial_id} is not in the registry")
     if trial.snapshot_id is None:
         raise Stage1HistoryMissing(f"stage 1 trial {trial_id} has no data snapshot")
-    if spec.params_fixed_at is None:
-        raise Stage1HistoryMissing(
-            "stage 1 has no forward history: the date its parameters were fixed is unknown")
     try:
         panel = load_snapshot(trial.snapshot_id, session=session)
     except (OSError, ValueError) as exc:
         raise Stage1HistoryMissing(
             f"stage 1's data snapshot {trial.snapshot_id} cannot be read: {exc}") from exc
+    spec, start = _stage1_forward(session, spec, trial_id, panel)
+    if start is None:
+        raise Stage1HistoryMissing(
+            "stage 1 has no forward history: the date its parameters were fixed is unknown")
     shared = total = reason = None
     run = None
     try:
@@ -175,7 +209,7 @@ def load_stage1_history(session, spec, trial_id: int | None, *,
             run = decay.run_on_panel(spec, panel)
     except decay.StandHistoryMissing as exc:
         raise Stage1HistoryMissing(str(exc)) from exc
-    since = pd.Timestamp(spec.params_fixed_at, tz="UTC")
+    since = pd.Timestamp(start, tz="UTC")
     forward = run.net_return[run.net_return.index >= since]
     capital = run.capital_return[run.capital_return.index >= since]
     stored = trial.metrics or {}

@@ -254,6 +254,12 @@ export function routeHint(trial) {
     parts.push(
       'Проверка вперёд невозможна: в спеке не записано, когда выбрали параметры и монеты, поэтому вся история считается периодом подбора. Пока дата не указана, идея будет ждать вечно.',
     )
+  } else if (m.split_by_data === 1 && (m.forward_days ?? 0) > 0) {
+    // Rules 2026-11-04.1: the forward test is the last third of the data by construction,
+    // so its length is never what it waits for (owner: «по 2/3 и 1/3 правилу»).
+    parts.push(
+      `Проверка вперёд — последняя треть данных: ${Math.round(m.forward_days)} дн. Её длины по правилу хватает; ждёт она другого.`,
+    )
   } else if ((m.forward_days ?? 0) > 0) {
     const need = m.forward_days_needed
     const regimes = /has not seen every market regime/.test(trial.route_reason ?? '')
