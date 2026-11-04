@@ -2890,6 +2890,76 @@ def forward_series_rebuild_cmd(
     typer.echo(f"total: {len(done)} runs looked at, series in {forward_series.store_dir()}")
 
 
+@app.command("standard")
+def standard_cmd(
+    idea: str = typer.Option(None, "--idea", help="One idea: the full list with the reasons"),
+    family: list[str] = typer.Option(  # noqa: B008
+        None, "--family", help="Only this strategy family (repeat for several)"),
+    status: list[str] = typer.Option(  # noqa: B008
+        None, "--status", help="Only this status (repeat for several)"),
+    as_json: bool = typer.Option(False, "--json", help="The same data as JSON"),
+    no_reasons: bool = typer.Option(False, "--no-reasons", help="Leave the commonest reasons out"),
+    mark_doubles: bool = typer.Option(
+        False, "--mark-doubles",
+        help="First run the check for doubles by results on every idea's latest stored series "
+             "(writes only data/duplicates/ledger.json, docs/DUPLICATES.md)"),
+) -> None:
+    """The 14 things every strategy page has, checked by code for every open idea
+    (docs/IDEA_STANDARD.md)."""
+    import json as _json
+
+    from qlab import idea_standard
+
+    with session_scope() as session:
+        if mark_doubles:
+            done = _mark_doubles(session)
+            typer.echo(f"проверка на двойника: {done} идей проверено")
+        if idea:
+            from qlab.registry.models import Idea
+
+            found = session.get(Idea, idea)
+            if found is None:
+                typer.echo(f"idea not found: {idea}", err=True)
+                raise typer.Exit(code=1)
+            if idea_standard.skipped(found):
+                typer.echo("Стандарт к этой идее не применяется (убрана или книга для шума).")
+                return
+            block = idea_standard.standard_for(session, found)
+            if as_json:
+                typer.echo(_json.dumps(block, ensure_ascii=False, indent=1))
+                return
+            typer.echo(f"{idea}: на странице {block['have']} из {block['total']}")
+            for item in block["items"]:
+                mark = idea_standard.SYMBOL[item["state"]]
+                text = item["reason"] or item["detail"] or ""
+                typer.echo(f" {mark} {item['number']:>2}. {item['short']:<9} {text}")
+            return
+        data = idea_standard.standard_all(session)
+    if family or status:
+        rows = [r for r in data["rows"] if (not family or r["family"] in family)
+                and (not status or r["status"] in status)]
+        data = {**data, "rows": rows, "totals": idea_standard.totals(rows)}
+    if as_json:
+        typer.echo(_json.dumps(data, ensure_ascii=False, indent=1))
+        return
+    typer.echo(idea_standard.render_text(data, reasons=not no_reasons))
+
+
+def _mark_doubles(session: object) -> int:
+    """Run the by-results check for doubles on the latest stored series of every open idea."""
+    from qlab import duplicates, forward_series
+    from qlab.registry.stages import latest_routed
+
+    done = 0
+    for idea_id in forward_series.chart_ideas(session):
+        found = latest_routed(session, idea_id)
+        if found is None or forward_series.load(found[0].id) is None:
+            continue
+        duplicates.mark_by_results(session, idea_id, found[0].id)
+        done += 1
+    return done
+
+
 overlays_app = typer.Typer(
     help="Overlays: when and how much a strategy holds (docs/OVERLAYS.md).",
     no_args_is_help=True)

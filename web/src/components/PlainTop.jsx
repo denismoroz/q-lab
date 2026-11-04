@@ -101,7 +101,8 @@ function Venue({ venue }) {
   )
 }
 
-export default function PlainTop({ plain }) {
+// `children` sits right under the title: the page's checklist (components/StandardPanel.jsx).
+export default function PlainTop({ plain, children }) {
   if (!plain) return null
   return (
     <div className="space-y-4">
@@ -109,6 +110,7 @@ export default function PlainTop({ plain }) {
         <h1 className="text-2xl font-semibold text-slate-900">{plain.title}</h1>
         <p className="mt-1 text-xs text-slate-500">{plain.technical_title}</p>
       </div>
+      {children}
       <What what={plain.what} />
       <Difference difference={plain.difference} />
       <div className="grid gap-4 md:grid-cols-2">

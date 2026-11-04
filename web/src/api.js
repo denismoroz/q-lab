@@ -33,6 +33,8 @@ export const fetchIdeaPage = (ideaId, resource, { limit, offset }) =>
 export const fetchTrials = ({ limit, offset, noise = false }) =>
   getJson(`/api/trials?limit=${limit}&offset=${offset}&noise=${noise}`)
 
+export const fetchStandard = () => getJson('/api/standard')
+
 export const fetchInbox = () => getJson('/api/inbox')
 export const fetchCard = (ideaId) => getJson(`/api/cards/${encodeURIComponent(ideaId)}`)
 
