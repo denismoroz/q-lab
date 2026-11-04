@@ -1,0 +1,185 @@
+# Bv3's coins chosen by code, not by the researcher (owner, 2026-11-04, «да, делай оба»;
+# docs/IDEA_STANDARD.md, «Монеты: сужать молча нельзя»).
+#
+# The second top-K check of Bv3 (owner 2026-11-04: «поднять до 12 и перебрать все три числа»).
+#
+# Why this spec exists. The first Bv3 check (specs/research/bv3/bv3-research-fast-release.yaml)
+# runs on BTC and ETH only. The owner never asked for two coins: the production Bv2 book holds
+# BTC, ETH, SOL and AVAX (specs/bv2-live.yaml), and the researcher cut the list to two because it
+# built the experiment on its own earlier two-coin experiment (bv2-research-btceth), whose reason
+# («SOL and AVAX are the coins that whipsaw the hedge») was a guess nobody had measured. Here the
+# coins are chosen by CODE: each day, the K coins with the largest 30-day traded value on Binance,
+# among the coins that have both a perpetual and a spot market. K is a declared choice (2, 4, 6),
+# which code picks once on the first two thirds of the data, so the guess about SOL and AVAX is tested
+# instead of taken on faith: if a small K wins, the data said so.
+#
+# What is the same as bv3-research-fast-release: the mechanism (the block
+# qlab.strategies.agent.fast_release_gate: the slow rule of the live book decides whether the coin
+# is falling, the coin's own return over the last fast_window_hours bars releases the hedge as soon
+# as it is above zero), the production Bv2 numbers, Binance's history from the start of the data.
+#
+# What is different:
+#   1. The coins. `params.universe` is the rule {top_liquid, n = K, rebalance = every day,
+#      by = the perpetual's traded value, window_days = 30}: the same definition as
+#      qlab.knowable_coins (a coin competes after it has been listed for the whole 30 days; the
+#      rank reads the earlier days only, never the day itself). Only the coins whose perpetual AND
+#      spot both have a price that day can open a book, because the book holds the spot; a coin
+#      that is in the first K by the perpetual's value but has no spot leg is skipped and the next
+#      coin takes its place, and the run counts such coin-days (counts["universe_top_without_spot"]).
+#      A coin that leaves the first K has its hedge bought back and its spot sold at the next
+#      rebalance (qlab.strategies.live._bv2_mechanisms, `_leave`), at the book's own costs, and its
+#      money is split among the coins that join, at most 257 / K each: what a leaver brings back
+#      above that stays cash, as the ratchet's set-aside cash does (fixed 2026-11-04, before it the
+#      joiner got the leaver's whole equity; docs/research/bv3-topk-2026-11-04.md).
+#   2. The list of candidates is every coin that was EVER among the first 6 by the 30-day traded
+#      value of Binance's perpetuals and has a spot candle file in the lab's cache: 70 coins,
+#      made by code on 2026-11-04 (qlab.top_coins.coins_ever_in_top(read_daily_value(
+#      data/raw/binance/1d), k=6, window_days=30, among=<coins with a cached Binance spot file>)).
+#      It is not a list somebody picked: K = 2 and 4 are inside K = 6, so no coin that could
+#      rank is missing, and no future knowledge enters (the rank on a day reads earlier days only).
+#      Coins whose spot candles exist only for part of the history are held only for that part;
+#      `data.spot_prices: own` prices the spot leg at the spot market's own closes.
+#   3. The money. K is a choice, so the book's money cannot be K x 64.25: it would change with the
+#      thing being chosen and the candidates would not be comparable. The strategy works on the
+#      money of the production Bv2 book, 257 (specs/bv2-live.yaml: 4 coins x 64.25), split equally
+#      among the K coins held; every percent is of 257. With K = 4 it is exactly the production
+#      per-coin money; with K = 2 each coin has 128.5; with K = 6, 42.8 (the hedge of the smallest
+#      position, half of 42.8 = 21, is above the 10-dollar minimum order).
+#   4. Leverage and maintenance margin: the values production gives BTC, ETH, SOL and AVAX; every
+#      other coin takes the production defaults (leverage 1.0, maintenance 0.05).
+#   5. sticky_exit_hours is a choice too (0 or 12 hours): 3 x 2 x 2 = 12 variants. The first
+#      top-K check (bv3-research-topk-coins, closed) fixed it at 0 to stay within the 8 variants
+#      the lab then allowed, and lost 35-40% a year to fees: a coin that rose for half a day had
+#      its hedge lifted and put back the next hour, 2,054 times in 870 days
+#      (docs/research/bv3-topk-2026-11-04.md). The owner raised the limit to 12 for this:
+#      «поднять до 12 и перебрать все три числа» (2026-11-04, night/own_numbers.yaml).
+#   6. measure_hedge_timing is off: the coins change over time, and a shifted-hedge measure of
+#      the held coins has no single coin set to shift (the timing of this mechanism is judged by
+#      the verdict and the noise bar).
+#
+# Heavy data: 140 columns of hourly candles from 2019 (70 coins, perpetual and spot) is more than
+# the night's limit (night/twins.yaml, max_hourly_instruments 40), so the night does not fetch it
+# by itself; it is run by hand (`qlab twins run --only bv3-research-topk-sticky --allow-heavy`) or
+# after the limit is raised by the owner.
+
+idea_id: bv3-research-topk-sticky
+title: "Bv3: монеты выбирает код (первые 2, 4 или 6 по обороту), страховку снимают по росту монеты за 12 или 24 часа и возвращают сразу или через 12 часов"
+code_ref: "qlab.strategies.agent.fast_release_gate:FastReleaseGate"
+
+plain_title: "Страховка, которую снимают на отскоке, и монеты, которые выбирает код, а не человек"
+plain_summary: >-
+  Владелец не просил держать Bv3 на двух монетах: боевая книга Bv2 держит четыре (BTC, ETH, SOL,
+  AVAX). Исследователь сам сузил список до двух, опираясь на своё прежнее предположение, что SOL и
+  AVAX «дёргают» страховку, — но это предположение никто не проверял. Здесь монеты выбирает код:
+  каждый день он берёт первые K монет по обороту за последние 30 дней на бирже Binance (оборот —
+  сколько денег в монете прошло через торги), только из тех, у кого есть и обычный рынок, и
+  бессрочный контракт (ставка на цену монеты без даты окончания). Число K — одно из трёх: 2, 4
+  или 6; код выбирает его сам на первых двух третях данных, вместе с окном роста (12 или 24
+  часа) и задержкой перед возвратом страховки (сразу или через 12 часов). Деньги стратегии те же, что у боевой
+  Bv2, — 257 долларов, поровну между теми монетами, которые держим. Монета, которая вышла из
+  первых K, продаётся вместе со страховкой при следующей перестановке. Страховка включается, когда
+  монета падает две и четыре недели подряд, а снимается, как только сама монета выросла за
+  последние 12 или 24 часа. Выберет код малое K — значит, догадка про SOL и AVAX была верна;
+  выберет большое — значит, нет. Риск: у монет из хвоста списка (новых и мелких) слабее рынок,
+  шире разрыв цены и дороже вход и выход, а частые перестановки стоят комиссий.
+
+params:
+  universe: {"rule": "top_liquid", "n": 2, "rebalance": "1d", "by": "perp_dollar_volume", "window_days": 30, "candidates": ["1000BONK", "1000LUNC", "1000PEPE", "1000SHIB", "ADA", "APE", "APT", "ARB", "ARPA", "ATOM", "AVAX", "AXS", "BAND", "BANK", "BCH", "BNB", "BTC", "CFX", "CHZ", "CYBER", "DOGE", "DOGS", "DOT", "ENA", "ETC", "ETH", "FIL", "FTM", "GALA", "GAS", "GMT", "HYPE", "LINK", "LPT", "LRC", "LTC", "LUNA", "MANA", "MASK", "MATIC", "NEAR", "NEIRO", "NOT", "OP", "ORDI", "PEOPLE", "RARE", "RUNE", "SAND", "SOL", "SUI", "SUSHI", "SXP", "TAO", "TON", "TRB", "TRUMP", "TRX", "UNI", "VET", "WIF", "WLD", "WLFI", "XLM", "XPL", "XRP", "XTZ", "YFI", "ZEC", "ZIL"]}
+  fast_window_hours: 12
+  fast_entry: 0
+  capital_usd: 257.0
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 0
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage: {BTC: 3.0, ETH: 2.0, SOL: 1.5, AVAX: 1.5}
+  default_leverage: 1.0
+  maint_margin_rate: {BTC: 0.0125, ETH: 0.02, SOL: 0.025, AVAX: 0.05}
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+
+data:
+  # The idea reads the coin's own spot closes: the spot column is the spot
+  # market's own close, not the perp's price (docs/SPOT_PRICES.md).
+  spot_prices: own
+  source: binance
+  interval: "1h"
+  start: 2019-09-08
+  end: 2026-10-30
+  instruments: ["1000BONK", "1000BONK-SPOT", "1000LUNC", "1000LUNC-SPOT", "1000PEPE", "1000PEPE-SPOT", "1000SHIB", "1000SHIB-SPOT", "ADA", "ADA-SPOT", "APE", "APE-SPOT", "APT", "APT-SPOT", "ARB", "ARB-SPOT", "ARPA", "ARPA-SPOT", "ATOM", "ATOM-SPOT", "AVAX", "AVAX-SPOT", "AXS", "AXS-SPOT", "BAND", "BAND-SPOT", "BANK", "BANK-SPOT", "BCH", "BCH-SPOT", "BNB", "BNB-SPOT", "BTC", "BTC-SPOT", "CFX", "CFX-SPOT", "CHZ", "CHZ-SPOT", "CYBER", "CYBER-SPOT", "DOGE", "DOGE-SPOT", "DOGS", "DOGS-SPOT", "DOT", "DOT-SPOT", "ENA", "ENA-SPOT", "ETC", "ETC-SPOT", "ETH", "ETH-SPOT", "FIL", "FIL-SPOT", "FTM", "FTM-SPOT", "GALA", "GALA-SPOT", "GAS", "GAS-SPOT", "GMT", "GMT-SPOT", "HYPE", "HYPE-SPOT", "LINK", "LINK-SPOT", "LPT", "LPT-SPOT", "LRC", "LRC-SPOT", "LTC", "LTC-SPOT", "LUNA", "LUNA-SPOT", "MANA", "MANA-SPOT", "MASK", "MASK-SPOT", "MATIC", "MATIC-SPOT", "NEAR", "NEAR-SPOT", "NEIRO", "NEIRO-SPOT", "NOT", "NOT-SPOT", "OP", "OP-SPOT", "ORDI", "ORDI-SPOT", "PEOPLE", "PEOPLE-SPOT", "RARE", "RARE-SPOT", "RUNE", "RUNE-SPOT", "SAND", "SAND-SPOT", "SOL", "SOL-SPOT", "SUI", "SUI-SPOT", "SUSHI", "SUSHI-SPOT", "SXP", "SXP-SPOT", "TAO", "TAO-SPOT", "TON", "TON-SPOT", "TRB", "TRB-SPOT", "TRUMP", "TRUMP-SPOT", "TRX", "TRX-SPOT", "UNI", "UNI-SPOT", "VET", "VET-SPOT", "WIF", "WIF-SPOT", "WLD", "WLD-SPOT", "WLFI", "WLFI-SPOT", "XLM", "XLM-SPOT", "XPL", "XPL-SPOT", "XRP", "XRP-SPOT", "XTZ", "XTZ-SPOT", "YFI", "YFI-SPOT", "ZEC", "ZEC-SPOT", "ZIL", "ZIL-SPOT"]
+
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+# The strategy's own money: the production Bv2 book's 257 (4 coins x 64.25), the base of every
+# percent, split equally among the K coins held (see the header, item 3).
+strategy_capital_usd: 257.0
+simultaneous_legs: 2
+# Binance is the DATA proxy; orders would go to Hyperliquid (as the base; docs/VENUES.md section 9).
+execution_venue: hyperliquid
+
+# Random books for the noise bar trade only the coins this book ever holds (docs/HEDGE_TIMING.md).
+noise_universe: held
+
+measure_hedge_timing: false
+
+unexpressed_mechanisms: []
+
+required_instruments: null
+
+regime_claim:
+  bull: earns
+  bear: beats_market
+
+# The lists the one check chooses among, once, on the first two thirds of the data (docs/ONE_CHECK.md):
+# 3 x 2 = 6 variants, each a trial of its own.
+choice:
+  axes:
+    universe.n: [2, 4, 6]
+    fast_window_hours: [12, 24]
+    sticky_exit_hours: [0, 12]
+  source: "docs/IDEA_STANDARD.md, cards/bv2-fast-release-by-own-trend.yaml"
+
+sources:
+  "universe": "docs/IDEA_STANDARD.md, «Монеты: сужать молча нельзя»: «монеты выбирает код — каждый день первые K монет по обороту за 30 дней на площадке; K — объявленный выбор из 2, 4, 6»; the rule is qlab.strategies.live._bv2_mechanisms.UniverseRule, the definition of the turnover is qlab.knowable_coins (night/knowable_coins.yaml: window_days 30)"
+  "fast_window_hours": "cards/bv2-fast-release-by-own-trend.yaml, grid: fast_window_hours 0, 12, 24; 0 (the block off, Bv2 itself) left out, as in specs/research/bv3/bv3-research-fast-release.yaml"
+  "fast_entry": "cards/bv2-fast-release-by-own-trend.yaml, grid: fast_entry 0, 1; 0 is the card's first reading (the slow rule decides whether to hedge)"
+  "sticky_exit_hours": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, §1 «Параметры — плато, а не пик»: «липкий выход 0/12/48 ч»; 0 is the reading «снимается чаще», 12 the value the first Bv3 check chose; both are offered since the owner raised max_candidates to 12 (night/own_numbers.yaml, header item 5)"
+  "costs.taker_fee_bps": "night/costs.yaml, venue hyperliquid, taker_fee_bps"
+  "costs.slippage_bps": "night/costs.yaml, venue hyperliquid, slippage_bps"
+  "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"
+  "strategy_capital_usd": "specs/bv2-live.yaml: strategy_capital_usd 257, the production Bv2 book's money, kept whatever K is chosen"
+  "capital_usd": "specs/bv2-live.yaml: capital_usd 257.0, the production Bv2 book's money (4 coins x 64.25), split equally among the K coins held"
+  "short_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), the four coins of production"
+  "maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), the four coins of production"
+  "data.instruments": "docs/IDEA_STANDARD.md, «Монеты: сужать молча нельзя»: the perpetual and the spot of every coin that was ever among the first 6 by the 30-day traded value (70 coins, made by code on 2026-11-04, see the header, item 2)"
+  "spot_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "ratchet_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_fraction": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_entry_apr": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "slippage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "min_order_usd": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_buffer": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "mode": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"

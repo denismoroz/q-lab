@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from qlab import own_numbers
 from qlab.cli import app
 from qlab.pipeline.sources import source_problems
 from qlab.pipeline.spec import StrategySpec, load_spec
@@ -195,7 +196,8 @@ def test_more_candidates_than_the_cap_is_refused_with_the_reason(xsmom_base):
     wide = xsmom_base.model_copy(update={"params": params})
     result = causal_twin(wide)
     assert result.spec is None
-    assert "32 candidates" in result.reason and "at most 8" in result.reason
+    cap = own_numbers.load_config(own_numbers.CONFIG)["max_candidates"]  # 12 since 2026-11-04
+    assert "32 candidates" in result.reason and f"at most {cap}" in result.reason
 
 
 def test_nothing_declared_and_no_base_is_no_twin():
@@ -682,7 +684,7 @@ def test_an_explicit_list_of_the_original_is_marked_too_and_loses_the_coins_bina
 
 
 def test_the_twin_with_a_list_survives_the_file_and_the_cli_prints_it(tmp_path, monkeypatch):
-    from qlab import twin_stage
+    from qlab import own_numbers, twin_stage
 
     monkeypatch.setattr(twin_stage, "_binance_listing",
                         lambda: _listing("BTC", "ETH", "SOL", "AVAX"))

@@ -35,7 +35,11 @@ lists:
   graded_hedge_depth: [0.05, 0.1, 0.2]
 # The most candidates one spec may offer (the product of its lists' lengths): each is a
 # trial, and the more there are, the higher the bar the best of them has to clear.
-max_candidates: 8
+# Raised from 8 to 12 by the owner, 2026-11-04, for Bv3's coins chosen by code: «поднять до 12 и
+# перебрать все три числа» (K of coins 2/4/6 x fast window 12/24 h x sticky exit 0/12 h). With
+# 8 the spec had to fix sticky exit at 0, and that one fixed number cost 52% a year in fees
+# (docs/research/bv3-topk-2026-11-04.md).
+max_candidates: 12
 # Where the cut falls: the owner's split of the window, «поделить 2/3 и 1/3 ... оставшуюся 1/3
 # для прогона вперед» (rules/2026-10-24.1.yaml, holdout_share 1/3) -- the value is chosen on
 # the first two thirds, judged on the last third; later only if the spec's own sources were

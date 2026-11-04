@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from qlab import night, one_check, twin
+from qlab import night, one_check, own_numbers, twin
 from qlab.pipeline.sources import choice_problems, source_problems
 from qlab.pipeline.spec import Choice, StrategySpec
 from qlab.strategies.retune import expand_grid
@@ -99,7 +99,8 @@ def test_the_product_of_the_lists_stays_within_the_cap_and_params_carry_the_firs
                              "source": OWN},
                      params={"signal": {"window_days": 3}, "rebalance_days": 1,
                              "portfolio": {"fraction": 0.1}})
-    assert any("at most 8" in p for p in one_check.declaration_problems(too_many))
+    cap = own_numbers.load_config(own_numbers.CONFIG)["max_candidates"]  # 12 since 2026-11-04
+    assert any(f"at most {cap}" in p for p in one_check.declaration_problems(too_many))
     wrong_first = _spec(params={"signal": {"window_days": 7}, "rebalance_days": 1})
     assert any("first" in p for p in one_check.declaration_problems(wrong_first))
 
