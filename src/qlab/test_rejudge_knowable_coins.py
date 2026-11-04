@@ -21,6 +21,21 @@ CONFIG = kc.KnowableConfig(top_k=2, window_days=5, raw_dir=Path("data/raw"), int
                            source="night/knowable_coins.yaml")
 
 
+def _as_before_the_rejudge(path: Path) -> None:
+    """The repo's spec was itself rewritten by the script on 2026-11-04 (commit 8f61c02): put back
+    the hand date it carried before, so the test does not depend on the repo's current state."""
+    import yaml
+
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw.pop("coins_knowable", None)
+    raw["judged_from"] = "2026-10-03"
+    raw["instruments_chosen_at"] = "2026-10-03"
+    raw.setdefault("sources", {})
+    raw["sources"]["instruments_chosen_at"] = "specs/research/bv2/bv2-research-btceth.yaml: params_fixed_at"
+    raw["sources"]["judged_from"] = "docs/RETUNE.md: a hand-picked list is judged from the day it was known"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
 @pytest.fixture()
 def script():
     spec = importlib.util.spec_from_file_location(
@@ -37,6 +52,7 @@ def lab(tmp_path: Path, monkeypatch) -> Path:
     target = tmp_path / "specs" / "generated" / "stage2"
     target.mkdir(parents=True)
     shutil.copy(SPEC, target / SPEC.name)
+    _as_before_the_rejudge(target / SPEC.name)
     (tmp_path / "data").mkdir()
     with sqlite3.connect(tmp_path / "data" / "qlab.db") as conn:
         conn.execute("create table idea (id text, status text)")
