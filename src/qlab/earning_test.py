@@ -30,6 +30,10 @@ nothing. **Resamples.** 2000, as in the overlay comparison.
 **Not defined.** Fewer than `MIN_DAYS` days, or a run whose base of percent is undefined (a book
 with deposits): no key is written, and the reading says so.
 
+**From rules 2026-11-04.2 it decides** (rule `earning_distinguishable`, owner 2026-11-04: «Да,
+решающим»): p at or below 0.05 on the forward third passes; above it the run is «рано судить»
+(`needs-forward`, `Rule.on_fail == "wait"`), not a reject. Under older versions what follows holds.
+
 **It decides nothing.** Owner's rule «сначала замер, потом правило»: the three numbers are recorded
 in `trial.metrics`, shown beside the noise bar, and counted over the registry (`collect`,
 `summarize`: how many ideas would pass and fail at p <= `ALPHA`, against the outcome and against
@@ -169,17 +173,25 @@ def p_text(p: float, n_boot: int = N_BOOT) -> str:
     return f"p меньше 1 из {n_boot}" if p <= 0.0 else f"p = {p:.3f}"
 
 
-def line_ru(metrics: Mapping[str, object] | None) -> str | None:
+def line_ru(metrics: Mapping[str, object] | None, *, line: float | None = None
+            ) -> str | None:
     """The reading in one line of plain words, e.g. «заработок отличим от нуля: p = 0.012,
-    95% интервал дохода в год от +3.1% до +14.0% (ничего не решает)»; None for a run without it."""
+    95% интервал дохода в год от +3.1% до +14.0% (ничего не решает)»; None for a run without it.
+
+    `line`: the threshold of the deciding rule of the run's rules version (from 2026-11-04.2,
+    `earning_distinguishable`), when it has one: the tail then says the line and what a failure
+    means instead of «ничего не решает»."""
     r = read(metrics)
     if r.p is None:
         return None
-    verdict = f"{PASSES_RU}" if r.distinct else f"{FAILS_RU}"
+    distinct = r.distinct if line is None else r.p <= line
+    verdict = f"{PASSES_RU}" if distinct else f"{FAILS_RU}"
     interval = ""
     if r.ann_low is not None and r.ann_high is not None:
         interval = (f", 95% интервал дохода в год от {_pct(r.ann_low)} до {_pct(r.ann_high)}")
-    return f"заработок {verdict}: {p_text(r.p)}{interval} (ничего не решает)"
+    tail = ("ничего не решает" if line is None else
+            f"решает: нужно p не больше {line:g}; если больше — рано судить, не отказ")
+    return f"заработок {verdict}: {p_text(r.p)}{interval} ({tail})"
 
 
 def _pct(value: float) -> str:

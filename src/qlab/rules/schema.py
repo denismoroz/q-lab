@@ -259,6 +259,37 @@ class NoiseBar(BaseModel):
         return self
 
 
+class MoneyFit(BaseModel):
+    """How the money step of the ladder judges, from 2026-11-04.2 (docs/MONEY_LADDER.md, step 4 of
+    docs/LADDER.md).
+
+    Owner, 2026-11-04, on a strategy page that read «нужно $37 591, своих $3 000»: «опять вижу нужно
+    37000$ - мы же решили вчера проверять стратегию по доступному бюджету а не на таких космических
+    суммах». Up to 2026-11-04.1 the step compared the strict minimum (`min_capital_usd`: every
+    position the strategy ever wanted is at least the venue's minimum order, set by one rare tiny
+    position) with the strategy's own money. From this block on it reads the book run on the
+    strategy's OWN money in the «fewer positions» form (`qlab.money_ladder.fewer_positions`: the
+    positions under the minimum are dropped, the smallest first, and their weight goes to the rest
+    of the same side), on the judged part of the run (the forward third under rules 2026-11-04.x),
+    against the same book without the minimum. It fits when that book keeps at least
+    `min_return_share` of the unconstrained book's yearly return on the strategy's money AND its
+    daily returns correlate with it at `min_correlation` or more. The strict minimum stays a
+    reading beside it. When the unconstrained book does not earn (its yearly return is not above
+    zero) there is nothing to keep: the step does not decide, and the edge rule of the venue's
+    step (`net_edge_positive`, the same number) already fails the run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mode: Literal["fewer"] = "fewer"
+    """Which execution model of the money ladder judges: «fewer positions, only those that fit»."""
+    min_return_share: float = Field(gt=0.0, le=1.0)
+    """The least share of the unconstrained book's yearly return the book on the strategy's own
+    money must keep."""
+    min_correlation: float = Field(gt=0.0, le=1.0)
+    """The least correlation of the two books' daily returns."""
+    rationale: str
+
+
 class VenueSplit(BaseModel):
     """Binance and Hyperliquid are judged separately, each on its own data, coins, costs and
     minimum leg, from 2026-10-30.1 (docs/VENUE_SPLIT.md; owner, 2026-10-30: «да, делай раздельно
@@ -330,6 +361,13 @@ class Rule(BaseModel):
     kind: RuleKind = RuleKind.STRATEGY
     fit_period: FitPeriodUse = FitPeriodUse.CONCLUSIVE
     on_short_forward: ShortForwardUse = ShortForwardUse.DECIDE
+    on_fail: Literal["reject", "wait"] = "reject"
+    """From 2026-11-04.2: what a failure of this rule on the forward test means. `reject` (every
+    rule before): the run is rejected. `wait`: the run is "too early to judge" (`needs-forward`),
+    never rejected by this rule -- the rule asks whether the earning can be told from zero yet,
+    and a "not yet" is not a "no" (owner, 2026-11-04, «Да, решающим»). A run that also fails a
+    rule that rejects is rejected by that rule. A metric that could not be computed is "unknown"
+    as for any rule (`needs-more-data`), never a pass."""
     skip_when_undefined: bool = Field(
         default=False,
         description=(
@@ -459,6 +497,10 @@ class RuleSet(BaseModel):
     noise_bar: NoiseBar | None = None
     """From 2026-11-03.1: a dead band around the noise bar's line, and no pass where the bar has no
     power (docs/NOISE_BAR.md)."""
+    money_fit: MoneyFit | None = None
+    """From 2026-11-04.2: the money step reads the «fewer positions» book on the strategy's own
+    money instead of the strict minimum (docs/MONEY_LADDER.md). Absent: the strict minimum against
+    the strategy's money, as before."""
     venue_split: VenueSplit | None = None
     """From 2026-10-30.1: Binance and Hyperliquid are judged separately and the idea's route is the
     better of the two (docs/VENUE_SPLIT.md). Absent: both stages must pass, as before."""

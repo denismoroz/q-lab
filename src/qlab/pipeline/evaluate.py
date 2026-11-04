@@ -1077,7 +1077,38 @@ def decide_fit_forward_route(
     routing = _with_regime_coverage(
         ruleset=ruleset, selection=selection, forward=forward, metrics=metrics,
         params_fixed_at=params_fixed_at)
-    return _power_gate(ruleset, forward, routing, metrics)
+    routing = _power_gate(ruleset, forward, routing, metrics)
+    return _wait_on_fail(ruleset, forward, routing, metrics)
+
+
+EARNING_WAIT = "too early to judge: the earning cannot yet be told from zero"
+"""How the reason of a run held by an `on_fail: wait` rule begins (rules 2026-11-04.2)."""
+
+
+def _wait_on_fail(ruleset: RuleSet, forward: EvaluationResult | None, routing: RoutingDecision,
+                  metrics: Mapping[str, float]) -> RoutingDecision:
+    """A forward test rejected ONLY by rules whose failure means "not yet" (`Rule.on_fail ==
+    "wait"`, rules 2026-11-04.2: «заработок отличим от нуля», owner 2026-11-04 «Да, решающим») is
+    `needs-forward`, not a reject. A failure of any other strategy rule keeps the reject; a
+    rejection on the selection period stands."""
+    if (forward is None or routing.route != "reject"
+            or routing.reason.startswith("fails on the selection period")):
+        return routing
+    by_id = {rule.id: rule for rule in ruleset.rules}
+    failed = _failed_for_waiting(ruleset, by_id, forward.rows)
+    if not failed or not all((rule := by_id.get(r.rule_id)) is not None
+                             and rule.on_fail == "wait" for r in failed):
+        return routing
+    shown = "; ".join(f"{r.rule_id}: {r.metric} = {r.value:.3f}, needs {r.comparator} "
+                      f"{r.threshold:g}" for r in failed)
+    infra = [r.rule_id for r in forward.rows if r.passed is False and r.rule_id not in
+             {f.rule_id for f in failed}]
+    tail = f"; missing infrastructure: {', '.join(infra)}" if infra else ""
+    return RoutingDecision(
+        route="needs-forward",
+        reason=f"{EARNING_WAIT} ({shown}); every other strategy rule passed{tail}",
+        required_capital_usd=metrics.get("min_capital_usd"),
+    )
 
 
 def _with_regime_coverage(
@@ -1529,6 +1560,7 @@ def evaluate_spec(
     review_route: Callable[[RoutingContext], RouteReview | None] | None = None,
     spec_row_id: int | None = None,
     earning_test: bool = True,
+    money_fit: bool = True,
 ) -> Evaluation:
     """Run `spec` end to end: data -> weights -> backtest -> metrics -> verdict.
 
@@ -1615,6 +1647,11 @@ def evaluate_spec(
     `earning_test` (docs/NOISE_BAR.md, stand 2026-11-03.1) records the bootstrap reading "can the
     earning be told from zero?" on the strategy's own money (`qlab.earning_test`); it decides
     nothing. Calibration noise books pass False: 200 of them per run would only slow it down.
+
+    `money_fit` (rules 2026-11-04.2, `qlab.money_fit`): under a ruleset with a `money_fit` block the
+    book on the strategy's own money, in the «fewer positions» form, is measured on the judged part
+    and written as `money_fit_*` metrics; step 4 of the ladder judges on them. Noise books pass
+    False, as for `earning_test`.
 
     `review_route` (stage 2 of the idea generator, docs/TWO_STAGE.md) is asked once,
     with the route the rules decided, before the trial is written; a `RouteReview`
@@ -1811,7 +1848,10 @@ def evaluate_spec(
                 # The judged part year by year (docs/YEARS.md): a description, read by no rule.
                 measured.update(year_breakdown(result.net_return))
                 measured.update(_protection(spec, result, part_panel, part_weights, capital))
-                if earning_test and capital.refused is None:
+                # From rules 2026-11-04.2 a rule decides on it: then even a noise book needs it,
+                # or every book would read "unknown" and the noise calibration would count none.
+                if (earning_test or any(r.metric == "cap_mean_positive_p"
+                                        for r in ruleset.rules)) and capital.refused is None:
                     # Can the earning be told from zero (docs/NOISE_BAR.md)? A reading on the
                     # strategy's own money, read by no rule. (Imported here: the module
                     # shares the overlay comparison's bootstrap, which imports this package.)
@@ -1942,6 +1982,14 @@ def evaluate_spec(
         knowable_list = stand_knowable_list(spec, index, rows.first, rows.last, ruleset)
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None,
                            years=True)
+        if money_fit and ruleset.money_fit is not None:
+            # Rules 2026-11-04.2: the book on the strategy's own money, fewer positions, on the
+            # judged part (qlab.money_fit). Read by step 4 of the ladder, by no rule row.
+            from qlab import money_fit as money_fit_mod
+
+            metrics.update(money_fit_mod.at_evaluation(
+                spec=spec, panel=panel, judged=judged, judged_run=judged_run, costs=costs,
+                extra_cost=extra_cost, capital=capital, orders=orders, floors=leg_floors_))
         if spec.judged_from is not None and first > 0:
             metrics["skipped_warmup_days"] = _days((0, first - 1))
         if (checked_list := spec.coins_knowable or knowable_list) is not None:
@@ -2141,6 +2189,10 @@ def evaluate_spec(
         if review is not None:
             routing = review.routing
             metrics.update(review.metrics)
+    if routing.route == "needs-forward" and routing.reason.startswith(EARNING_WAIT):
+        # Rules 2026-11-04.2: held only by «заработок отличим от нуля»; read by the page and the
+        # morning report, by no rule.
+        metrics["earning_wait"] = 1.0
     if band is not None and band.kept:
         routing = dataclasses.replace(routing, reason=f"{routing.reason} [{band.note_ru()}]")
     if ruleset.noise_bar is not None and ruleset.noise_power is not None:

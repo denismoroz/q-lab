@@ -362,6 +362,10 @@ def _money(facts: Facts) -> Item:
         row = rows.get(venue)
         if run.get("min_capital_usd") is None:
             lacks.append(f"{_venue(venue)}: не посчитано, сколько денег нужно на все ордера")
+        elif (row is not None and row.get("rule") == "fewer_own"
+              and row.get("outcome") == "undecided"):
+            # rules 2026-11-04.2: the decisive line is the book on the strategy's own money
+            lacks.append(f"{_venue(venue)}: {row.get('detail') or 'на своих деньгах не измерено'}")
         elif row is None or not row.get("money_line_ru"):
             lacks.append(f"{_venue(venue)}: ряд на $1k, $3k, $10k ещё не измерен — будет после "
                          "пересчёта")

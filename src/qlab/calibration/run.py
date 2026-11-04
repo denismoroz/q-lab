@@ -395,6 +395,8 @@ def _evaluate_noise(spec: StrategySpec, session: Session, ruleset: RuleSet,
         spec_row_id=spec_row_id,
         # Nor does a book need the reading "can its earning be told from zero?" (docs/NOISE_BAR.md).
         earning_test=False,
+        # Nor the book on its own money (rules 2026-11-04.2, qlab.money_fit).
+        money_fit=False,
     )
 
 

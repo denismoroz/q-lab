@@ -115,6 +115,13 @@ def test_the_latest_rules_split_the_venues_and_older_rules_do_not() -> None:
     was.pop("noise_bar")
     now.pop("split_by_data")  # the 2/3 and 1/3 cut of 2026-11-04.1 is not about venues either
     was.pop("split_by_data")
+    now.pop("money_fit")  # the money step of 2026-11-04.2 reads the strategy's own money
+    was.pop("money_fit")
+    # 2026-11-04.2 also retires capital_fit and adds the earning rule; neither is about venues
+    for part in (was, now):
+        part["rules"] = [r for r in part["rules"]
+                         if r["id"] not in ("capital_fit", "earning_distinguishable")]
+        part["retired"] = [r for r in part["retired"] if r["id"] != "capital_fit"]
     assert was == now
 
 

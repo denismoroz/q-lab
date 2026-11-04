@@ -119,6 +119,11 @@ function VenueCard({ view }) {
           деньги стратегии: <span className="font-medium">{money.outcome_ru}</span>
           {money.reason_ru && <span className="italic"> ({money.reason_ru})</span>}
           {money.detail ? ` — ${money.detail}` : ''}
+          {money.strict_ru && (
+            <span className="block text-[11px] text-slate-500" data-testid={`venue-${view.venue}-strict`}>
+              {money.strict_ru}
+            </span>
+          )}
         </p>
       )}
     </div>
@@ -190,7 +195,7 @@ const MODE_RU = {
 
 // How the strategy works on other money (docs/MONEY_LADDER.md; owner, 2026-11-03: «а на меньших
 // деньгах - не работает? можно добавить как работает на 1к 3к?»). A reading: it decides nothing.
-function MoneyLadderTable({ reading }) {
+function MoneyLadderTable({ reading, rule }) {
   if (!reading) return null
   const rows = reading.rows.filter((r) => r.available)
   const ref = reading.reference
@@ -255,11 +260,19 @@ function MoneyLadderTable({ reading }) {
         </table>
       </div>
       {reading.note && <p className="mt-1 text-xs text-slate-500">{reading.note}</p>}
-      <p className="mt-1 text-xs text-slate-500">
-        Это показание, а не вердикт: оно ничего не решает. «Меньше позиций» — другая стратегия, не
-        та, что измерена; если она выглядит хорошо, её надо описать отдельным спеком и судить
-        правилами.
-      </p>
+      {rule === 'fewer_own' ? (
+        <p className="mt-1 text-xs text-slate-500">
+          Это показание. Ступень решает строка выше: книга «меньше позиций» на деньгах самой
+          стратегии на последней трети данных, посчитанная при оценке прогона (правила
+          2026-11-04.2, владелец 2026-11-04: «проверять стратегию по доступному бюджету»).
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-slate-500">
+          Это показание, а не вердикт: оно ничего не решает. «Меньше позиций» — другая стратегия, не
+          та, что измерена; если она выглядит хорошо, её надо описать отдельным спеком и судить
+          правилами.
+        </p>
+      )}
     </details>
   )
 }
@@ -279,12 +292,20 @@ function MoneyLines({ money }) {
               {m.money_line_ru}
             </span>
           )}
+          {m.strict_ru && (
+            <span className="block text-[11px] text-slate-500" data-testid={`money-strict-${m.venue}`}>
+              {m.strict_ru}
+            </span>
+          )}
           {m.money_ladder?.why_strict_ru && (
-            <span className="block text-xs text-slate-600" data-testid={`money-why-${m.venue}`}>
+            <span
+              className={`block ${m.rule === 'fewer_own' ? 'text-[11px] text-slate-500' : 'text-xs text-slate-600'}`}
+              data-testid={`money-why-${m.venue}`}
+            >
               {m.money_ladder.why_strict_ru}
             </span>
           )}
-          <MoneyLadderTable reading={m.money_ladder} />
+          <MoneyLadderTable reading={m.money_ladder} rule={m.rule} />
         </li>
       ))}
     </ul>

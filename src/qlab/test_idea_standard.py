@@ -220,6 +220,23 @@ def test_money_on_the_ladder_must_be_measured_for_every_venue_with_a_run() -> No
     assert money.state == "нет" and "Hyperliquid" in money.reason and "$1k" in money.reason
 
 
+def test_money_under_rules_2026_11_04_2_needs_the_own_money_book_measured() -> None:
+    """Rules 2026-11-04.2: step 4 judges the «fewer positions» book on the strategy's own money;
+    a venue where it was not measured is a gap, named with the reason."""
+    unmeasured = {"venue": "hyperliquid", "money_line_ru": "x", "rule": "fewer_own",
+                  "outcome": "undecided",
+                  "detail": "на своих $3 000 при меньшем числе позиций не измерено: расчёт упал"}
+    facts = _full(ladder=_ladder(
+        binance=_step(2, "binance", trial=1), hyperliquid=_step(3, "hyperliquid", trial=2),
+        money_rows=[{"venue": "binance", "money_line_ru": "x", "rule": "fewer_own",
+                     "outcome": "passed"}, unmeasured]))
+
+    money = next(i for i in std.check(facts) if i.key == "money")
+
+    assert money.state == "нет" and "не измерено: расчёт упал" in money.reason
+    assert "Binance" not in money.reason
+
+
 # --- the first day of the data ---------------------------------------------------------------
 
 

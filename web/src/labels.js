@@ -241,10 +241,31 @@ export const TRIAL_ROUTE_HINT = {
  * `needs-forward` the generic hint hides three different situations: a
  * forward test that cannot start because nobody recorded when the parameters
  * were fixed, one that has not started, and one still too short. */
+/** The headline of a run's outcome: the route's word, and for a run held only by the rule
+ * «заработок отличим от нуля» (rules 2026-11-04.2, owner 2026-11-04: «Да, решающим») what it
+ * waits for. */
+export function routeTitle(trial) {
+  const m = trial?.metrics ?? {}
+  if (trial?.route === 'needs-forward' && m.earning_wait === 1) {
+    return 'рано судить: заработок пока не отличим от нуля'
+  }
+  return label(TRIAL_ROUTE, trial?.route)
+}
+
 export function routeHint(trial) {
   const generic = TRIAL_ROUTE_HINT[trial.route]
   if (trial.route !== 'needs-forward') return generic
   const m = trial.metrics ?? {}
+  if (m.earning_wait === 1) {
+    // Rules 2026-11-04.2: «заработок отличим от нуля» decides, and its failure is a wait.
+    const p = m.cap_mean_positive_p
+    const pText = typeof p === 'number' ? (p <= 0 ? 'меньше 1 из 2000' : p.toFixed(3)) : '—'
+    return (
+      'Все остальные правила пройдены, но на последней трети данных заработок пока не отличим от нуля: ' +
+      `если много раз пересобрать дни стратегии в похожем порядке, средний день оказывается не выше нуля в доле ${pText} пересборок, а решает правило «не больше 0.05». ` +
+      'Это «рано судить», а не отказ: с новыми данными число пересчитается.'
+    )
+  }
   const parts = []
   // Runs recorded before the fact was stored say it only in their reason.
   const dateUnknown =

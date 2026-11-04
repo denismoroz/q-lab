@@ -39,7 +39,14 @@ Step 4 (phase B, 2026-10-29): the strategy's money is a field of the spec itself
 (`StrategySpec.strategy_capital_usd`, cited in its `sources`), and the capital a run needed
 (`min_capital_usd`) is compared with THAT, never with a common sum: the route `shelf` is gone
 (rules 2026-10-29.3), a run that passed every rule is `paper`, and whether it fits its money is
-this step's outcome. A spec that states no money reads «деньги стратегии не заданы»."""
+this step's outcome. A spec that states no money reads «деньги стратегии не заданы».
+
+Step 4 under rules 2026-11-04.2 (owner, 2026-11-04: «опять вижу нужно 37000$ - мы же решили вчера
+проверять стратегию по доступному бюджету а не на таких космических суммах»): a run judged under a
+version with `money_fit` is read by `qlab.money_fit.judge` -- the «fewer positions» book on the
+strategy's own money against the unconstrained book, on the judged part -- and the strict minimum
+is a small line beside it (`VenueMoney.strict_ru`). A run judged under an older version keeps the
+strict comparison and its words."""
 
 from __future__ import annotations
 
@@ -128,6 +135,8 @@ class Reason(StrEnum):
     STAGE2_FAILED = "stage2_failed"
     # Added with one idea, one check (2026-11-01, docs/ONE_CHECK.md):
     NO_NEW_TWINS = "no_new_twins"
+    # Added with the money step on the strategy's own money (rules 2026-11-04.2):
+    NO_EDGE_TO_KEEP = "no_edge_to_keep"
 
 
 REASON_RU: dict[Reason, str] = {
@@ -151,6 +160,7 @@ REASON_RU: dict[Reason, str] = {
     Reason.SECOND_VENUE_QUEUED: "вторая площадка не проводилась: стоит в очереди закрытых идей",
     Reason.STAGE2_FAILED: "не проводился: сбой",
     Reason.NO_NEW_TWINS: "двойники больше не строятся: у идеи одна проверка",
+    Reason.NO_EDGE_TO_KEEP: "без ограничений стратегия не зарабатывает",
 }
 
 STEP_KEYS = ("description", "binance", "hyperliquid", "money", "readings", "paper", "owner")
@@ -221,9 +231,18 @@ class StepRun:
     consistency_trial: int | None = None
     """The first-stage trial this run's pass was checked against instead of the noise bar (the
     consistency check, docs/TWO_STAGE.md); None: the noise bar decided, or no pass."""
+    earning_wait: bool = False
+    """The run waits only on «заработок отличим от нуля» (rules 2026-11-04.2)."""
+    earning_p: float | None = None
+    """`cap_mean_positive_p` of the run (qlab.earning_test), when measured."""
+    money_fit: Mapping[str, float] | None = None
+    """The run's `money_fit_*` metrics (rules 2026-11-04.2, `qlab.money_fit`): the book on the
+    strategy's own money in the «fewer positions» form; None when the run has none."""
 
     def to_dict(self) -> dict[str, Any]:
-        return dict(self.__dict__)
+        out = dict(self.__dict__)
+        out["money_fit"] = None if self.money_fit is None else dict(self.money_fit)
+        return out
 
 
 @dataclass(frozen=True)
@@ -253,10 +272,20 @@ class VenueMoney:
     money_ladder: Any = None
     """`qlab.money_ladder.MoneyLadder` of this venue's run when it was measured (a reading: how
     the strategy works on $1 000, $3 000, $10 000 and its own money; docs/MONEY_LADDER.md)."""
+    rule: str = "strict"
+    """Which rule wrote the line: `strict` (the strict minimum against the strategy's money, rules
+    up to 2026-11-04.1) or `fewer_own` (the «fewer positions» book on the strategy's own money,
+    rules 2026-11-04.2, `qlab.money_fit`)."""
+    word_ru: str | None = None
+    """The outcome's word when the general four would mislead (`fewer_own`: «не решён» without
+    «рано судить» for a run that was not measured, «не решает» where there is no return to keep)."""
+    strict_ru: str | None = None
+    """Under `fewer_own`: the strict minimum as a small line («чтобы держать все позиции как есть,
+    нужно $37 591 …»); it decides nothing."""
 
     @property
     def outcome_ru(self) -> str:
-        return OUTCOME_RU[self.outcome]
+        return self.word_ru or OUTCOME_RU[self.outcome]
 
     @property
     def reason_ru(self) -> str | None:
@@ -276,6 +305,7 @@ class VenueMoney:
         return {"venue": self.venue, "outcome": self.outcome.value, "outcome_ru": self.outcome_ru,
                 "reason": None if self.reason is None else self.reason.value,
                 "reason_ru": self.reason_ru, "detail": self.detail,
+                "rule": self.rule, "strict_ru": self.strict_ru,
                 "money_line_ru": self.money_line_ru,
                 "money_ladder": None if found is None else {
                     **found.to_dict(), "why_strict_ru": money_ladder.why_strict_ru(found),
@@ -303,9 +333,14 @@ class Step:
     """What the lab can do on that venue: the fact about its order adapter, in words."""
     money: tuple[VenueMoney, ...] = ()
     """Step 4 only: the money check of each venue."""
+    word_ru: str | None = None
+    """The outcome's word when the general four would mislead (step 4 under rules 2026-11-04.2
+    takes its leading venue's word)."""
 
     @property
     def outcome_ru(self) -> str:
+        if self.word_ru:
+            return self.word_ru
         return STEP_OUTCOME_RU.get(self.number, {}).get(self.outcome, OUTCOME_RU[self.outcome])
 
     @property
@@ -327,7 +362,7 @@ class Step:
     def short_ru(self) -> str:
         """«пройден», «не проводился: нет версии на Binance»: one cell of a table."""
         if self.outcome == Outcome.NOT_RUN:
-            return f"не проводился: {self.reason_ru}"
+            return f"{self.word_ru or 'не проводился'}: {self.reason_ru}"
         return self.outcome_ru
 
 
@@ -698,7 +733,17 @@ def _step_run(session: Session, run: _Run) -> StepRun:
         noise_percentile=_percentile(m), noise_power=_power(m),
         min_capital_usd=_number(m, "min_capital_usd"),
         consistency_trial=(None if _number(m, "stage1_trial_id") is None
-                           else int(_number(m, "stage1_trial_id") or 0)))
+                           else int(_number(m, "stage1_trial_id") or 0)),
+        earning_wait=bool(m.get("earning_wait")), earning_p=_number(m, "cap_mean_positive_p"),
+        money_fit=_money_fit_metrics(m))
+
+
+def _money_fit_metrics(m: Mapping[str, Any]) -> dict[str, float] | None:
+    from qlab.money_fit import PREFIX
+
+    found = {k: float(v) for k, v in m.items()
+             if k.startswith(PREFIX) and isinstance(v, int | float)}
+    return found or None
 
 
 def _short(text: str | None, n: int = 260) -> str:
@@ -744,7 +789,17 @@ def _run_detail(run: _Run, step_run: StepRun) -> str:
     parts = [ROUTE_NOTE_RU.get(route, route)]
     if run.venue:
         parts[0] += f" (данные {run.venue})"
-    if route == "needs-forward":
+    if route == "needs-forward" and m.get("earning_wait"):
+        # Rules 2026-11-04.2: held only by «заработок отличим от нуля» (owner: «Да, решающим»).
+        from qlab import earning_test
+
+        parts[0] = "рано судить: заработок пока не отличим от нуля, все остальные правила пройдены"
+        if run.venue:
+            parts[0] += f" (данные {run.venue})"
+        line = earning_test.line_ru(m, line=_earning_line(step_run.rules_version))
+        if line:
+            parts.append(line)
+    elif route == "needs-forward":
         have, need = step_run.forward_days, step_run.forward_days_needed
         if have is not None and need is not None:
             parts.append(f"проверки вперёд {_days_ru(have)} из {_days_ru(need)} нужных")
@@ -1027,9 +1082,73 @@ def _venue_money(idea: Idea, step: Step, money: float | None, ledgers: Ledgers |
     if money is None:
         note = "" if need is None else f"прогону нужно ${need:,.0f}; сравнить не с чем"
         return VenueMoney(venue, Outcome.NOT_RUN, note, Reason.NO_STRATEGY_MONEY)
+    reading = _stored_money_ladder(step, money, ledgers or Ledgers())
+    rule = _money_fit_rule(None if step.run is None else step.run.rules_version)
+    if rule is not None and step.run is not None:
+        return _fewer_own_money(venue, step.run, rule, money, need, reading)
     outcome, detail = capital_fit(need, money)
-    return VenueMoney(venue, outcome, detail,
-                      money_ladder=_stored_money_ladder(step, money, ledgers or Ledgers()))
+    return VenueMoney(venue, outcome, detail, money_ladder=reading)
+
+
+_RULES_CACHE: dict[str, Any] = {}
+
+
+def _ruleset(version: str | None):
+    """The run's own rules version, loaded once (None: no version, or it cannot be loaded)."""
+    if not version:
+        return None
+    if version not in _RULES_CACHE:
+        from qlab.rules.loader import load
+
+        try:
+            _RULES_CACHE[version] = load(version)
+        except (OSError, ValueError):
+            _RULES_CACHE[version] = None
+    return _RULES_CACHE[version]
+
+
+def _money_fit_rule(version: str | None):
+    """The `money_fit` block of the run's own rules version (rules 2026-11-04.2), or None: a run
+    judged under an older version keeps the strict reading and its words."""
+    found = _ruleset(version)
+    return None if found is None else found.money_fit
+
+
+def _earning_line(version: str | None) -> float | None:
+    """The threshold of the rule that decides on «заработок отличим от нуля» in the run's rules
+    version (from 2026-11-04.2), or None where it is only a reading."""
+    from qlab.earning_test import P_KEY
+
+    found = _ruleset(version)
+    rule = None if found is None else next((r for r in found.rules if r.metric == P_KEY), None)
+    return None if rule is None else float(rule.threshold)
+
+
+def _rules_version_of(session: Session, trial_id: int) -> str | None:
+    return (session.query(Verdict.rules_version)
+            .filter(Verdict.trial_id == trial_id, Verdict.rules_version.isnot(None))
+            .limit(1).scalar())
+
+
+MONEY_FIT_OUTCOME: dict[str, Outcome] = {
+    "passed": Outcome.PASSED, "failed": Outcome.FAILED, "unmeasured": Outcome.UNDECIDED,
+    "no_edge": Outcome.NOT_RUN,
+}
+MONEY_FIT_WORD_RU: dict[str, str] = {"unmeasured": "не решён", "no_edge": "не решает"}
+
+
+def _fewer_own_money(venue: str, run: StepRun, rule, money: float, need: float | None,
+                     reading) -> VenueMoney:
+    """Step 4 of one venue under rules 2026-11-04.2: the «fewer positions» book on the strategy's
+    own money (`qlab.money_fit.judge`); the strict minimum is a small line beside it."""
+    from qlab import money_fit
+
+    found = money_fit.judge(run.money_fit or {}, rule, money)
+    return VenueMoney(venue, MONEY_FIT_OUTCOME[found.state], found.detail_ru,
+                      Reason.NO_EDGE_TO_KEEP if found.state == "no_edge" else None,
+                      money_ladder=reading, rule="fewer_own",
+                      word_ru=MONEY_FIT_WORD_RU.get(found.state),
+                      strict_ru=money_fit.strict_ru(need, reading))
 
 
 def _step4(idea: Idea, steps: list[Step], ledgers: Ledgers) -> Step:
@@ -1048,10 +1167,13 @@ def _step4(idea: Idea, steps: list[Step], ledgers: Ledgers) -> Step:
         reasons = [m.reason for m in lines]
         reason = (Reason.NO_STRATEGY_MONEY if Reason.NO_STRATEGY_MONEY in reasons
                   else Reason.CLOSED_BEFORE if Reason.CLOSED_BEFORE in reasons
+                  else Reason.NO_EDGE_TO_KEEP if Reason.NO_EDGE_TO_KEEP in reasons
                   else Reason.NO_VERSION_ON_VENUE)
         return Step(4, STEP_KEYS[3], STEP_TITLES[3], Outcome.NOT_RUN, detail, reason=reason,
-                    money=lines)
-    return Step(4, STEP_KEYS[3], STEP_TITLES[3], lead.outcome, detail, money=lines)
+                    money=lines,
+                    word_ru=next((m.word_ru for m in lines if m.reason == reason), None))
+    return Step(4, STEP_KEYS[3], STEP_TITLES[3], lead.outcome, detail, money=lines,
+                word_ru=lead.word_ru)
 
 
 def capital_fit(need: float | None, money: float) -> tuple[Outcome, str]:
@@ -1098,7 +1220,8 @@ def _readings(session: Session, idea: Idea, main: _Run | None, ledgers: Ledgers)
                            Reason.NOT_REACHED))
     from qlab import earning_test
 
-    line = earning_test.line_ru(m) if m else None
+    rules = None if main is None else _rules_version_of(session, main.trial.id)
+    line = earning_test.line_ru(m, line=_earning_line(rules)) if m else None
     out.append(Reading("earning_test", line is not None,
                        line or "заработок отличим от нуля: у этого прогона замера ещё нет "
                        "(появляется при пересчёте, стенд 2026-11-03.1)"))
@@ -1346,7 +1469,10 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         "2 Binance, 3 Hyperliquid, 4 деньги стратегии (Binance / Hyperliquid), 5 показания, "
         "6 бумага, 7 владелец. ✓ пройден, ✗ не пройден, ~ не решён (рано судить), · не проводился, "
         "причина названа на странице идеи; у пятой ступени ✓ значит «показания записаны». "
-        "Прошедшая на Binance идея — «нужна инфраструктура»: адаптера Binance у нас нет.", "",
+        "Прошедшая на Binance идея — «нужна инфраструктура»: адаптера Binance у нас нет. "
+        "Деньги с правил 2026-11-04.2 судятся по книге «меньше позиций» на деньгах самой "
+        "стратегии (`docs/MONEY_LADDER.md`); у денег ~ значит «не измерено», · — «не решает: без "
+        "ограничений стратегия не зарабатывает» или прогона нет.", "",
         "| идея | статус | 1 | 2 Binance | 3 Hyperliquid | 4 деньги B / H | 5 | 6 | 7 | "
         "итог по площадкам | почему площадки расходятся |",
         "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -1374,6 +1500,15 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         lines.append("")
         lines.append("Статус «скамейка» по надписям: " + "; ".join(
             f"{BENCH_LABEL_RU[r]} — {benched.count(r)}" for r in BENCH_ORDER) + ".")
+    held = [f"{found.idea_id} ({VENUE_TITLE[s.venue]}, p = {s.run.earning_p:.3f})"
+            for found in ladders for s in found.steps[1:3]
+            if s.run is not None and s.run.earning_wait and s.venue in VENUE_TITLE
+            and s.run.earning_p is not None]
+    if held:
+        lines.append("")
+        lines.append("Рано судить, потому что заработок пока не отличим от нуля (правило с "
+                     "2026-11-04.2: нужно p не больше 0.05; не отказ — ждёт новых данных): "
+                     + "; ".join(dict.fromkeys(held)) + ".")
     lines.append("")
     lines.append("Не проводилось, по причинам (ступеней): " + "; ".join(
         f"{REASON_RU[r]} — {n}" for r, n in sorted(reasons.items(), key=lambda kv: -kv[1])) + ".")

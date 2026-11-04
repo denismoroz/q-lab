@@ -1,0 +1,104 @@
+# The money step judges on the strategy's own money, in the «fewer positions» form.
+#
+# Owner, 2026-11-04, on http://localhost:5890/ideas/trend-binance-cap-gated-causal-hl, whose step 4
+# read «нужно $37,591, своих $3,000: не помещается»: «опять вижу нужно 37000$ - мы же решили вчера
+# проверять стратегию по доступному бюджету а не на таких космических суммах». Asked how, the owner
+# chose: the money step judges on the strategy's own money, in the «fewer positions» form; it passes
+# when that book keeps at least 70% of the unconstrained book's return and its daily returns
+# correlate with it at 0.9 or more, on the last third of the data (the forward test); the strict
+# minimum stays only as a small line.
+#
+# Up to 2026-11-04.1 step 4 of the ladder (qlab.ladder, docs/LADDER.md) compared the strict minimum
+# `min_capital_usd` (every position the strategy ever wanted is at least the venue's minimum order;
+# one coin, H on Binance at a 0.013% share on one day, set it at $37,591) with the strategy's own
+# money (`strategy_capital_usd`). The money ladder (qlab.money_ladder, docs/MONEY_LADDER.md) showed
+# that on its own $3,000 the trend book loses almost nothing: Hyperliquid, trial 264109, +4.12% a
+# year against +3.65% unconstrained, daily correlation 0.997.
+#
+# What changes (no rule row is touched, no threshold of another rule moves):
+#
+#   * every run measures at evaluation time, on its judged part (the forward third), the book on
+#     the strategy's own money in the «fewer positions» form against the same book without the
+#     minimum (`money_fit_*` metrics, qlab.money_fit); a book that drives itself (Bv2, FRAB) is its
+#     own code run on its own money against the same book on $100,000;
+#   * step 4 reads `money_fit` below: it fits when the yearly return kept is at least
+#     `min_return_share` of the unconstrained one AND the daily correlation is at least
+#     `min_correlation`; it does not decide when the unconstrained book does not earn (the venue's
+#     `net_edge_positive` already fails that run on the same number); a run whose measurement is
+#     missing is «не решён: не измерено» with the reason, never a silent pass and never the old
+#     strict fail;
+#   * the strict minimum stays a reading on the page, in small print.
+#
+# Two more changes in this version, both the owner's (2026-11-04):
+#
+#   * «заработок отличим от нуля» becomes a deciding rule (`earning_distinguishable`). Asked
+#     «Сделать ли «заработок отличим от нуля» решающим правилом?», after seeing
+#     bv3-research-fast-release pass with two of its three forward years negative («странно что …
+#     прошла 2 года в минусе 25 и 26. все вытягивает 24 год»), the owner answered «Да, решающим».
+#     The reading of stand 2026-11-03.1 (qlab.earning_test, docs/NOISE_BAR.md) is the share of
+#     2000 block-bootstrap resamples of the strategy's days on its own money whose average day is
+#     at or below zero (`cap_mean_positive_p`), measured on the judged part, the forward third.
+#     It passes at 0.05 or below. Its failure is not a reject: the run is «рано судить: заработок
+#     пока не отличим от нуля» (`needs-forward`, `on_fail: wait`), the family of the noise bar
+#     without power, unless another rule rejects it. A run where the number cannot be computed
+#     (fewer than 30 days, no base of percent) is «не решено» (`needs-more-data`), never a pass;
+#   * `capital_fit` is retired: it rejected a run whose strict minimum (`min_capital_usd`)
+#     exceeded $120,000, the owner's whole capital horizon of 2026-09-20 («конечная цель
+#     разместить 100-120к. на все стратегии»), inherited unchanged by every version since
+#     2026-09-20.2. Its verdict row (value 216.64, threshold 120000 on trial 272441) compared the
+#     strict minimum with that horizon, not with the strategy's own money. From this version the
+#     strict minimum decides nothing anywhere; the money is step 4 above.
+#
+# Step 4 has never moved an idea's status (qlab.pipeline.venue_status.settle reads the venues'
+# routes only), and it still does not. A run judged under 2026-11-04.1 or earlier keeps the strict
+# reading and its old words; a run under this version is read by the new rule.
+
+version: "2026-11-04.2"
+based_on: "2026-11-04.1"
+
+rules:
+  - id: earning_distinguishable
+    stage: edge
+    metric: cap_mean_positive_p
+    comparator: "<="
+    threshold: 0.05
+    fatal: false
+    fit_period: informational
+    on_short_forward: wait
+    on_fail: wait
+    rationale: >
+      Owner, 2026-11-04, «Да, решающим», to «Сделать ли «заработок отличим от нуля» решающим
+      правилом?», after bv3-research-fast-release passed with two of three forward years negative:
+      «странно что … прошла 2 года в минусе 25 и 26. все вытягивает 24 год». The share of
+      block-bootstrap resamples of the strategy's daily returns on its own money (the forward
+      third) whose average day is at or below zero must be at most 0.05, the line the reading was
+      counted at since stand 2026-11-03.1 (qlab.earning_test.ALPHA). A failure means "not yet":
+      the run waits (needs-forward), it is not rejected by this rule. Not fatal, so every other
+      rule is still judged and a reject by any of them stands. Read on the forward test only; on
+      the selection period it is shown, not decisive.
+
+retired:
+  - id: capital_fit
+    retired_in: "2026-11-04.2"
+    reason: >
+      The fatal preflight rule min_capital_usd <= 120000 of 2026-09-20.2 (the owner's capital
+      horizon, «конечная цель разместить 100-120к. на все стратегии») compared the strict minimum
+      with all the money of all strategies, not with the strategy's own money. Owner, 2026-11-04:
+      «опять вижу нужно 37000$ - мы же решили вчера проверять стратегию по доступному бюджету а
+      не на таких космических суммах»; the strict minimum stays only as a small line, and the
+      money is judged by money_fit on the strategy's own money.
+
+money_fit:
+  mode: fewer
+  min_return_share: 0.70
+  min_correlation: 0.90
+  rationale: >
+    Owner, 2026-11-04: «опять вижу нужно 37000$ - мы же решили вчера проверять стратегию по
+    доступному бюджету а не на таких космических суммах». The owner chose the «fewer positions» form
+    on the strategy's own money, judged on the last third of the data: it passes when that book keeps
+    at least 70% of the unconstrained book's yearly return and its daily returns correlate with the
+    unconstrained book's at 0.9 or more. Both numbers are the owner's. The return is on the
+    strategy's own money (cap_ann_return, docs/CAPITAL_BASE.md) for both books, so the two numbers
+    compared are on one base. When the unconstrained book's return is not above zero there is no
+    return to keep: the step does not decide, and net_edge_positive fails that run on the very same
+    number.
