@@ -152,9 +152,12 @@ def _run(session, idea_id: str, route: TrialRoute, source: str, *, started=None)
     return trial.id
 
 
-def _stored(trial_id: int, store, idea_id: str = "x") -> None:
+def _stored(trial_id: int, store, idea_id: str = "x", *, whole: bool = True) -> None:
+    returns = _bars([0.01, 0.0])
+    block = fs.build_whole(net_return=returns, hold_return=None, hold_coins=None,
+                           bounds={}) if whole else None
     fs.save(fs.build_payload(trial_id=trial_id, idea_id=idea_id, venue="binance", interval="12h",
-                             net_return=_bars([0.01, 0.0]), hold_return=None), store)
+                             net_return=returns, hold_return=None, whole=block), store)
 
 
 def test_a_passed_idea_with_two_stages_shows_a_chart_per_stage(session, store) -> None:
@@ -214,15 +217,39 @@ def test_a_second_stage_that_has_not_run_yet_is_a_message_not_a_chart(session, s
     (IdeaStatus.CANDIDATE, TrialRoute.REJECT),
     (IdeaStatus.REJECTED, TrialRoute.REJECT),
 ])
-def test_an_idea_that_did_not_pass_gets_no_chart_and_a_reason(
-        session, store, status, route) -> None:
+def test_an_idea_that_did_not_pass_still_gets_its_chart(session, store, status, route) -> None:
     _idea(session, "beta", status)
     _stored(_run(session, "beta", route, "binance"), store)
 
     view = fs.forward_view(session, "beta", store=store)
 
-    assert view["passed"] is False and view["stages"] == []
-    assert view["reason"]
+    assert view["passed"] is False and view["reason"] is None
+    stage = view["stages"][0]
+    assert stage["series"]["whole"]["points"] and stage["window"] == "whole"
+    assert "Hyperliquid" in view["second_stage_message"]
+
+
+def test_a_series_stored_before_the_whole_window_is_the_forward_part_and_says_so(
+        session, store) -> None:
+    _idea(session, "old", IdeaStatus.REJECTED)
+    _stored(_run(session, "old", TrialRoute.REJECT, "binance"), store, whole=False)
+
+    stage = fs.forward_view(session, "old", store=store)["stages"][0]
+
+    assert stage["window"] == "forward_only" and stage["series"]["points"]
+    assert "только отрезок проверки вперёд" in stage["message"]
+
+
+def test_a_format_1_file_is_still_read(session, store) -> None:
+    payload = fs.build_payload(trial_id=5, idea_id="x", venue="binance", interval="12h",
+                               net_return=_bars([0.01, 0.0]), hold_return=None)
+    payload["format"] = 1
+    payload.pop("whole")
+    fs.save(payload, store)
+
+    loaded = fs.load(5, store)
+
+    assert loaded is not None and not fs.has_whole(loaded)
 
 
 def test_a_retired_idea_gets_no_chart_even_if_its_last_run_passed(session, store) -> None:
@@ -231,7 +258,28 @@ def test_a_retired_idea_gets_no_chart_even_if_its_last_run_passed(session, store
 
     view = fs.forward_view(session, "gone", store=store)
 
-    assert view["passed"] is False and "закрыта" in view["reason"]
+    assert view["passed"] is False and view["stages"] == [] and "убрана" in view["reason"]
+
+
+def test_a_stage_without_a_run_says_the_idea_was_not_run(session, store) -> None:
+    _idea(session, "other", IdeaStatus.CANDIDATE)
+
+    view = fs.forward_view(session, "other", store=store)
+
+    assert view["stages"][0]["message"] == fs.NO_RUN_RU
+
+
+def test_a_hyperliquid_only_idea_says_the_second_venue_is_not_needed(session, store) -> None:
+    _idea(session, "solo", IdeaStatus.VALIDATED)
+    _run(session, "solo", TrialRoute.PAPER, "hyperliquid")
+    _idea(session, "alpha", IdeaStatus.VALIDATED)
+    _idea(session, "alpha-hl", IdeaStatus.VALIDATED, parent="alpha")
+
+    solo = fs.forward_view(session, "solo", store=store)
+    two = fs.forward_view(session, "alpha-hl", store=store)
+
+    assert solo["second_stage_message"].startswith("Вторая площадка не нужна")
+    assert two["two_stage"] is True and two["second_stage_message"] is None
 
 
 def test_an_unknown_idea_is_none(session, store) -> None:
@@ -336,3 +384,84 @@ def test_the_report_has_no_section_when_nothing_passed_and_one_line_when_it_cann
     monkeypatch.setattr("qlab.registry.db.session_scope", broken)
     lines = night._forward_chart_lines(date(2026, 10, 28))
     assert "не посчитано" in " ".join(lines).lower()
+
+
+# --------------------------------------------------------------------------
+# The whole window
+
+
+class _Rows:
+    """The few fields of `JudgedRows` that `part_bounds` reads."""
+
+    def __init__(self, split, warmup=None):
+        self.split, self.warmup = split, warmup
+
+
+def _whole_payload(reinvested: bool = True):
+    from qlab.pipeline.evaluate import PeriodSplit
+
+    # 12 days of one bar each: days 0-1 warm-up, 2-7 selection, 8-11 forward
+    index = pd.date_range(pd.Timestamp("2026-03-01", tz="UTC"), periods=12, freq="1D")
+    returns = pd.Series([0.01] * 12, index=index)
+    hold = pd.Series([0.005] * 12, index=index)
+    split = PeriodSplit(selection=(2, 7), forward=(8, 11))
+    bounds = fs.part_bounds(index, _Rows(split, warmup=(0, 1)), True)
+    return fs.build_whole(net_return=returns, hold_return=hold, hold_coins=["BTC"],
+                          bounds=bounds, reinvested=reinvested), bounds
+
+
+def test_the_whole_window_runs_from_the_first_row_to_the_last_with_the_boundaries() -> None:
+    whole, bounds = _whole_payload()
+
+    assert list(bounds) == ["warmup", "selection", "forward"]
+    assert (whole["start"], whole["end"], whole["days"]) == ("2026-03-01", "2026-03-12", 12)
+    assert whole["points"][0] == ["2026-02-28", 0.0, 0.0]
+    assert len(whole["points"]) == 13
+    assert whole["split_date"] == "2026-03-09"
+    assert [(p["part"], p["start"], p["end"], p["days"]) for p in whole["parts"]] == [
+        ("warmup", "2026-03-01", "2026-03-02", 2),
+        ("selection", "2026-03-03", "2026-03-08", 6),
+        ("forward", "2026-03-09", "2026-03-12", 4)]
+
+
+def test_each_part_is_counted_from_zero_at_its_own_first_day() -> None:
+    whole, _ = _whole_payload()
+    by_part = {p["part"]: p for p in whole["parts"]}
+
+    assert whole["total_return"] == pytest.approx(1.01 ** 12 - 1)
+    assert by_part["selection"]["total_return"] == pytest.approx(1.01 ** 6 - 1)
+    assert by_part["forward"]["total_return"] == pytest.approx(1.01 ** 4 - 1)
+    assert by_part["forward"]["hold_total"] == pytest.approx(1.005 ** 4 - 1)
+    assert whole["hold_total"] == pytest.approx(1.005 ** 12 - 1)
+    assert whole["max_dd"] == 0.0 and by_part["forward"]["max_dd"] == 0.0
+
+
+def test_a_book_that_does_not_reinvest_sums_the_parts() -> None:
+    whole, _ = _whole_payload(reinvested=False)
+    by_part = {p["part"]: p for p in whole["parts"]}
+
+    assert whole["total_return"] == pytest.approx(0.12)
+    assert by_part["forward"]["total_return"] == pytest.approx(0.04)
+    assert whole["points"][-1][1] == pytest.approx(0.12)
+
+
+def test_a_run_judged_without_a_split_has_no_parts() -> None:
+    from qlab.pipeline.evaluate import PeriodSplit
+
+    index = pd.date_range(pd.Timestamp("2026-03-01", tz="UTC"), periods=4, freq="1D")
+    assert fs.part_bounds(index, _Rows(PeriodSplit(None, (0, 3))), False) == {}
+    whole = fs.build_whole(net_return=pd.Series([0.01] * 4, index=index), hold_return=None,
+                           hold_coins=None, bounds={})
+    assert whole["parts"] == [] and whole["split_date"] is None and whole["days"] == 4
+
+
+def test_the_payload_keeps_the_judged_part_figures_and_adds_the_whole_window() -> None:
+    whole, _ = _whole_payload()
+    returns = _bars([0.01] * 4, start="2026-03-09")
+    payload = fs.build_payload(trial_id=1, idea_id="a", venue="binance", interval="12h",
+                               net_return=returns, hold_return=None, whole=whole)
+
+    assert payload["format"] == fs.FORMAT == 2
+    assert payload["days"] == 2 and payload["whole"]["days"] == 12
+    assert payload["judged_on_forward"] is True
+    assert fs.has_whole(payload)

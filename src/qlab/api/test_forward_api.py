@@ -90,11 +90,36 @@ def test_a_missing_series_is_explained_in_the_stage_not_as_an_error(client, sess
     assert second["series"] is None and "не сохранён" in second["message"]
 
 
-def test_an_idea_that_did_not_pass_returns_an_empty_explained_result(client):
+def test_an_idea_that_did_not_pass_still_returns_its_whole_window_series(client, session_factory):
+    session = session_factory()
+    t1 = _stage(session, "gen-c", "binance", status=IdeaStatus.REJECTED, route=TrialRoute.REJECT)
+    session.commit()
+    session.close()
+    index = pd.date_range("2026-03-01", periods=6, freq="1D", tz="UTC")
+    returns = pd.Series([0.01, 0.0, 0.02, -0.01, 0.0, 0.01], index=index)
+    whole = forward_series.build_whole(
+        net_return=returns, hold_return=None, hold_coins=None,
+        bounds={"selection": (index[0], index[3]), "forward": (index[4], index[5])})
+    forward_series.save(forward_series.build_payload(
+        trial_id=t1, idea_id="gen-c", venue="binance", interval="1d",
+        net_return=returns.iloc[4:], hold_return=None, whole=whole))
+
+    body = client.get("/api/ideas/gen-c/forward").json()
+
+    assert body["passed"] is False and body["reason"] is None
+    stage = body["stages"][0]
+    assert stage["window"] == "whole" and stage["message"] is None
+    assert stage["series"]["whole"]["split_date"] == "2026-03-05"
+    assert [p["part"] for p in stage["series"]["whole"]["parts"]] == ["selection", "forward"]
+    assert "Hyperliquid" in body["second_stage_message"]
+
+
+def test_an_idea_that_did_not_pass_and_has_no_run_says_so_in_its_stage(client):
     # `omega` is decayed in the fixture registry, `alpha` validated but with no routed run.
     body = client.get("/api/ideas/omega/forward").json()
 
-    assert body["passed"] is False and body["stages"] == [] and body["reason"]
+    assert body["passed"] is False and body["reason"] is None
+    assert body["stages"][0]["series"] is None and body["stages"][0]["message"]
 
 
 def test_a_validated_idea_with_no_run_yet_says_the_stage_has_none(client):

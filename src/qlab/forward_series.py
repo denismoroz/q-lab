@@ -1,4 +1,4 @@
-"""How a passed idea did on its forward test, day by day (docs/FORWARD_CHART.md).
+"""The money of every idea's run over the whole data period, day by day (docs/FORWARD_CHART.md).
 
 The owner (2026-10-28): «когда стратегия прошла - добавить для неё график - как она
 проработала на forward test. для каждого из этапов». A trial stores only numbers
@@ -6,16 +6,18 @@ The owner (2026-10-28): «когда стратегия прошла - доба�
 them -- `data/forward_series/<trial_id>.json`, a few hundred points -- and reads it back
 for the console and the morning report.
 
-* **The judged part** is the one the rules read: the forward test, from the spec's
-  `params_fixed_at` (or, for a causal chooser, from its first choice) to the end of the
-  data (docs/FIT_VS_FORWARD.md). Nothing before it is drawn: the fit period is not a test.
+* **The window** is everything the run judges, from the window's first row to its last
+  (`judged_rows`): the warm-up, the selection part and the forward part, as the rules of the
+  run's version split it. The file's top-level figures are the judged part's (what the rules
+  read, the forward test when there is one); `whole` holds the money over the whole window and
+  each part's own totals (docs/IDEA_STANDARD.md, item 5; owner 2026-11-04).
 * **Money** is the strategy's: the run's `capital_return` (a share of the capital the
   strategy started with, never of the account balance or of a book balance that has grown
   with money set aside, CLAUDE.md money rule, docs/CAPITAL_BASE.md) from zero: compounded
   for a strategy that reinvests its profit, summed for one that does not. The old stand
   figure (a share of the grown book, compounded) is kept beside as `stand_total_return`.
-* **Two sources, one result.** `evaluate_spec` stores the series of every run that stays
-  alive (`STORED_ROUTES`) from the very backtest the verdict rests on. For runs made before
+* **Two sources, one result.** `evaluate_spec` stores the series of every run, whatever its
+  route (a refusal too), from the very backtests the verdict rests on. For runs made before
   this existed, `replay` re-runs the stored spec on the stored snapshot -- CPU only, no
   network, no trial, no verdict -- through the same row-cutting (`judged_rows`), and says
   whether the replayed total equals the trial's recorded one.
@@ -37,9 +39,10 @@ from sqlalchemy.orm import Session
 
 STORE_DIR = Path("data/forward_series")
 SPEC_ROOT = Path("specs")
-FORMAT = 1
-STORED_ROUTES = frozenset({"paper", "needs-infrastructure", "needs-forward", "shelf"})
-"""Routes of a run whose idea is still alive. A rejected or failed run is not drawn."""
+FORMAT = 2
+"""Format 2 adds `whole`: the money over the whole judged window with its parts. Format 1 (the
+forward part only) is still read; the console says so for such a file."""
+READABLE_FORMATS = frozenset({1, 2})
 PASSED_ROUTE = "paper"
 """The route of a run that passed every rule (`TrialRoute.PAPER`): «прошла все правила,
 ждёт решения владельца»."""
@@ -48,6 +51,11 @@ MATCH_TOLERANCE = 1e-6
 count as the same run."""
 VENUE_NAMES = {"binance": "Binance", "hyperliquid": "Hyperliquid"}
 CLOSED_STATUSES = frozenset({"retired", "rejected", "decayed"})
+NO_CHART_STATUSES = frozenset({"retired"})
+"""Ideas the owner put away: nothing is drawn for them. A rejected or decayed idea is drawn, so
+that the reason for the refusal can be seen (docs/IDEA_STANDARD.md, item 5)."""
+PART_ORDER = ("before", "warmup", "selection", "forward")
+"""Parts of the window, as the split names them, in time order."""
 
 
 def store_dir() -> Path:
@@ -94,12 +102,103 @@ def _curve(daily: pd.Series, reinvested: bool) -> pd.Series:
     return (1.0 + daily).cumprod() - 1.0 if reinvested else daily.cumsum()
 
 
+def _max_dd(curve: pd.Series, reinvested: bool) -> float:
+    if reinvested:
+        return _drawdown(1.0 + curve)
+    return float((curve - curve.cummax().clip(lower=0.0)).min())
+
+
+def _part_stats(daily: pd.Series, hold_daily: pd.Series | None, reinvested: bool) -> dict[str, Any]:
+    """Totals of one stretch of days, counted from zero at its own first day."""
+    curve = _curve(daily, reinvested)
+    n_days = int((daily.index[-1] - daily.index[0]).days) + 1
+    total = float(curve.iloc[-1])
+    hold_total = None
+    if hold_daily is not None:
+        hold_total = float(_curve(hold_daily, reinvested).iloc[-1])
+    return {
+        "start": daily.index[0].date().isoformat(), "end": daily.index[-1].date().isoformat(),
+        "days": n_days, "total_return": total, "ann_return": _annual(total, n_days, reinvested),
+        "max_dd": _max_dd(curve, reinvested), "hold_total": hold_total,
+        "hold_ann": None if hold_total is None else _annual(hold_total, n_days, reinvested)}
+
+
+def part_bounds(index: pd.DatetimeIndex, rows: Any, split_mode: bool
+                ) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
+    """The parts of a run's window as `(first bar, last bar)` times, read from the very rows the
+    verdict cuts (`qlab.pipeline.evaluate.judged_rows`), so that the chart follows whatever split
+    the rules give. A run judged without a split has no parts."""
+    if not split_mode:
+        return {}
+    found = {"before": rows.split.before, "warmup": rows.warmup,
+             "selection": rows.split.selection, "forward": rows.split.forward}
+    out = {}
+    for name in PART_ORDER:
+        span = found[name]
+        if span is not None:
+            out[name] = (index[span[0]], index[span[1]])
+    return out
+
+
+def build_whole(*, net_return: pd.Series, hold_return: pd.Series | None,
+                hold_coins: list[str] | None, bounds: dict[str, tuple[pd.Timestamp, pd.Timestamp]],
+                capital_return: pd.Series | None = None, reinvested: bool = True
+                ) -> dict[str, Any]:
+    """The money over the whole judged window, day by day, with its parts.
+
+    The same reading as `build_payload` (the strategy's own capital, compounded or summed per
+    `reinvested`), but over every bar from the window's first row to its last, from zero on the
+    eve of the first day. `parts` lists each part the split gives (`before`, `warmup`,
+    `selection`, `forward`, in time order) with its totals counted from zero at its own first
+    day; `split_date` is the first day of the forward part (null when the run has none). The
+    day of a part is that of its first bar."""
+    if len(net_return) == 0:
+        raise ValueError("no returns to draw")
+    drawn = net_return if capital_return is None else capital_return
+    days = pd.DatetimeIndex(drawn.index).tz_convert("UTC").normalize()
+    daily = _by_day(drawn, days, reinvested)
+    hold_daily = None
+    if hold_return is not None:
+        hold_daily = _by_day(hold_return.reindex(drawn.index).fillna(0.0), days, reinvested)
+    curve = _curve(daily, reinvested)
+    hold_curve = None if hold_daily is None else _curve(hold_daily, reinvested)
+    first_day = curve.index[0]
+    points: list[list[Any]] = [[(first_day - pd.Timedelta(days=1)).date().isoformat(), 0.0,
+                                None if hold_curve is None else 0.0]]
+    for day in curve.index:
+        points.append([day.date().isoformat(), float(curve[day]),
+                       None if hold_curve is None else float(hold_curve[day])])
+
+    starts = {name: pd.Timestamp(lo).tz_convert("UTC").normalize()
+              for name, (lo, _hi) in bounds.items()}
+    label = pd.Series([None] * len(daily), index=daily.index, dtype=object)
+    for name in sorted(starts, key=lambda n: starts[n]):
+        label.loc[daily.index >= starts[name]] = name
+    parts = []
+    for name in PART_ORDER:
+        mask = (label == name).to_numpy()
+        if name not in bounds or not mask.any():
+            continue
+        parts.append({"part": name, **_part_stats(
+            daily[mask], None if hold_daily is None else hold_daily[mask], reinvested)})
+    whole = _part_stats(daily, hold_daily, reinvested)
+    return {
+        **whole,
+        "points": points,
+        "hold_coins": hold_coins,
+        "parts": parts,
+        "split_date": next((p["start"] for p in parts if p["part"] == "forward"), None),
+    }
+
+
 def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: str | None,
                   net_return: pd.Series, hold_return: pd.Series | None,
                   hold_coins: list[str] | None = None, source: str = "evaluate",
                   recorded_total: float | None = None,
                   capital_return: pd.Series | None = None, reinvested: bool = True,
-                  recorded_capital_total: float | None = None) -> dict[str, Any]:
+                  recorded_capital_total: float | None = None,
+                  whole: dict[str, Any] | None = None,
+                  judged_on_forward: bool = True) -> dict[str, Any]:
     """The judged part's money by day, as a plain mapping that `save` writes.
 
     The line is drawn from `capital_return` (the stand's `net_return` when none is given):
@@ -112,7 +211,11 @@ def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: s
     nothing. `stand_total_return` is the old reading of the same bars (compounded shares of
     the book's grown equity). `recorded_total` is the trial's own `total_return_net` for the
     same part and `recorded_capital_total` its `cap_total_return`; `matches_trial` says whether
-    this series reproduces the capital one when the trial recorded it, else the stand one."""
+    this series reproduces the capital one when the trial recorded it, else the stand one.
+
+    `whole` (`build_whole`) is the money over the whole window with its parts; the fields above
+    stay the judged part's, which the rules read. `judged_on_forward` says whether that part is
+    a forward test (a run judged on its selection period has none)."""
     if len(net_return) == 0:
         raise ValueError("no returns to draw")
     drawn = net_return if capital_return is None else capital_return
@@ -133,10 +236,7 @@ def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: s
     n_days = int((curve.index[-1] - first_day).days) + 1
     total = float(curve.iloc[-1])
     hold_total = None if hold_curve is None else float(hold_curve.iloc[-1])
-    if reinvested:
-        max_dd = _drawdown(1.0 + curve)
-    else:
-        max_dd = float((curve - curve.cummax().clip(lower=0.0)).min())
+    max_dd = _max_dd(curve, reinvested)
     if recorded_capital_total is not None:
         matches: bool | None = abs(total - recorded_capital_total) <= MATCH_TOLERANCE
         recorded = recorded_capital_total
@@ -168,6 +268,8 @@ def build_payload(*, trial_id: int, idea_id: str, venue: str | None, interval: s
         "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "recorded_total": recorded,
         "matches_trial": matches,
+        "judged_on_forward": judged_on_forward,
+        "whole": whole,
     }
 
 
@@ -187,25 +289,47 @@ def load(trial_id: int, store: Path | None = None) -> dict[str, Any] | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return payload if isinstance(payload, dict) and payload.get("format") == FORMAT else None
+    ok = isinstance(payload, dict) and payload.get("format") in READABLE_FORMATS
+    return payload if ok else None
+
+
+def has_whole(payload: dict[str, Any] | None) -> bool:
+    """Whether a stored series covers the whole window (format 2); a format 1 file is the
+    forward part only."""
+    return bool(payload and payload.get("whole"))
 
 
 def store_from_run(*, trial_id: int, spec: Any, result: Any, part_panel: Any,
                    part_weights: pd.DataFrame, recorded_total: float | None,
                    recorded_capital_total: float | None = None, on_capital: bool = True,
-                   store: Path | None = None) -> Path:
+                   whole_result: Any = None, whole_panel: Any = None,
+                   whole_weights: pd.DataFrame | None = None,
+                   bounds: dict[str, tuple[pd.Timestamp, pd.Timestamp]] | None = None,
+                   judged_on_forward: bool = True, store: Path | None = None) -> Path:
     """Write the series of a run `evaluate_spec` has just made, from the very backtest
-    result the verdict rests on."""
+    results the verdict rests on: the judged part's (`result`, what the rules read) and, when
+    given, the whole window's (`whole_*`) with the parts' `bounds`."""
     from qlab.harness.metrics import held_coins, hold_returns
 
+    capital_of = (lambda r: r.capital_return) if on_capital else (lambda r: None)
+    reinvested = result.capital_reinvested if on_capital else True
+    whole = None
+    if whole_result is not None:
+        whole = build_whole(
+            net_return=whole_result.net_return,
+            hold_return=hold_returns(whole_panel.prices, whole_weights,
+                                     whole_result.net_return.index),
+            hold_coins=held_coins(whole_weights), bounds=bounds or {},
+            capital_return=capital_of(whole_result),
+            reinvested=whole_result.capital_reinvested if on_capital else True)
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
         hold_return=hold_returns(part_panel.prices, part_weights, result.net_return.index),
         hold_coins=held_coins(part_weights), source="evaluate", recorded_total=recorded_total,
-        capital_return=result.capital_return if on_capital else None,
-        reinvested=result.capital_reinvested if on_capital else True,
-        recorded_capital_total=recorded_capital_total if on_capital else None)
+        capital_return=capital_of(result), reinvested=reinvested,
+        recorded_capital_total=recorded_capital_total if on_capital else None,
+        whole=whole, judged_on_forward=judged_on_forward)
     return save(payload, store)
 
 
@@ -272,6 +396,12 @@ class ReplayedRun:
     part_weights: pd.DataFrame
     capital: Any
     """`qlab.harness.strategy.CapitalSetup`: the base (None: 1) and the declared reinvest choice."""
+    rows: Any = None
+    """`JudgedRows` of the run (set for `part="whole"`)."""
+    split_mode: bool = False
+    whole: tuple[Any, Any, pd.DataFrame] | None = None
+    """The whole window's `(result, panel, weights)` (set for `part="whole"`)."""
+    index: pd.DatetimeIndex | None = None
 
 
 def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None,
@@ -280,10 +410,12 @@ def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None
     window and return the pieces, or `(None, reason)` -- the reason in plain Russian. Writes
     nothing.
 
-    `part` is `"forward"` (the forward test, which the chart draws) or `"judged"` (the part the
-    verdict was read on: the forward test when the run split one off, else the window after the
-    warm-up; the year view and the protection reading are read on it). The cut rows come from
-    `qlab.pipeline.evaluate.judged_rows`, the rules' version from the run's own verdicts."""
+    `part` is `"forward"` (the forward test), `"judged"` (the part the verdict was read on: the
+    forward test when the run split one off, else the window after the warm-up; the year
+    view and the protection reading are read on it) or `"whole"` (the judged part as for
+    `"judged"` and, besides, the whole window with the split's parts; the chart draws it). The
+    cut rows come from `qlab.pipeline.evaluate.judged_rows`, the rules' version from the run's
+    own verdicts."""
     from qlab.data.snapshot import load_snapshot
     from qlab.harness.costs import CostModel
     from qlab.harness.run import run_backtest
@@ -340,30 +472,51 @@ def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None
                           slippage_bps=spec.costs.slippage_bps)
         extra_cost = own_costs(strategy, panel, spec.params)
         capital = capital_setup(strategy, panel, spec.params)
-        part_panel = _slice_rows(panel, lo, hi)
-        part_weights = weights.iloc[lo:hi + 1]
-        result = run_backtest(part_panel, part_weights, costs, part_panel.funding,
-                              extra_cost=extra_cost, **capital.kwargs)
+
+        def run_rows(a: int, b: int) -> tuple[Any, Any, pd.DataFrame]:
+            sliced = _slice_rows(panel, a, b)
+            part_weights_ = weights.iloc[a:b + 1]
+            return (run_backtest(sliced, part_weights_, costs, sliced.funding,
+                                 extra_cost=extra_cost, **capital.kwargs),
+                    sliced, part_weights_)
+
+        result, part_panel, part_weights = run_rows(lo, hi)
+        whole = None
+        if part == "whole":
+            whole = ((result, part_panel, part_weights) if (lo, hi) == (rows.first, rows.last)
+                     else run_rows(rows.first, rows.last))
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary
         return None, f"прогон не удалось повторить: {type(exc).__name__}: {exc}"
-    return ReplayedRun(spec, trial, result, part_panel, part_weights, capital), None
+    return ReplayedRun(spec, trial, result, part_panel, part_weights, capital, rows=rows,
+                       split_mode=bool(ruleset.splits_fit_forward), whole=whole,
+                       index=panel.prices.index), None
 
 
 def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) -> Replay:
-    """Re-run the stored spec of trial `trial_id` on its stored snapshot and return the judged
-    part's series. Writes nothing: no trial, no verdict, no status; the caller `save`s it.
+    """Re-run the stored spec of trial `trial_id` on its stored snapshot and return the series:
+    the judged part's (what the rules read) and the whole window's with its parts. Writes
+    nothing: no trial, no verdict, no status; the caller `save`s it.
 
     When the replayed total differs from the one the trial recorded (the strategy's code
     changed since), the payload says so (`matches_trial` false)."""
     from qlab.harness.metrics import held_coins, hold_returns
 
-    run, reason = replay_run(session, trial_id, spec_root=spec_root, part="forward")
+    run, reason = replay_run(session, trial_id, spec_root=spec_root, part="whole")
     if run is None:
         return Replay(None, reason)
     spec, trial, result = run.spec, run.trial, run.result
     recorded = trial.metrics.get("total_return_net")
     recorded_capital = trial.metrics.get("cap_total_return")
     drawn_on_capital = run.capital.refused is None
+    whole_result, whole_panel, whole_weights = run.whole
+    whole = build_whole(
+        net_return=whole_result.net_return,
+        hold_return=hold_returns(whole_panel.prices, whole_weights,
+                                 whole_result.net_return.index),
+        hold_coins=held_coins(whole_weights),
+        bounds=part_bounds(run.index, run.rows, run.split_mode),
+        capital_return=whole_result.capital_return if drawn_on_capital else None,
+        reinvested=whole_result.capital_reinvested if drawn_on_capital else True)
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
@@ -373,7 +526,8 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
         capital_return=result.capital_return if drawn_on_capital else None,
         reinvested=result.capital_reinvested if drawn_on_capital else True,
         recorded_capital_total=(recorded_capital if drawn_on_capital
-                                and isinstance(recorded_capital, int | float) else None))
+                                and isinstance(recorded_capital, int | float) else None),
+        whole=whole, judged_on_forward=run.rows.split.forward is not None and run.split_mode)
     return Replay(payload)
 
 
@@ -426,13 +580,27 @@ def stage_runs(session: Session, idea_id: str) -> tuple[bool, list[StageRun]] | 
     return child_id is not None, stages
 
 
+NO_SECOND_STAGE_YET_RU = ("На Hyperliquid ещё не прогонялась: второй этап этой идеи ночь пока не "
+                          "записала.")
+NO_SECOND_STAGE_NEEDED_RU = "Вторая площадка не нужна: прогон идеи и так на Hyperliquid."
+NO_RUN_RU = "У этого этапа ещё нет прогона: идея ещё не прогонялась."
+NOT_STORED_RU = ("Ряд по дням для этого прогона ещё не сохранён. Он появится в ближайший "
+                 "ночной прогон; сейчас построить: `uv run qlab forward-series rebuild --all`.")
+FORWARD_ONLY_RU = ("Сохранён только отрезок проверки вперёд (файл построен до того, как ряд стали "
+                   "хранить за весь период); весь период появится после пересчёта.")
+
+
 def forward_view(session: Session, idea_id: str, *, store: Path | None = None
                  ) -> dict[str, Any] | None:
     """What the console draws on an idea's page. None for an unknown idea.
 
-    `passed` is false for an idea that did not pass every rule (nothing is drawn for it),
-    and then `reason` says why in plain Russian. For a passed idea, `stages` lists each
-    stage with its `series` (the stored payload) or, when none is stored, a `message`."""
+    Every idea with a run gets its stages' series, whatever the outcome: `passed` only says
+    whether the idea passed every rule (information, it does not gate the chart). Each stage
+    lists `series` (the stored payload; its `whole` is the money over the whole window with the
+    split's parts) or, when none is stored, a `message` in plain Russian; `window` is `whole`,
+    `forward_only` (a format 1 file) or null. Nothing is drawn for an idea the owner put away
+    (`NO_CHART_STATUSES`) or for a calibration book: `stages` is empty and `reason` says why.
+    `second_stage_message` explains the missing second stage of a one-stage idea."""
     from qlab.registry.models import Idea
 
     found = stage_runs(session, idea_id)
@@ -442,33 +610,36 @@ def forward_view(session: Session, idea_id: str, *, store: Path | None = None
     idea = session.get(Idea, idea_id)
     status = idea.status.value
     own = next((s for s in stages if s.idea_id == idea_id), stages[0])
-    if status in CLOSED_STATUSES:
+    passed = status == "validated" or own.route == PASSED_ROUTE
+    if status in NO_CHART_STATUSES or idea_id.startswith("noise-"):
+        why = ("Идея убрана владельцем: график не рисуется." if status in NO_CHART_STATUSES
+               else "Это книга для калибровки шума: графика у неё нет.")
         return {"idea_id": idea_id, "passed": False, "two_stage": two_stage, "stages": [],
-                "reason": "Идея закрыта: график проверки вперёд рисуется только для прошедших "
-                          "все правила."}
-    if status != "validated" and own.route != PASSED_ROUTE:
-        return {"idea_id": idea_id, "passed": False, "two_stage": two_stage, "stages": [],
-                "reason": "Идея не прошла все правила: график проверки вперёд рисуется только "
-                          "для прошедших."}
+                "reason": why, "second_stage_message": None}
     out = []
     for stage in stages:
         entry: dict[str, Any] = {
             "stage": stage.number, "idea_id": stage.idea_id, "trial_id": stage.trial_id,
             "route": stage.route, "venue": venue_name(stage.source), "series": None,
-            "message": None}
+            "window": None, "message": None}
         if stage.trial_id is None:
-            entry["message"] = "У этого этапа ещё нет прогона."
+            entry["message"] = NO_RUN_RU
         else:
             payload = load(stage.trial_id, store)
             if payload is None:
-                entry["message"] = ("Ряд по дням для этого прогона ещё не сохранён. Он появится "
-                                    "в ближайший ночной прогон; сейчас построить: "
-                                    "`uv run qlab forward-series rebuild`.")
+                entry["message"] = NOT_STORED_RU
             else:
                 entry["series"] = payload
+                entry["window"] = "whole" if has_whole(payload) else "forward_only"
+                if entry["window"] == "forward_only":
+                    entry["message"] = FORWARD_ONLY_RU
         out.append(entry)
-    return {"idea_id": idea_id, "passed": True, "two_stage": two_stage, "stages": out,
-            "reason": None}
+    second = None
+    if not two_stage:
+        second = (NO_SECOND_STAGE_NEEDED_RU if own.source == "hyperliquid"
+                  else NO_SECOND_STAGE_YET_RU)
+    return {"idea_id": idea_id, "passed": passed, "two_stage": two_stage, "stages": out,
+            "reason": None, "second_stage_message": second}
 
 
 def passed_ideas(session: Session) -> list[str]:
@@ -492,15 +663,38 @@ def passed_ideas(session: Session) -> list[str]:
     return found
 
 
+def chart_ideas(session: Session) -> list[str]:
+    """Every idea whose runs get a chart: not put away by the owner, not a calibration book,
+    parents and second stages alike."""
+    from qlab.registry.models import Idea
+
+    return [idea.id for idea in session.query(Idea).order_by(Idea.id)
+            if idea.status.value not in NO_CHART_STATUSES and not idea.id.startswith("noise-")]
+
+
 def rebuild(session: Session, idea_ids: list[str] | None = None, *, force: bool = False,
-            store: Path | None = None, spec_root: Path | None = None
-            ) -> list[tuple[str, int, str]]:
-    """Build the missing series of the passed ideas' stages (every `passed_ideas` one by default)
-    by `replay`. Returns `(idea_id, trial_id, outcome)` per stage run looked at; an existing
-    series is kept unless `force`. Writes only the series files."""
+            store: Path | None = None, spec_root: Path | None = None, every: bool = False,
+            on_done: Any = None) -> list[tuple[str, int, str]]:
+    """Build the missing series of the ideas' stages by `replay`: the passed ideas by default,
+    `chart_ideas` when `every`. Returns `(idea_id, trial_id, outcome)` per stage run looked at;
+    a series that covers the whole window is kept unless `force` (a format 1 file, the forward
+    part only, is built again). `on_done(idea_id, trial_id, outcome, seconds)` is called after
+    each run looked at. Writes only the series files."""
+    from time import perf_counter
+
     done: list[tuple[str, int, str]] = []
     seen: set[int] = set()
-    for idea_id in idea_ids if idea_ids is not None else passed_ideas(session):
+    if idea_ids is not None:
+        wanted = idea_ids
+    else:
+        wanted = chart_ideas(session) if every else passed_ideas(session)
+
+    def note(idea_id: str, trial_id: int, outcome: str, started: float) -> None:
+        done.append((idea_id, trial_id, outcome))
+        if on_done is not None:
+            on_done(idea_id, trial_id, outcome, perf_counter() - started)
+
+    for idea_id in wanted:
         found = stage_runs(session, idea_id)
         if found is None:
             done.append((idea_id, 0, "нет такой идеи"))
@@ -509,18 +703,19 @@ def rebuild(session: Session, idea_ids: list[str] | None = None, *, force: bool 
             if stage.trial_id is None or stage.trial_id in seen:
                 continue
             seen.add(stage.trial_id)
-            if not force and load(stage.trial_id, store) is not None:
-                done.append((stage.idea_id, stage.trial_id, "уже есть"))
+            started = perf_counter()
+            if not force and has_whole(load(stage.trial_id, store)):
+                note(stage.idea_id, stage.trial_id, "уже есть", started)
                 continue
             result = replay(session, stage.trial_id, spec_root=spec_root)
             if result.payload is None:
-                done.append((stage.idea_id, stage.trial_id, f"нет: {result.reason}"))
+                note(stage.idea_id, stage.trial_id, f"нет: {result.reason}", started)
                 continue
             save(result.payload, store)
             same = result.payload["matches_trial"]
-            done.append((stage.idea_id, stage.trial_id,
-                         "построен" + ("" if same in (True, None)
-                                        else ", но расходится с записью прогона")))
+            note(stage.idea_id, stage.trial_id,
+                 "построен" + ("" if same in (True, None)
+                                else ", но расходится с записью прогона"), started)
     return done
 
 
@@ -554,6 +749,7 @@ def passed_on(session: Session, since: datetime, until: datetime) -> list[dict[s
     return out
 
 
-__all__ = ["PASSED_ROUTE", "STORED_ROUTES", "STORE_DIR", "Replay", "StageRun", "build_payload",
-           "forward_view", "load", "passed_ideas", "passed_on", "rebuild", "replay", "save",
-           "series_path", "spec_file_for", "stage_runs", "store_from_run"]
+__all__ = ["PASSED_ROUTE", "STORE_DIR", "Replay", "StageRun", "build_payload", "build_whole",
+           "chart_ideas", "forward_view", "has_whole", "load", "part_bounds", "passed_ideas",
+           "passed_on", "rebuild", "replay", "save", "series_path",
+           "spec_file_for", "stage_runs", "store_from_run"]
