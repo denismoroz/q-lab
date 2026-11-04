@@ -200,6 +200,14 @@ Write two kinds of files and nothing else:
    Where long history exists, prefer a variant on it: Binance (`data.source: binance`, history
    since 2019; see specs/bv2-binance.yaml, specs/trend-binance-cap.yaml).
 
+   SPOT PRICES (docs/SPOT_PRICES.md). The stand marks a spot leg at its perp's price by default.
+   An experiment whose rule reads the coin's OWN SPOT CLOSES (the spot's return, a spot-perp gap,
+   a leftover valued at the spot) must declare `data.spot_prices: own` (the spot market's own
+   closes; Hyperliquid and Binance both have them) and must NOT list the perp mark in
+   `unexpressed_mechanisms`: copy that line away from the spec you copy. Code refuses a spec that
+   does, and a spec that is "not expressed" is not judged at all. A bar without a spot print is
+   carried at the last own close and the run states how many were; never the perp's price.
+
    ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). An experiment does not
    get a "twin" any more and you do not write a causal wrapper: the idea declares up front the
    values of the numbers it changes, code chooses among them every month from the past only, on
@@ -302,6 +310,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     from qlab import one_check
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
+    from qlab.spot_declaration import spot_declaration_problems
 
     today = datetime.now(UTC).date()
     (QLAB_ROOT / CONTEXT_DIR).mkdir(parents=True, exist_ok=True)
@@ -355,7 +364,8 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     for spec_path in outcome.specs:
         try:
             spec = load_spec(QLAB_ROOT / spec_path)
-            problems = [*source_problems(spec), *one_check.declaration_problems(spec)]
+            problems = [*source_problems(spec), *one_check.declaration_problems(spec),
+                        *spot_declaration_problems(spec)]
             # the page opens with plain words: a new mechanism or family carries its own
             spec_text = (QLAB_ROOT / spec_path).read_text(encoding="utf-8")
             problems += [f"plain words: {p}" for p in plain.spec_problems(
@@ -425,6 +435,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
     from qlab.registry.db import session_scope
     from qlab.registry.models import AssetClass, Idea, Profile, SourceType
     from qlab.rules.loader import load_latest
+    from qlab.spot_declaration import spot_declaration_problems
 
     lines = ["", "## Эксперименты на стенде (записано кодом, не исследователем)", ""]
     for spec_path in spec_paths:
@@ -439,6 +450,10 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
             continue
         if source_problems(experiment):
             lines.append(f"- `{spec_path}`: не запущен — числа без источника")
+            continue
+        if wrong := spot_declaration_problems(experiment):
+            lines.append(f"- `{spec_path}`: не запущен — цена спота объявлена неверно: "
+                         f"{'; '.join(wrong)}")
             continue
         if declared := one_check.declaration_problems(experiment):
             lines.append(f"- `{spec_path}`: не запущен — у идеи один способ проверки, и он не "

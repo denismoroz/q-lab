@@ -46,6 +46,13 @@ implementation must reproduce), the SPEC (parameters and data), and the CODE of 
 implementation with line numbers. The implementation computes target portfolio
 weights per bar; a weight at bar t may use data up to and including t, never after.
 
+The SPEC's data block says what a spot column's price is (`spot_prices`): `perp` marks the spot
+leg at its perp's price (the stand's default), `own` is the spot market's own close, carried
+forward over a bar without a print. Judge the code against what the spec declares. A spec that
+declares `own` and a code that reads the spot closes through `spot_marks` is correct; do not
+report the spot-perp gap as missing there. If the SOURCE needs the coin's own spot closes and the
+spec says `perp`, report it as parameter_mismatch (spec_path data.spot_prices).
+
 Find what is wrong or missing. Kinds:
 - unexpressed_mechanism: something the source does that the code does not do at all
   (a rule, a state, an exit, a sizing or margin mechanism, a filter).
