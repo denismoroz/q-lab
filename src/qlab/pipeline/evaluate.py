@@ -2026,18 +2026,29 @@ def evaluate_spec(
     trial_id, decision = _record(
         status=TrialStatus.OK, metrics=metrics, routing=routing, data_end=range_end
     )
-    if (update_idea_status and routing.route in forward_series.STORED_ROUTES and judged_run
-            and metrics.get("judged_on_forward") == 1.0):
-        # The forward test's daily money, for the console and the morning report. A failure to
-        # write it must not fail a run whose trial and verdicts are already on record:
-        # `qlab forward-series rebuild` makes it again from the stored spec.
+    if update_idea_status and judged_run:
+        # The run's daily money over the whole window, for the console and the morning report,
+        # whatever the route (a refusal too). A failure to write it must not fail a run whose
+        # trial and verdicts are already on record: `qlab forward-series rebuild` makes it again
+        # from the stored spec.
         try:
+            if judged == (rows.first, rows.last):
+                whole_run = (judged_run["result"], judged_run["panel"], judged_run["weights"])
+            else:
+                whole_panel = _slice_rows(panel, rows.first, rows.last)
+                whole_weights = weights.iloc[rows.first : rows.last + 1]
+                whole_run = (run_backtest(whole_panel, whole_weights, costs, whole_panel.funding,
+                                          extra_cost=extra_cost, **capital.kwargs),
+                             whole_panel, whole_weights)
             forward_series.store_from_run(
                 trial_id=trial_id, spec=spec, result=judged_run["result"],
                 part_panel=judged_run["panel"], part_weights=judged_run["weights"],
                 recorded_total=metrics.get("total_return_net"),
                 recorded_capital_total=metrics.get("cap_total_return"),
-                on_capital=capital.refused is None)
+                on_capital=capital.refused is None, whole_result=whole_run[0],
+                whole_panel=whole_run[1], whole_weights=whole_run[2],
+                bounds=forward_series.part_bounds(index, rows, split_mode),
+                judged_on_forward=bool(split_mode and split.forward is not None))
             # The same daily money as an older open idea's latest run is a stored reading
             # «дубль X по результатам», shown, deciding nothing (docs/DUPLICATES.md).
             from qlab import duplicates

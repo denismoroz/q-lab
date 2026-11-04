@@ -43,15 +43,33 @@ def test_a_run_that_passes_stores_the_forward_series_from_its_own_backtest(sessi
     assert stored["matches_trial"] is True
     assert stored["points"][0][1] == 0.0 and len(stored["points"]) > 2
     assert stored["start"] == "2026-01-03"
+    assert stored["judged_on_forward"] is True
 
 
-def test_a_run_that_does_not_keep_its_idea_alive_stores_nothing(session, tmp_path):
+def test_the_series_covers_the_whole_window_with_the_warmup_and_the_forward_part(
+        session, tmp_path):
+    spec = _causal_spec(session, tmp_path)
+
+    result = evaluate_spec(spec, session=session, ruleset=RULESET)
+
+    stored = forward_series.load(result.trial_id)
+    whole = stored["whole"]
+    parts = {p["part"]: p for p in whole["parts"]}
+    assert whole["start"] < stored["start"] and whole["end"] == stored["end"]
+    assert "warmup" in parts and parts["forward"]["start"] == stored["start"] == whole["split_date"]
+    # the forward part of the whole-window series is the part the rules read
+    assert parts["forward"]["days"] == stored["days"]
+    assert whole["points"][0][1] == 0.0 and len(whole["points"]) > len(stored["points"])
+
+
+def test_a_refusal_stores_its_series_too(session, tmp_path):
     spec = _causal_spec(session, tmp_path)
 
     result = evaluate_spec(spec, session=session, ruleset=_split_ruleset([CAPITAL_FIT_TIGHT]))
 
     assert result.routing.route == "reject"
-    assert forward_series.load(result.trial_id) is None
+    stored = forward_series.load(result.trial_id)
+    assert stored is not None and forward_series.has_whole(stored)
 
 
 def test_calibration_noise_stores_nothing(session, tmp_path):
@@ -63,13 +81,16 @@ def test_calibration_noise_stores_nothing(session, tmp_path):
     assert forward_series.load(result.trial_id) is None
 
 
-def test_a_run_judged_on_its_fit_period_stores_nothing(session, tmp_path):
+def test_a_run_judged_on_its_fit_period_stores_the_window_as_selection_only(session, tmp_path):
     spec = _explicit_long(session, tmp_path)  # no fixed date: the whole window is the fit period
 
     result = evaluate_spec(spec, session=session, ruleset=RULESET)
 
     assert result.metrics.get("judged_on_forward") in (None, 0.0)
-    assert forward_series.load(result.trial_id) is None
+    stored = forward_series.load(result.trial_id)
+    assert stored["judged_on_forward"] is False
+    assert [p["part"] for p in stored["whole"]["parts"]] == ["selection"]
+    assert stored["whole"]["split_date"] is None
 
 
 def test_a_failure_to_write_the_series_does_not_fail_the_run(session, tmp_path, monkeypatch):
@@ -105,6 +126,8 @@ def test_a_stored_run_is_replayed_from_its_spec_and_snapshot_to_the_same_series(
     assert replayed.payload is not None, replayed.reason
     assert replayed.payload["built_by"] == "rebuild" and replayed.payload["matches_trial"] is True
     assert replayed.payload["points"] == live["points"]
+    assert replayed.payload["whole"]["points"] == live["whole"]["points"]
+    assert replayed.payload["whole"]["parts"] == live["whole"]["parts"]
 
 
 def test_rebuild_writes_the_series_a_run_made_before_this_existed_lacks(
@@ -119,6 +142,28 @@ def test_rebuild_writes_the_series_a_run_made_before_this_existed_lacks(
 
     assert done == [(spec.idea_id, result.trial_id, "построен")]
     assert forward_series.load(result.trial_id)["built_by"] == "rebuild"
+
+
+def test_rebuild_all_builds_a_refused_idea_and_redoes_a_forward_only_file(
+        session, tmp_path, monkeypatch):
+    spec = _causal_spec(session, tmp_path)
+    result = evaluate_spec(spec, session=session, ruleset=_split_ruleset([CAPITAL_FIT_TIGHT]))
+    assert result.routing.route == "reject"
+    old = forward_series.load(result.trial_id)
+    old["whole"], old["format"] = None, 1  # a file from before the whole window was kept
+    forward_series.save(old)
+    tight = _split_ruleset([CAPITAL_FIT_TIGHT])
+    monkeypatch.setattr("qlab.rules.loader.load", lambda version: tight)
+    _write_spec(spec, tmp_path / "specs")
+    seen = []
+
+    done = forward_series.rebuild(session, every=True, spec_root=tmp_path / "specs",
+                                  on_done=lambda *a: seen.append(a))
+
+    assert (spec.idea_id, result.trial_id, "построен") in done and seen
+    assert forward_series.has_whole(forward_series.load(result.trial_id))
+    again = forward_series.rebuild(session, every=True, spec_root=tmp_path / "specs")
+    assert (spec.idea_id, result.trial_id, "уже есть") in again
 
 
 def test_a_spec_edited_since_the_run_is_not_used_to_replay_it(session, tmp_path):
@@ -144,10 +189,15 @@ def test_a_changed_data_window_alone_does_not_hide_the_spec(session, tmp_path):
     assert found == tmp_path / "specs" / f"{spec.idea_id}.yaml"
 
 
-def test_a_run_judged_on_its_fit_period_cannot_be_replayed_into_a_forward_chart(session, tmp_path):
+def test_a_run_judged_on_its_fit_period_replays_into_a_chart_without_a_forward_part(
+        session, tmp_path, monkeypatch):
     spec = _explicit_long(session, tmp_path)
     result = evaluate_spec(spec, session=session, ruleset=RULESET)
+    monkeypatch.setattr("qlab.rules.loader.load", lambda version: RULESET)
+    _write_spec(spec, tmp_path / "specs")
 
     replayed = forward_series.replay(session, result.trial_id, spec_root=tmp_path / "specs")
 
-    assert replayed.payload is None and "нет проверки вперёд" in replayed.reason
+    assert replayed.payload is not None, replayed.reason
+    assert replayed.payload["judged_on_forward"] is False
+    assert [p["part"] for p in replayed.payload["whole"]["parts"]] == ["selection"]

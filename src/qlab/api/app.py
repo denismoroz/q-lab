@@ -527,10 +527,10 @@ def create_app(*, warm: bool = False) -> FastAPI:
 
     @app.get("/api/ideas/{idea_id}/forward")
     def idea_forward(idea_id: str, session: SessionDep) -> dict[str, Any]:
-        """How a passed idea did on its forward test, one stored daily series per stage
-        (qlab.forward_series, docs/FORWARD_CHART.md). For an idea that did not pass: `passed`
-        false and a plain-Russian `reason`, no series. A stage whose series is not stored
-        yet carries a `message` instead."""
+        """The strategy's money over the whole data period, one stored daily series per stage,
+        for any outcome (qlab.forward_series, docs/FORWARD_CHART.md). `passed` is information,
+        not a gate. A stage whose series is not stored (or is stored for the forward part only)
+        carries a `message` in plain Russian; an idea put away has `reason` and no stages."""
         from qlab.forward_series import forward_view
 
         view = forward_view(session, idea_id)
