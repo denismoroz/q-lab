@@ -82,6 +82,8 @@ from qlab.rules.schema import (
     RuleSet,
     ShortForwardUse,
 )
+from qlab.spot_declaration import spot_declaration_problems
+from qlab.spot_fallback import spot_fallback_metrics
 from qlab.venues.config import leg_floors, load_venue
 from qlab.venues.derive import (
     derive_cross_venue_metrics,
@@ -765,6 +767,9 @@ def not_evaluable_reasons(
         reasons.append(
             "implementation does not express: " + "; ".join(spec.unexpressed_mechanisms)
         )
+        if spot_declaration_problems(spec):
+            reasons.append("the stand can price a spot leg at the spot's own closes: declare "
+                           "data.spot_prices: own and remove the line (docs/SPOT_PRICES.md)")
     if coverage is not None:
         if coverage.missing:
             reasons.append(
@@ -1705,6 +1710,10 @@ def evaluate_spec(
                 weights, part_weights, orders, lo, hi, spec.min_leg_notional, leg_floors_))
             if coverage is not None:
                 measured["book_coverage"] = coverage.coverage
+            # Under `data.spot_prices: own`: how many bars of the spot legs the book holds were
+            # valued at a carried close (docs/SPOT_PRICES.md). Nothing is added for a perp-marked
+            # panel, so every older run keeps its metrics as they were.
+            measured.update(spot_fallback_metrics(part_panel, part_weights))
             if truncated:
                 measured["history_truncated_instruments"] = float(len(truncated))
             # A fixed instrument list chosen on `params_fixed_at` cannot know

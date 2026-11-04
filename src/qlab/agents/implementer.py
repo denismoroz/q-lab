@@ -94,6 +94,15 @@ Rules:
   numbers need a `costs.differs_from_table` entry with a checkable source, which you do not
   write. min_leg_notional and its `sources` entry: copy from
   specs/trend-live-top25-cap.yaml for Hyperliquid perps.
+- The price of a spot column (docs/SPOT_PRICES.md). By default the stand marks a spot leg at its
+  perp's price, so the spot-perp gap never enters a return. A card whose rule READS THE COIN'S OWN
+  SPOT CLOSES (a return of the spot, a leftover valued at the spot, a basis) needs the spot's own
+  prices: declare `data.spot_prices: own` (with `include_spot: true` or '-SPOT' names in
+  `data.instruments`; Hyperliquid spot pairs and Binance spot both have candles) and the strategy
+  reads them with `qlab.strategies.live._marks.spot_marks`. That is NOT an unexpressed mechanism:
+  never list "the stand marks the spot at the perp's price" in `unexpressed_mechanisms`; code
+  rejects a spec that does. A bar where the spot printed nothing is carried at its last own
+  close, never at the perp's price. A card that does not read spot closes keeps the default.
 - If the card needs something the data cannot give, do NOT fake it with a proxy the card
   does not name: list it in `unexpressed_mechanisms` (one sentence each). An honest "not
   evaluable" is a valid outcome; a strategy that quietly does something else is not.
@@ -235,6 +244,7 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
 
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
+    from qlab.spot_declaration import spot_declaration_problems
 
     idea_id = yaml.safe_load(card.read_text(encoding="utf-8"))["idea_id"]
     try:
@@ -308,6 +318,7 @@ def implement(card: Path, *, budget: CandidateBudget | ExplicitNoBudget, session
         outcome.problems.append(f"spec does not load: {exc}")
         return outcome
     outcome.problems += [f"source: {p}" for p in source_problems(spec)]
+    outcome.problems += [f"spot prices: {p}" for p in spot_declaration_problems(spec)]
     # One idea, one check: the lists come from the card (code writes them into the spec); a card
     # with no grid needs the spec to say why there is nothing to choose.
     if fields.grid is not None and spec.choice is not None:

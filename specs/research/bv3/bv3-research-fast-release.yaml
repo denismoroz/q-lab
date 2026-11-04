@@ -64,6 +64,9 @@ params:
   mode: paper
 
 data:
+  # The idea reads the coin's own spot closes: the spot column is the spot
+  # market's own close, not the perp's price (docs/SPOT_PRICES.md).
+  spot_prices: own
   source: binance
   interval: "1h"
   start: 2019-09-08
@@ -88,8 +91,7 @@ noise_universe: held
 # this idea is exactly when the hedge is lifted.
 measure_hedge_timing: true
 
-unexpressed_mechanisms:
-  - "The card reads the coin's spot closes for the fast return; the stand's default marks a spot column at its perp's price (data.spot_prices perp, as the base), so the fast return is read at that mark and the spot-perp gap does not enter it."
+unexpressed_mechanisms: []
 
 required_instruments: [BTC-SPOT, ETH-SPOT, BTC, ETH]
 

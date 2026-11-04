@@ -2411,3 +2411,65 @@ def test_the_noise_bar_gate_is_a_function_of_the_judged_rows() -> None:
     assert decide_fit_forward_route(
         **{**kwargs, "ruleset": without, "forward": _rows(("net_edge", True))},
         metrics={**base, "noise_power": 0.1}).route == "paper"
+
+
+# --------------------------------------------------------------------------
+# spot prices of their own (docs/SPOT_PRICES.md)
+# --------------------------------------------------------------------------
+
+
+def _register_spot_snapshot(session, tmp_path: Path, *, spot_prices: str) -> None:
+    """BTC with its spot column: the spot prints at hours 3 and 10 only (of 25)."""
+    names = ["BTC", "BTC-SPOT"]
+    _register_snapshot(session, tmp_path, snapshot_id=f"snap-{spot_prices}", instruments=names,
+                       universe_complete=False)
+    snap_dir = tmp_path / f"snap-{spot_prices}"
+    prices = pd.read_parquet(snap_dir / "prices.parquet")
+    spot = pd.Series(np.nan, index=prices.index)
+    spot.iloc[[3, 10]] = prices["BTC"].iloc[[3, 10]]
+    prices["BTC-SPOT"] = spot
+    prices.to_parquet(snap_dir / "prices.parquet", engine="pyarrow", index=True)
+    manifest = json.loads((snap_dir / "manifest.json").read_text(encoding="utf-8"))
+    if spot_prices != "perp":
+        manifest["spot_prices"] = spot_prices
+    (snap_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _spot_spec(spot_prices: str, **overrides: object) -> StrategySpec:
+    data = {"source": SOURCE, "interval": INTERVAL, "start": START, "end": END,
+            "instruments": ["BTC", "BTC-SPOT"], "spot_prices": spot_prices}
+    return _make_spec(data=data, params={"weight": 0.4}, **overrides)
+
+
+def test_a_run_on_own_spot_prices_states_how_many_bars_were_carried(session, tmp_path) -> None:
+    """The spot prints twice (hours 3 and 10 of 25); every other bar of the book's spot column
+    after the first print is a carried one. The counts are metrics of the trial."""
+    _register_spot_snapshot(session, tmp_path, spot_prices="own")
+    result = evaluate_spec(_spot_spec("own"), session=session,
+                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
+    assert result.error is None
+    m = result.metrics
+    assert m["spot_prints"] <= 2.0
+    assert m["spot_prints"] + m["spot_carried"] > 0
+    assert m["spot_carried_share"] == pytest.approx(
+        m["spot_carried"] / (m["spot_prints"] + m["spot_carried"]))
+
+
+def test_a_run_on_perp_marked_spot_gains_no_metric(session, tmp_path) -> None:
+    """The identical-numbers guard: a spec that does not ask for own spot prices records the
+    metrics it always did."""
+    _register_spot_snapshot(session, tmp_path, spot_prices="perp")
+    result = evaluate_spec(_spot_spec("perp"), session=session,
+                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
+    assert result.error is None
+    assert not [k for k in result.metrics if k.startswith("spot_")]
+
+
+def test_a_refused_perp_mark_line_tells_the_stand_can_price_the_spot(session, tmp_path) -> None:
+    _register_spot_snapshot(session, tmp_path, spot_prices="perp")
+    line = ("The idea reads the coin's spot closes; the stand marks a spot column at its perp's "
+            "price (data.spot_prices perp), so the gap does not enter it.")
+    result = evaluate_spec(_spot_spec("perp", unexpressed_mechanisms=[line]), session=session,
+                           ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
+    assert result.routing.route == "not-evaluable"
+    assert "declare data.spot_prices: own" in result.routing.reason
