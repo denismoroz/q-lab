@@ -706,6 +706,29 @@ def _short(text: str | None, n: int = 260) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _closed_text(idea: Idea) -> str:
+    """The status of a closed idea with the date and the recorded reason it was closed: the
+    status alone told the owner nothing (2026-11-04, on
+    xsmom-research-nobull-causal-ov-gate-enter: «почему??»). The reason is the last transition
+    into that status, as step 7 already shows it."""
+    from sqlalchemy.orm import object_session
+
+    from qlab.registry.models import StageTransition
+
+    text = f"статус «{idea.status.value}»"
+    session = object_session(idea)
+    if session is None:
+        return text
+    row = (session.query(StageTransition).filter(
+        StageTransition.idea_id == idea.id, StageTransition.to_status == idea.status)
+        .order_by(StageTransition.id.desc()).first())
+    if row is None:
+        return text
+    when = f", закрыта {row.at:%Y-%m-%d}" if row.at is not None else ""
+    why = f": {_short(row.reason, 300)}" if row.reason else ""
+    return f"{text}{when}{why}"
+
+
 def _days_ru(n: float) -> str:
     return f"{n:,.0f}".replace(",", " ") + " дн."
 
@@ -863,7 +886,7 @@ def _no_second_stage(session: Session, idea: Idea, own: _Run, ledgers: Ledgers) 
                             "независимо; Hyperliquid ещё не смотрел, ночь берёт такие идеи по "
                             "очереди, самые старые первыми")
         return _not_run(3, Reason.CLOSED_BEFORE,
-                        f"статус «{idea.status.value}»: до второго этапа дело не дошло")
+                        f"{_closed_text(idea)} — до второго этапа дело не дошло")
     if child_id_taken(session, idea.id):
         return _not_run(3, Reason.ID_TAKEN,
                         f"имя «{child_id(idea.id)}» принадлежит другой идее (опыту "
@@ -904,7 +927,7 @@ def _twin_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None
                         "числа здесь уже выбирает код, но версии этой идеи на данных Binance нет")
     if idea.status in (IdeaStatus.PAPER, IdeaStatus.LIVE):
         return _not_run(2, Reason.IN_PRODUCTION,
-                        f"статус «{idea.status.value}»: двойников строят только идеям в работе")
+                        f"{_closed_text(idea)} — двойников строят только идеям в работе")
     if idea.id in ledgers.no_choice:
         return _not_run(2, Reason.NO_CHOICE,
                         "идея сама сказала, почему выбирать не из чего: "
@@ -993,7 +1016,7 @@ def _venue_money(idea: Idea, step: Step, money: float | None, ledgers: Ledgers |
     against the strategy's own money. A venue with no run has nothing to check."""
     venue = step.venue or ""
     if idea.status in CLOSED_STATUSES and (step.outcome == Outcome.NOT_RUN or money is None):
-        return VenueMoney(venue, Outcome.NOT_RUN, f"статус «{idea.status.value}»",
+        return VenueMoney(venue, Outcome.NOT_RUN, _closed_text(idea),
                           Reason.CLOSED_BEFORE)
     if step.outcome == Outcome.NOT_RUN:
         why = f" ({step.reason_ru})" if step.reason_ru else ""
@@ -1138,7 +1161,7 @@ def _step6(session: Session, idea: Idea, ledgers: Ledgers) -> Step:
         return Step(6, STEP_KEYS[5], STEP_TITLES[5],
                     Outcome.PASSED if rule.ready else Outcome.UNDECIDED, rule.line())
     if idea.status in CLOSED_STATUSES:
-        return _not_run(6, Reason.CLOSED_BEFORE, f"статус «{idea.status.value}»")
+        return _not_run(6, Reason.CLOSED_BEFORE, _closed_text(idea))
     if idea.status in GATE_STATUSES:
         return _not_run(6, Reason.NOT_IN_PAPER, "")
     return _not_run(6, Reason.NOT_REACHED, "")
