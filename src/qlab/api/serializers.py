@@ -184,6 +184,22 @@ def headline_json(metrics: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _with_chosen_selection(trial: Trial) -> dict[str, Any] | None:
+    """The trial's metrics with the selection part's figures of the chosen value, for a run of a
+    value-choosing wrapper whose metrics were written without them (a run from before
+    `qlab.chosen_curve`): they are read from the run's stored series and are display only. None
+    when the run needs nothing added."""
+    m = trial.metrics
+    if (not m or m.get("judged_on_forward") != 1.0 or not m.get("warmup_days")
+            or m.get("fit_chosen_in_sample") is not None):
+        return None
+    from qlab import forward_series
+
+    whole = (forward_series.load(trial.id) or {}).get("whole") or {}
+    numbers = whole.get("selection_numbers")
+    return {**m, **numbers} if numbers else None
+
+
 def trial_json(
     trial: Trial,
     *,
@@ -198,6 +214,7 @@ def trial_json(
     discarded run still counts as a trial: the ledger must show the runs
     that were thrown away, or the deflation denominator is a lie.
     """
+    metrics = _with_chosen_selection(trial) or trial.metrics
     return {
         "id": trial.id,
         "spec_id": trial.spec_id,
@@ -210,10 +227,10 @@ def trial_json(
         "code_sha": trial.code_sha,
         "started_at": _iso(trial.started_at),
         "finished_at": _iso(trial.finished_at),
-        "metrics": trial.metrics,
+        "metrics": metrics,
         # The numbers to lead with, on the strategy's own money (docs/CAPITAL_BASE.md), the stand's
         # beside them; copied from the stored metrics.
-        "headline": headline_json(trial.metrics),
+        "headline": headline_json(metrics),
         # The metrics' per-year keys regrouped for the console (docs/YEARS.md); null for a
         # run from before the view existed. Copied from the stored metrics, nothing computed.
         "year_view": year_view(trial.metrics, _latest_ruleset()),

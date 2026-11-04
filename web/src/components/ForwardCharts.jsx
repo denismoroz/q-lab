@@ -141,6 +141,13 @@ function Caption({ stage, title, series, chart }) {
           <PartLine label="До подбора" part={byPart.before} />
           <PartLine label="Подбор" part={byPart.selection} />
           <PartLine label="Проверка вперёд" part={byPart.forward} />
+          {byPart.selection?.chosen_in_sample && (
+            <p className="text-xs text-amber-700" data-testid="chosen-in-sample-note">
+              На подборе показаны числа, которые код выбрал, глядя именно на этот отрезок, — они
+              приукрашены; честная часть — проверка вперёд. Выбранное значение:{' '}
+              <span className="font-mono">{byPart.selection.chosen}</span>.
+            </p>
+          )}
           {(chart.parts ?? []).length === 0 && (
             <p className="text-slate-500">
               В правилах этого прогона деления на подбор и проверку вперёд не было.

@@ -43,6 +43,10 @@ FORMAT = 2
 """Format 2 adds `whole`: the money over the whole judged window with its parts. Format 1 (the
 forward part only) is still read; the console says so for such a file."""
 READABLE_FORMATS = frozenset({1, 2})
+WHOLE_REVISION = 2
+"""Revision of `whole`: 2 draws the selection part of a run that chooses among declared values as
+the chosen value's own money (`qlab.chosen_curve`) instead of a flat warm-up. A file of an older
+revision with a warm-up part is built again by `rebuild`."""
 PASSED_ROUTE = "paper"
 """The route of a run that passed every rule (`TrialRoute.PAPER`): «прошла все правила,
 ждёт решения владельца»."""
@@ -142,8 +146,8 @@ def part_bounds(index: pd.DatetimeIndex, rows: Any, split_mode: bool
 
 def build_whole(*, net_return: pd.Series, hold_return: pd.Series | None,
                 hold_coins: list[str] | None, bounds: dict[str, tuple[pd.Timestamp, pd.Timestamp]],
-                capital_return: pd.Series | None = None, reinvested: bool = True
-                ) -> dict[str, Any]:
+                capital_return: pd.Series | None = None, reinvested: bool = True,
+                chosen: dict[str, Any] | None = None) -> dict[str, Any]:
     """The money over the whole judged window, day by day, with its parts.
 
     The same reading as `build_payload` (the strategy's own capital, compounded or summed per
@@ -151,7 +155,12 @@ def build_whole(*, net_return: pd.Series, hold_return: pd.Series | None,
     eve of the first day. `parts` lists each part the split gives (`before`, `warmup`,
     `selection`, `forward`, in time order) with its totals counted from zero at its own first
     day; `split_date` is the first day of the forward part (null when the run has none). The
-    day of a part is that of its first bar."""
+    day of a part is that of its first bar.
+
+    `chosen` (`qlab.chosen_curve.ChosenCandidate.info`) says the series holds, on the `selection`
+    part, the money of the value the run's wrapper chose by looking at exactly that part: the part
+    is marked `chosen_in_sample` with the value's name, and the figures of the part are kept in
+    `selection_numbers` (informational: no rule reads them)."""
     if len(net_return) == 0:
         raise ValueError("no returns to draw")
     drawn = net_return if capital_return is None else capital_return
@@ -179,11 +188,16 @@ def build_whole(*, net_return: pd.Series, hold_return: pd.Series | None,
         mask = (label == name).to_numpy()
         if name not in bounds or not mask.any():
             continue
-        parts.append({"part": name, **_part_stats(
-            daily[mask], None if hold_daily is None else hold_daily[mask], reinvested)})
+        entry = {"part": name, **_part_stats(
+            daily[mask], None if hold_daily is None else hold_daily[mask], reinvested)}
+        if chosen is not None and name == "selection":
+            entry.update(chosen_in_sample=True, chosen=chosen["name"])
+        parts.append(entry)
     whole = _part_stats(daily, hold_daily, reinvested)
     return {
         **whole,
+        "revision": WHOLE_REVISION,
+        "selection_numbers": None if chosen is None else chosen["numbers"],
         "points": points,
         "hold_coins": hold_coins,
         "parts": parts,
@@ -299,29 +313,47 @@ def has_whole(payload: dict[str, Any] | None) -> bool:
     return bool(payload and payload.get("whole"))
 
 
+def is_current(payload: dict[str, Any] | None) -> bool:
+    """Whether a stored series is built the way `rebuild` builds it now: it covers the whole
+    window, and a warm-up it shows is not one that a later revision draws as the chosen value's
+    own money (`WHOLE_REVISION`)."""
+    if not has_whole(payload):
+        return False
+    whole = payload["whole"]  # type: ignore[index]
+    if int(whole.get("revision") or 1) >= WHOLE_REVISION:
+        return True
+    return not any(p.get("part") == "warmup" for p in whole.get("parts") or [])
+
+
 def store_from_run(*, trial_id: int, spec: Any, result: Any, part_panel: Any,
                    part_weights: pd.DataFrame, recorded_total: float | None,
                    recorded_capital_total: float | None = None, on_capital: bool = True,
                    whole_result: Any = None, whole_panel: Any = None,
                    whole_weights: pd.DataFrame | None = None,
                    bounds: dict[str, tuple[pd.Timestamp, pd.Timestamp]] | None = None,
-                   judged_on_forward: bool = True, store: Path | None = None) -> Path:
+                   judged_on_forward: bool = True, chosen: Any = None,
+                   store: Path | None = None) -> Path:
     """Write the series of a run `evaluate_spec` has just made, from the very backtest
     results the verdict rests on: the judged part's (`result`, what the rules read) and, when
-    given, the whole window's (`whole_*`) with the parts' `bounds`."""
+    given, the whole window's (`whole_*`) with the parts' `bounds`. `chosen`
+    (`qlab.chosen_curve.ChosenCandidate`) puts the chosen value's own money on the selection
+    part of the whole window; the judged part stays the run's."""
     from qlab.harness.metrics import held_coins, hold_returns
 
     capital_of = (lambda r: r.capital_return) if on_capital else (lambda r: None)
     reinvested = result.capital_reinvested if on_capital else True
     whole = None
     if whole_result is not None:
+        net, cap, weights = whole_result.net_return, capital_of(whole_result), whole_weights
+        if chosen is not None:
+            net, stitched_cap, weights = chosen.stitch(whole_result, whole_weights)
+            cap = stitched_cap if on_capital else None
+            bounds = chosen.chart_bounds(bounds or {})
         whole = build_whole(
-            net_return=whole_result.net_return,
-            hold_return=hold_returns(whole_panel.prices, whole_weights,
-                                     whole_result.net_return.index),
-            hold_coins=held_coins(whole_weights), bounds=bounds or {},
-            capital_return=capital_of(whole_result),
-            reinvested=whole_result.capital_reinvested if on_capital else True)
+            net_return=net, hold_return=hold_returns(whole_panel.prices, weights, net.index),
+            hold_coins=held_coins(weights), bounds=bounds or {}, capital_return=cap,
+            reinvested=whole_result.capital_reinvested if on_capital else True,
+            chosen=None if chosen is None else chosen.info())
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
@@ -377,6 +409,48 @@ def spec_file_for(session: Session, spec_id: int, root: Path | None = None) -> P
     return max(matching)[2] if matching else None
 
 
+def stored_spec(session: Session, spec_id: int, root: Path | None = None) -> Any:
+    """The `StrategySpec` the stored `spec` row was run as, or None.
+
+    A spec file whose content is the row (`spec_file_for`) is that spec. An idea that declares
+    lists of values (`choice`, docs/ONE_CHECK.md) is run as its check form -- a `Retune` that
+    chooses once at the stand's cut -- which no file holds: the file is rebuilt into the form by
+    the very code the night uses (`qlab.one_check.check_spec`) and compared with the row the same
+    way, the data window aside. The row keeps `choose_at: split`, and so does the form; the day is
+    put in only when a run starts (`with_split_day`)."""
+    from qlab import one_check
+    from qlab.pipeline.evaluate import _same_content, _spec_row_content
+    from qlab.pipeline.spec import load_spec
+    from qlab.registry.models import Spec
+
+    path = spec_file_for(session, spec_id, root)
+    if path is not None:
+        return load_spec(path)
+    row = session.get(Spec, spec_id)
+    if row is None:
+        return None
+    base = root if root is not None else SPEC_ROOT
+    pattern = re.compile(rf"^idea_id:\s*{re.escape(row.idea_id)}\s*$", re.M)
+    for file in sorted(base.rglob("*.yaml")):
+        if not pattern.search(file.read_text(encoding="utf-8")):
+            continue
+        try:
+            spec = load_spec(file)
+            if not one_check.declares_lists(spec):
+                continue
+            form = one_check.check_spec(spec, spec_path=file).spec
+        except Exception:  # noqa: BLE001 - a file that cannot be made into its check is not this
+            continue
+        if form is None:
+            continue
+        data_requirements, costs_model = _spec_row_content(form)
+        for window in ("start", "end"):
+            data_requirements[window] = row.data_requirements.get(window)
+        if _same_content(row, form, data_requirements, costs_model):
+            return form
+    return None
+
+
 def _rules_version(session: Session, trial_id: int) -> str | None:
     from qlab.registry.models import Verdict
 
@@ -402,6 +476,9 @@ class ReplayedRun:
     whole: tuple[Any, Any, pd.DataFrame] | None = None
     """The whole window's `(result, panel, weights)` (set for `part="whole"`)."""
     index: pd.DatetimeIndex | None = None
+    chosen: Any = None
+    """`qlab.chosen_curve.ChosenCandidate` of a run that chooses among declared values (set for
+    `part="whole"`): the selection part's money, display only."""
 
 
 def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None,
@@ -428,7 +505,6 @@ def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None
         resolve_strategy,
         with_split_day,
     )
-    from qlab.pipeline.spec import load_spec
     from qlab.registry.models import Spec, Trial
     from qlab.rules import loader
 
@@ -440,11 +516,10 @@ def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None
     if part == "forward" and trial.metrics.get("judged_on_forward") != 1.0:
         return None, "у этого прогона нет проверки вперёд: судили период подбора"
     spec_row = session.get(Spec, trial.spec_id)
-    path = spec_file_for(session, trial.spec_id, spec_root)
-    if spec_row is None or path is None:
+    spec = stored_spec(session, trial.spec_id, spec_root)
+    if spec_row is None or spec is None:
         return None, ("файл спека, с которым шёл прогон, не найден или с тех пор изменён: "
                       "ряд честно не восстановить")
-    spec = load_spec(path)
     version = _rules_version(session, trial_id)
     try:
         ruleset = loader.load(version) if version else loader.load_latest()
@@ -484,14 +559,31 @@ def replay_run(session: Session, trial_id: int, *, spec_root: Path | None = None
 
         result, part_panel, part_weights = run_rows(lo, hi)
         whole = None
+        chosen = None
         if part == "whole":
             whole = ((result, part_panel, part_weights) if (lo, hi) == (rows.first, rows.last)
                      else run_rows(rows.first, rows.last))
+            if (ruleset.splits_fit_forward and rows.warmup is not None
+                    and rows.split.forward is not None):
+                chosen = _chosen_of(strategy, panel, spec.params, rows, costs)
     except Exception as exc:  # noqa: BLE001 - strategy code is arbitrary
         return None, f"прогон не удалось повторить: {type(exc).__name__}: {exc}"
     return ReplayedRun(spec, trial, result, part_panel, part_weights, capital, rows=rows,
                        split_mode=bool(ruleset.splits_fit_forward), whole=whole,
-                       index=panel.prices.index), None
+                       index=panel.prices.index, chosen=chosen), None
+
+
+def _chosen_of(strategy: Any, panel: Any, params: Any, rows: Any, costs: Any) -> Any:
+    """The chosen value's own money over the selection part of a run whose wrapper chooses among
+    declared values, or None (any other run; a run whose value cannot be replayed keeps the flat
+    warm-up: this is a picture, it must not fail the chart)."""
+    from qlab.chosen_curve import chosen_candidate
+
+    try:
+        return chosen_candidate(strategy, panel, params, first=rows.first,
+                                cut=rows.split.forward[0], costs=costs)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) -> Replay:
@@ -511,14 +603,18 @@ def replay(session: Session, trial_id: int, *, spec_root: Path | None = None) ->
     recorded_capital = trial.metrics.get("cap_total_return")
     drawn_on_capital = run.capital.refused is None
     whole_result, whole_panel, whole_weights = run.whole
+    net, cap, drawn_weights = whole_result.net_return, whole_result.capital_return, whole_weights
+    bounds = part_bounds(run.index, run.rows, run.split_mode)
+    if run.chosen is not None:  # the selection part is the chosen value's own money
+        net, cap, drawn_weights = run.chosen.stitch(whole_result, whole_weights)
+        bounds = run.chosen.chart_bounds(bounds)
     whole = build_whole(
-        net_return=whole_result.net_return,
-        hold_return=hold_returns(whole_panel.prices, whole_weights,
-                                 whole_result.net_return.index),
-        hold_coins=held_coins(whole_weights),
-        bounds=part_bounds(run.index, run.rows, run.split_mode),
-        capital_return=whole_result.capital_return if drawn_on_capital else None,
-        reinvested=whole_result.capital_reinvested if drawn_on_capital else True)
+        net_return=net,
+        hold_return=hold_returns(whole_panel.prices, drawn_weights, net.index),
+        hold_coins=held_coins(drawn_weights), bounds=bounds,
+        capital_return=cap if drawn_on_capital else None,
+        reinvested=whole_result.capital_reinvested if drawn_on_capital else True,
+        chosen=None if run.chosen is None else run.chosen.info())
     payload = build_payload(
         trial_id=trial_id, idea_id=spec.idea_id, venue=spec.data.source,
         interval=spec.data.interval, net_return=result.net_return,
@@ -680,7 +776,8 @@ def rebuild(session: Session, idea_ids: list[str] | None = None, *, force: bool 
     """Build the missing series of the ideas' stages by `replay`: the passed ideas by default,
     `chart_ideas` when `every`. Returns `(idea_id, trial_id, outcome)` per stage run looked at;
     a series that covers the whole window is kept unless `force` (a format 1 file, the forward
-    part only, is built again). `on_done(idea_id, trial_id, outcome, seconds)` is called after
+    part only, and a file whose warm-up a later revision draws as the chosen value's own money
+    are built again). `on_done(idea_id, trial_id, outcome, seconds)` is called after
     each run looked at. Writes only the series files."""
     from time import perf_counter
 
@@ -706,7 +803,7 @@ def rebuild(session: Session, idea_ids: list[str] | None = None, *, force: bool 
                 continue
             seen.add(stage.trial_id)
             started = perf_counter()
-            if not force and has_whole(load(stage.trial_id, store)):
+            if not force and is_current(load(stage.trial_id, store)):
                 note(stage.idea_id, stage.trial_id, "уже есть", started)
                 continue
             result = replay(session, stage.trial_id, spec_root=spec_root)
@@ -754,4 +851,4 @@ def passed_on(session: Session, since: datetime, until: datetime) -> list[dict[s
 __all__ = ["PASSED_ROUTE", "STORE_DIR", "Replay", "StageRun", "build_payload", "build_whole",
            "chart_ideas", "forward_view", "has_whole", "load", "part_bounds", "passed_ideas",
            "passed_on", "rebuild", "replay", "save", "series_path",
-           "spec_file_for", "stage_runs", "store_from_run"]
+           "spec_file_for", "stage_runs", "store_from_run", "stored_spec"]
