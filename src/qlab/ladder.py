@@ -517,6 +517,10 @@ class Ledgers:
     stage2_failures: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     """`data/stage2/failures.json`: ideas whose second stage crashed, with the attempts so far and
     whether the idea was given up on (the Hyperliquid side then stays «не проводился: сбой»)."""
+    duplicates: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    """`data/duplicates/ledger.json`, the «дубль X по результатам» readings (docs/DUPLICATES.md):
+    idea -> the idea it doubles and the numbers that matched. A stored reading; it decides
+    nothing."""
     root: Path | None = None
     """Where the stored comparisons and exports are looked for (None: the working directory)."""
 
@@ -618,6 +622,7 @@ def load_ledgers(root: Path = Path(".")) -> Ledgers:
         restamp=_json(root / "data" / "restamp" / "ledger.json"),
         implement=_json(root / "data" / "implement" / "ledger.json"),
         stage2_failures=_json(root / "data" / "stage2" / "failures.json"),
+        duplicates=dict(_json(root / "data" / "duplicates" / "ledger.json").get("results") or {}),
         queue=queue, deferred_twins=deferred, money=money, paper_books=held, spec_stems=stems,
         no_choice=spec_no_choice(root / "specs"),
         stage1_survives=frozenset(stage2.get("stage1_survives") or DEFAULT_STAGE1_SURVIVES),
@@ -1075,6 +1080,10 @@ def _readings(session: Session, idea: Idea, main: _Run | None, ledgers: Ledgers)
                        line or "заработок отличим от нуля: у этого прогона замера ещё нет "
                        "(появляется при пересчёте, стенд 2026-11-03.1)"))
     out += _overlay_reading(session, idea)
+    if mark := ledgers.duplicates.get(idea.id):
+        from qlab import duplicates
+
+        out.append(Reading("duplicate", True, duplicates.reading_ru(mark)))
     return out
 
 

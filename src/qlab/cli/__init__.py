@@ -518,6 +518,14 @@ def evaluate_cmd(
             "`shape_aware_edge` reads as unknown and the route is needs-more-data."
         ),
     ),
+    allow_duplicate: bool = typer.Option(
+        False, "--allow-duplicate",
+        help=(
+            "Run a NEW idea even if it equals an open idea's latest spec (same code, numbers "
+            "after defaults, lists, data, costs, money): by default such a double is refused "
+            "(owner, 2026-11-04, docs/DUPLICATES.md)."
+        ),
+    ),
 ) -> None:
     """Run the full pipeline: spec -> data -> backtest -> metrics -> verdict.
 
@@ -534,6 +542,20 @@ def evaluate_cmd(
         raise typer.Exit(code=1) from exc
 
     ruleset = load(rules_version) if rules_version is not None else load_latest()
+
+    if not allow_duplicate:
+        from qlab import duplicates
+
+        try:
+            with session_scope() as session:
+                double = duplicates.refusal_for_new_idea(spec, session)
+        except Exception as exc:  # noqa: BLE001 - a check that fails must not stop a hand run
+            double = None
+            typer.echo(f"note: doubles not checked ({type(exc).__name__}: {exc})", err=True)
+        if double is not None:
+            duplicates.note_refusal(spec, double, "qlab evaluate")
+            typer.echo(f"not run: {double.text()}  (--allow-duplicate runs it anyway)", err=True)
+            raise typer.Exit(code=1)
 
     with session_scope() as session:
         try:
@@ -2372,12 +2394,18 @@ def implement_cmd(
     for f in review.accepted:
         typer.echo(f"  [{f.kind}] {f.summary}")
     if evaluate:
+        from qlab import duplicates
         from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
         from qlab.registry import repo
         from qlab.registry.models import AssetClass, Idea, Profile, SourceType
         from qlab.rules.loader import load_latest
 
         with session_scope() as session:
+            double = duplicates.refusal_for_new_idea(spec, session)
+            if double is not None:
+                duplicates.note_refusal(spec, double, f"qlab implement {card}")
+                typer.echo(f"stand: not run: {double.text()}")
+                return
             if session.get(Idea, spec.idea_id) is None:
                 repo.upsert_idea(session, id=spec.idea_id, title=spec.title,
                                  source_type=SourceType.INTERNAL,

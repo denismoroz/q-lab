@@ -211,6 +211,29 @@ def test_an_experiments_fixation_day_is_named_by_code_before_it_runs(
     assert load_spec(path).params_fixed_at == named
 
 
+def test_an_experiment_that_doubles_an_open_idea_is_not_run_and_the_memo_says_so(
+        tmp_path, stand, second, monkeypatch) -> None:
+    """Owner 2026-11-04 (docs/DUPLICATES.md): a spec with an open idea's fingerprint is refused
+    before the stand sees it; a different one in the same memo still runs."""
+    from qlab import duplicates
+
+    old = duplicates.OpenIdea("old-idea", "Старая идея", "Старая идея", "bench",
+                              duplicates.fingerprint(_spec("old-idea")), "specs/old.yaml")
+    monkeypatch.setattr(duplicates, "open_index", lambda session, **kw: [old])
+    refused: list[str] = []
+    monkeypatch.setattr(duplicates, "note_refusal",
+                        lambda spec, double, where, path=None: refused.append(spec.idea_id))
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+    same = _write(tmp_path, _spec("exp-same"))
+    other = _write(tmp_path, _spec("exp-other").model_copy(update={"params": {"lookback": 99}}))
+    lines = researcher.run_experiments(memo, [same, other], name="s", noise_trials=1)
+    text = "\n".join(lines)
+    assert "не запущен — дубль идеи old-idea («Старая идея»)" in text
+    assert stand == ["exp-other"] and refused == ["exp-same"]
+    assert "дубль идеи old-idea" in memo.read_text(encoding="utf-8")
+
+
 # ---- one idea, one check (docs/ONE_CHECK.md) ------------------------------------------------
 
 

@@ -550,6 +550,19 @@ def _report_row(m: dict) -> tuple[str, str, str, str, str, str, str]:
             *(_pct(m.get(f"{prefix}{regime}{r}_return")) for r in ("bull", "flat", "bear")))
 
 
+def _duplicates_lines() -> list[str]:
+    """Doubles by identical results, proposed for retirement (docs/DUPLICATES.md); empty when
+    there are none or the registry cannot be read: the report does not fail for a reading."""
+    from qlab import duplicates
+    from qlab.registry.db import session_scope
+
+    try:
+        with session_scope() as session:
+            return duplicates.report_lines(session)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def write_report(day: date, state: dict) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [f"# Ночной прогон {day.isoformat()}", ""]
@@ -618,6 +631,10 @@ def write_report(day: date, state: dict) -> Path:
         from qlab.ladder import SECTION_TITLE as LADDER_TITLE
 
         lines += [f"## {LADDER_TITLE}", "", *state["ladder"], ""]
+    if body := _duplicates_lines():
+        from qlab.duplicates import SECTION_TITLE as DUPLICATES_TITLE
+
+        lines += [f"## {DUPLICATES_TITLE}", "", *body, ""]
     if state.get("waiting") or state.get("waiting_notes"):
         from qlab.waiting import SECTION_TITLE as WAITING_TITLE
         from qlab.waiting import report_lines as waiting_lines

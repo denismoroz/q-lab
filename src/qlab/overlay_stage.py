@@ -414,6 +414,13 @@ class _Run:
             self.run_variant(base, spec, entry, end)
             self.clock.finished(spec.idea_id, self.clock.now() - started)
             self.block["entries"].append(entry)
+            if entry["action"] == "duplicate":
+                # a double of an open idea was not run; remembered so that it is not tried again
+                self.ledger[spec.idea_id] = {
+                    "fingerprint": stamp, "day": self.day.isoformat(), "base": base.idea_id,
+                    "route": None, "trial": None, "stage2_pending": False, "duplicate": True}
+                save_ledger(self.ledger, self.ledger_path)
+                continue
             if entry["action"] != "error":
                 self.block["new"] += 1
                 entry_base["variants"].append(spec.idea_id)
@@ -491,12 +498,18 @@ class _Run:
             entry_base["diagnostics_error"] = f"{type(exc).__name__}: {exc}"
 
     def run_variant(self, base: Base, spec: StrategySpec, entry: dict, end: date) -> None:
-        from qlab import overlay_compare, twin_stage
+        from qlab import duplicates, overlay_compare, twin_stage
         from qlab.overlay_variants import write_variant
         from qlab.registry.db import session_scope
 
         path = write_variant(self.spec_dir, base.idea_id, spec)
         entry["spec"] = path.as_posix()
+        with session_scope() as session:  # a double of an open idea is not run (docs/DUPLICATES.md)
+            double = duplicates.refusal_for_new_idea(spec, session)
+        if double is not None:
+            duplicates.note_refusal(spec, double, f"надстройки, база {base.idea_id}")
+            entry.update(action="duplicate", reason=double.text(), of=double.of)
+            return
         started = time.monotonic()
         ok = twin_stage.stage1_on_stand(
             spec, entry, ensure_idea=lambda: ensure_overlay_idea(spec, base.idea_id),
@@ -672,6 +685,8 @@ def report_lines(block: dict | None, tables: dict[str, dict] | None = None) -> l
             elif e.get("action") == "none":
                 lines.append(f"    - {'+'.join(e.get('chain') or [])}: вариант не построен — "
                              f"{e.get('reason')}")
+            elif e.get("action") == "duplicate":
+                lines.append(f"    - `{e.get('variant')}`: не запущен — {e.get('reason')}")
             elif e.get("comparison_error"):
                 lines.append(f"    - `{e.get('variant')}`: прогон есть, сравнение не вышло — "
                              f"{str(e['comparison_error'])[:200]}")

@@ -274,6 +274,7 @@ def create_app(*, warm: bool = False) -> FastAPI:
         detail["anomalies"] = _anomalies(session, idea_id)
         detail["ladder"] = _ladder(session, idea_id)
         detail["bench"] = (detail["ladder"] or {}).get("bench")
+        detail["duplicate"] = _duplicate(idea_id)
         detail["family"] = family_of_root(detail["strategy"]["root"])
         # The idea's card (owner, 2026-11-04: «карточки кандидатов и реестр ... очень похоже на
         # дупликацию»): the registry is the one place, so the card is read on this page.
@@ -351,6 +352,14 @@ def create_app(*, warm: bool = False) -> FastAPI:
             return None
         return {"id": twin.id, "status": twin.status.value,
                 "two_stage": _two_stage(session, twin)}
+
+    def _duplicate(idea_id: str) -> dict[str, Any] | None:
+        """The stored reading «дубль X по результатам» (qlab.duplicates, docs/DUPLICATES.md), or
+        None. It decides nothing: the owner decides whether the idea is retired."""
+        from qlab import duplicates
+
+        mark = duplicates.load_ledger()["results"].get(idea_id)
+        return None if mark is None else {**mark, "text": duplicates.reading_ru(mark)}
 
     def _ladder(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The idea's ladder: the same seven steps for every idea, each with its outcome, the
