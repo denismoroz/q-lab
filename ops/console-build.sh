@@ -39,4 +39,12 @@ if [ "$RESTART" = 1 ]; then
   else
     echo "launchd job com.qlab.console is not loaded: nothing restarted (docs/CONSOLE.md)" >&2
   fi
+  # The page reads the API: a merge that changed both must not leave the old API serving the new
+  # page (2026-11-04: the whole-period chart was built and merged, the API still said «рисуется
+  # только для прошедших»).
+  if launchctl kickstart -k "gui/$(id -u)/com.qlab.api" 2>/dev/null; then
+    echo "api restarted"
+  else
+    echo "launchd job com.qlab.api is not loaded: the API was not restarted" >&2
+  fi
 fi
