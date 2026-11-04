@@ -965,9 +965,9 @@ def result_line(r: GeneratedResult) -> str:
     m = r.metrics
     own = ""
     if r.candidates:
-        own = (f" [одна проверка: код выбирает раз в месяц по прошлому между {len(r.candidates)} "
-               f"вариантами, каждый записан отдельным испытанием; вердикт на всей истории, с "
-               f"{r.cut}]")
+        own = (f" [одна проверка: код один раз выбирает на первых двух третях данных между "
+               f"{len(r.candidates)} вариантами, каждый записан отдельным испытанием; вердикт — "
+               f"на последней трети, с {r.cut}]")
     elif r.nothing_to_choose:
         own = f" [выбирать не из чего: {r.nothing_to_choose}; судится после дня фиксации]"
     elif r.candidate_trials:

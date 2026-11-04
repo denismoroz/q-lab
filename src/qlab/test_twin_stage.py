@@ -447,7 +447,11 @@ def test_a_twin_with_an_instrument_list_is_run_and_the_report_names_the_list(
     assert "только 8 столбцами" in text and "со дня, когда список уже был известен" in text
 
 
-def test_a_list_past_the_threshold_is_recorded_as_heavy_with_its_size(world, monkeypatch) -> None:
+def test_a_list_past_the_threshold_is_recorded_as_heavy_with_its_size(world, monkeypatch,
+                                                                    tmp_path) -> None:
+    # An empty raw cache: the estimate counts only what is not cached, and the real data/raw holds
+    # these columns (base.missing_share, owner 2026-11-04).
+    monkeypatch.setattr("qlab.data.sources.base.DEFAULT_RAW_CACHE_DIR", tmp_path / "raw")
     monkeypatch.setattr(twin_stage, "_causal_twin", lambda *a, **k: _bv2_result())
     world.config.write_text(CONFIG_HEAD + "max_new_twins_per_night: 4\nslow_twin_minutes: 20\n"
                             "max_hourly_instruments: 5\n", encoding="utf-8")

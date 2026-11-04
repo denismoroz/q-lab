@@ -773,11 +773,11 @@ def entry_lines(e: Mapping) -> list[str]:
                 f"{e['idea']} --allow-heavy`. Больше не пробуем, пока не изменится файл спека."]
     if e["action"] in ("checked", "would-check"):
         if e["action"] == "would-check":
-            return [f"- {head}: проверка идеи будет прогнана (код выбирает раз в месяц по "
-                    "прошлому)"]
-        line = (f"- {head}: одна проверка прогнана вручную; код выбирает раз в месяц только по "
-                f"прошлому между {len(e.get('candidates') or [])} вариантами, каждый записан "
-                f"испытанием. Прогон {e.get('trial')}: {route_ru(e.get('route'))} — "
+            return [f"- {head}: проверка идеи будет прогнана (код выбирает числа "
+                    "один раз, на первых двух третях данных)"]
+        line = (f"- {head}: одна проверка прогнана вручную; код один раз выбрал на "
+                f"первых двух третях данных между {len(e.get('candidates') or [])} вариантами, "
+                f"каждый записан испытанием. Прогон {e.get('trial')}: {route_ru(e.get('route'))} — "
                 f"{numbers_ru(e.get('metrics') or {})}")
         out = [line]
         if e.get("stage2") is not None:
@@ -792,7 +792,8 @@ def entry_lines(e: Mapping) -> list[str]:
         return [f"- {head}: **сбой** — {str(e.get('error'))[:200]}; повторится в следующую ночь"]
     made = "двойник уже был, прогнан впервые" if e["action"] == "existing" else "двойник сделан"
     line = (f"- {head}: {made}{base}, файл `{e.get('twin_spec')}`; код выбирает между "
-            f"{len(e.get('candidates') or [])} наборами чисел раз в месяц только по прошлому. "
+            f"{len(e.get('candidates') or [])} наборами чисел раз в месяц только по прошлому "
+            "(старый двойник). "
             if e.get("candidates") else f"- {head}: {made}{base}, файл `{e.get('twin_spec')}`. ")
     if e.get("instruments"):
         line += (f"Двойник торгует только {len(e['instruments'])} столбцами "

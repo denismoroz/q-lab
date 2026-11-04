@@ -478,10 +478,11 @@ def entry_lines(e: Mapping) -> list[str]:
     check = runs.get("check") or runs.get("causal") or {}
     if check.get("action") == "ran" and check.get("candidates"):
         out.append(
-            f"    - одна проверка: числа выбирает код раз в месяц и только по прошлому, между "
-            f"вариантами карточки ({', '.join(check.get('candidates') or [])}), каждый записан "
-            f"отдельным испытанием; данные Binance, торгует с {check.get('first_choice')} (до "
-            "первого выбора она не торгует)"
+            f"    - одна проверка: числа код выбирает один раз, на первых двух третях данных, "
+            f"между вариантами карточки ({', '.join(check.get('candidates') or [])}), каждый "
+            f"записан отдельным испытанием; данные Binance, проверка вперёд с "
+            f"{check.get('first_choice')} "
+            "(последняя треть данных)"
             + (f"; монет только {len(check['instruments'])}: список подобран заранее, поэтому "
                "идея судится только со дня, когда он был известен" if check.get("instruments")
                else ""))

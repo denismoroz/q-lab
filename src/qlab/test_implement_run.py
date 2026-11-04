@@ -562,7 +562,7 @@ def test_the_report_shows_the_idea_the_block_and_the_comparison(world) -> None:
     assert "по годам: 2021 +40%, 2022 −10%" in section  # the per-year line, once per version
     assert section.count("по годам:") >= 2
     assert "второй этап проверки идеи:" in section  # stage 2's own lines under the survivor
-    assert "одна проверка" in section and "торгует с" in section
+    assert "одна проверка" in section and "проверка вперёд с" in section
     assert "window_days=7, window_days=14, window_days=30" in section
     assert "судится только со дня" in section  # the hand-picked list is said to be judged late
 

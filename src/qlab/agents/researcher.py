@@ -554,9 +554,9 @@ def _check_words(prepared) -> str:
     """The short note after an experiment's name: what its one check chose among."""
     if prepared.declared == "nothing":
         return f" [выбирать не из чего: {prepared.reason}; судится после дня фиксации]"
-    return (f" [одна проверка: код выбирает раз в месяц по прошлому между "
+    return (f" [одна проверка: код один раз выбирает на первых двух третях данных между "
             f"{len(prepared.candidates)} вариантами ({', '.join(prepared.candidates)}), каждый "
-            f"записан испытанием; история Binance, судится с {prepared.first_choice}]")
+            f"записан испытанием; вердикт — на последней трети, с {prepared.first_choice}]")
 
 
 __all__ = ["CUT_SENTENCE", "MODEL", "DropProposal", "ResearchOutcome", "build_context",
