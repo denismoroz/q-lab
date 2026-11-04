@@ -247,7 +247,7 @@ function Outcome({ outcome }) {
   const periods = split
     ? [
         ['окно подбора параметров', days(m.fit_window_days)],
-        ['период подбора в этих данных', days(m.selection_days)],
+        ['период подбора в этих данных', days(m.selection_days || (m.fit_chosen_in_sample ? m.warmup_days : null))],
         ['проверка вперёд', days(m.forward_days)],
         ['нужно для вывода', days(m.forward_days_needed)],
       ].filter(([, v]) => v !== null)
@@ -287,7 +287,14 @@ function Outcome({ outcome }) {
         </p>
       )}
       {fitNumbers.length > 0 && (
-        <NumberList title="период подбора — только для сведения" numbers={fitNumbers} />
+        <NumberList
+          title={
+            m.fit_chosen_in_sample
+              ? 'период подбора — числа, выбранные по нему же, приукрашены; только для сведения'
+              : 'период подбора — только для сведения'
+          }
+          numbers={fitNumbers}
+        />
       )}
       <RegimeTable m={m} />
       <YearView view={trial.year_view} />

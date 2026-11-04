@@ -99,7 +99,7 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
     """Re-create the trial's book from its stored spec and snapshot. Raises `RunUnavailable`
     with the reason when that cannot be done. Reads the registry; writes nothing."""
     from qlab.data.snapshot import load_snapshot
-    from qlab.forward_series import _rules_version, spec_file_for
+    from qlab.forward_series import _rules_version, stored_spec
     from qlab.pipeline.evaluate import (
         complete_book_window,
         cut_truncated_history,
@@ -107,7 +107,6 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
         resolve_strategy,
         with_split_day,
     )
-    from qlab.pipeline.spec import load_spec
     from qlab.registry.models import Spec, Trial
     from qlab.rules import loader
 
@@ -117,11 +116,10 @@ def load_run(session: Session, trial_id: int, *, spec_root: Path | None = None) 
     if trial.metrics is None or trial.snapshot_id is None:
         raise RunUnavailable("the trial has no numbers or no data snapshot: nothing to re-run")
     spec_row = session.get(Spec, trial.spec_id)
-    path = spec_file_for(session, trial.spec_id, spec_root)
-    if spec_row is None or path is None:
+    spec = stored_spec(session, trial.spec_id, spec_root)
+    if spec_row is None or spec is None:
         raise RunUnavailable("the spec file this trial ran with is not found or has changed "
                              "since: the run cannot be honestly reproduced")
-    spec = load_spec(path)
     version = _rules_version(session, trial_id)
     try:
         ruleset = loader.load(version) if version else loader.load_latest()

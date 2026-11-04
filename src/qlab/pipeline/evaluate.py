@@ -39,6 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from qlab import forward_series, noise_bar
+from qlab.chosen_curve import ChosenCandidate, chosen_candidate
 from qlab.data.panel import MarketPanel
 from qlab.data.snapshot import PANEL_RULES_VERSION, build_snapshot, load_snapshot
 from qlab.data.sources.base import INTERVAL_TO_TIMEDELTA, SPOT_COLUMN_SUFFIX
@@ -1501,6 +1502,18 @@ def _protection(spec: StrategySpec, result: RunResult, part_panel: MarketPanel,
         return {}
 
 
+def _chosen_in_sample(strategy: object, panel: MarketPanel, params: Mapping[str, object],
+                      rows: JudgedRows, costs: CostModel) -> ChosenCandidate | None:
+    """The value a choosing wrapper holds on the first forward bar, run alone over the selection
+    part (`qlab.chosen_curve`), or None for any other run. A picture and figures that decide
+    nothing: a failure here leaves the part flat and never fails the run."""
+    try:
+        return chosen_candidate(strategy, panel, params, first=rows.first,
+                                cut=rows.split.forward[0], costs=costs)  # type: ignore[index]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def evaluate_spec(
     spec: StrategySpec,
     *,
@@ -1771,6 +1784,7 @@ def evaluate_spec(
         # The judged part's backtest, kept for the forward test's chart
         # (`qlab.forward_series`): the very result the verdict rests on.
         judged_run: dict[str, object] = {}
+        chosen: ChosenCandidate | None = None
 
         # The minimum leg of each contract where the venue the orders go to states one per
         # contract (Binance, docs/VENUE_SPLIT.md); None keeps the spec's single number.
@@ -1954,6 +1968,15 @@ def evaluate_spec(
 
         selection_metrics: dict[str, float] | None = None
         if split_mode:
+            if split.forward is not None and rows.warmup is not None:
+                # A wrapper that chooses among declared values holds nothing before its choice:
+                # the selection part shows the chosen value's own money, and its figures stand
+                # under the `fit_` names. Informational: `selection_metrics` below stays None for
+                # a causal chooser, so no selection-period rule is applied to it, and the rules
+                # read the forward part as before (qlab.chosen_curve).
+                chosen = _chosen_in_sample(strategy, panel, spec.params, rows, costs)
+                if chosen is not None:
+                    metrics.update(chosen.fit_metrics())
             if split.forward is not None and split.selection is not None:
                 selection_metrics = _measure(*split.selection)
                 metrics.update({f"fit_{k}": v for k, v in selection_metrics.items()
@@ -2196,7 +2219,8 @@ def evaluate_spec(
                 on_capital=capital.refused is None, whole_result=whole_run[0],
                 whole_panel=whole_run[1], whole_weights=whole_run[2],
                 bounds=forward_series.part_bounds(index, rows, split_mode),
-                judged_on_forward=bool(split_mode and split.forward is not None))
+                judged_on_forward=bool(split_mode and split.forward is not None),
+                chosen=chosen)
             # The same daily money as an older open idea's latest run is a stored reading
             # «дубль X по результатам», shown, deciding nothing (docs/DUPLICATES.md).
             from qlab import duplicates
