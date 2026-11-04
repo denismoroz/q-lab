@@ -27,9 +27,12 @@
 #     when it falls inside the forward third (the numbers were chosen while part of it was already
 #     visible), `params_fixed_overlap_days` says by how many days. It decides nothing (owner:
 #     «сначала замер, потом правило»).
-#   * A hand-picked coin list on the forward third is point-in-time only when it was known by the
-#     day the third begins (its `instruments_chosen_at`, else the spec's `params_fixed_at`, or the
-#     knowable-coins check): a list written down after the third began knows who survived in it.
+#   * A hand-picked coin list of ANY spec gets the knowable-coins check from the stand (owner
+#     2026-11-04, «где дырка во фреймворке?», night/knowable_coins.yaml): a list that was the
+#     obvious pick (listed 30 days, top 10 by trailing turnover, computed from the venue's data) is
+#     point-in-time from the first day all its coins pass, whoever wrote it down when. Only a list
+#     that fails the check is dated by hand as before (`instruments_chosen_at`, else
+#     `params_fixed_at`): written down after the third began, it knows who survived in it.
 #
 # A verdict stored under 2026-11-03.1 keeps its route; every open idea is measured again under this
 # version (`qlab restamp run --all`) and the report names each idea whose route or status moved.

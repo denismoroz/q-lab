@@ -1421,6 +1421,35 @@ def with_split_day(spec: StrategySpec, index: pd.DatetimeIndex, rows: JudgedRows
     return spec.model_copy(update={"params": params})
 
 
+def stand_knowable_list(spec: StrategySpec, index: pd.DatetimeIndex, first: int, last: int,
+                        ruleset: RuleSet):
+    """The knowable-coins check of a plain spec's hand-picked list, made by the stand (rules
+    2026-11-04.1), or None when it does not apply or cannot be made.
+
+    Owner, 2026-11-04 («где дырка во фреймворке?», night/knowable_coins.yaml, docs/ONE_CHECK.md):
+    a list that was the obvious pick on every past day -- listed long enough and among the venue's
+    top coins by trailing turnover, computed by code from the venue's data -- is judged from the
+    start of the data, not from the day somebody wrote it down. A choice form or a second stage
+    carries its own check (`coins_knowable`); a spec that chooses causally keeps the old reading.
+    The check is the same code (`qlab.knowable_coins.check` on `raw_volume`, the raw cache of the
+    venue), on the judged window; no cache means no check, and the list is dated by hand."""
+    if (not ruleset.splits_by_data or spec.data.instruments is None
+            or spec.coins_knowable is not None or spec.selects_causally):
+        return None
+    from qlab import knowable_coins
+
+    try:
+        config = knowable_coins.load_config()
+        volume = knowable_coins.raw_volume(spec.data.source, config)
+        if volume is None or volume.empty:
+            return None
+        return knowable_coins.check(volume, spec.data.instruments, venue=spec.data.source,
+                                    start=index[first].date(), end=index[last].date(),
+                                    config=config)
+    except Exception:  # noqa: BLE001 - a check that cannot be made leaves the list dated by hand
+        return None
+
+
 def measured_min_capital(weights: pd.DataFrame, part_weights: pd.DataFrame,
                          orders: PlacedOrders | None, lo: int, hi: int,
                          min_leg_notional: float,
@@ -1816,18 +1845,24 @@ def evaluate_spec(
                 spec.instruments_chosen_at is None
                 or index[lo].date() >= spec.instruments_chosen_at
             )
+            obvious = False
             if ruleset.splits_by_data and not spec.selects_causally:
                 # Rules 2026-11-04.1: the forward third may begin before the list was written
-                # down. The list is point-in-time there only when it was known by the day the
-                # third begins: its own date (`instruments_chosen_at`, else the day the numbers
-                # were fixed), or the knowable-coins check (a list anybody could have written).
-                listed = spec.instruments_chosen_at or spec.params_fixed_at
-                known = spec.coins_knowable
-                list_precedes = (
-                    (known is not None and known.known_from is not None
-                     and index[lo].date() >= known.known_from)
-                    or (listed is not None and index[lo].date() >= listed))
-            honest = bool(panel.meta.get("universe_complete")) or (
+                # down. A list that passes the knowable-coins check (the obvious pick, computed by
+                # code from the venue's data; owner 2026-11-04) is point-in-time from the first
+                # day all its coins pass, whoever wrote it when. Only a list that fails it falls
+                # back to its own date (`instruments_chosen_at`, else the day the numbers were
+                # fixed).
+                known = spec.coins_knowable or knowable_list
+                if known is not None and known.known_from is not None:
+                    list_precedes = index[lo].date() >= known.known_from
+                    # an obvious pick knows nothing of the future on any part from that day,
+                    # the selection period included
+                    obvious = list_precedes and spec.data.instruments is not None
+                else:
+                    listed = spec.instruments_chosen_at or spec.params_fixed_at
+                    list_precedes = listed is not None and index[lo].date() >= listed
+            honest = bool(panel.meta.get("universe_complete")) or obvious or (
                 forward_part and spec.data.instruments is not None and list_precedes
             )
             measured["point_in_time_universe"] = 1.0 if honest else 0.0
@@ -1889,15 +1924,18 @@ def evaluate_spec(
         split_mode = ruleset.splits_fit_forward
         rows = judged_rows(spec, panel, coverage, ruleset)
         first, split, warmup, judged = rows.first, rows.split, rows.warmup, rows.judged
+        # Read by `_measure` (point-in-time of a hand-picked list, rules 2026-11-04.1).
+        knowable_list = stand_knowable_list(spec, index, rows.first, rows.last, ruleset)
         metrics = _measure(*judged, forward_part=split_mode and split.forward is not None,
                            years=True)
         if spec.judged_from is not None and first > 0:
             metrics["skipped_warmup_days"] = _days((0, first - 1))
-        if spec.coins_knowable is not None:
+        if (checked_list := spec.coins_knowable or knowable_list) is not None:
             # The knowable-coins check of the list (qlab.knowable_coins): 1 when every coin was a
-            # knowable pick from some day, and whether that day is the start of the data.
-            metrics["coins_knowable"] = float(spec.coins_knowable.known_from is not None)
-            metrics["coins_knowable_from_start"] = float(spec.coins_knowable.from_start)
+            # knowable pick from some day, and whether that day is the start of the data. For a
+            # plain spec the stand makes it (rules 2026-11-04.1, `stand_knowable_list`).
+            metrics["coins_knowable"] = float(checked_list.known_from is not None)
+            metrics["coins_knowable_from_start"] = float(checked_list.from_start)
         if spec.measure_hedge_timing:
             # Does the book pick WHEN to hedge better than chance, on the
             # judged part (docs/HEDGE_TIMING.md)? A description, read by no rule.
@@ -2242,6 +2280,7 @@ __all__ = [
     "split_day",
     "binds_split",
     "with_split_day",
+    "stand_knowable_list",
     "Evaluation",
     "JudgedRows",
     "RouteReview",

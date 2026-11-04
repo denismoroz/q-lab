@@ -438,7 +438,7 @@ def test_route_paper_when_passed_and_affordable(session, tmp_path) -> None:
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert result.metrics["min_capital_usd"] == pytest.approx(12.0 / 0.4)
     assert result.metrics["point_in_time_universe"] == 1.0
     assert result.metrics["accrual_applied"] == 1.0
@@ -561,7 +561,7 @@ def test_route_paper_and_the_capital_it_needed_when_min_capital_is_large(session
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert result.routing.required_capital_usd == pytest.approx(12000.0)
     assert result.rules_result.overall_passed is True
 
@@ -587,7 +587,7 @@ def test_the_capital_a_book_needs_is_measured_from_its_orders_not_its_weights(
     assert result.metrics["min_capital_from_orders"] == 1.0
     assert result.metrics["orders_opening"] == 2.0
     assert result.metrics["orders_skipped"] == 3.0
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
 
 
 def test_a_book_that_declares_no_orders_keeps_the_weights_number(session, tmp_path) -> None:
@@ -709,7 +709,7 @@ def test_snapshot_not_refetched_when_already_registered(session, tmp_path) -> No
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     assert result.error is None
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
 
 
 # --------------------------------------------------------------------------
@@ -759,7 +759,7 @@ def test_frab_like_multileg_spec_passes_atomic_execution_via_recovery(session, t
 
     assert result.error is None
     assert result.metrics["atomic_execution"] == 1.0
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
 
 
 def test_failed_venue_supported_names_the_venue_and_the_instruments(session, tmp_path) -> None:
@@ -853,7 +853,7 @@ def test_two_leg_binance_proxy_reads_execution_facts_from_hyperliquid(session, t
     assert result.metrics["atomic_execution"] == 1.0
     assert result.metrics["venue_supported"] == 1.0
     assert result.metrics["data_forward_available"] == 1.0
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert "read from hyperliquid, the spec's execution_venue; data from binance" in (
         result.routing.reason)
 
@@ -878,7 +878,7 @@ def test_an_execution_venue_equal_to_the_data_source_changes_nothing(session, tm
 
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert "execution_venue" not in result.routing.reason
 
 
@@ -907,7 +907,7 @@ def test_passed_venue_supported_has_no_venue_explanation(session, tmp_path) -> N
 
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert "adapter" not in result.routing.reason
     row = (session.query(Verdict)
            .filter(Verdict.trial_id == result.trial_id, Verdict.rule_id == "venue_supported")
@@ -1654,7 +1654,7 @@ def test_causal_selection_is_judged_from_its_first_choice_without_waiting(sessio
     result = evaluate_spec(spec, session=session, ruleset=ruleset)
 
     # No selection period: the forward test's own route stands, even when short.
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
     assert result.metrics["warmup_days"] == pytest.approx(2.0)
     assert result.metrics["selection_days"] == 0.0
     assert not any(k.startswith("fit_") for k in result.metrics)
@@ -2647,7 +2647,7 @@ def test_an_idea_with_a_choice_is_chosen_once_on_the_first_two_thirds(session, t
     assert m["forward_days"] == pytest.approx(10 + 1 / 24)
     assert "forward_days_needed" not in m and m["split_by_data"] == 1.0
     assert "params_fixed_in_forward" not in m  # code chose at the cut: nothing to read
-    assert result.routing.route == "paper"
+    assert result.routing.route == "paper", result.routing.reason
 
 
 def test_the_fixation_day_inside_the_forward_third_is_a_reading_not_a_rule(session, tmp_path
@@ -2672,8 +2672,21 @@ def test_the_fixation_day_inside_the_forward_third_is_a_reading_not_a_rule(sessi
     assert reading["params_fixed_before_forward"].holds is False
 
 
+def _venue_volume(btc_eth_rank_low: bool) -> pd.DataFrame:
+    """Daily traded value of twelve perpetuals from 2025-11-01: BTC and ETH the largest, or (with
+    `btc_eth_rank_low`) ETH the smallest of all every day, so never in the top 10."""
+    days = pd.date_range("2025-11-01", "2026-02-15", freq="D")
+    others = {f"C{i}": 1e6 * (i + 2) for i in range(10)}
+    values = {"BTC": 1e9, "ETH": 1e3 if btc_eth_rank_low else 5e8, **others}
+    return pd.DataFrame({k: [v] * len(days) for k, v in values.items()}, index=days)
+
+
 def test_a_hand_picked_list_written_inside_the_forward_third_is_not_point_in_time(
-        session, tmp_path) -> None:
+        session, tmp_path, monkeypatch) -> None:
+    """No venue data to run the knowable-coins check on: the list is dated by hand, as before."""
+    import qlab.knowable_coins as knowable_coins
+
+    monkeypatch.setattr(knowable_coins, "raw_volume", lambda venue, config=None: None)
     ruleset = _by_data_ruleset([CAPITAL_FIT_GENEROUS])
     kwargs = dict(session=session, ruleset=ruleset, check_lookahead=False, check_sources=False)
     late = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 25),
@@ -2684,6 +2697,47 @@ def test_a_hand_picked_list_written_inside_the_forward_third_is_not_point_in_tim
     assert late.metrics["point_in_time_universe"] == 0.0
     assert early.metrics["point_in_time_universe"] == 1.0
     assert undated.metrics["point_in_time_universe"] == 0.0
+
+
+def test_an_obvious_coin_list_is_judged_on_the_forward_third_whatever_its_fixation_day(
+        session, tmp_path, monkeypatch) -> None:
+    """Owner, 2026-11-04 («где дырка во фреймворке?»): a list that was the obvious pick on every
+    past day (listed long enough, top 10 by trailing turnover, computed by code from the venue's
+    data) is judged from the start of the data, not from the day it was written down. The stand
+    runs the check for a plain spec too, so a late fixation day does not fail its list."""
+    import qlab.knowable_coins as knowable_coins
+
+    monkeypatch.setattr(knowable_coins, "raw_volume",
+                        lambda venue, config=None: _venue_volume(btc_eth_rank_low=False))
+    result = evaluate_spec(
+        _month(session, tmp_path, params_fixed_at=date(2026, 1, 25),
+               params_fixed_evidence="a person, test"),
+        session=session, ruleset=_by_data_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE]),
+        check_lookahead=False, check_sources=False)
+    assert result.metrics["coins_knowable"] == 1.0
+    assert result.metrics["coins_knowable_from_start"] == 1.0
+    assert result.metrics["point_in_time_universe"] == 1.0
+    assert result.metrics["params_fixed_in_forward"] == 1.0  # still read, still decides nothing
+    assert result.routing.route == "paper", result.routing.reason
+
+
+def test_a_list_that_was_not_the_obvious_pick_still_fails_on_its_late_date(
+        session, tmp_path, monkeypatch) -> None:
+    import qlab.knowable_coins as knowable_coins
+
+    monkeypatch.setattr(knowable_coins, "raw_volume",
+                        lambda venue, config=None: _venue_volume(btc_eth_rank_low=True))
+    ruleset = _by_data_ruleset([CAPITAL_FIT_GENEROUS, HONEST_UNIVERSE])
+    kwargs = dict(session=session, ruleset=ruleset, check_lookahead=False, check_sources=False)
+    late = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 25),
+                                params_fixed_evidence="a person, test"), **kwargs)
+    assert late.metrics["coins_knowable"] == 0.0
+    assert late.metrics["point_in_time_universe"] == 0.0
+    assert late.routing.route == "reject" and "honest_universe" in late.routing.reason
+    # dated before the forward third, the same list is point-in-time there, as before
+    early = evaluate_spec(_month(session, tmp_path, params_fixed_at=date(2026, 1, 5),
+                                 params_fixed_evidence="a person, test"), **kwargs)
+    assert early.metrics["point_in_time_universe"] == 1.0
 
 
 def test_the_forward_length_is_never_a_reason_to_wait_under_the_new_rules() -> None:
