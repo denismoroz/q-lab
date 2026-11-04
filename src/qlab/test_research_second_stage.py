@@ -234,6 +234,32 @@ def test_an_experiment_that_doubles_an_open_idea_is_not_run_and_the_memo_says_so
     assert "дубль идеи old-idea" in memo.read_text(encoding="utf-8")
 
 
+def test_an_experiment_that_narrows_the_coin_list_without_a_source_is_not_run(
+        tmp_path, stand, second, monkeypatch) -> None:
+    """Owner 2026-11-04 (docs/COIN_SCOPE.md): Bv3 on two of Bv2's four coins is refused with the
+    reason in Russian, the refusal goes to the ledger, and an experiment on all four still runs."""
+    from qlab import one_check
+
+    noted: list[tuple[str, str]] = []
+    monkeypatch.setattr(one_check, "note_refusal",
+                        lambda idea_id, reason, spec_path, **kw: noted.append((idea_id, reason)))
+    memo = tmp_path / "memo.md"
+    memo.write_text("The memo.\n", encoding="utf-8")
+
+    def _coins(idea_id: str, coins: list[str]) -> Path:
+        return _write(tmp_path, _spec(idea_id).model_copy(
+            update={"params": {"lookback": 14, "coins": coins}}))
+
+    narrow = _coins("bv3-narrow", ["BTC", "ETH"])
+    whole = _coins("bv3-whole", ["BTC", "ETH", "SOL", "AVAX"])
+    lines = researcher.run_experiments(memo, [narrow, whole], name="s", noise_trials=1)
+    text = "\n".join(lines)
+    assert "не запущен — список монет сужен без источника" in text
+    assert stand == ["bv3-whole"]
+    assert [i for i, _ in noted] == ["bv3-narrow"]
+    assert noted[0][1].startswith("список монет сужен без источника")
+
+
 # ---- one idea, one check (docs/ONE_CHECK.md) ------------------------------------------------
 
 

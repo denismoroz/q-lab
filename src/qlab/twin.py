@@ -45,7 +45,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from qlab import knowable_coins, tree_writes, venue_split
+from qlab import coin_scope, knowable_coins, tree_writes, venue_split
 from qlab.card_fields import param_at
 from qlab.costs import DEVIATION_KEY
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
@@ -848,12 +848,18 @@ def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None,
 
 
 def _list_evidence(chosen: ChosenList, start: date, seconds: float | None,
-                   day: date | None, known: CoinsKnowable | None) -> str:
+                   day: date | None, known: CoinsKnowable | None, by_code: bool = False) -> str:
     cost = ("" if seconds is None else
             f" (hourly candles of every Binance perpetual take hours; these take about "
             f"{seconds / 60:.0f} minutes)")
     trades = (f"The twin trades only the {len(chosen.names)} columns {', '.join(chosen.names)} "
               f"({chosen.kind} of {chosen.owner}){cost}. ")
+    if by_code:
+        return (trades + "They are the data of a rule of code that chooses the coins each day "
+                "(`params.universe`: the first K by trailing traded value, reading earlier days "
+                "only), not a list somebody picked, so no coin of the history is known to have "
+                f"survived and the idea is judged from the start of the data ({start}) "
+                "(docs/COIN_SCOPE.md).")
     if known is not None and known.known_from is not None:
         checked = (f"Every coin of the list was knowable as a pick on the days it is judged: "
                    f"listed for {known.window_days} days and among the venue's top {known.top_k} "
@@ -1022,7 +1028,13 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                                 None if chosen is not None or honest_from is None
                                 else honest_from[0])
     known = day = None
-    if chosen is not None:
+    by_code = chosen is not None and coin_scope.coin_list(spec).by_code
+    if by_code:
+        # The columns are the data of a rule of code (`params.universe`: each day the first K coins
+        # by traded value, `qlab.top_coins`), not a pick: the rule reads earlier days only, so no
+        # day of the history knows who survived, and the idea is judged from the start of the data.
+        day = None
+    elif chosen is not None:
         day = chosen.chosen_at
         volume = volume_of(TWIN_VENUE) if volume_of is not None and honest_from is None else None
         if volume is not None:
@@ -1068,7 +1080,13 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         listing = (f"The twin trades only {len(chosen.names)} named columns "
                    f"({', '.join(chosen.names)}), the {chosen.kind} of {chosen.owner}, not the "
                    "whole market: ")
-        if known is not None and known.known_from is not None and day is None:
+        if by_code:
+            notes.append(f"The twin trades the {len(chosen.names)} columns of {chosen.owner}'s "
+                         "candidates for a rule of code that chooses the coins each day from "
+                         "earlier days only (`params.universe`), not a hand-picked list: no "
+                         "survivorship guard applies and it is judged from the start of the data "
+                         f"({data.start}).")
+        elif known is not None and known.known_from is not None and day is None:
             notes.append(listing + "every coin was knowable as a pick on every past day "
                          f"(top {known.top_k} by trailing volume, {known.source}), so no "
                          "survivorship guard applies and the twin is judged from the start of "
@@ -1104,7 +1122,8 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "params_fixed_at": dates[2],
         "params_fixed_evidence": _evidence(
             spec, grid, data.start, warm, label, dates, refit_every,
-            None if chosen is None else _list_evidence(chosen, data.start, seconds, day, known)),
+            None if chosen is None else _list_evidence(chosen, data.start, seconds, day, known,
+                                                       by_code)),
         "selects_causally": True,
         "sources": _sources(
             spec, grid, refit_every, _text(spec_path) or RETUNE_DOC, chosen,

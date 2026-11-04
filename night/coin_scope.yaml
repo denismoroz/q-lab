@@ -1,0 +1,24 @@
+# Which spec is the PARENT of a strategy family for the coin list (qlab.coin_scope,
+# docs/COIN_SCOPE.md).
+#
+# Owner, 2026-11-04, «да, делай оба» -- on the hole found the same day: the researcher narrowed
+# Bv2's four coins (BTC, ETH, SOL, AVAX) to two in the Bv3 experiment, because it based the
+# experiment on its own earlier two-coin experiment, and nobody had asked for two coins.
+#
+# A new experiment whose coin list is a strict part of its parent's list needs a source for the
+# narrowing (the owner's word in `sources["coins"]`, a declared choice, or a rule of code such as
+# "the first K coins by traded value"). The parent is the production spec of the family the
+# experiment belongs to: the family is found by the prefix of the idea id, else by the strategy
+# module the spec runs (`qlab.registry.families.strategy_key`).
+families:
+  bv2:
+    parent: specs/bv2-live.yaml
+    prefixes: ["bv2-", "strategy-b-v2"]
+  # Bv3 is Bv2's coin list with another hedge rule (cards/bv3.yaml): its parent for the coins is
+  # the same production book.
+  bv3:
+    parent: specs/bv2-live.yaml
+    prefixes: ["bv3-"]
+  frab:
+    parent: specs/frab-live.yaml
+    prefixes: ["frab-"]
