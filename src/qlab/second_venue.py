@@ -157,7 +157,10 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
         names = _listing_names(session)
     found: list[Candidate] = []
     refused: dict[str, str] = {}
-    for idea in session.query(Idea).filter(Idea.status == IdeaStatus.REJECTED).order_by(Idea.id):
+    for idea in session.query(Idea).filter(
+            Idea.status.in_([IdeaStatus.REJECTED, IdeaStatus.BENCH])).order_by(Idea.id):
+        # a bench idea with a Binance reject is open only because Hyperliquid is owed
+        # (`qlab.pipeline.venue_status`): the same queue runs it
         if idea.id.startswith("noise-") or is_stage2_child(idea):
             continue
         routed = latest_routed(session, idea.id)

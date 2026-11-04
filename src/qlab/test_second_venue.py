@@ -93,11 +93,9 @@ def _world(tmp_path, registry) -> None:
         _idea(s, "middle", IdeaStatus.REJECTED, rejected_on=date(2026, 10, 20))
         for name in ("young", "old", "middle"):
             _trial(s, name, "reject", "binance")
-        # not queued: rejected on Hyperliquid's own data, still open, no spec file, a second stage
+        # not queued: rejected on Hyperliquid's own data, no spec file, a second stage
         _idea(s, "hl-reject", IdeaStatus.REJECTED, rejected_on=date(2026, 10, 1))
         _trial(s, "hl-reject", "reject", "hyperliquid")
-        _idea(s, "still-open", IdeaStatus.BENCH)
-        _trial(s, "still-open", "reject", "binance")
         _idea(s, "no-spec", IdeaStatus.REJECTED, rejected_on=date(2026, 10, 3))
         _trial(s, "no-spec", "reject", "binance")
         _idea(s, "old-hl", IdeaStatus.REJECTED, parent="old", rejected_on=date(2026, 10, 2))
@@ -112,7 +110,7 @@ def _world(tmp_path, registry) -> None:
         _trial(s, "stale", "reject", "binance")
         _idea(s, "stale-hl", IdeaStatus.VALIDATED, parent="stale")
         _trial(s, "stale-hl", "paper", "hyperliquid", rules="2026-10-29.3")
-    for name in ("young", "old", "middle", "hl-reject", "still-open", "judged", "stale"):
+    for name in ("young", "old", "middle", "hl-reject", "judged", "stale"):
         _spec(tmp_path, name)
 
 
@@ -500,3 +498,18 @@ def test_the_last_time_of_an_idea_keeps_it_from_the_night_when_it_exceeds_the_st
     assert "old" not in seen
     ledger = second_venue.load_ledger(tmp_path / "ledger.json")
     assert ledger["old"]["seconds"] == 4800.0  # the heavy mark does not forget how long it took
+
+
+def test_an_open_idea_with_a_binance_reject_and_no_hyperliquid_run_is_queued_too(
+        tmp_path, registry) -> None:
+    """Under independent venues such an idea is open only because Hyperliquid is owed
+    (`qlab.pipeline.venue_status`); the queue that runs the closed ones runs it as well."""
+    _world(tmp_path, registry)
+    with registry.session_scope() as s:
+        _idea(s, "still-open", IdeaStatus.BENCH)
+        _trial(s, "still-open", "reject", "binance")
+    _spec(tmp_path, "still-open")
+
+    found, _ = _find(tmp_path, registry)
+
+    assert "still-open" in [c.idea_id for c in found]
