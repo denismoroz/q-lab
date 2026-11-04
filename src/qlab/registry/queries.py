@@ -408,27 +408,28 @@ def funnel_stats(session: Session) -> FunnelStats:
         _enum_value(cause): count for cause, count in shutdown_cause_rows if cause is not None
     }
 
-    stage_rows = (
-        session.query(Verdict.stage, func.count(Verdict.id)).group_by(Verdict.stage).all()
+    # One pass over the verdict table instead of five (2.75M rows on 2026-11-04: the funnel page
+    # took five to thirty seconds while a night or a restamp was writing): every count below is a
+    # sum of this one grouping by stage, outcome and whether a value was recorded.
+    groups = (
+        session.query(Verdict.stage, Verdict.passed, Verdict.value.is_(None),
+                      func.count(Verdict.id))
+        .group_by(Verdict.stage, Verdict.passed, Verdict.value.is_(None))
+        .all()
     )
-    verdicts_by_stage = {_enum_value(stage): count for stage, count in stage_rows}
-
-    passed = session.query(func.count(Verdict.id)).filter(Verdict.passed.is_(True)).scalar() or 0
-    failed = (
-        session.query(func.count(Verdict.id)).filter(Verdict.passed.is_(False)).scalar() or 0
-    )
-    unknown = (
-        session.query(func.count(Verdict.id))
-        .filter(Verdict.passed.is_(None), Verdict.value.is_(None))
-        .scalar()
-        or 0
-    )
-    measurement = (
-        session.query(func.count(Verdict.id))
-        .filter(Verdict.passed.is_(None), Verdict.value.isnot(None))
-        .scalar()
-        or 0
-    )
+    verdicts_by_stage: dict[str, int] = {}
+    passed = failed = unknown = measurement = 0
+    for stage, outcome, no_value, count in groups:
+        key = _enum_value(stage)
+        verdicts_by_stage[key] = verdicts_by_stage.get(key, 0) + count
+        if outcome is True:
+            passed += count
+        elif outcome is False:
+            failed += count
+        elif no_value:
+            unknown += count
+        else:
+            measurement += count
 
     return FunnelStats(
         ideas_by_status=ideas_by_status,

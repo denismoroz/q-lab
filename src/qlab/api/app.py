@@ -146,10 +146,20 @@ def create_app(*, warm: bool = False) -> FastAPI:
         return inbox_view(inbox_module.load(get_inbox_path()), load_cards(),
                           _registered_ids(session))["counts"]
 
+    funnel_cache: dict[str, Any] = {"at": 0.0, "data": None}
+
     @app.get("/api/funnel")
     def funnel(session: SessionDep) -> dict[str, Any]:
-        """The counts `queries.funnel_stats` computes — no extra aggregation."""
-        stats = funnel_stats(session)
+        """The counts `queries.funnel_stats` computes — no extra aggregation. The counts scan the
+        whole verdict table (millions of rows), so they are kept for a minute: the owner,
+        2026-11-04, «страница воронка - очень долго грузится»."""
+        import time
+
+        now = time.monotonic()
+        if funnel_cache["data"] is None or now - funnel_cache["at"] > 60:
+            funnel_cache["data"] = funnel_stats(session)
+            funnel_cache["at"] = now
+        stats = funnel_cache["data"]
         # How many STRATEGIES stand behind each status's count: variants of
         # one strategy share a parent (qlab.registry.families), and thirty
         # bench ideas were three strategies.
