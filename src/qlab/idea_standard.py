@@ -863,6 +863,7 @@ def compact(items: Sequence[Item]) -> list[dict[str, Any]]:
 def standard_all(session: Any, common: Shared | None = None) -> dict[str, Any]:
     """Every idea the standard applies to, with its items and the totals per item. A second stage
     of an idea (`<id>-hl`) is its parent's second venue and is not a row of its own."""
+    from qlab.bench_label import bench_block, bench_reasons, status_key
     from qlab.registry.models import Idea
     from qlab.registry.stages import is_stage2_child
     from qlab.registry.strategies import families_of
@@ -870,11 +871,17 @@ def standard_all(session: Any, common: Shared | None = None) -> dict[str, Any]:
     common = common or shared()
     rows = []
     families = families_of(session)
+    # The bench in the registry's three words, not the bare «bench» (owner, 2026-11-04: «на странице
+    # - Стандарт - такой статус - есть а в реестре - нет»).
+    reasons = bench_reasons(session)
     for idea in session.query(Idea).order_by(Idea.id):
         if skipped(idea) or is_stage2_child(idea):
             continue
         items = check(gather(session, idea, common))
+        reason = reasons.get(idea.id) if idea.status.value == "bench" else None
         rows.append({"id": idea.id, "title": idea.title, "status": idea.status.value,
+                     "status_key": status_key(idea.status.value, reason),
+                     "bench": bench_block(reason),
                      "family": families.get(idea.id, ("", "other"))[1], "have": have_count(items),
                      "items": compact(items)})
     return {"items": [{"number": d.number, "key": d.key, "title": d.title, "short": d.short}

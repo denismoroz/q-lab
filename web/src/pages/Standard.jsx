@@ -165,7 +165,7 @@ function Table({ data, chosen, onFamilies }) {
                   </Link>
                 </td>
                 <td className="px-2 py-1">
-                  <StatusBadge status={r.status} />
+                  <StatusBadge status={r.status} bench={r.bench} />
                 </td>
                 {r.items.map((item, k) => (
                   <Cell key={item.number} item={item} name={data.items[k].title} />
