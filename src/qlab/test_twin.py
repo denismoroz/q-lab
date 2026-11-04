@@ -684,7 +684,7 @@ def test_an_explicit_list_of_the_original_is_marked_too_and_loses_the_coins_bina
 
 
 def test_the_twin_with_a_list_survives_the_file_and_the_cli_prints_it(tmp_path, monkeypatch):
-    from qlab import own_numbers, twin_stage
+    from qlab import twin_stage
 
     monkeypatch.setattr(twin_stage, "_binance_listing",
                         lambda: _listing("BTC", "ETH", "SOL", "AVAX"))
