@@ -342,7 +342,7 @@ def test_the_check_survives_the_childs_file(tmp_path: Path) -> None:
     for coins, late in ((["BTC", "ETH"], None), (["BTC", "SOL"], {"SOL": 90})):
         volume = _hl_volume(late=late)
         child = stage2.translate(_hl_spec(coins), CONFIG, venue_names=set(coins),
-                                 volume_of=lambda venue: volume).spec
+                                 volume_of=lambda venue, v=volume: v).spec
         path = stage2.write_spec(child, PARENT, tmp_path)
         assert load_spec(path).coins_knowable == child.coins_knowable
         assert load_spec(path).judged_from == child.judged_from
