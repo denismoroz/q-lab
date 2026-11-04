@@ -376,23 +376,25 @@ def _agents_after_a_scan() -> list[dict]:
 def test_the_agents_lane_is_never_idle_while_one_of_its_steps_is_ready(jr, tmp_path) -> None:
     """A budget edge is the order of spending, not a wait: the lane takes the first READY step in
     the table's order, and the step that waits for the scan runs in the lane's next free slot."""
-    work = {"scan": 0.8, "health": 0.1, "prog": 0.3, "plan": 0.3, "new": 0.1}
+    # wide gaps between the steps' lengths: the test ran inside the programmer's checks under a
+    # loaded machine on 2026-11-04 and failed on a 0.05 s margin; slack is a second, not tenths
+    work = {"scan": 2.0, "health": 0.1, "prog": 0.3, "plan": 0.3, "new": 0.1}
     clock, outcome, _, _ = _lanes_run(jr, tmp_path, _agents_after_a_scan(), work)
     assert set(outcome.values()) == {"ok"}
     # prog and plan do not wait for the scan or for `health`: they start at once, in order
     t0, scan_end = clock.span("scan")
-    assert clock.span("prog")[0] - t0 < 0.2
+    assert clock.span("prog")[0] - t0 < 0.5
     assert clock.span("plan")[0] >= clock.span("prog")[1] - 1e-3
-    assert clock.span("plan")[1] < scan_end + 0.05
+    assert clock.span("plan")[1] < scan_end
     # `health` needs the scan's output and goes as soon as the scan has ended AND the lane is free
     assert clock.span("health")[0] >= scan_end - 1e-3
     # the lane's gaps: from the first start to the last end, it stood idle only while NO agent
     # step was ready (here: between `plan` ending and the scan ending, `health` is not ready)
     spans = sorted(clock.span(n) for n in ("prog", "plan", "health", "new"))
     idle = [(a_end, b_start) for (_, a_end), (b_start, _) in zip(spans, spans[1:], strict=False)
-            if b_start - a_end > 0.05]
+            if b_start - a_end > 0.25]
     for _, gap_end in idle:
-        assert gap_end <= scan_end + 0.05, "idle while a step was ready"
+        assert gap_end <= scan_end + 0.25, "idle while a step was ready"
     # `new` still comes after `health` (same lane, the table's order among the ready ones)
     assert clock.span("new")[0] >= clock.span("health")[1] - 1e-3
 
