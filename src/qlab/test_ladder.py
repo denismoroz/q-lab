@@ -472,7 +472,7 @@ def test_the_report_table_has_a_row_per_open_idea_and_counts_the_reasons(session
     assert ("| live-one | live | ✓ | · | ~ | ·/· | ✓ | · | ✓ | "
             "ни одна площадка не пройдена: на Binance — не проводилась, на Hyperliquid — рано "
             "судить |") in text
-    assert "| card-one | candidate | · | · | · | ·/· | · | · | · | " in text
+    assert "| card-one | ещё не прогонялась | · | · | · | ·/· | · | · | · | " in text
     assert "2 Binance, 3 Hyperliquid" in text
     assert "gone" not in text and "noise-" not in text
     assert "Не проводилось, по причинам" in text and "карточка без реализации" in text

@@ -24,8 +24,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from qlab.api.cards import card_summary, load_cards
+from qlab.api.cards import load_cards
 from qlab.api.deps import get_session
+from qlab.api.inbox import card_page, get_inbox_path, idea_path, inbox_view
 from qlab.api.registry_view import RegistryView
 from qlab.api.serializers import (
     idea_detail_json,
@@ -139,6 +140,12 @@ def create_app(*, warm: bool = False) -> FastAPI:
     # 1. Funnel
     # ------------------------------------------------------------------
 
+    def _inbox_counts(session: Session) -> dict[str, int]:
+        from qlab import ideas as inbox_module
+
+        return inbox_view(inbox_module.load(get_inbox_path()), load_cards(),
+                          _registered_ids(session))["counts"]
+
     @app.get("/api/funnel")
     def funnel(session: SessionDep) -> dict[str, Any]:
         """The counts `queries.funnel_stats` computes — no extra aggregation."""
@@ -161,6 +168,8 @@ def create_app(*, warm: bool = False) -> FastAPI:
             "decayed_by_shutdown_cause": stats.decayed_by_shutdown_cause,
             "ideas_by_latest_route": stats.ideas_by_latest_route,
             "calibration_ideas": stats.calibration_ideas,
+            # inbox -> card -> in the registry, not yet run -> run (qlab.api.inbox.idea_path)
+            "idea_path": idea_path(_inbox_counts(session), stats.ideas_by_status),
         }
 
     @app.get("/api/agents")
@@ -266,15 +275,10 @@ def create_app(*, warm: bool = False) -> FastAPI:
         detail["ladder"] = _ladder(session, idea_id)
         detail["bench"] = (detail["ladder"] or {}).get("bench")
         detail["family"] = family_of_root(detail["strategy"]["root"])
-        # How the strategy works, from its card (owner, 2026-10-24: «еще бы в
-        # карточку описание метода как хеджирование включается»).
+        # The idea's card (owner, 2026-11-04: «карточки кандидатов и реестр ... очень похоже на
+        # дупликацию»): the registry is the one place, so the card is read on this page.
         cards = load_cards()
-        card = next((c for c in cards if c["idea_id"] == idea_id), None)
-        detail["how_it_works"] = None if card is None else {
-            "plain_summary": card["plain_summary"],
-            "signal": card["parts"]["signal"]["fields"],
-            "sizing": card["parts"]["sizing"]["fields"],
-        }
+        detail["card"] = next((c for c in cards if c["idea_id"] == idea_id), None)
         detail["plain"] = _plain_page(session, idea, {c["idea_id"]: c for c in cards})
         return detail
 
@@ -538,18 +542,29 @@ def create_app(*, warm: bool = False) -> FastAPI:
         return found
 
     # ------------------------------------------------------------------
-    # 3. Candidate cards
+    # 3. Inbox and cards (owner, 2026-11-04: the registry is the one place for an idea that exists)
     # ------------------------------------------------------------------
 
-    @app.get("/api/cards")
-    def list_cards() -> dict[str, Any]:
-        return {"items": [card_summary(card) for card in load_cards()]}
+    def _registered_ids(session: Session) -> set[str]:
+        return {i for (i,) in session.query(Idea.id) if not i.startswith("noise-")}
+
+    @app.get("/api/inbox")
+    def inbox(session: SessionDep) -> dict[str, Any]:
+        """Ideas not yet in the registry and the stage of each (qlab.api.inbox); one already in
+        the registry is a link to its idea page, its card is read there."""
+        from qlab import ideas as inbox_module
+
+        return inbox_view(inbox_module.load(get_inbox_path()), load_cards(),
+                          _registered_ids(session))
 
     @app.get("/api/cards/{idea_id}")
-    def get_card(idea_id: str) -> dict[str, Any]:
+    def get_card(idea_id: str, session: SessionDep) -> dict[str, Any]:
+        """A card by its idea id, with `page`: where it is read now -- the idea page when the idea
+        is registered (old `/cards/<id>` links go there), the inbox page before that."""
         for card in load_cards():
             if card["idea_id"] == idea_id:
-                return card
+                registered = idea_id in _registered_ids(session)
+                return {**card, "registered": registered, "page": card_page(idea_id, registered)}
         raise HTTPException(status_code=404, detail=f"card not found: {idea_id}")
 
     # ------------------------------------------------------------------

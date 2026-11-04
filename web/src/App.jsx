@@ -2,7 +2,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import Funnel from './pages/Funnel.jsx'
 import Registry from './pages/Registry.jsx'
 import IdeaDetail from './pages/IdeaDetail.jsx'
-import Cards from './pages/Cards.jsx'
+import { CardRedirect, Inbox, InboxCard } from './pages/Inbox.jsx'
 import Trials from './pages/Trials.jsx'
 import Agents from './pages/Agents.jsx'
 import Pipeline from './pages/Pipeline.jsx'
@@ -12,7 +12,7 @@ const NAV = [
   { to: '/agents', text: 'Агенты' },
   { to: '/pipeline', text: 'Пайплайн' },
   { to: '/ideas', text: 'Реестр и кладбище' },
-  { to: '/cards', text: 'Карточки кандидатов' },
+  { to: '/inbox', text: 'Входящие' },
   { to: '/trials', text: 'Прогоны' },
 ]
 
@@ -53,8 +53,10 @@ export default function App() {
           <Route path="/pipeline" element={<Pipeline />} />
           <Route path="/ideas" element={<Registry />} />
           <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
-          <Route path="/cards" element={<Cards />} />
-          <Route path="/cards/:ideaId" element={<Cards />} />
+          <Route path="/inbox" element={<Inbox />} />
+          <Route path="/inbox/:ideaId" element={<InboxCard />} />
+          <Route path="/cards" element={<Navigate to="/inbox" replace />} />
+          <Route path="/cards/:ideaId" element={<CardRedirect />} />
           <Route path="/trials" element={<Trials />} />
           <Route path="*" element={<p className="text-sm">Страница не найдена.</p>} />
         </Routes>

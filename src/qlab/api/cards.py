@@ -125,22 +125,8 @@ def load_cards(cards_dir: Path | None = None) -> list[dict[str, Any]]:
     return cards
 
 
-def card_summary(card: dict[str, Any]) -> dict[str, Any]:
-    """Short form for the card index."""
-    driver = card["parts"]["driver"]["fields"]
-    return {
-        "idea_id": card["idea_id"],
-        "title": card["title"],
-        "found_at": card["found_at"],
-        "who_pays": driver.get("who_pays"),
-        "protection_is_empty": card["protection_is_empty"],
-        "source_count": len(card["sources"]),
-    }
-
-
 __all__ = [
     "CARD_PARTS",
-    "card_summary",
     "get_cards_dir",
     "load_cards",
     "parse_card",

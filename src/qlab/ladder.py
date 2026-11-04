@@ -66,6 +66,7 @@ from qlab.registry.stages import (
     latest_routed,
     stage2_child,
 )
+from qlab.status_words import status_ru
 
 TWIN_SUFFIX = "-causal"
 BINANCE_SUFFIX = "-binance"
@@ -1324,7 +1325,7 @@ def report_lines(session: Session, ledgers: Ledgers | None = None) -> list[str]:
         s = found.steps
         # «скамейка» is three different things (owner, 2026-11-03): the label says which
         bench = bench_reason_of_ladder(found)
-        status = BENCH_LABEL_RU[bench] if bench is not None else found.status
+        status = BENCH_LABEL_RU[bench] if bench is not None else status_ru(found.status)
         money = "/".join(SYMBOL[m.outcome] for m in s[3].money)
         cells = [SYMBOL[s[0].outcome], SYMBOL[s[1].outcome], SYMBOL[s[2].outcome], money,
                  SYMBOL[s[4].outcome], SYMBOL[s[5].outcome], SYMBOL[s[6].outcome]]

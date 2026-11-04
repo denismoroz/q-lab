@@ -5,7 +5,9 @@
 // falls through unchanged rather than being hidden.
 
 export const IDEA_STATUS = {
-  candidate: 'кандидат',
+  // The stored status stays `candidate`; the word «кандидат» also named the inbox's cards, so
+  // the owner reads "registered, never run" (owner, 2026-11-04).
+  candidate: 'ещё не прогонялась',
   speccing: 'формализация',
   implemented: 'реализована',
   validated: 'прошла, ждёт решения',

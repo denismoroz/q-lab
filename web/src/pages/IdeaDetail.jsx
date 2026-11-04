@@ -12,6 +12,7 @@ import OverlayPanels from '../components/OverlayPanels.jsx'
 import Anomalies from '../components/Anomalies.jsx'
 import Ladder from '../components/Ladder.jsx'
 import PlainTop from '../components/PlainTop.jsx'
+import CardBody from '../components/CardBody.jsx'
 import {
   ASSET_CLASS,
   PROFILE,
@@ -92,6 +93,7 @@ export default function IdeaDetail() {
         {ideaQuery.data && (
           <>
             <PlainTop plain={ideaQuery.data.plain} />
+            <CardSection card={ideaQuery.data.card} />
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
@@ -104,7 +106,6 @@ export default function IdeaDetail() {
             <PaperCheck check={ideaQuery.data.paper_check} />
             <PaperRule rule={ideaQuery.data.paper_rule} />
             <Decay decay={ideaQuery.data.decay} />
-            <HowItWorks how={ideaQuery.data.how_it_works} ideaId={ideaQuery.data.id} />
             <ResearchNotes notes={ideaQuery.data.research_notes} />
             <Header idea={ideaQuery.data} />
             <StrategyLine strategy={ideaQuery.data.strategy} />
@@ -496,31 +497,23 @@ function weeksWord(n) {
   return 'недель'
 }
 
-// From the idea's card (cards/<idea_id>.yaml): what the strategy does, in
-// plain words, and the exact rule for entering and leaving.
-function HowItWorks({ how, ideaId }) {
-  if (!how) return null
-  const rows = [
-    ['когда входит', how.signal?.entry],
-    ['когда выходит', how.signal?.exit],
-    ['сколько', how.sizing?.rule],
-  ].filter(([, v]) => v)
+// The idea's card (cards/<idea_id>.yaml): the sources, the six parts, feasibility and prior. Owner,
+// 2026-11-04: the registry is the one place for an idea that exists, so the card is a section of
+// its page, not a page of its own. Closed by default: the plain top above already says what the
+// strategy does.
+function CardSection({ card }) {
+  if (!card) return null
   return (
-    <section className="rounded border border-slate-200 p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-500">Как работает стратегия</div>
-      <p className="mt-2 text-sm text-slate-700">{how.plain_summary}</p>
-      <dl className="mt-3 space-y-2 text-sm">
-        {rows.map(([k, v]) => (
-          <div key={k}>
-            <dt className="text-xs uppercase tracking-wide text-slate-500">{k}</dt>
-            <dd className="text-slate-700">{v}</dd>
-          </div>
-        ))}
-      </dl>
-      <Link className="mt-3 inline-block text-xs text-sky-700 hover:underline" to={`/cards/${ideaId}`}>
-        вся карточка: источники, защита, как умрёт →
-      </Link>
-    </section>
+    <Panel title="Карточка" subtitle="Разбор идеи по схеме cards/SCHEMA.md: откуда она, как входит и выходит, чем защищена, как умрёт.">
+      <details>
+        <summary className="cursor-pointer text-sm text-sky-700">
+          {card.plain_summary ? 'показать карточку целиком' : 'показать карточку (пересказа в ней нет)'}
+        </summary>
+        <div className="mt-4">
+          <CardBody card={card} />
+        </div>
+      </details>
+    </Panel>
   )
 }
 
