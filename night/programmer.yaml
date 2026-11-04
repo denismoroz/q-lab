@@ -50,6 +50,18 @@ night_share: 0.5
 # stage's allowance (`night_share`); when it runs out the request stops where it is, worktree
 # and remarks kept, and the next night goes on.
 max_iterations: 7
+# Owner, 2026-11-04: «делай все три по порядку разделяя находки на Critical, hight, medium, low.
+# цикл останавливать когда все critical and hight пофикшены». On the night of 2026-11-04 both
+# requests ran all seven iterations and failed (the reviewer found a new, smaller remark every
+# round) and the step took 178.7 minutes and 6.1M tokens. Now every finding has a severity
+# (CRITICAL, HIGH, MEDIUM, LOW): the loop is accepted when code's checks pass and no CRITICAL or
+# HIGH finding is open; MEDIUM and LOW are a follow-up list on the request (`qlab code list`,
+# `qlab code followup <id>` after the merge). A new finding outside the files the request touches
+# blocks nothing unless it is CRITICAL. The whole step also has a time limit for the night: a
+# request in progress stops before its next writer pass (worktree and findings kept) and the next
+# night goes on; nothing new starts. A writer pass that has begun finishes, so the step may run a
+# little over.
+max_minutes_per_night: 60
 # What a worktree lacks that the tests read (2026-10-30, request 2026-10-28-1: 34 tests failed
 # in its worktree and none because of its work). Worktrees live in data/programmer/worktrees, so
 # the sibling repository the tests cite as `<checkout>/../funding-rate-arbitrage` is looked for

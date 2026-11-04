@@ -439,6 +439,7 @@ class _Levels(_Calls):
     def __init__(self):
         super().__init__()
         self.plan_prompts: list[str] = []
+        self.review_prompts: list[str] = []
         self.plan_args: list[dict] = []
 
 
@@ -804,6 +805,7 @@ def _reviewer_says(monkeypatch, write, verdicts, plans=(PLAN,)):
     def fake(budget, prompt, **kw):
         if kw["agent"] == "programmer-review":
             calls.append("programmer-review")
+            calls.review_prompts.append(prompt)
             reply = verdicts[min(turn["n"], len(verdicts) - 1)]
             turn["n"] += 1
             return SimpleNamespace(text=reply, exit_code=0)
@@ -832,7 +834,7 @@ def test_a_remark_goes_back_to_the_writer_and_the_second_round_is_accepted(
             (wt / "pkg" / "strategy" / "tests" / "test_band.py").unlink()
 
     calls = _reviewer_says(monkeypatch, with_leftover, [
-        "GAP: pkg/strategy/tests/test_band.py is an empty leftover: remove it\nVERDICT: GAP",
+        "GAP: HIGH: pkg/strategy/tests/test_band.py is an empty leftover: remove it\nVERDICT: GAP",
         "VERDICT: OK"])
     req = _request([])
     done = []
@@ -846,8 +848,8 @@ def test_a_remark_goes_back_to_the_writer_and_the_second_round_is_accepted(
     assert calls.cwds[0] == calls.cwds[1]  # the same worktree
     second = calls.prompts[1]
     assert "round 2 of at most 7" in second
-    assert "reviewer: pkg/strategy/tests/test_band.py" in second
-    assert "every remark, the small ones too" in second
+    assert "reviewer [HIGH]: pkg/strategy/tests/test_band.py" in second
+    assert "MEDIUM and LOW findings do not block" in second
     assert not (Path(req.worktree) / "pkg/strategy/tests/test_band.py").exists()
     assert req.commit and req.review == [] and req.remarks == []
     assert done == [(1, "queued"), (2, "ready")]  # saved after every finished iteration
@@ -889,7 +891,7 @@ def test_an_iteration_the_environment_ended_does_not_count_and_the_loop_goes_on(
     """The second round's tests cannot be judged (the base checkout could not be made ready):
     that round is not one of the seven, and the next session goes on with the same remarks."""
     calls = _reviewer_says(monkeypatch, _good_change, [
-        "GAP: add the second assertion\nVERDICT: GAP", "VERDICT: OK"])
+        "GAP: HIGH: add the second assertion\nVERDICT: GAP", "VERDICT: OK"])
     real = prog.judge_tests
     seen = {"n": 0}
 
@@ -905,7 +907,7 @@ def test_an_iteration_the_environment_ended_does_not_count_and_the_loop_goes_on(
     _run(req, cfg, tmp_path)
     assert req.status == "queued" and req.iterations == 1  # round 2 did not count
     assert req.env_stops == 1 and req.attempts == 0 and req.problems[0].startswith("environment:")
-    assert req.remarks == ["reviewer: add the second assertion"]  # kept for the next session
+    assert req.remarks == ["reviewer [HIGH]: add the second assertion"]  # kept for the next session
     _run(req, cfg, tmp_path)
     assert req.status == "ready", req.problems
     assert req.iterations == 2 and req.env_stops == 0
@@ -918,7 +920,7 @@ def test_the_budget_stops_the_loop_where_it_is_and_the_next_night_resumes_it(
     from qlab.budget import CandidateExhausted
 
     calls = _reviewer_says(monkeypatch, _good_change, [
-        "GAP: wire the setting into the list\nVERDICT: GAP", "VERDICT: OK"])
+        "GAP: HIGH: wire the setting into the list\nVERDICT: GAP", "VERDICT: OK"])
     inner = prog.run_agent
     writes = {"n": 0}
 
@@ -935,7 +937,7 @@ def test_the_budget_stops_the_loop_where_it_is_and_the_next_night_resumes_it(
     with pytest.raises(CandidateExhausted):
         _run(req, cfg, tmp_path)
     assert req.status == "queued" and req.iterations == 1
-    assert req.remarks == ["reviewer: wire the setting into the list"]
+    assert req.remarks == ["reviewer [HIGH]: wire the setting into the list"]
     worktree = Path(req.worktree)
     assert (worktree / "pkg/strategy/tests/test_window_setting.py").is_file()  # work kept
     # the next night: no new plan, the same worktree, the remark is the first thing said
@@ -1145,3 +1147,216 @@ def test_tests_and_setup_run_without_bytecode_whatever_the_environment_of_the_ni
 
     entry = {"id": "x-1", "repo": "qlab", "what": "w", "status": "failed", "env_failures": ["t::a"]}
     assert any("Должно быть 0" in line for line in report_lines([entry], []))
+
+
+# ---- severity of the reviewer's findings (owner, 2026-11-04) ----------------------------------
+
+
+def test_every_finding_line_carries_a_severity_and_a_line_without_one_is_high_and_unparsed():
+    findings = prog.parse_review(
+        "GAP: CRITICAL: signal.py changes the default\n"
+        "GAP: [medium] docs/BLOCKS.md misses a line\n"
+        "GAP: LOW - rename the helper\n"
+        "GAP: the generator prompt does not name the block\n"
+        "VERDICT: GAP")
+    assert [(f["severity"], f["unparsed"]) for f in findings] == [
+        ("CRITICAL", False), ("MEDIUM", False), ("LOW", False), ("HIGH", True)]
+    assert findings[1]["text"] == "docs/BLOCKS.md misses a line"
+    assert findings[3]["text"] == "the generator prompt does not name the block"
+    # no verdict, or a GAP verdict that names nothing blocking, is itself one HIGH finding
+    assert prog.parse_review("GAP: LOW: a nit")[-1]["severity"] == "HIGH"
+    assert prog.parse_review("GAP: LOW: a nit\nVERDICT: GAP")[-1]["unparsed"] is True
+    assert prog.parse_review("GAP: LOW: a nit\nVERDICT: OK") == [
+        {"severity": "LOW", "text": "a nit", "unparsed": False}]
+    # the old helper: only CRITICAL and HIGH fail a review
+    assert prog.review_lines("GAP: MEDIUM: a doc line\nVERDICT: OK") == (True, [])
+    assert prog.review_lines("GAP: HIGH: a bug\nVERDICT: GAP") == (False, ["a bug"])
+
+
+def test_the_review_prompt_defines_the_four_severities_with_the_remarks_of_the_bad_night():
+    for word in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        assert f"  {word} " in prog.REVIEW
+    assert "strategies/plain/blocks.yaml" in prog.REVIEW  # MEDIUM: a missing plain phrase
+    assert "does not name yet" in prog.REVIEW  # MEDIUM: the generator's prompt
+    assert "GAP: <SEVERITY>:" in prog.REVIEW
+    assert "reported only when it is CRITICAL" in prog.REVIEW  # the scope rule
+
+
+def test_a_change_with_only_medium_and_low_findings_is_accepted_and_keeps_them_as_follow_ups(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: MEDIUM: pkg/strategy/signal.py: the docs line for the setting is missing\n"
+        "GAP: LOW: pkg/strategy/signal.py: rename the helper\nVERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready", req.problems
+    assert req.iterations == 1 and calls.count("programmer") == 1
+    assert req.review == [] and req.remarks == [] and req.commit
+    assert [(f["severity"], f["outside"]) for f in req.followups] == [
+        ("MEDIUM", False), ("LOW", False)]
+    entry = req.history[0]
+    assert entry["result"] == "accepted" and entry["followups"] == 2
+    from dataclasses import asdict
+
+    text = "\n".join(prog.report_lines([asdict(req)], [req]))
+    assert "не мешают принять работу" in text and "среднее: pkg/strategy/signal.py" in text
+    assert "низкое: pkg/strategy/signal.py: rename the helper" in text
+    assert f"qlab code followup {req.id}" in text
+    assert "к слиянию приложен список замечаний" in text  # in the owner's waiting list
+
+
+def test_a_critical_finding_blocks_even_beside_an_ok_verdict_and_goes_back_to_the_writer(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: CRITICAL: pkg/strategy/signal.py changes the default window\nVERDICT: OK",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready" and req.iterations == 2
+    assert [h["result"] for h in req.history] == ["review", "accepted"]
+    assert req.history[0]["by_severity"] == {"CRITICAL": 1}
+    assert "reviewer [CRITICAL]: pkg/strategy/signal.py changes the default window" in \
+        calls.prompts[1]
+
+
+def test_a_gap_without_a_severity_blocks_as_high_and_is_reported_as_unparsed(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: the generator prompt does not name the block\nVERDICT: GAP", "VERDICT: OK"])
+    req = _request([])
+    done = []
+    prog.run_request(req, _two_level_config(repo), budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt", plans=tmp_path / "plans",
+                     checkpoint=lambda r: done.append(list(r.findings)))
+    assert req.status == "ready" and req.iterations == 2
+    assert req.history[0]["unparsed"] == 1 and req.history[0]["remarks"] == 1
+    assert "reviewer [HIGH]: the generator prompt does not name the block" in calls.prompts[1]
+    from dataclasses import asdict
+
+    entry = {**asdict(req), "review": ["the generator prompt does not name the block"],
+             "findings": done[0], "status": "failed"}
+    assert "оценки важности не было, считается высоким" in "\n".join(
+        prog.report_lines([entry], []))
+
+
+def test_the_writer_gets_the_open_blocking_findings_and_only_the_medium_ones_it_can_reach(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/strategy/signal.py: window(0) must be refused\n"
+        "GAP: MEDIUM: pkg/strategy/tests/test_window_setting.py: add a docstring\n"
+        "GAP: MEDIUM: pkg/strategy/signal.py: the module header misses the new setting\n"
+        "GAP: LOW: pkg/strategy/signal.py: rename the helper\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready"
+    second = calls.prompts[1]
+    assert "reviewer [HIGH]: pkg/strategy/signal.py: window(0) must be refused" in second
+    assert "Optional -- MEDIUM findings in files you have changed already" in second
+    assert "add a docstring" in second and "module header misses" in second
+    assert "rename the helper" not in second  # LOW is never asked for
+    # the reviewer of round 2 is told what was raised, and to keep inside the change
+    assert "window(0) must be refused" in calls.review_prompts[1]
+    assert "do not raise new ones outside the scope" in calls.review_prompts[1]
+
+
+def test_a_new_non_critical_finding_outside_the_change_blocks_nothing_but_is_recorded(
+        repo, tmp_path, monkeypatch):
+    _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/strategy/signal.py: window(0) must be refused\nVERDICT: GAP",
+        "GAP: HIGH: pkg/elsewhere/other_module.py: has a stale comment\n"
+        "GAP: LOW: pkg/elsewhere/other_module.py: wording\nVERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready" and req.iterations == 2, req.problems
+    assert [f["outside"] for f in req.followups] == [True, True]
+    assert [f["severity"] for f in req.followups] == ["HIGH", "LOW"]  # the label is kept
+    assert "other_module.py" in req.raised_files and "signal.py" in req.raised_files
+
+
+def test_a_new_critical_finding_outside_the_change_still_blocks(repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/strategy/signal.py: window(0) must be refused\nVERDICT: GAP",
+        "GAP: CRITICAL: pkg/elsewhere/other_module.py: now sends orders on import\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready" and req.iterations == 3
+    assert "reviewer [CRITICAL]: pkg/elsewhere/other_module.py" in calls.prompts[2]
+
+
+def test_the_first_review_may_name_any_file_and_a_finding_naming_no_file_stays_in_scope(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/elsewhere/other_module.py: is not updated\nVERDICT: GAP",
+        "GAP: HIGH: the default of window() is not covered by a test\nVERDICT: GAP",
+        "VERDICT: OK"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "ready" and req.iterations == 3
+    assert "other_module.py: is not updated" in calls.prompts[1]  # round 1: any file counts
+    assert "default of window() is not covered" in calls.prompts[2]  # no file named: in scope
+
+
+def test_the_same_blocking_remark_three_times_still_stops_the_loop(repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/strategy/signal.py: window(0) must be refused\nVERDICT: GAP"])
+    req = _request([])
+    _run(req, _two_level_config(repo), tmp_path)
+    assert req.status == "blocked" and req.iterations == 3
+    assert calls.count("programmer") == 3 and "three times" in req.problems[-1]
+
+
+def test_the_time_limit_stops_a_request_between_passes_and_the_next_night_resumes_it(
+        repo, tmp_path, monkeypatch):
+    calls = _reviewer_says(monkeypatch, _good_change, [
+        "GAP: HIGH: pkg/strategy/signal.py: window(0) must be refused\nVERDICT: GAP",
+        "GAP: MEDIUM: pkg/strategy/signal.py: header\nVERDICT: OK"])
+    req = _request([])
+    cfg = _two_level_config(repo)
+    asked = []
+
+    def time_up() -> bool:
+        asked.append(1)
+        return len(asked) > 1  # the time is up once the first iteration is over
+
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt", plans=tmp_path / "plans", time_up=time_up)
+    assert req.status == "queued" and req.iterations == 1
+    assert calls.count("programmer") == 1  # no second pass was started
+    assert "время шага «Программист»" in req.stopped and "после 1 итераций" in req.stopped
+    assert req.remarks == ["reviewer [HIGH]: pkg/strategy/signal.py: window(0) must be refused"]
+    assert req.findings and Path(req.worktree).is_dir() and req.minutes > 0
+    worktree = req.worktree
+    prog.run_request(req, cfg, budget=ExplicitNoBudget("t"), session=None,
+                     worktrees=tmp_path / "wt", plans=tmp_path / "plans")
+    assert req.status == "ready" and req.iterations == 2 and req.worktree == worktree
+    assert req.stopped is None and calls.count("programmer-plan") == 1
+    assert "window(0) must be refused" in calls.prompts[1]
+
+
+def test_a_follow_up_request_is_made_only_by_the_owner_from_a_merged_request():
+    queue: list = []
+    req = _request(queue)
+    req.followups = [
+        {"severity": "MEDIUM", "text": "docs/BLOCKS.md misses a line", "unparsed": False,
+         "round": 1, "outside": False},
+        {"severity": "LOW", "text": "rename the helper", "unparsed": False, "round": 1,
+         "outside": False}]
+    req.status = "ready"
+    with pytest.raises(ValueError, match="merge it first"):
+        prog.followup(queue, req, date(2026, 11, 5))
+    req.status = "merged"
+    made = prog.followup(queue, req, date(2026, 11, 5))
+    assert made.status == "queued" and made.id == "2026-11-05-1" and made.repo == req.repo
+    assert made.kind == "other" and made.source == f"owner, follow-up of {req.id}"
+    assert "1. [MEDIUM] docs/BLOCKS.md misses a line" in made.why
+    assert "2. [LOW] rename the helper" in made.why
+    assert req.followed_up == made.id
+    with pytest.raises(ValueError, match="has its follow-up already"):
+        prog.followup(queue, req, date(2026, 11, 5))
+    bare = prog.enqueue(queue, repo="demo", what="another", why="y", source="owner",
+                        day=date(2026, 11, 5))
+    bare.status = "merged"
+    with pytest.raises(ValueError, match="no recorded follow-up"):
+        prog.followup(queue, bare, date(2026, 11, 5))

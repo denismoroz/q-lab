@@ -24,6 +24,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -729,6 +730,8 @@ def write_report(day: date, state: dict) -> Path:
         if coded.get("stopped"):
             lines.append(f"- остановлено: {coded['stopped']}; продолжит в следующую ночь")
             lines.append("")
+        if line := programmer_time_line(state.get("programmer_time")):
+            lines += [line, ""]
     if (read := state.get("catalogue")) is not None:
         from qlab.agents.cataloguer import load_ledger
         from qlab.agents.cataloguer import report_lines as catalogue_lines
@@ -1462,6 +1465,7 @@ def _stage_note(name: str, ctx: NightContext) -> str | None:
 _TIME_NOTES = {
     # step -> (where the stage keeps its time in the state, the command that runs an idea by hand)
     "recheck": ("recheck_time", ""),
+    "programmer": ("programmer_time", ""),
     "waiting": ("waiting_time", "qlab twins run --only {idea}"),
     "twins": ("twins", "qlab twins run --only {idea}"),
     "overlays": ("overlays", "qlab overlays run --only {idea}"),
@@ -2106,6 +2110,30 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
                      source=f"research director, directions of {directions.date}", day=day)
     prog.save_queue(queue)
     done = {e["id"] for e in entry["entries"]}
+    # The step's time for the night (`max_minutes_per_night`, owner 2026-11-04: the step took 178.7
+    # minutes on the night of 2026-11-04): the minutes already spent tonight (a re-run of the stage
+    # keeps them) plus this run's. Nothing new starts when it is up, and a request in progress
+    # stops before its next writer pass, worktree and findings kept.
+    limit_minutes = cfg.get("max_minutes_per_night")
+    prior_minutes = float(entry.get("minutes_spent") or 0.0)
+    started = time.monotonic()
+
+    def minutes_spent() -> float:
+        return prior_minutes + (time.monotonic() - started) / 60
+
+    def time_up() -> bool:
+        return limit_minutes is not None and minutes_spent() >= float(limit_minutes)
+
+    def note_time() -> None:
+        block = {"limit_minutes": limit_minutes, "minutes_spent": round(minutes_spent(), 1)}
+        if time_up():
+            block["time_up"] = True
+            waiting = [r.id for r in queue if r.status == "queued" and prog._started(r)]
+            if waiting:
+                block["deferred"] = waiting
+        entry["minutes_spent"] = block["minutes_spent"]
+        state["programmer_time"] = block
+
     max_iterations = int(cfg.get("max_iterations", prog.DEFAULT_MAX_ITERATIONS))
     per_night = int(cfg.get("per_night", 1))
     share = float(cfg.get("night_share") or 1.0)
@@ -2114,6 +2142,8 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
         if req is None:
             break
         if past_stop(stop_at, state, "programmer"):
+            break
+        if time_up():
             break
         try:
             with session_scope() as session:
@@ -2127,7 +2157,7 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
                 prog.run_request(
                     req, cfg, session=session, budget=CandidateBudget(
                         night=night_budget, stage=Stage.IMPLEMENT, idea_id=None, cap_tokens=cap),
-                    checkpoint=lambda _r: prog.save_queue(queue))
+                    checkpoint=lambda _r: prog.save_queue(queue), time_up=time_up)
         except CandidateExhausted as stop:
             # This request's share of the stage's allowance is spent: the loop stops where it is
             # (its worktree and remarks are kept) and the next night goes on from there. The other
@@ -2137,6 +2167,7 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
                            "продолжит в следующую ночь")
         except (NightExhausted, BudgetExhausted) as stop:
             entry["stopped"] = str(stop)
+            note_time()
             prog.save_queue(queue)
             save_state(day, state)
             return
@@ -2144,8 +2175,24 @@ def programmer_stage(day: date, state: dict, *, config: Path = PROGRAMMER,
             prog.environment_stop(req, exc)
         entry["entries"].append(asdict(req))
         done.add(req.id)
+        note_time()
         prog.save_queue(queue)
         save_state(day, state)
+    note_time()
+    save_state(day, state)
+
+
+def programmer_time_line(block: dict | None) -> str | None:
+    """The report's line for the programmer step's minutes (`max_minutes_per_night`)."""
+    if not block or block.get("minutes_spent") is None:
+        return None
+    limit = block.get("limit_minutes")
+    line = (f"Шаг шёл {block['minutes_spent']:g} минут"
+            + (f" из {limit:g} на ночь" if limit else " (предела по времени нет)"))
+    if block.get("time_up"):
+        waiting = ", ".join(block.get("deferred") or []) or "нет"
+        line += f"; время вышло, начатые запросы продолжат в следующую ночь: {waiting}"
+    return line + "."
 
 
 def worth_assessing(session, results: list[dict]) -> list[dict]:

@@ -1654,8 +1654,34 @@ def code_list() -> None:
         if r.env_failures:
             typer.echo(f"    {len(r.env_failures)} tests fail on the untouched base too "
                        "(the environment's, not the agent's)")
-        for problem in r.problems + [f"review: {g}" for g in r.review]:
+        shown = {f["text"]: f["severity"] for f in r.findings}
+        for problem in r.problems + [
+                f"review [{shown.get(g, 'HIGH')}]: {g}" for g in r.review]:
             typer.echo(f"    {problem.splitlines()[0]}")
+        if r.followups:
+            typer.echo(f"    {len(r.followups)} follow-up remarks (MEDIUM/LOW, they do not block"
+                       + (f"; qlab code followup {r.id} after the merge)" if not r.followed_up
+                          else f"; made into request {r.followed_up})"))
+            for f in r.followups:
+                typer.echo(f"      [{f['severity']}]" + (" (outside the change)"
+                                                          if f.get("outside") else "")
+                           + f" {f['text'].splitlines()[0]}")
+
+
+@code_app.command("followup")
+def code_followup(request_id: str = typer.Argument(...)) -> None:
+    """THE OWNER'S COMMAND: make the MEDIUM and LOW remarks recorded on a merged request into a new
+    queued request. Never done by the night on its own."""
+    from datetime import UTC, datetime
+
+    prog, queue, req = _code_request(request_id)
+    try:
+        made = prog.followup(queue, req, datetime.now(UTC).date())
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    prog.save_queue(queue)
+    typer.echo(f"{req.id}: follow-up queued as {made.id} ({len(req.followups)} remarks)")
 
 
 @code_app.command("answer")
