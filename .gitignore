@@ -101,3 +101,6 @@ data/one_check/
 
 # backups written by repair scripts
 data/backups/
+
+# the double check: its ledger of refusals and of ideas already checked (docs/DUPLICATES.md)
+data/duplicates/
