@@ -3,6 +3,7 @@ largest traded value each day, the leaver sold and unhedged, the skip for a miss
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -45,9 +46,25 @@ def test_a_coin_that_leaves_the_first_k_is_sold_and_unhedged_at_the_next_rebalan
     assert bar == 1248 and leave["time"].hour == 0, "the daily rebalance is at the day's first bar"
     assert run.weights[["B", "B-SPOT"]].iloc[bar:].abs().to_numpy().sum() == 0.0
     assert run.weights["B-SPOT"].iloc[bar - 1] != 0.0, "B was held the bar before"
-    # the leaver's money goes to the joiner, who starts a new book at once
+    # the leaver's money goes to the joiner, up to a slot's money (300 / 2), who starts at once
     joiner = [e for e in run.log if e["kind"] == "join"][-1]
-    assert joiner["coin"] == "D" and joiner["capital"] == pytest.approx(leave["proceeds"])
+    assert joiner["coin"] == "D"
+    assert joiner["capital"] == pytest.approx(min(leave["proceeds"], 150.0))
+
+
+def test_a_joiner_never_works_with_more_than_a_slot_s_money() -> None:
+    """bv3-research-topk-coins, 2026-11-04: a K = 4 joiner got up to 254 of a 64 slot, the
+    leaver's profit and set-aside cash put back to work although the book declares it does not
+    reinvest (docs/research/bv3-topk-2026-11-04.md). The gain stays cash."""
+    base = kit.market(coins=FOUR)
+    paths = {c: base.prices[c].to_numpy() for c in FOUR}
+    paths["B"] = 100.0 * np.cumprod(np.full(HOURS, 1.0007))
+    panel = kit.market(coins=FOUR, dollar_volume={"D": kit.spike_from(1200)}, paths=paths)
+    run = FastReleaseGate().run(panel, _params())
+    leave = next(e for e in run.log if e["kind"] == "leave")
+    joiner = [e for e in run.log if e["kind"] == "join"][-1]
+    assert leave["coin"] == "B" and leave["proceeds"] > 160.0
+    assert joiner["coin"] == "D" and joiner["capital"] == 150.0
 
 
 def test_the_money_is_split_equally_among_the_k_coins_at_the_start() -> None:

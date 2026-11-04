@@ -63,10 +63,55 @@ def test_a_leaving_book_is_closed_at_frabs_costs_and_its_money_goes_to_the_joine
     fees = leave["equity_before"] - leave["proceeds"]
     # hedge bought back and spot sold: at most the spot and perp takers plus slippage on the book
     assert 0 < fees < 0.0025 * leave["equity_before"]
-    assert joins[2]["coin"] == "D" and joins[2]["capital"] == pytest.approx(leave["proceeds"])
+    # the joiner gets what the leaver brought back, up to a slot's money (300 / 2)
+    assert joins[2]["coin"] == "D"
+    assert joins[2]["capital"] == pytest.approx(min(leave["proceeds"], 150.0))
     # The stayer's book is not touched: it is not closed, and it joined once, at the start.
     assert [e["coin"] for e in run.log if e["kind"] == "leave"] == ["B"]
     assert [e["coin"] for e in joins].count("A") == 1
+
+
+def _swap_with_b(b_path: np.ndarray, capital: float = 300.0):
+    """A held, then dropped for D at bar 1344 (D's volume rises at 1200), B on `b_path`."""
+    base = market(coins=FOUR)
+    paths = {c: base.prices[c].to_numpy() for c in FOUR}
+    paths["B"] = b_path
+    panel = market(coins=FOUR, dollar_volume={"D": spike_from(1200)}, paths=paths)
+    run = LiveBv2().run(panel, universe_params(capital=capital))
+    leave = next(e for e in run.log if e["kind"] == "leave")
+    join = next(e for e in run.log if e["kind"] == "join" and e["coin"] == "D")
+    assert leave["coin"] == "B" and leave["time"] == join["time"] == panel.prices.index[1344]
+    return run, leave, join
+
+
+def test_a_leaver_s_profit_stays_cash_and_the_joiner_gets_a_slot_s_money() -> None:
+    """The defect of 2026-11-04 (docs/research/bv3-topk-2026-11-04.md): the joiner got the
+    leaver's whole equity, the ratchet's set-aside cash included, so the money at work grew with
+    the profit while the percent of it was summed over the starting money (`reinvests_profit`
+    False). A slot's money is the capital over n, and the rest stays cash."""
+    rising = 100.0 * np.cumprod(np.full(HOURS, 1.0007))  # up 40% over B's stay
+    run, leave, join = _swap_with_b(rising)
+    assert leave["proceeds"] > 180.0, "B gained over its stay"
+    assert join["capital"] == 150.0
+    bar = run.book_equity.index.get_loc(join["time"])
+    # the rotation moves no money out of the strategy: only the closing fees leave it
+    lost = run.book_equity.iloc[bar - 1] - run.book_equity.iloc[bar]
+    assert abs(lost) < 0.01 * run.book_equity.iloc[bar]
+    # the surplus is cash in no coin: D's spot is what a slot's money buys -- the size A's spot
+    # had when A's book started with its 150 -- not what B's equity would buy
+    def spot_usd(coin: str, at: int) -> float:
+        return float(run.weights[f"{coin}-SPOT"].iloc[at] * run.book_equity.iloc[at])
+
+    assert spot_usd("D", bar) == pytest.approx(spot_usd("A", FIRST), rel=0.01)
+
+
+def test_a_leaver_that_lost_money_hands_on_what_it_brought_back() -> None:
+    # a crash the hedge cannot see coming: the slow rule hedges only after it
+    falling = 100.0 * np.cumprod(np.full(HOURS, 1.0001))
+    falling[1300:] *= 0.6
+    _, leave, join = _swap_with_b(falling)
+    assert leave["proceeds"] < 150.0
+    assert join["capital"] == pytest.approx(leave["proceeds"])
 
 
 def test_before_the_first_rebalance_the_money_waits_as_cash() -> None:

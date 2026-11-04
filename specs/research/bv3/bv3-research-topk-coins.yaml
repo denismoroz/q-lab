@@ -26,7 +26,9 @@
 #      coin takes its place, and the run counts such coin-days (counts["universe_top_without_spot"]).
 #      A coin that leaves the first K has its hedge bought back and its spot sold at the next
 #      rebalance (qlab.strategies.live._bv2_mechanisms, `_leave`), at the book's own costs, and its
-#      money is split among the coins that join.
+#      money is split among the coins that join, at most 257 / K each: what a leaver brings back
+#      above that stays cash, as the ratchet's set-aside cash does (fixed 2026-11-04, before it the
+#      joiner got the leaver's whole equity; docs/research/bv3-topk-2026-11-04.md).
 #   2. The list of candidates is every coin that was EVER among the first 6 by the 30-day traded
 #      value of Binance's perpetuals and has a spot candle file in the lab's cache: 70 coins,
 #      made by code on 2026-11-04 (qlab.top_coins.coins_ever_in_top(read_daily_value(

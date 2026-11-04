@@ -289,6 +289,53 @@ class Translation:
     """Why the book cannot be held on the venue: a REQUIRED column (a spot leg, usually) it
     does not list. The run is "not evaluable" with these reasons; nothing is dropped
     silently, because a book without one of its legs is another mechanism."""
+    dropped_candidates: list[str] = field(default_factory=list)
+    """Candidates of a coin-list rule (`params.universe.candidates`, Bv2's top_liquid) that the
+    venue cannot hold: no perpetual, or no spot leg under the same coin, in the stage 2 list.
+    Stage 1's names; the rule chooses among the rest."""
+
+
+#: The coin-list rule whose candidates name venue columns (`_bv2_mechanisms.UniverseRule`).
+_COIN_LIST_RULE = "top_liquid"
+
+
+def _universe_candidates(params: object, held: Callable[[str], str | None], path: str = "params"
+                         ) -> tuple[object, list[str], list[str]]:
+    """`params` with the candidates of every coin-list rule in it (`universe: {rule: top_liquid,
+    candidates: [...]}`, at any depth: a wrapper such as `Retune` keeps it under `base_params`)
+    renamed to the venue's coins and cut to the ones the venue can hold; (new params, stage 1
+    names dropped, problems). `held(coin)` is the venue's name of a coin whose perpetual and spot
+    leg are both in the stage 2 list, None when one is missing.
+
+    It is the same translation the instrument list gets ("монет первого этапа, которых нет на
+    Hyperliquid, не торгуем"): a candidate is a name of a column, not a number, and a candidate
+    with no column was a crash of the run (bv3-research-topk-coins-hl, 2026-11-04: «Bv2 needs
+    column '1000BONK'; this panel has none»). A rule left with no candidate is a problem."""
+    if isinstance(params, Mapping):
+        out: dict = {}
+        dropped: list[str] = []
+        problems: list[str] = []
+        for key, value in params.items():
+            if (key == "universe" and isinstance(value, Mapping)
+                    and value.get("rule") == _COIN_LIST_RULE
+                    and isinstance(value.get("candidates"), list)):
+                kept: list[str] = []
+                for coin in value["candidates"]:
+                    found = held(str(coin))
+                    if found is None:
+                        dropped.append(str(coin))
+                    elif found not in kept:
+                        kept.append(found)
+                if not kept:
+                    problems.append(f"none of the {len(value['candidates'])} candidates of "
+                                    f"{path}.universe has both a perpetual and a spot leg here")
+                out[key] = {**value, "candidates": kept}
+                continue
+            out[key], more, issues = _universe_candidates(value, held, f"{path}.{key}")
+            dropped += more
+            problems += issues
+        return out, dropped, problems
+    return params, [], []
 
 
 def strategy_sources(code_ref: str) -> tuple[str, ...] | None:
@@ -351,7 +398,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     With `instruments` or `required_instruments` named, `venue_names` (what the
     venue lists) maps them; a coin it does not list is dropped from the list --
     not traded -- and named in `dropped`. `problems` non-empty means no spec could
-    be made (the whole list is missing)."""
+    be made (the whole list is missing).
+
+    The candidates of a coin-list rule (`params.universe.candidates`) are names of columns too:
+    each is renamed to the venue's coin and kept only when the stage 2 list has both its
+    perpetual and its spot leg, the rest named in `dropped_candidates` -- the one place a
+    parameter is touched, and only its names."""
     problems: list[str] = []
     dropped: list[str] = []
     data = spec.data
@@ -376,13 +428,27 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         unavailable = [absence_reason(n, config) for n in dict.fromkeys(required)
                        if venue_name(n, venue_names) is None]
         required = list(dict.fromkeys(mapped))  # an unmapped name stays: the run says it is absent
+    params = copy.deepcopy(spec.params)
+    dropped_candidates: list[str] = []
+    if venue_names is not None:
+        listed = set(instruments) if instruments is not None else set(venue_names)
+
+        def held(coin: str) -> str | None:
+            perp = venue_name(coin, venue_names)
+            if perp is None or perp not in listed or f"{perp}{SPOT_SUFFIX}" not in listed:
+                return None
+            spot = venue_name(f"{coin}{SPOT_SUFFIX}", venue_names)
+            return perp if spot == f"{perp}{SPOT_SUFFIX}" else None
+
+        params, dropped_candidates, issues = _universe_candidates(params, held)
+        problems += issues
     only_on = strategy_sources(spec.code_ref)
     if only_on is not None and config.venue not in only_on:
         problems.append(
             f"the strategy {spec.code_ref} runs only on a panel of {', '.join(only_on)} "
             f"(valid_sources), so it has no version on {config.venue}")
     if problems:
-        return Translation(None, problems, dropped, unavailable)
+        return Translation(None, problems, dropped, unavailable, dropped_candidates)
 
     child_data = SpecData(
         source=config.venue, interval=data.interval, include_spot=data.include_spot,
@@ -427,6 +493,11 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     if dropped:
         notes.append(f"{len(dropped)} instrument(s) of stage 1 are not listed on {config.venue} "
                      f"and are not traded: {', '.join(dropped)}.")
+    if dropped_candidates:
+        notes.append(f"{len(dropped_candidates)} candidate(s) of the coin-list rule "
+                     f"(universe.candidates) have no perpetual or no spot leg on {config.venue} "
+                     "and are not candidates here; the rule chooses among the rest: "
+                     f"{', '.join(dropped_candidates)}.")
     if no_data:
         notes.append("Of those, listed by the venue but with no candle in the window, so treated "
                      "as not listed: " + "; ".join(f"{name} ({why})" for name, why in
@@ -472,7 +543,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     child = spec.model_copy(update={**own_list,
         "idea_id": f"{spec.idea_id}{CHILD_SUFFIX}",
         "title": f"{spec.title} (второй этап: {config.venue})",
-        "params": copy.deepcopy(spec.params),
+        "params": params,
         "data": child_data,
         "costs": SpecCosts(taker_fee_bps=config.taker_fee_bps,
                            slippage_bps=config.slippage_bps),
@@ -485,7 +556,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                                   else f"Inherited from stage 1 ({spec.idea_id}): {evidence}"),
         "sources": sources,
     })
-    return Translation(child, [], dropped, unavailable)
+    return Translation(child, [], dropped, unavailable, dropped_candidates)
 
 
 # --------------------------------------------------------------------------
@@ -723,6 +794,8 @@ class Stage2Result:
     no_data: dict = field(default_factory=dict)
     """Contracts the venue lists that have no candle in the window (delisted before it): a part of
     `dropped`, with the reason each."""
+    dropped_candidates: list = field(default_factory=list)
+    """Candidates of a coin-list rule the venue cannot hold (`Translation.dropped_candidates`)."""
     unavailable: list = field(default_factory=list)
     """Required columns the venue does not list, with the cited reason each (the run is
     not evaluable for them)."""
@@ -1025,6 +1098,7 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                if spec.data.instruments is not None else {})
     translation = translate(spec, config, venue_names=venue_names, no_data=no_data)
     result.dropped = translation.dropped
+    result.dropped_candidates = translation.dropped_candidates
     result.no_data = no_data
     result.unavailable = translation.unavailable
     if translation.spec is None:
@@ -1218,6 +1292,10 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
     if stage2.get("dropped"):
         lines.append("монет первого этапа, которых нет на Hyperliquid, не торгуем: "
                      f"{len(stage2['dropped'])}")  # type: ignore[arg-type]
+    if stage2.get("dropped_candidates"):
+        lines.append("монет из списка, среди которых код выбирает, без контракта или без обычного "
+                     "рынка на Hyperliquid, в выбор не берём: "
+                     f"{len(stage2['dropped_candidates'])}")  # type: ignore[arg-type]
     if stage2.get("no_data"):
         lines.append("из них в списке площадки, но без свечей в окне (сняты с торгов раньше), "
                      "поэтому считаются отсутствующими: "

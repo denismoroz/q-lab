@@ -40,7 +40,9 @@ by: perp_dollar_volume, window_days: 30, candidates: [...]}` is "each day, the K
 largest 30-day traded value": the rank of a day reads only earlier bars, only coins whose perp AND
 spot can open a book that day compete (a coin without a spot price cannot be held, and the next
 coin takes its place), a coin that leaves the first K has its hedge bought back and its spot sold
-at the next rebalance (`_leave`), and its money is split among the coins that join. The run counts
+at the next rebalance (`_leave`), and its money is split among the coins that join, each getting at
+most a slot's money (`capital_usd / K`: a leaver's gain stays cash, `qlab.strategies.live.bv2`,
+"Capital"). The run counts
 (`counts["universe_top_without_spot"]`) the coin-days a coin was in the first K by the perp's
 traded value but had no spot leg to hold, so the skip is visible, not silent.
 
