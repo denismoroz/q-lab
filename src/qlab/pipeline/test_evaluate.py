@@ -2588,8 +2588,9 @@ def test_the_window_is_the_one_judged_rows_already_cuts_its_warm_up_included() -
 def test_the_latest_rules_cut_by_data_and_inherit_everything_else() -> None:
     from qlab.rules.loader import load, load_latest
 
-    latest, before = load_latest(), load("2026-11-03.1")
-    assert latest.splits_by_data  # 2026-11-04.1 and every version based on it
+    assert load_latest().splits_by_data  # 2026-11-04.1 and every version based on it
+    # 2026-11-04.2 adds a rule and retires one (qlab.test_earning_rule); 2026-11-04.1 moved none
+    latest, before = load("2026-11-04.1"), load("2026-11-03.1")
     assert latest.holdout_share.share == pytest.approx(1 / 3)
     assert {r.id for r in latest.rules} == {r.id for r in before.rules}
     assert latest.noise_bar == before.noise_bar and not before.splits_by_data
