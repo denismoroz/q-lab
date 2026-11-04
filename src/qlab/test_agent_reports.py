@@ -94,8 +94,8 @@ def test_the_implementer_row_shows_the_block_and_the_routes_of_the_three_version
     (run,) = {a["key"]: a["runs"] for a in out["agents"]}["implementer"]
     assert run["did"] == "карточки: cards/a.yaml, cards/b.yaml, cards/c.yaml"
     assert run["result"].startswith("код написан и прошёл проверки: 2 из 3")
-    assert ("cards/a.yaml: написанная: рано судить: пока не отличить от удачи; с выбором кода: прошла все "
-            "правила, ждёт решения владельца; база: отвергнута") in run["result"]
+    assert ("cards/a.yaml: написанная: рано судить: пока не отличить от удачи; с выбором кода: "
+            "прошла все правила, ждёт решения владельца; база: отвергнута") in run["result"]
     assert "cards/c.yaml: написанная: тяжёлые данные" in run["result"]
     assert "cards/a.yaml: блок `momentum` написан впервые" in run["details"]
     assert "cards/b.yaml: source: x" in run["details"]
