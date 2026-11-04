@@ -316,6 +316,7 @@ def label_events(ev: pd.DataFrame, spot: pd.Series) -> pd.DataFrame:
     the fill is read. NaN when the window runs past the data."""
     s = spot.ffill(limit=24)
     out = ev.copy()
+    out["fill"] = pd.to_datetime(out["fill"], utc=True)  # an empty table has no dtype
     last = spot.last_valid_index()
     for h in HORIZONS_DAYS:
         later = out["fill"] + pd.Timedelta(days=h)

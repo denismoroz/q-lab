@@ -369,11 +369,14 @@ def _book_events_last(rec, coins: list[CoinData]) -> pd.DataFrame:
         if cd.coin not in rec.stepped.columns:
             continue
         ev = hs.label_events(hs.events(rec, cd.coin), cd.spot_own)
+        if not len(ev):
+            continue
         in_set = pd.Series(False, index=cd.index)
         in_set.iloc[cd.stepped[cd.mask]] = True
         ev = ev[in_set.reindex(ev["decision"]).to_numpy(dtype=bool) & (ev["decision"] >= CUT)]
         evs.append(ev.assign(coin=cd.coin))
-    return pd.concat(evs, ignore_index=True)
+    return pd.concat(evs, ignore_index=True) if evs else pd.DataFrame(
+        columns=["fill", "decision", "kind", "liquidation", "ret_7d"])
 
 
 def _per_coin_book_events(v, coins: list[CoinData], panel, params) -> pd.DataFrame:
@@ -385,7 +388,9 @@ def _per_coin_book_events(v, coins: list[CoinData], panel, params) -> pd.DataFra
         g, w = _full_gates(v, [cd]) if v is not None else ({}, {})
         rec = hs.run_book(sub, {**p_one, "coins": [cd.coin], "capital_usd": PER_COIN_CAPITAL},
                           gates=g or None, wishes=w or None)
-        evs.append(_book_events_last(rec, [cd]))
+        ev = _book_events_last(rec, [cd])
+        if len(ev):
+            evs.append(ev)
     return pd.concat(evs, ignore_index=True)
 
 
