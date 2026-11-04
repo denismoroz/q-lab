@@ -189,7 +189,7 @@ def test_the_morning_report_and_the_agents_page_show_the_second_stage(
     (tmp_path / "2026-10-27.json").write_text(json.dumps(state, ensure_ascii=False))
     agent = {a["key"]: a for a in reports.agent_reports(state_dir=tmp_path)["agents"]}
     run = agent["researcher"]["runs"][0]
-    assert run["result"] == "исходы экспериментов: ждёт проверки вперёд — 1"  # nested: not counted
+    assert run["result"] == "исходы экспериментов: рано судить — 1"  # nested: not counted
     assert "xsmom: второй этап, Hyperliquid, прогон 77: прошла" in run["details"]
     assert any(d.startswith("xsmom: exp (прогон 41)") for d in run["details"])
 

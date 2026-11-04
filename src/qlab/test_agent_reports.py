@@ -34,7 +34,7 @@ def test_each_agent_gets_what_it_did_and_what_came_of_it(tmp_path, monkeypatch) 
     agents = {a["key"]: a for a in out["agents"]}
     research = agents["researcher"]["runs"][0]
     assert research["did"] == "1 стратегий (bv2); экспериментов 2"
-    assert research["result"] == "исходы экспериментов: ждёт проверки вперёд — 1, отказ — 1"
+    assert research["result"] == "исходы экспериментов: рано судить — 1, отказ — 1"
     assert research["details"][0].startswith("bv2: bv2-x (прогон 1)")
     assessor = agents["assessor"]
     assert [r["day"] for r in assessor["runs"]] == ["2026-10-27", "2026-10-26"]
@@ -94,7 +94,7 @@ def test_the_implementer_row_shows_the_block_and_the_routes_of_the_three_version
     (run,) = {a["key"]: a["runs"] for a in out["agents"]}["implementer"]
     assert run["did"] == "карточки: cards/a.yaml, cards/b.yaml, cards/c.yaml"
     assert run["result"].startswith("код написан и прошёл проверки: 2 из 3")
-    assert ("cards/a.yaml: написанная: ждёт проверки на новых данных; с выбором кода: прошла все "
+    assert ("cards/a.yaml: написанная: рано судить: пока не отличить от удачи; с выбором кода: прошла все "
             "правила, ждёт решения владельца; база: отвергнута") in run["result"]
     assert "cards/c.yaml: написанная: тяжёлые данные" in run["result"]
     assert "cards/a.yaml: блок `momentum` написан впервые" in run["details"]
