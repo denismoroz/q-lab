@@ -2,7 +2,7 @@
 # the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
 idea_id: gen-xsmom-liu-equal-weekly-hl
 title: 'Недельное продолжение движения монет на Binance: пятая часть лучших против пятой части худших,
-  равные доли, срок оценки 1–4 недели: числа выбирает код раз в месяц только по прошлому, история Binance
+  равные доли, срок оценки 1–4 недели: числа выбирает код один раз, на первых 2/3 данных, история Binance
   с 2019 (второй этап: hyperliquid)'
 code_ref: qlab.strategies.retune:Retune
 params:
@@ -31,7 +31,8 @@ params:
         signal.lookback_days: 21
       lookback_days=28:
         signal.lookback_days: 28
-  refit_every: M
+  refit_every: once
+  choose_at: split
   window: expanding
   objective: sharpe_net
   score_costs:
@@ -59,11 +60,11 @@ differs_from_source:
 - The paper's 30-day filter is a whole-sample filter in the review work, not an admission rule on each
   date; the block applies it on each date.
 - The paper has no costs and no funding; the stand charges both.
-- 'One check of gen-xsmom-liu-equal-weekly: the numbers it trades are chosen by code, every month, from
-  returns realised before the choice (the lists declared in docs/MECHANISMS.md, mechanism crypto-xs-momentum,
-  row signal.lookback_days: 7, 14, 21, 28 (Liu, Tsyvinski, Wu 2019)); the data is Binance''s history,
-  a proxy for binance''s market, judged for Binance itself: Binance''s costs and minimum leg and Binance''s
-  facts about execution (docs/VENUE_SPLIT.md).'
+- 'One check of gen-xsmom-liu-equal-weekly: the numbers it trades are chosen by code, once, at the cut
+  of the window at its last third, from returns realised on the first 2/3, and held on the last third
+  (the lists declared in docs/MECHANISMS.md, mechanism crypto-xs-momentum, row signal.lookback_days: 7,
+  14, 21, 28 (Liu, Tsyvinski, Wu 2019)); the data is Binance''s history, a proxy for binance''s market,
+  judged for Binance itself: Binance''s costs and minimum leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
 - 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
   the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
   where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
@@ -79,23 +80,22 @@ differs_from_source:
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 noise_universe: panel
 measure_hedge_timing: false
-params_fixed_at: '2019-12-01'
-params_fixed_evidence: 'Inherited from stage 1 (gen-xsmom-liu-equal-weekly): The wrapper''s first causal
-  choice (qlab.strategies.retune, docs/RETUNE.md): the data starts 2019-09-08; the longest warm-up read
-  from the parameters is 30 days (min_history_days = 30), so the book can first trade on 2019-10-08; a
-  candidate is eligible only after one whole month re-tuning period, so the first re-tuning after 2019-10-08
-  is 2019-11-01 and the first choice is made at the one after it, 2019-12-01. This is warm-up arithmetic
-  read generically from the parameters (every day, hour, window and lookback number, whatever the strategy
-  does with it), not a result. If the strategy needs more than the parameters show (enough instruments
-  listed on Binance, a signal that waits for history), the true first choice is later and the days before
-  it are judged as flat days. The grid is the idea''s declared lists (signal.lookback_days), 4 candidates.
-  What this does not prove: the lists were declared with the idea before its check ran; what was seen
-  of the history when they were declared is not recorded, so the choice is only as honest as the lists
-  are.'
+params_fixed_at: '2024-06-15'
+params_fixed_evidence: 'Inherited from stage 1 (gen-xsmom-liu-equal-weekly): The numbers are chosen once
+  by code (qlab.strategies.retune, refit_every: once, choose_at: split; docs/RETUNE.md), at the stand''s
+  cut: the first day of the last third of the judged window (rules 2026-11-04.1; owner 2026-11-04: «все
+  стратегии должны проходить проверку вперед по 2/3 и 1/3 правилу»), by the after-cost Sharpe each value
+  realised on the strategy''s own money before that day, and held to the end. The stand puts the day in
+  for the window it runs on, so this date is the cut of the spec''s own window (2019-09-08..2026-11-03):
+  2024-06-15. The data starts 2019-09-08; the longest warm-up read from the parameters is 30 days (min_history_days
+  = 30), so the book can first trade on 2019-10-08. The grid is the idea''s declared lists (signal.lookback_days),
+  4 candidates. What this does not prove: the lists were declared with the idea before its check ran;
+  what was seen of the history when they were declared is not recorded, so the choice is only as honest
+  as the lists are.'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
-  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
-    месяц»'
+  refit_every: 'rules/2026-11-04.1.yaml (split_by_data); owner 2026-11-04: «все стратегии должны проходить
+    проверку вперед по 2/3 и 1/3 правилу»: the declared values are chosen once, on the first 2/3'
   window: 'docs/RETUNE.md (expanding window: no number introduced)'
   objective: docs/RETUNE.md (Sharpe after costs)
   data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
@@ -129,6 +129,8 @@ sources:
     32) is used and marked unmeasured'
   min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
     (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  choose_at: 'rules/2026-11-04.1.yaml (split_by_data); owner 2026-11-04: «все стратегии должны проходить
+    проверку вперед по 2/3 и 1/3 правилу»: at the stand''s cut, the first day of the last third (qlab.pipeline.evaluate.with_split_day)'
   min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
     MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
     by'

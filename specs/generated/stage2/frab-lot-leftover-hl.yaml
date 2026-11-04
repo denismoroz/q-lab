@@ -2,7 +2,7 @@
 # the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
 idea_id: frab-lot-leftover-hl
 title: 'Стенд FRAB с остатком монеты после округления до лота биржи (Hyperliquid, с 2026-06-01): числа
-  выбирает код раз в месяц только по прошлому, история Binance с 2019 (второй этап: hyperliquid)'
+  выбирает код один раз, на первых 2/3 данных, история Binance с 2019 (второй этап: hyperliquid)'
 code_ref: qlab.strategies.retune:Retune
 params:
   inner_code_ref: qlab.strategies.agent.lot_leftover:LotLeftover
@@ -48,7 +48,8 @@ params:
         leftover_hedged: 0
       leftover_hedged=1:
         leftover_hedged: 1
-  refit_every: M
+  refit_every: once
+  choose_at: split
   window: expanding
   objective: sharpe_net
   score_costs:
@@ -85,16 +86,16 @@ unexpressed_mechanisms:
 - The leftover is re-read each hour, so the harness books a very small turnover cost on its drift that
   the live account does not pay.
 differs_from_source:
-- 'One check of frab-lot-leftover: the numbers it trades are chosen by code, every month, from returns
-  realised before the choice (the lists declared in cards/frab-lot-leftover.yaml); the data is Binance''s
-  history, a proxy for hyperliquid''s market, judged for Binance itself: Binance''s costs and minimum
-  leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
+- 'One check of frab-lot-leftover: the numbers it trades are chosen by code, once, at the cut of the window
+  at its last third, from returns realised on the first 2/3, and held on the last third (the lists declared
+  in cards/frab-lot-leftover.yaml); the data is Binance''s history, a proxy for hyperliquid''s market,
+  judged for Binance itself: Binance''s costs and minimum leg and Binance''s facts about execution (docs/VENUE_SPLIT.md).'
 - '2 named instrument(s) are not listed on Binance and are not traded: PURR, PURR-SPOT.'
 - 'The twin trades only 10 named columns (AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, HYPE, HYPE-SPOT,
-  SOL, SOL-SPOT), the data.instruments of frab-lot-leftover, not the whole market: the list was chosen
-  by 2026-06-01 and would know which coins survived if applied to the history before it (survivorship),
-  so the twin is judged only from 2026-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08
-  are warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+  SOL, SOL-SPOT), the data.instruments of frab-lot-leftover, not the whole market: the list was knowable
+  only from 2025-07-01 (night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily
+  traded value of the previous 30 days, binance candles in data/raw), so the twin is judged only from
+  2025-07-01 (judged_from = instruments_chosen_at); the days before are warm-up for the choice.'
 - 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
   the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
   minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
@@ -105,7 +106,10 @@ differs_from_source:
   stage 1 (frab-lot-leftover) on hyperliquid''s own perpetual contracts listed at each bar; nothing was
   refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
-- Judged from 2026-06-01, the day the instrument list was known (instruments_chosen_at); the days before
+- 'Knowable-coins check on hyperliquid''s own listing and volumes: Монета AVAX за всю историю данных не
+  была в первой десятке по обороту на Hyperliquid: список считается выбранным вручную и оценивается со
+  дня, когда его записали.'
+- Judged from 2025-07-01, the day the instrument list was known (instruments_chosen_at); the days before
   it are warm-up.
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
@@ -141,33 +145,32 @@ required_instruments:
 - HYPE
 - PURR
 - SOL
-params_fixed_at: '2019-12-01'
-params_fixed_evidence: 'Inherited from stage 1 (frab-lot-leftover): The wrapper''s first causal choice
-  (qlab.strategies.retune, docs/RETUNE.md): the data starts 2019-09-08; the longest warm-up read from
-  the parameters is 30 days (cap_min_hold_hours = 720), so the book can first trade on 2019-10-08; a candidate
-  is eligible only after one whole month re-tuning period, so the first re-tuning after 2019-10-08 is
-  2019-11-01 and the first choice is made at the one after it, 2019-12-01. This is warm-up arithmetic
-  read generically from the parameters (every day, hour, window and lookback number, whatever the strategy
-  does with it), not a result. If the strategy needs more than the parameters show (enough instruments
-  listed on Binance, a signal that waits for history), the true first choice is later and the days before
-  it are judged as flat days. The grid is the idea''s declared lists (leftover_lots, leftover_hedged),
-  4 candidates. What this does not prove: the lists were declared with the idea before its check ran;
-  what was seen of the history when they were declared is not recorded, so the choice is only as honest
-  as the lists are (the spec''s own date for its numbers: 2026-11-02). The instrument list is not point-in-time
-  before 2026-06-01. The twin trades only the 10 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT,
-  HYPE, HYPE-SPOT, SOL, SOL-SPOT (data.instruments of frab-lot-leftover) (hourly candles of every Binance
-  perpetual take hours; these take about 4 minutes). A list chosen by hand and applied to history from
-  2019-09-08 knows which coins existed and survived, which the days before it was chosen did not; a coin
-  Binance listed later has no candles before its listing day and enters then. The earliest documented
-  day the list existed is 2026-06-01 (data.honest_from of frab-lot-leftover), so the twin is judged only
-  from that day (`judged_from` = `instruments_chosen_at` = 2026-06-01): the history before it is warm-up
-  for the code''s monthly choice (more data to choose with), not judged, and from that day the stand counts
-  the list as point-in-time (docs/FIT_VS_FORWARD.md).'
-judged_from: '2026-06-01'
+params_fixed_at: '2026-05-23'
+params_fixed_evidence: 'Inherited from stage 1 (frab-lot-leftover): The numbers are chosen once by code
+  (qlab.strategies.retune, refit_every: once, choose_at: split; docs/RETUNE.md), at the stand''s cut:
+  the first day of the last third of the judged window (rules 2026-11-04.1; owner 2026-11-04: «все стратегии
+  должны проходить проверку вперед по 2/3 и 1/3 правилу»), by the after-cost Sharpe each value realised
+  on the strategy''s own money before that day, and held to the end. The stand puts the day in for the
+  window it runs on, so this date is the cut of the spec''s own window (2019-09-08..2026-11-02): 2026-05-23.
+  The data starts 2019-09-08; the longest warm-up read from the parameters is 30 days (cap_min_hold_hours
+  = 720), so the book can first trade on 2019-10-08. The grid is the idea''s declared lists (leftover_lots,
+  leftover_hedged), 4 candidates. What this does not prove: the lists were declared with the idea before
+  its check ran; what was seen of the history when they were declared is not recorded, so the choice is
+  only as honest as the lists are (the spec''s own date for its numbers: 2026-11-02). The twin trades
+  only the 10 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, HYPE, HYPE-SPOT, SOL, SOL-SPOT (data.instruments
+  of frab-lot-leftover) (hourly candles of every Binance perpetual take hours; these take about 4 minutes).
+  Every coin of the list was knowable as a pick on the days it is judged: listed for 30 days and among
+  the venue''s top 10 perpetuals by trailing traded value, looking only at earlier days (night/knowable_coins.yaml:
+  top 10 of the venue''s perpetuals by the mean daily traded value of the previous 30 days, binance candles
+  in data/raw); Монета HYPE вошла в первой десятке по обороту на Binance только 2025-07-01 (до этого её
+  нельзя было выбрать, не зная будущего): оценка идёт с этого дня, раньше — разгон. The list is knowable
+  only from 2025-07-01, so the twin is judged from that day (`judged_from` = `instruments_chosen_at` =
+  2025-07-01): the history before it is warm-up for the code''s monthly choice, not judged..'
+judged_from: '2025-07-01'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
-  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
-    месяц»'
+  refit_every: 'rules/2026-11-04.1.yaml (split_by_data); owner 2026-11-04: «все стратегии должны проходить
+    проверку вперед по 2/3 и 1/3 правилу»: the declared values are chosen once, on the first 2/3'
   window: 'docs/RETUNE.md (expanding window: no number introduced)'
   objective: docs/RETUNE.md (Sharpe after costs)
   data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
@@ -214,10 +217,13 @@ sources:
   grid: 'cards/frab-lot-leftover.yaml: the lists the idea declares, 4 variants; owner 2026-10-31: one
     idea, one check -- code chooses among the declared values every month from the past only (docs/ONE_CHECK.md)'
   data.instruments: 'docs/RETUNE.md: data.instruments of frab-lot-leftover, the coins its book trades'
-  instruments_chosen_at: 'cards/frab-lot-leftover.yaml: data.honest_from = 2026-06-01 of frab-lot-leftover,
-    the earliest documented day the list of frab-lot-leftover existed'
-  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
-    = 2026-06-01); the days before are warm-up'
+  coins_knowable: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded
+    value of the previous 30 days, hyperliquid candles in data/raw'
+  instruments_chosen_at: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily
+    traded value of the previous 30 days, binance candles in data/raw: the first day every coin of the
+    list was knowable (2025-07-01)'
+  judged_from: 'docs/RETUNE.md: a list is judged only from the day it was known (instruments_chosen_at
+    = 2025-07-01); the days before are warm-up'
   score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
     spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
     (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
@@ -230,6 +236,8 @@ sources:
     (frab.db strategies.params_json id 1, read-only; owner''s change of 2026-10-27)'
   min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
     (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  choose_at: 'rules/2026-11-04.1.yaml (split_by_data); owner 2026-11-04: «все стратегии должны проходить
+    проверку вперед по 2/3 и 1/3 правилу»: at the stand''s cut, the first day of the last third (qlab.pipeline.evaluate.with_split_day)'
   min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
     MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
     by'
@@ -258,4 +266,26 @@ strategy_capital_usd: 120.0
 regime_claim: {}
 review_answers: {}
 selects_causally: true
-instruments_chosen_at: '2026-06-01'
+instruments_chosen_at: '2025-07-01'
+coins_knowable:
+  venue: hyperliquid
+  top_k: 10
+  window_days: 30
+  checked_from: '2025-01-31'
+  from_start: false
+  coins:
+    AVAX: null
+    BTC: '2025-01-31'
+    ETH: '2025-01-31'
+    HYPE: '2025-01-31'
+    SOL: '2025-01-31'
+  listed:
+    AVAX: '2025-01-01'
+    BTC: '2025-01-01'
+    ETH: '2025-01-01'
+    HYPE: '2025-01-01'
+    SOL: '2025-01-01'
+  plain: 'Монета AVAX за всю историю данных не была в первой десятке по обороту на Hyperliquid: список
+    считается выбранным вручную и оценивается со дня, когда его записали.'
+  source: 'night/knowable_coins.yaml: top 10 of the venue''s perpetuals by the mean daily traded value
+    of the previous 30 days, hyperliquid candles in data/raw'
