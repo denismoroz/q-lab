@@ -92,6 +92,7 @@ export default function IdeaDetail() {
         {ideaQuery.data && (
           <>
             <PlainTop plain={ideaQuery.data.plain} />
+            <DuplicateMark mark={ideaQuery.data.duplicate} />
             <Outcome outcome={ideaQuery.data.latest_outcome} />
             <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
@@ -291,6 +292,23 @@ function Outcome({ outcome }) {
 // stand at minus and the paper book at plus.
 function dayText(iso) {
   return iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : '—'
+}
+
+// A stored reading (qlab.duplicates, docs/DUPLICATES.md): the idea's daily money equals an older
+// open idea's. It decides nothing; the owner decides whether the idea is retired.
+function DuplicateMark({ mark }) {
+  if (!mark) return null
+  return (
+    <div
+      className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+      data-testid="duplicate-mark"
+    >
+      {mark.text}{' '}
+      <Link className="font-medium underline" to={`/ideas/${mark.of}`}>
+        Открыть {mark.of}
+      </Link>
+    </div>
+  )
 }
 
 function PaperCheck({ check }) {

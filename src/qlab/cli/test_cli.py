@@ -466,3 +466,27 @@ def test_check_prints_what_code_chooses_among_or_the_reason_for_nothing(tmp_path
     bare.write_text(yaml.safe_dump(base))
     refused = runner.invoke(app, ["check", str(bare)])
     assert refused.exit_code == 1 and "refused:" in refused.output
+
+
+def test_evaluate_refuses_a_new_idea_that_doubles_an_open_one(tmp_path, monkeypatch) -> None:
+    """Owner 2026-11-04 (docs/DUPLICATES.md): by hand too, a double is not run unless the owner
+    says `--allow-duplicate`."""
+    import yaml
+
+    from qlab import duplicates
+
+    spec = tmp_path / "double.yaml"
+    spec.write_text(yaml.safe_dump({
+        "idea_id": "cli-double", "title": "x", "code_ref": "a:b", "params": {"lookback": 3},
+        "data": {"source": "binance", "interval": "1d", "start": "2025-01-01",
+                 "end": "2026-09-20"},
+        "costs": {"taker_fee_bps": 5.0, "slippage_bps": 0.9}, "min_leg_notional": 5.0,
+        "unexpressed_mechanisms": []}))
+    monkeypatch.setattr(duplicates, "refusal_for_new_idea",
+                        lambda s, session: duplicates.Duplicate("old", "Old", ["код"], "words"))
+    noted: list[str] = []
+    monkeypatch.setattr(duplicates, "note_refusal", lambda s, d, where: noted.append(where))
+    refused = runner.invoke(app, ["evaluate", str(spec), "--noise-trials", "0"])
+    assert refused.exit_code == 1
+    assert "дубль идеи old" in refused.output and "--allow-duplicate" in refused.output
+    assert noted == ["qlab evaluate"]

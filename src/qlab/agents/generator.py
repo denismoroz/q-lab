@@ -51,18 +51,19 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import yaml
 
-from qlab import costs, fixation, plain
+from qlab import costs, duplicates, fixation, plain
 from qlab.agents.implementer import _changed_paths
 from qlab.budget import CandidateBudget, ExplicitNoBudget, run_agent
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
 from qlab.directions import active_directions, generator_text
+from qlab.duplicates import OpenIdea
 from qlab.pipeline.sources import QLAB_ROOT
 from qlab.year_view import year_keys, years_line
 
@@ -349,13 +350,16 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
                     data_end: date | None = None, registry_idea_ids: frozenset[str] = frozenset(),
                     other_params: dict[tuple[str, str], str] | None = None,
                     reference: Path | None = REFERENCE_SPEC,
-                    paused: Mapping[str, str] | None = None
+                    paused: Mapping[str, str] | None = None,
+                    open_ideas: Iterable[OpenIdea] | None = None
                     ) -> tuple[GeneratedSpec | None, list[str]]:
     """Every guard on one spec file the agent wrote. Returns the spec (if it
     loads) and the problems; a spec with problems is reported, not run.
     `paused` maps the mechanisms the research director paused to its reason
     (night/directions.yaml, once the owner has reviewed it): a spec of one of them
-    is rejected."""
+    is rejected. `open_ideas` (`qlab.duplicates.open_index`) are the open ideas a spec must not
+    double: the same code, numbers after defaults, lists, data, costs and money
+    (docs/DUPLICATES.md)."""
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
 
@@ -432,6 +436,8 @@ def check_generated(path: Path, *, mechanisms: list[Mechanism], catalogue_path: 
     key = (spec.code_ref, json.dumps(spec.params, sort_keys=True, default=str))
     if (other := (other_params or {}).get(key)) is not None and other != spec.idea_id:
         problems.append(f"same params as the already existing {other}")
+    if open_ideas is not None and (double := duplicates.refusal(spec, open_ideas)):
+        problems.append(double.text())
 
     from qlab import one_check, own_numbers
 
@@ -729,6 +735,11 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
     (QLAB_ROOT / spec_dir).mkdir(parents=True, exist_ok=True)
     (QLAB_ROOT / CONTEXT_DIR).mkdir(parents=True, exist_ok=True)
     existing = existing_generated(spec_dir)
+    try:  # the open ideas, to name them to the agent and to refuse doubles (docs/DUPLICATES.md)
+        open_ideas = duplicates.open_index(session)
+    except Exception as exc:  # noqa: BLE001 - the other guards stand; the report says so
+        open_ideas = []
+        outcome.notes.append(f"doubles not checked: the open ideas were not read ({exc})")
     context_path = CONTEXT_DIR / f"generate-{today}.md"
     (QLAB_ROOT / context_path).write_text("\n".join([
         f"# Context for the idea generator (built {today}, by code)", "",
@@ -736,7 +747,8 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
         f"## Specs already in {spec_dir}/ (do not duplicate)", "",
         *[f"- {i}" for i in sorted(existing)], "",
         "## Idea ids already in the registry (do not duplicate)", "",
-        *[f"- {i}" for i in sorted(registry_idea_ids)], ""]), encoding="utf-8")
+        *[f"- {i}" for i in sorted(registry_idea_ids)], "",
+        duplicates.prompt_block(open_ideas)]), encoding="utf-8")
 
     # The research director's directions, once the owner has reviewed them; no file (or one
     # still waiting for the review) is today's behaviour.
@@ -810,12 +822,13 @@ def generate(*, budget: CandidateBudget | ExplicitNoBudget, session, data_end: d
             outcome.notes.append(named)
         generated, problems = check_generated(
             path, mechanisms=mechanisms, catalogue_path=catalogue_path, data_end=data_end,
-            registry_idea_ids=registry, other_params=seen, paused=paused)
+            registry_idea_ids=registry, other_params=seen, paused=paused, open_ideas=open_ideas)
         if problems or generated is None:
             outcome.rejected.append(Rejected(str(path), problems))
             continue
         seen[(generated.spec.code_ref, json.dumps(generated.spec.params, sort_keys=True,
                                                   default=str))] = generated.spec.idea_id
+        open_ideas.append(duplicates.as_open(generated.spec))
         outcome.accepted.append(generated)
     if not candidates:
         outcome.problems.append("no spec written")

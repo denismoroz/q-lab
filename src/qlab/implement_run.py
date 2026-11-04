@@ -224,11 +224,18 @@ def _checked(ctx: RunContext, card: str, spec: StrategySpec, fields: CardFields 
 
 def _step_check(ctx: RunContext, card: str, rec: dict, spec: StrategySpec,
                 fields: CardFields | None) -> dict:
-    from qlab import night, one_check
+    from qlab import duplicates, night, one_check
     from qlab.registry.db import session_scope
     from qlab.rules.loader import load_latest
 
     entry: dict = {"idea": spec.idea_id, "action": "ran", "data": _data_text(spec)}
+    with session_scope() as session:  # a double of an open idea is not run (docs/DUPLICATES.md)
+        double = duplicates.refusal_for_new_idea(spec, session)
+    if double is not None:
+        duplicates.note_refusal(spec, double, f"программист, карточка {card}")
+        rec["duplicate"] = double.text()
+        entry.update(action="duplicate", reason=double.text(), of=double.of)
+        return entry
     ran = spec
     if rec.get("blocked"):
         # the reviewer found a gap between the card and the code: the stand answers «проверить
@@ -359,6 +366,9 @@ def run_card(card: str, rec: dict, ctx: RunContext) -> bool:
         if not _needs_run(runs.get(name)):
             continue
         blocked = rec.get("blocked")
+        if rec.get("duplicate") and name != STEPS[0]:
+            runs[name] = {"action": "skipped", "reason": f"идея не запущена: {rec['duplicate']}"}
+            continue
         if blocked and name != STEPS[0]:
             runs[name] = {"action": "skipped", "reason": "проверяющий нашёл пробел между "
                           "карточкой и кодом: прогоны о другой стратегии не нужны"}
@@ -526,8 +536,8 @@ def summary(e: Mapping) -> str:
         parts.append(f"{LABELS[step]}: " + (twin_stage.route_ru(r.get("route"))
                                              if r.get("action") == "ran" else
                                              {"none": "не сделана", "heavy": "тяжёлые данные",
-                                              "error": "сбой"}.get(str(r.get("action")),
-                                                                    "не прогнана")))
+                                              "error": "сбой", "duplicate": "дубль"}.get(
+                                                 str(r.get("action")), "не прогнана")))
     return "; ".join(parts)
 
 

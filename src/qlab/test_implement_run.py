@@ -450,6 +450,26 @@ def test_data_too_heavy_for_a_night_is_named_not_fetched(world) -> None:
     assert "данные слишком тяжёлые для одной ночи" in text
 
 
+def test_a_card_that_doubles_an_open_idea_is_not_run_at_all(world, monkeypatch) -> None:
+    """Owner 2026-11-04 (docs/DUPLICATES.md): the check, the baseline and the second stage of a
+    double are not run; the card's record says which idea it doubles."""
+    from qlab import duplicates
+
+    double = duplicates.Duplicate("old-idea", "Старая идея", ["код"], "words")
+    monkeypatch.setattr(duplicates, "refusal_for_new_idea", lambda spec, session: double)
+    monkeypatch.setattr(duplicates, "note_refusal", lambda *a, **k: None)
+    world.add_card()
+    state = _stage(world)
+    (entry,) = state["implemented"]
+    runs = entry["runs"]
+    assert runs["check"]["action"] == "duplicate" and runs["check"]["of"] == "old-idea"
+    assert "дубль идеи old-idea" in runs["check"]["reason"]
+    assert runs["baseline"]["action"] == "skipped" and runs["stage2"]["action"] == "skipped"
+    assert [c for c in world.calls if c[0] in ("stand", "stage2")] == []
+    text = night.write_report(DAY, state).read_text(encoding="utf-8")
+    assert "дубль идеи old-idea" in text
+
+
 def test_a_reviewers_verified_gap_runs_the_written_spec_only_and_records_no_values(
         world) -> None:
     world.review_findings = [Finding(kind="unexpressed_mechanism", summary="the exit is missing",

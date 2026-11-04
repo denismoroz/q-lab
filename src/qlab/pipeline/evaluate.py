@@ -2028,6 +2028,11 @@ def evaluate_spec(
                 recorded_total=metrics.get("total_return_net"),
                 recorded_capital_total=metrics.get("cap_total_return"),
                 on_capital=capital.refused is None)
+            # The same daily money as an older open idea's latest run is a stored reading
+            # «дубль X по результатам», shown, deciding nothing (docs/DUPLICATES.md).
+            from qlab import duplicates
+
+            duplicates.mark_by_results(session, spec.idea_id, trial_id)
         except Exception:  # noqa: BLE001
             pass
 

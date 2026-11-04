@@ -457,6 +457,23 @@ def test_duplicates_of_the_registry_and_of_existing_specs_are_rejected(repo) -> 
     assert any("same params as the already existing gen-older" in p for p in problems)
 
 
+def test_a_spec_that_doubles_an_open_idea_is_rejected_with_its_name(repo) -> None:
+    """Owner 2026-11-04 (docs/DUPLICATES.md): the same code, numbers, data, costs and money as an
+    open idea's latest spec are a double, whatever the new spec calls itself."""
+    from qlab import duplicates
+
+    generated, problems = _check(repo, _spec_text())
+    assert generated is not None and not any("дубль" in p for p in problems)
+    older = duplicates.as_open(generated.spec.model_copy(
+        update={"idea_id": "gen-older", "title": "Older"}))
+    _, problems = _check(repo, _spec_text(), open_ideas=[older])
+    assert any(p.startswith("дубль идеи gen-older") for p in problems)
+    elsewhere = duplicates.as_open(generated.spec.model_copy(
+        update={"idea_id": "gen-else", "params": {**generated.spec.params, "blocks": "x"}}))
+    _, problems = _check(repo, _spec_text(), open_ideas=[elsewhere])
+    assert not any("дубль" in p for p in problems)
+
+
 # ---- the agent call ------------------------------------------------------
 
 

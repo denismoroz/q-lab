@@ -307,7 +307,7 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
              budget: CandidateBudget | ExplicitNoBudget, session, max_experiments: int = 3,
              model: str = MODEL, max_turns: int = 60, focus: str | None = None
              ) -> ResearchOutcome:
-    from qlab import one_check
+    from qlab import duplicates, one_check
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
     from qlab.spot_declaration import spot_declaration_problems
@@ -315,8 +315,12 @@ def research(name: str, *, idea_ids: list[str], specs: list[Path], docs: list[Pa
     today = datetime.now(UTC).date()
     (QLAB_ROOT / CONTEXT_DIR).mkdir(parents=True, exist_ok=True)
     context_path = CONTEXT_DIR / f"{name}-{today}.md"
-    (QLAB_ROOT / context_path).write_text(build_context(name, idea_ids, session, specs),
-                                          encoding="utf-8")
+    evidence = build_context(name, idea_ids, session, specs)
+    try:  # the open ideas in plain words and the rule that doubles are refused (docs/DUPLICATES.md)
+        evidence += "\n" + duplicates.prompt_block(duplicates.open_index(session))
+    except Exception:  # noqa: BLE001 - the evidence stands without it
+        pass
+    (QLAB_ROOT / context_path).write_text(evidence, encoding="utf-8")
     memo_path = MEMO_DIR / f"{name}-{today}.md"
     spec_dir = SPEC_DIR / name
     (QLAB_ROOT / MEMO_DIR).mkdir(parents=True, exist_ok=True)
@@ -427,7 +431,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
     unless it says why there is nothing to choose. An experiment that survives stage 1 goes on to
     the second stage on Hyperliquid at once (`second_stage_lines`); its lines follow the
     experiment's, indented."""
-    from qlab import one_check
+    from qlab import duplicates, one_check
     from qlab.calibration.shape_aware import evaluate_spec_with_shape_aware_bar
     from qlab.pipeline.sources import source_problems
     from qlab.pipeline.spec import load_spec
@@ -438,6 +442,7 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
     from qlab.spot_declaration import spot_declaration_problems
 
     lines = ["", "## Эксперименты на стенде (записано кодом, не исследователем)", ""]
+    open_ideas = None  # the open ideas, read once, grown by every experiment that goes on
     for spec_path in spec_paths:
         try:
             # The day the numbers were fixed is named by code (owner, 2026-10-29, docs/FIXATION.md):
@@ -461,6 +466,15 @@ def run_experiments(memo: Path, spec_paths: list[Path], *, name: str,
             continue
         try:
             with session_scope() as session:
+                if duplicates.is_new(session, experiment.idea_id):
+                    # A double of an open idea is not run (owner, 2026-11-04, docs/DUPLICATES.md).
+                    if open_ideas is None:
+                        open_ideas = duplicates.open_index(session)
+                    if double := duplicates.refusal(experiment, open_ideas):
+                        duplicates.note_refusal(experiment, double, f"исследователь {name}")
+                        lines.append(f"- `{spec_path}`: не запущен — {double.text()}")
+                        continue
+                    open_ideas.append(duplicates.as_open(experiment))
                 if session.get(Idea, experiment.idea_id) is None:
                     repo.upsert_idea(session, id=experiment.idea_id, title=experiment.title,
                                      source_type=SourceType.INTERNAL,
