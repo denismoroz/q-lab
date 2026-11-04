@@ -222,6 +222,30 @@ class Choice(BaseModel):
         return self.nothing_to_choose is None
 
 
+class CoinsKnowable(BaseModel):
+    """The result of the knowable-coins check of a hand-picked coin list (`qlab.knowable_coins`).
+
+    A list is knowable on a day when every coin of it was listed long enough and among the venue's
+    `top_k` perpetuals by trailing traded value, looking only at earlier days. `known_from` is the
+    first day all coins are; `None` when a coin never is (the list is then dated by hand, as
+    before). `from_start` says the list was knowable on every day the data can rank (so nothing
+    of the history is warm-up for the list). `coins` maps each coin to the day it first was."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    venue: str
+    top_k: int
+    window_days: int
+    checked_from: date
+    known_from: date | None = None
+    from_start: bool = False
+    coins: dict[str, date | None] = Field(default_factory=dict)
+    listed: dict[str, date | None] = Field(default_factory=dict)
+    """The first day each coin has a candle on the venue."""
+    plain: str
+    source: str
+
+
 class StrategySpec(BaseModel):
     """One strategy spec, as formalized in a `<spec>.yaml` file.
 
@@ -503,6 +527,12 @@ class StrategySpec(BaseModel):
     judged part is point-in-time. `None` (the default) keeps the old reading: the list
     was fixed at `params_fixed_at`.
     Needs `data.instruments` and a citation in `sources["instruments_chosen_at"]`."""
+
+    coins_knowable: CoinsKnowable | None = None
+    """The check that decided from which day the explicit coin list is judged
+    (`qlab.knowable_coins`, docs/ONE_CHECK.md): the list was knowable on every past day (then
+    `instruments_chosen_at` is empty and the history is judged from its start), or only from
+    `known_from` (then that day, or the hand-picked date if earlier, is `instruments_chosen_at`)."""
 
     @model_validator(mode="after")
     def _chosen_list_needs_a_list_and_a_source(self) -> StrategySpec:

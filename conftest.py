@@ -210,3 +210,13 @@ def _no_money_ladder_on_the_owners_registry(monkeypatch) -> None:
     import qlab.night as night
 
     monkeypatch.setattr(night, "money_ladder_stage", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_raw_volumes(monkeypatch) -> None:
+    """The knowable-coins check (`qlab.knowable_coins`) reads the raw daily candles in
+    `data/raw`, which a checkout may or may not have. Tests see none, so a hand-picked coin list
+    keeps its hand-picked date; a test of the check passes its own volumes (`volume_of`)."""
+    import qlab.knowable_coins as knowable_coins
+
+    monkeypatch.setattr(knowable_coins, "_cached_value", lambda folder: None)

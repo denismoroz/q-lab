@@ -300,6 +300,60 @@ def test_a_list_dated_after_the_venue_data_begins_is_judged_from_that_day_here_t
     assert stage2.translate(early, CONFIG, venue_names={"BTC", "ETH"}).spec.judged_from is None
 
 
+def _hl_volume(late: dict[str, int] | None = None) -> pd.DataFrame:
+    """Hyperliquid's daily traded value from before the window: BTC and ETH always the two
+    biggest, one filler; a coin in `late` is listed that many days after the window starts."""
+    index = pd.date_range("2024-11-01", LAST_DAY, freq="D")
+    frame = pd.DataFrame({"BTC": 1000.0, "ETH": 900.0, "F1": 1.0}, index=index)
+    for coin, offset in (late or {}).items():
+        frame[coin] = 800.0
+        frame.loc[frame.index < pd.Timestamp(FIRST_DAY) + pd.Timedelta(days=offset), coin] = np.nan
+    return frame
+
+
+def _hl_spec(coins: list[str]) -> StrategySpec:
+    return _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
+                       "end": LAST_DAY, "instruments": coins},
+                 instruments_chosen_at=date(2025, 6, 1),
+                 sources={**_spec().sources, "instruments_chosen_at": OWNER})
+
+
+def test_a_list_knowable_on_the_venue_is_judged_from_its_first_day_not_from_the_hand_date() -> None:
+    """Owner 2026-11-04 (docs/ONE_CHECK.md): BTC and ETH were the venue's two biggest on every day,
+    so the hand-picked date 2025-06-01 no longer cuts the child's window."""
+    child = stage2.translate(_hl_spec(["BTC", "ETH"]), CONFIG, venue_names={"BTC", "ETH"},
+                             volume_of=lambda venue: _hl_volume()).spec
+    assert child.judged_from is None and child.instruments_chosen_at is None
+    assert child.coins_knowable.venue == "hyperliquid" and child.coins_knowable.from_start
+    assert "instruments_chosen_at" not in child.sources and "coins_knowable" in child.sources
+    assert any("Knowable-coins check on hyperliquid" in n for n in child.differs_from_source)
+
+
+def test_a_coin_that_was_not_a_pick_on_the_venue_keeps_the_cut_at_its_day() -> None:
+    volume = _hl_volume(late={"SOL": 90})  # SOL is listed on day 90 of the window
+    child = stage2.translate(_hl_spec(["BTC", "SOL"]), CONFIG, venue_names={"BTC", "SOL"},
+                             volume_of=lambda venue: volume).spec
+    assert child.coins_knowable.known_from == date(2025, 1, 1) + pd.Timedelta(days=120)
+    assert child.judged_from == child.instruments_chosen_at == child.coins_knowable.known_from
+    assert child.sources["instruments_chosen_at"].startswith("night/knowable_coins.yaml")
+
+
+def test_the_check_survives_the_childs_file(tmp_path: Path) -> None:
+    for coins, late in ((["BTC", "ETH"], None), (["BTC", "SOL"], {"SOL": 90})):
+        volume = _hl_volume(late=late)
+        child = stage2.translate(_hl_spec(coins), CONFIG, venue_names=set(coins),
+                                 volume_of=lambda venue: volume).spec
+        path = stage2.write_spec(child, PARENT, tmp_path)
+        assert load_spec(path).coins_knowable == child.coins_knowable
+        assert load_spec(path).judged_from == child.judged_from
+
+
+def test_no_volumes_for_the_venue_leave_the_hand_picked_date_as_it_was() -> None:
+    child = stage2.translate(_hl_spec(["BTC", "ETH"]), CONFIG, venue_names={"BTC", "ETH"},
+                             volume_of=lambda venue: None).spec
+    assert child.judged_from == date(2025, 6, 1) and child.coins_knowable is None
+
+
 def test_translation_with_no_instrument_left_makes_no_spec_and_says_why() -> None:
     spec = _spec(data={"source": "binance", "interval": "1d", "start": date(2019, 9, 8),
                        "end": LAST_DAY, "instruments": ["LUNA2", "FTT"]})

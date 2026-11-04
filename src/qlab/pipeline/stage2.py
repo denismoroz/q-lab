@@ -28,14 +28,15 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
-from qlab import tree_writes
+from qlab import knowable_coins, tree_writes
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
 from qlab.costs import venue_costs
 from qlab.pipeline import confirm
@@ -332,7 +333,8 @@ def coins_without_data(spec: StrategySpec, config: Stage2Config,
 
 def translate(spec: StrategySpec, config: Stage2Config, *,
               venue_names: Collection[str] | None = None,
-              no_data: Mapping[str, str] | None = None) -> Translation:
+              no_data: Mapping[str, str] | None = None,
+              volume_of: Callable[[str], pd.DataFrame | None] | None = None) -> Translation:
     """The stage 2 spec of a stage 1 spec.
 
     Kept exactly: the code, every parameter value (a deep copy, never an edit),
@@ -341,7 +343,10 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     venue (`data.source`), the start of the data (the later of stage 1's and the
     config's), the costs (Hyperliquid's, cited), the idea id and title. A stage 1
     `instruments_chosen_at` later than the start becomes the child's `judged_from`: the days
-    before the list was known are warm-up here as there.
+    before the list was known are warm-up here as there. A list that has a date (or a knowable-
+    coins check, `qlab.knowable_coins`) is checked AGAIN on the venue's own listing dates and
+    volumes (`volume_of`, default the raw cache): its coins may have been obvious picks on Binance
+    and not on Hyperliquid, and the child's `judged_from` follows the venue it is judged on.
 
     With `instruments` or `required_instruments` named, `venue_names` (what the
     venue lists) maps them; a coin it does not list is dropped from the list --
@@ -396,6 +401,16 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     known_from = (spec.instruments_chosen_at
                   if spec.instruments_chosen_at is not None and instruments is not None
                   and spec.instruments_chosen_at > child_data.start else None)
+    known = None
+    list_day = spec.instruments_chosen_at
+    if instruments is not None and (list_day is not None or spec.coins_knowable is not None):
+        volume = (volume_of or knowable_coins.raw_volume)(config.venue)
+        if volume is not None:
+            known = knowable_coins.check(
+                volume, instruments, venue=config.venue, start=child_data.start,
+                end=child_data.end, config=knowable_coins.load_config())
+            list_day = knowable_coins.list_day(known, spec.instruments_chosen_at)
+            known_from = list_day if list_day is not None and list_day > child_data.start else None
     notes = [
         f"Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same "
         f"parameter values as stage 1 ({spec.idea_id}) on {config.venue}'s own perpetual "
@@ -416,6 +431,9 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         notes.append("Of those, listed by the venue but with no candle in the window, so treated "
                      "as not listed: " + "; ".join(f"{name} ({why})" for name, why in
                                                    sorted(no_data.items())) + ".")
+    if known is not None:
+        notes.append(f"Knowable-coins check on {config.venue}'s own listing and volumes: "
+                     f"{known.plain}")
     if known_from is not None:
         notes.append(f"Judged from {known_from}, the day the instrument list was known "
                      "(instruments_chosen_at); the days before it are warm-up.")
@@ -438,7 +456,20 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     notes += spot_notes
     sources.update(spot_sources)
     evidence = spec.params_fixed_evidence
-    child = spec.model_copy(update={
+    own_list: dict[str, object] = {}
+    if known is not None:
+        # the venue's own check replaces the date the stage 1 spec carried
+        own_list = {"instruments_chosen_at": list_day, "coins_knowable": known}
+        sources["coins_knowable"] = known.source
+        if list_day is not None:
+            sources["instruments_chosen_at"] = (
+                f"{known.source}: the first day every coin of the list was knowable on "
+                f"{config.venue}" if list_day == known.known_from else
+                sources.get("instruments_chosen_at")
+                or f"the list's hand-picked date {list_day} (stage 1 spec {spec.idea_id})")
+        else:
+            sources.pop("instruments_chosen_at", None)
+    child = spec.model_copy(update={**own_list,
         "idea_id": f"{spec.idea_id}{CHILD_SUFFIX}",
         "title": f"{spec.title} (второй этап: {config.venue})",
         "params": copy.deepcopy(spec.params),

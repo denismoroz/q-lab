@@ -103,6 +103,11 @@ Rules:
   never list "the stand marks the spot at the perp's price" in `unexpressed_mechanisms`; code
   rejects a spec that does. A bar where the spot printed nothing is carried at its last own
   close, never at the perp's price. A card that does not read spot closes keeps the default.
+- Coins (docs/ONE_CHECK.md, «Почему опыт ждал 27 дней»). When the card gives a rule for the
+  coins (the biggest by volume, a floor), leave `data.instruments` unset and use the rule: no
+  list, nothing to date. A card that names its coins gets them in `data.instruments`; code
+  then checks from the venue's listing dates and volumes whether they were obvious picks on every
+  past day, and judges from the start of the data if they were. Do not shorten the window yourself.
 - If the card needs something the data cannot give, do NOT fake it with a proxy the card
   does not name: list it in `unexpressed_mechanisms` (one sentence each). An honest "not
   evaluable" is a valid outcome; a strategy that quietly does something else is not.

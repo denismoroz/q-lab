@@ -208,6 +208,16 @@ Write two kinds of files and nothing else:
    does, and a spec that is "not expressed" is not judged at all. A bar without a spot print is
    carried at the last own close and the run states how many were; never the perp's price.
 
+   COINS (owner, 2026-11-04, docs/ONE_CHECK.md, «Почему опыт ждал 27 дней»). Prefer a RULE to a
+   coin list: let the book take the venue's listing under the trailing volume floor
+   (`data.min_daily_volume_usd`, `data.instruments` unset), so no list is written by hand and
+   there is nothing to date. Write a list only when the idea is about NAMED coins (Bv2's BTC and
+   ETH). Then you need no hedge about it: code checks, from the venue's own listing dates and
+   volumes, whether each coin was among the top ten by trailing volume on every past day
+   (night/knowable_coins.yaml); if so the list is judged from the start of the data, if not
+   only from the day it was knowable. Never shorten the data window to "the day the list was
+   written".
+
    ONE IDEA, ONE CHECK (owner, 2026-10-31, docs/ONE_CHECK.md; read it). An experiment does not
    get a "twin" any more and you do not write a causal wrapper: the idea declares up front the
    values of the numbers it changes, code chooses among them every month from the past only, on

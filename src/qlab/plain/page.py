@@ -27,6 +27,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from qlab import knowable_coins
 from qlab.plain import choice as choice_mod
 from qlab.plain import compose, venue
 from qlab.plain.difference import Item, difference
@@ -252,7 +253,8 @@ def plain_page(session: Session, idea: Idea, *, root: Path | None = None,
     if own_view is not None:
         payload["choice"] = asdict(choice_mod.describe(own_view, base_name, words))
         payload["choice"]["lines"] = list(payload["choice"]["lines"])
+        remembered = knowable_coins.recall(idea.id)
         payload["venue"] = venue.describe(
             own_view, parent_id=idea.parent_id, child_id=child.id if child else None,
-            is_second_stage=second_stage)
+            is_second_stage=second_stage, coins_line=remembered.plain if remembered else None)
     return payload

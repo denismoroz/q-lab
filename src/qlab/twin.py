@@ -37,19 +37,20 @@ from __future__ import annotations
 import copy
 import math
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+import pandas as pd
 import yaml
 
-from qlab import tree_writes, venue_split
+from qlab import knowable_coins, tree_writes, venue_split
 from qlab.card_fields import param_at
 from qlab.costs import DEVIATION_KEY
 from qlab.own_numbers import CONFIG, RETUNE, _label, load_config, open_params, problems
 from qlab.pipeline.sources import QLAB_ROOT, covering_key
-from qlab.pipeline.spec import SpecData, StrategySpec
+from qlab.pipeline.spec import CoinsKnowable, SpecData, StrategySpec
 from qlab.regimes import WINDOW_DAYS
 from qlab.strategies.retune import expand_grid
 
@@ -846,14 +847,30 @@ def _twin_data(spec: StrategySpec, venue_names: Collection[str] | None,
     ), required
 
 
-def _list_evidence(chosen: ChosenList, start: date, seconds: float | None) -> str:
+def _list_evidence(chosen: ChosenList, start: date, seconds: float | None,
+                   day: date | None, known: CoinsKnowable | None) -> str:
     cost = ("" if seconds is None else
             f" (hourly candles of every Binance perpetual take hours; these take about "
             f"{seconds / 60:.0f} minutes)")
+    trades = (f"The twin trades only the {len(chosen.names)} columns {', '.join(chosen.names)} "
+              f"({chosen.kind} of {chosen.owner}){cost}. ")
+    if known is not None and known.known_from is not None:
+        checked = (f"Every coin of the list was knowable as a pick on the days it is judged: "
+                   f"listed for {known.window_days} days and among the venue's top {known.top_k} "
+                   f"perpetuals by trailing traded value, looking only at earlier days "
+                   f"({known.source}); {known.plain}")
+        if day is None:
+            return (trades + checked + f" So the list is judged from the start of the data "
+                    f"({start}), not from {chosen.chosen_at} ({chosen.dated_by} of "
+                    f"{chosen.dated_owner}), the day it was written down: a list anybody could "
+                    "have written on every past day cannot know who survived "
+                    "(docs/ONE_CHECK.md, section on the 27 days).")
+        return (trades + checked + f" The list is knowable only from {day}, so the twin is judged "
+                f"from that day (`judged_from` = `instruments_chosen_at` = {day}): the history "
+                "before it is warm-up for the code's monthly choice, not judged.")
     return (
-        f"The instrument list is not point-in-time before {chosen.chosen_at}. The twin trades "
-        f"only the {len(chosen.names)} columns {', '.join(chosen.names)} ({chosen.kind} of "
-        f"{chosen.owner}){cost}. A list chosen by hand and applied to history from {start} "
+        f"The instrument list is not point-in-time before {chosen.chosen_at}. " + trades
+        + f"A list chosen by hand and applied to history from {start} "
         "knows which coins existed and survived, which the days before it was chosen did not; a "
         "coin Binance listed later has no candles before its listing day and enters then. The "
         f"earliest documented day the list existed is {chosen.chosen_at} ({chosen.dated_by} of "
@@ -885,8 +902,8 @@ def _evidence(spec: StrategySpec, grid: _Grid, start: date, warm: float, label: 
 
 
 def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
-             chosen: ChosenList | None = None, start_cite: str | None = None
-             ) -> dict[str, str]:
+             chosen: ChosenList | None = None, start_cite: str | None = None,
+             day: date | None = None, known: CoinsKnowable | None = None) -> dict[str, str]:
     period = PERIODS[refit_every][0]
     sources = {
         "code_ref": "src/qlab/strategies/retune.py (existing wrapper)",
@@ -902,12 +919,20 @@ def _sources(spec: StrategySpec, grid: _Grid, refit_every: str, spec_cite: str,
     sources.update(grid.sources)
     if chosen is not None:
         sources["data.instruments"] = chosen.cite
-        dated = (f"{chosen.dated_by} = {chosen.chosen_at} of {chosen.dated_owner}, the earliest "
-                 f"documented day the list of {chosen.owner} existed")
-        sources["instruments_chosen_at"] = f"{chosen.dated_cite.split(':')[0]}: {dated}"
-        sources["judged_from"] = (
-            f"{RETUNE_DOC}: a hand-picked list is judged only from the day it was known "
-            f"(instruments_chosen_at = {chosen.chosen_at}); the days before are warm-up")
+        if known is not None:
+            sources["coins_knowable"] = known.source
+        if day is not None:
+            if known is not None and known.known_from is not None and day == known.known_from:
+                sources["instruments_chosen_at"] = (
+                    f"{known.source}: the first day every coin of the list was knowable "
+                    f"({known.known_from})")
+            else:
+                dated = (f"{chosen.dated_by} = {chosen.chosen_at} of {chosen.dated_owner}, the "
+                         f"earliest documented day the list of {chosen.owner} existed")
+                sources["instruments_chosen_at"] = f"{chosen.dated_cite.split(':')[0]}: {dated}"
+            sources["judged_from"] = (
+                f"{RETUNE_DOC}: a list is judged only from the day it was known "
+                f"(instruments_chosen_at = {day}); the days before are warm-up")
     for name in ("taker_fee_bps", "slippage_bps"):
         cost = spec.sources.get(f"costs.{name}") or spec.sources.get("costs")
         sources[f"score_costs.{name}"] = cost or f"{RETUNE_DOC}: scores use the spec's costs"
@@ -929,7 +954,9 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
                 seconds_per_instrument: float = SECONDS_PER_INSTRUMENT,
                 peers: Sequence[tuple[StrategySpec, str]] = (), grid: _Grid | None = None,
                 honest_from: tuple[date, str] | None = None,
-                execution_venue: str | None = None, keep_id: bool = False) -> TwinResult:
+                execution_venue: str | None = None, keep_id: bool = False,
+                volume_of: Callable[[str], pd.DataFrame | None] | None = None,
+                knowable_config: knowable_coins.KnowableConfig | None = None) -> TwinResult:
     """The spec whose numbers code chooses every month from the past only, on Binance's history.
 
     `base` is the strategy spec an experiment `spec` modifies (see the module docstring).
@@ -947,6 +974,11 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     without a list starts the data no earlier. `execution_venue` is kept for the callers that
     pass it and is ignored: since the venue split (docs/VENUE_SPLIT.md) the twin is judged for
     Binance itself and names no other venue.
+
+    `volume_of` (venue -> the venue's daily traded value, `qlab.knowable_coins.raw_volume`) lets a
+    hand-picked list be judged from the start of the data when every coin of it was knowable as a
+    pick on every past day (`qlab.knowable_coins`, owner 2026-11-04); without it (or without the
+    venue's data) the list is dated by hand, as before.
 
     `keep_id` (owner, 2026-10-31, docs/ONE_CHECK.md): the result keeps the idea's own `idea_id`
     instead of the `-causal` twin's. It is then not a second idea beside the first but the form in
@@ -989,6 +1021,15 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
     data, required = _twin_data(spec, venue_names, chosen,
                                 None if chosen is not None or honest_from is None
                                 else honest_from[0])
+    known = day = None
+    if chosen is not None:
+        day = chosen.chosen_at
+        volume = volume_of(TWIN_VENUE) if volume_of is not None and honest_from is None else None
+        if volume is not None:
+            known = knowable_coins.check(
+                volume, chosen.names, venue=TWIN_VENUE, start=data.start, end=data.end,
+                config=knowable_config or knowable_coins.load_config())
+            day = knowable_coins.list_day(known, chosen.chosen_at)
     dropped = list(chosen.dropped) if chosen is not None else []
     seconds = None if chosen is None else fetch_estimate(len(chosen.names),
                                                          seconds_per_instrument)
@@ -1024,16 +1065,28 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         notes.append(f"{len(dropped)} named instrument(s) are not listed on Binance and are "
                      f"not traded: {', '.join(dropped)}.")
     if chosen is not None:
-        notes.append(
-            f"The twin trades only {len(chosen.names)} named columns ({', '.join(chosen.names)}), "
-            f"the {chosen.kind} of {chosen.owner}, not the whole market: the list was chosen by "
-            f"{chosen.chosen_at} and would know which coins survived if applied to the history "
-            f"before it (survivorship), so the twin is judged only from {chosen.chosen_at} "
-            f"(judged_from = instruments_chosen_at); the days from {data.start} are warm-up for "
-            "the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).")
-    if chosen is not None and chosen.chosen_at >= data.end:
+        listing = (f"The twin trades only {len(chosen.names)} named columns "
+                   f"({', '.join(chosen.names)}), the {chosen.kind} of {chosen.owner}, not the "
+                   "whole market: ")
+        if known is not None and known.known_from is not None and day is None:
+            notes.append(listing + "every coin was knowable as a pick on every past day "
+                         f"(top {known.top_k} by trailing volume, {known.source}), so no "
+                         "survivorship guard applies and the twin is judged from the start of "
+                         f"the data ({data.start}).")
+        elif known is not None and known.known_from is not None:
+            notes.append(listing + f"the list was knowable only from {known.known_from} "
+                         f"({known.source}), so the twin is judged only from {day} "
+                         "(judged_from = instruments_chosen_at); the days before are warm-up "
+                         "for the choice.")
+        else:
+            notes.append(listing + f"the list was chosen by {chosen.chosen_at} and would know "
+                         "which coins survived if applied to the history before it "
+                         f"(survivorship), so the twin is judged only from {chosen.chosen_at} "
+                         f"(judged_from = instruments_chosen_at); the days from {data.start} are "
+                         "warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).")
+    if chosen is not None and day is not None and day >= data.end:
         return TwinResult(None, (
-            f"the instrument list is dated {chosen.chosen_at} ({chosen.dated_by} of "
+            f"the instrument list is dated {day} ({chosen.dated_by} of "
             f"{chosen.dated_owner}), on or after the end of the data ({data.end}): a hand-picked "
             "list is judged only from the day it was known, and no such day is left"))
     update = {
@@ -1046,19 +1099,20 @@ def causal_twin(spec: StrategySpec, *, base: StrategySpec | None = None,
         "data": data,
         "required_instruments": required,
         "exploratory": None,
-        "judged_from": None if chosen is None else chosen.chosen_at,
+        "judged_from": day,
         "params_fit_from": None,
         "params_fixed_at": dates[2],
         "params_fixed_evidence": _evidence(
             spec, grid, data.start, warm, label, dates, refit_every,
-            None if chosen is None else _list_evidence(chosen, data.start, seconds)),
+            None if chosen is None else _list_evidence(chosen, data.start, seconds, day, known)),
         "selects_causally": True,
         "sources": _sources(
             spec, grid, refit_every, _text(spec_path) or RETUNE_DOC, chosen,
             None if chosen is not None or honest_from is None else
             f"{honest_from[1]}: the first day the card's data honestly exists "
-            f"(data.honest_from = {honest_from[0]})"),
-        "instruments_chosen_at": None if chosen is None else chosen.chosen_at,
+            f"(data.honest_from = {honest_from[0]})", day, known),
+        "instruments_chosen_at": day,
+        "coins_knowable": known,
         "differs_from_source": [*spec.differs_from_source, *notes],
     }
     update["data"] = data.model_dump(mode="python")

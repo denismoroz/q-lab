@@ -26,7 +26,7 @@ _HISTORY_OF = {"hyperliquid-xyz": "раздела xyz на Hyperliquid (акци
 
 
 def describe(view: SpecView, *, parent_id: str | None = None, child_id: str | None = None,
-             is_second_stage: bool = False) -> dict:
+             is_second_stage: bool = False, coins_line: str | None = None) -> dict:
     """The page's «Где проверена»: `lines` (strings) and the venue's id."""
     source = view.data.get("source")
     lines = []
@@ -39,6 +39,10 @@ def describe(view: SpecView, *, parent_id: str | None = None, child_id: str | No
     if judged_from:
         lines.append(f"Оценка идёт с {judged_from}: раньше шёл разгон, на котором стратегии "
                      "копят историю для сигнала, и он в оценку не входит.")
+    known = view.extras.get("coins_knowable")
+    coins_line = (known.get("plain") if isinstance(known, dict) else None) or coins_line
+    if coins_line:
+        lines.append(coins_line)
     if is_second_stage and parent_id:
         lines.append("Это вторая проверка той же идеи: тот же механизм и те же числа (или те же "
                      "списки, из которых выбирает код), но на данных Hyperliquid; "
