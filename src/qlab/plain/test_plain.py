@@ -544,7 +544,7 @@ def test_the_api_carries_the_plain_field_for_a_variant_without_a_card(client):
     assert plain_part["what"]["paragraphs"] and plain_part["what"]["source"] == "family"
     assert plain_part["difference"]["items"] and plain_part["choice"]["kind"] == "by_code"
     assert plain_part["venue"]["lines"]
-    assert body["how_it_works"] is None  # the old card block is untouched
+    assert body["card"] is None  # no card, no card section
 
 
 def test_the_api_never_fails_the_page_over_the_plain_field(client, monkeypatch):

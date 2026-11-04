@@ -225,3 +225,13 @@ def test_the_morning_report_names_the_label_not_the_bare_status(registry) -> Non
     assert "| crashed | скамейка — причина не определена |" in text
     assert "| validated-one | validated |" in text
     assert "Статус «скамейка» по надписям: рано судить" in text
+
+
+def test_the_morning_report_does_not_call_a_never_run_idea_a_candidate(registry) -> None:
+    _idea(registry, "fresh", IdeaStatus.CANDIDATE)
+    registry.flush()
+
+    text = "\n".join(lad.report_lines(registry, Ledgers()))
+
+    assert "| fresh | ещё не прогонялась |" in text
+    assert "| candidate |" not in text

@@ -406,12 +406,9 @@ def cards_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_cards_index_flags_an_empty_protection_row(client, cards_dir):
-    items = client.get("/api/cards").json()["items"]
-    by_id = {item["idea_id"]: item for item in items}
-
-    assert by_id["naked-tails"]["protection_is_empty"] is True
-    assert by_id["hedged"]["protection_is_empty"] is False
+def test_card_flags_an_empty_protection_row(client, cards_dir):
+    assert client.get("/api/cards/naked-tails").json()["protection_is_empty"] is True
+    assert client.get("/api/cards/hedged").json()["protection_is_empty"] is False
 
 
 def test_card_detail_exposes_six_parts_and_every_quote(client, cards_dir):

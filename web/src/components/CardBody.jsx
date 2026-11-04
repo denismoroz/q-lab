@@ -1,8 +1,9 @@
-import { NavLink, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { fetchCard, fetchCards } from '../api.js'
-import { Absent, Panel, QueryState } from '../components/ui.jsx'
+import { Absent, Panel } from './ui.jsx'
 import { CARD_FIELD, CARD_PART, label } from '../labels.js'
+
+// The card of an idea (cards/<idea_id>.yaml, schema cards/SCHEMA.md). Since 2026-11-04 it is a
+// section of the idea page (the registry is the one place for an idea that exists); the inbox page
+// shows the same body for a card whose idea is not registered yet.
 
 // The six parts, in the order cards/SCHEMA.md defines them.
 const PARTS = ['driver', 'signal', 'sizing', 'protection', 'execution', 'death']
@@ -136,18 +137,25 @@ function Protection({ part, isEmpty }) {
   )
 }
 
-function CardBody({ card }) {
+/** The card's content: the plain summary, sources, the six parts, feasibility and prior. */
+export default function CardBody({ card }) {
   return (
     <div className="space-y-4">
-      <Panel>
-        <h1 className="text-lg font-semibold">{card.title}</h1>
-        <p className="font-mono text-xs text-slate-400">{card.idea_id}</p>
-        <p className="mt-1 text-xs text-slate-500">
-          найдено: {card.found_at ?? <Absent>дата не указана</Absent>} · файл{' '}
-          <span className="font-mono">{card.path}</span>
-        </p>
+      <div>
+        <h3 className="text-xs uppercase tracking-wide text-slate-500">Простыми словами</h3>
+        {card.plain_summary ? (
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-800">
+            {card.plain_summary}
+          </p>
+        ) : (
+          <Absent>
+            пересказа нет: карточка написана до правила «без жаргона» (cards/SCHEMA.md, 2026-10-01)
+          </Absent>
+        )}
+      </div>
 
-        <h2 className="mt-4 text-xs uppercase tracking-wide text-slate-500">Источники</h2>
+      <div>
+        <h3 className="text-xs uppercase tracking-wide text-slate-500">Источники</h3>
         <ul className="mt-1 space-y-1">
           {card.sources.map((source, index) => (
             <li key={index} className="text-sm">
@@ -165,24 +173,12 @@ function CardBody({ card }) {
             </li>
           ))}
         </ul>
-      </Panel>
-
-      <Panel title="Простыми словами">
-        {card.plain_summary ? (
-          <p className="max-w-3xl text-sm leading-relaxed text-slate-800">{card.plain_summary}</p>
-        ) : (
-          <Absent>
-            пересказа нет: карточка написана до правила «без жаргона» (cards/SCHEMA.md, 2026-10-01)
-          </Absent>
-        )}
-      </Panel>
+      </div>
 
       {PARTS.map((name) => {
         const part = card.parts[name]
         if (name === 'protection') {
-          return (
-            <Protection key={name} part={part} isEmpty={card.protection_is_empty} />
-          )
+          return <Protection key={name} part={part} isEmpty={card.protection_is_empty} />
         }
         return (
           <Panel key={name} title={CARD_PART[name]}>
@@ -192,70 +188,18 @@ function CardBody({ card }) {
         )
       })}
 
-      <Panel title="Проверяемость" subtitle="Видно до расчётов, жив ли кандидат вообще.">
+      <Panel title="Проверяемость" subtitle="Видно до расчётов, жива ли идея вообще.">
         {card.feasibility ? <Fields fields={card.feasibility} /> : <Absent>раздела нет</Absent>}
       </Panel>
 
       <Panel title="Связь с уже известным" subtitle="Совпадение по драйверу — не фильтр.">
         {card.prior ? <Fields fields={card.prior} /> : <Absent>раздела нет</Absent>}
       </Panel>
-    </div>
-  )
-}
 
-function CardDetail({ ideaId }) {
-  const query = useQuery({ queryKey: ['card', ideaId], queryFn: () => fetchCard(ideaId) })
-  return <QueryState query={query}>{query.data && <CardBody card={query.data} />}</QueryState>
-}
-
-export default function Cards() {
-  const { ideaId } = useParams()
-  const listQuery = useQuery({ queryKey: ['cards'], queryFn: fetchCards })
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-[20rem,1fr]">
-      <Panel title="Карточки кандидатов" subtitle="Разбор по фиксированной схеме cards/SCHEMA.md.">
-        <QueryState query={listQuery}>
-          {listQuery.data && (
-            <ul className="space-y-1">
-              {listQuery.data.items.map((item) => (
-                <li key={item.idea_id}>
-                  <NavLink
-                    to={`/cards/${item.idea_id}`}
-                    className={({ isActive }) =>
-                      `block rounded border p-2 text-sm ${
-                        isActive
-                          ? 'border-slate-900 bg-slate-900 text-white'
-                          : 'border-slate-200 hover:bg-slate-50'
-                      }`
-                    }
-                  >
-                    <span className="block">{item.title}</span>
-                    <span className="mt-1 block font-mono text-xs opacity-70">
-                      {item.idea_id}
-                    </span>
-                    {item.protection_is_empty && (
-                      <span className="mt-1 inline-block rounded bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-white">
-                        защиты нет
-                      </span>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </QueryState>
-      </Panel>
-
-      <div>
-        {ideaId ? (
-          <CardDetail ideaId={ideaId} />
-        ) : (
-          <Panel>
-            <p className="text-sm text-slate-500">Выберите карточку слева.</p>
-          </Panel>
-        )}
-      </div>
+      <p className="text-xs text-slate-500">
+        найдено: {card.found_at ?? <Absent>дата не указана</Absent>} · файл{' '}
+        <span className="font-mono">{card.path}</span>
+      </p>
     </div>
   )
 }

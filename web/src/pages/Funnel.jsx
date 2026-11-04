@@ -131,6 +131,15 @@ function FunnelBody({ stats }) {
       <AgentFunnel />
 
       <Panel
+        title="Путь идеи"
+        subtitle="Одна идея считается один раз: входящие → карточка → в реестре, ещё не прогонялась → прогонялась. Шумовые книги не входят."
+      >
+        <CountList
+          entries={(stats.idea_path ?? []).map((step) => [step.key, step.label_ru, step.count])}
+        />
+      </Panel>
+
+      <Panel
         title="Что решил q-lab"
         subtitle="Идеи по исходу их последнего прогона. Только собственные прогоны q-lab: импорт старого фреймворка и решения владельца сюда не входят."
       >
@@ -157,7 +166,7 @@ function FunnelBody({ stats }) {
 
       <Panel
         title="Идеи по статусам"
-        subtitle={`Текущий срез реестра. Порядок — жизненный цикл из docs/REGISTRY.md. Калибровочные шумовые идеи (${stats.calibration_ideas ?? 0}) не показаны: это измерительный прибор, а не кандидаты.`}
+        subtitle={`Текущий срез реестра. Порядок — жизненный цикл из docs/REGISTRY.md. Калибровочные шумовые идеи (${stats.calibration_ideas ?? 0}) не показаны: это измерительный прибор, а не идеи.`}
       >
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
