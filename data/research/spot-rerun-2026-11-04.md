@@ -1,0 +1,7 @@
+
+## Эксперименты на стенде (записано кодом, не исследователем)
+
+- `bv3-research-fast-release` (прогон 260037) [одна проверка: код выбирает раз в месяц по прошлому между 4 вариантами (fast_window_hours=12/sticky_exit_hours=0, fast_window_hours=12/sticky_exit_hours=12, fast_window_hours=24/sticky_exit_hours=0, fast_window_hours=24/sticky_exit_hours=12), каждый записан испытанием; история Binance, судится с 2019-11-01]: needs-forward — в год −31.4%, Шарп -2.80, просадка −4.3%, обгоняет шум 60%; как считает стенд (от баланса книги): в год −9.4%, Шарп -2.80, просадка −1.3%, нужно капитала $121 (по заявкам, которые книга поставила); по весам позиций было бы $384; flat: +0.5%, bear: -2.8%
+  - второй этап, Hyperliquid (тот же механизм и те же числа; комиссии Hyperliquid; код без агента, токены не тратятся), прогон 260256: ждёт проверки на новых данных — в год −21.4%, Шарп -2.20, просадка −3.4%, обгоняет шум 48%; как считает стенд (от баланса книги): в год −16.9%, Шарп -2.18, просадка −2.9%; 2025-01-01 — 2026-10-30; проверка вперёд — 27 дн. после даты фиксации параметров
+  - причина: has not seen every market regime for 30 days: bull 0 days, flat 7 days, bear 21 days; so far it would route reject (rule(s) failed: net_edge_positive, shape_aware_edge; fatal rule: net_edge_positive) [noise bar power 4% (it decides from 80%)]
+  - итог по двум этапам: площадки вместе пока не решают: Binance ещё не решила, Hyperliquid ещё не решила; статус «bench»

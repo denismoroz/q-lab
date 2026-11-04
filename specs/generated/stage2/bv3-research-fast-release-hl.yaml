@@ -58,7 +58,7 @@ data:
   source: hyperliquid
   interval: 1h
   include_spot: false
-  spot_prices: perp
+  spot_prices: own
   start: '2025-01-01'
   end: '2026-10-30'
   instruments:
@@ -71,10 +71,7 @@ costs:
   slippage_bps: 0.9
 min_leg_notional: 10.0
 simultaneous_legs: 2
-unexpressed_mechanisms:
-- The card reads the coin's spot closes for the fast return; the stand's default marks a spot column at
-  its perp's price (data.spot_prices perp, as the base), so the fast return is read at that mark and the
-  spot-perp gap does not enter it.
+unexpressed_mechanisms: []
 plain_summary: 'Держим BTC и ETH на половину денег стратегии. Когда монета падает две и четыре недели
   подряд (её доход за 14 и за 30 дней не выше нуля), включаем страховку: продаём на бирже бессрочный контракт
   (ставку на цену монеты без даты окончания) на ту же сумму, и падение цены гасится. Новое здесь одно:

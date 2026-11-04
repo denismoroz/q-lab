@@ -58,7 +58,7 @@ data:
   source: hyperliquid
   interval: 1h
   include_spot: false
-  spot_prices: perp
+  spot_prices: own
   start: '2025-01-01'
   end: '2026-11-03'
   instruments:
@@ -78,8 +78,6 @@ costs:
 min_leg_notional: 10.0
 simultaneous_legs: 2
 unexpressed_mechanisms:
-- 'The spot-perp price gap is not in the leftover''s value: the stand marks a spot column at its perp''s
-  price (data.spot_prices perp, as the baseline), so the leftover is worth the perp''s price.'
 - The lot table is today's szDecimals applied to the whole history, so a lot that changed over time is
   not modelled (the card accepts this).
 - The covered leftover is a short contract of exactly the leftover's size; the live engine's slightly
@@ -94,8 +92,8 @@ differs_from_source:
 - '2 named instrument(s) are not listed on Binance and are not traded: PURR, PURR-SPOT.'
 - 'The twin trades only 10 named columns (AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT, HYPE, HYPE-SPOT,
   SOL, SOL-SPOT), the data.instruments of frab-lot-leftover, not the whole market: the list was chosen
-  by 2026-10-10 and would know which coins survived if applied to the history before it (survivorship),
-  so the twin is judged only from 2026-10-10 (judged_from = instruments_chosen_at); the days from 2019-09-08
+  by 2026-06-01 and would know which coins survived if applied to the history before it (survivorship),
+  so the twin is judged only from 2026-06-01 (judged_from = instruments_chosen_at); the days from 2019-09-08
   are warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
 - 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
   the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
@@ -107,7 +105,7 @@ differs_from_source:
   stage 1 (frab-lot-leftover) on hyperliquid''s own perpetual contracts listed at each bar; nothing was
   refitted.'
 - The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
-- Judged from 2026-10-10, the day the instrument list was known (instruments_chosen_at); the days before
+- Judged from 2026-06-01, the day the instrument list was known (instruments_chosen_at); the days before
   it are warm-up.
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
 - 'AVAX-SPOT is hyperliquid''s UAVAX/USDC spot token (docs/TASKS.md line 638 (spotMeta read 2026-09-22):
@@ -156,16 +154,16 @@ params_fixed_evidence: 'Inherited from stage 1 (frab-lot-leftover): The wrapper'
   4 candidates. What this does not prove: the lists were declared with the idea before its check ran;
   what was seen of the history when they were declared is not recorded, so the choice is only as honest
   as the lists are (the spec''s own date for its numbers: 2026-11-02). The instrument list is not point-in-time
-  before 2026-10-10. The twin trades only the 10 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT,
+  before 2026-06-01. The twin trades only the 10 columns AVAX, AVAX-SPOT, BTC, BTC-SPOT, ETH, ETH-SPOT,
   HYPE, HYPE-SPOT, SOL, SOL-SPOT (data.instruments of frab-lot-leftover) (hourly candles of every Binance
   perpetual take hours; these take about 4 minutes). A list chosen by hand and applied to history from
   2019-09-08 knows which coins existed and survived, which the days before it was chosen did not; a coin
   Binance listed later has no candles before its listing day and enters then. The earliest documented
-  day the list existed is 2026-10-10 (params_fixed_at of frab-live-own-spot-five-coins), so the twin is
-  judged only from that day (`judged_from` = `instruments_chosen_at` = 2026-10-10): the history before
-  it is warm-up for the code''s monthly choice (more data to choose with), not judged, and from that day
-  the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
-judged_from: '2026-10-10'
+  day the list existed is 2026-06-01 (data.honest_from of frab-lot-leftover), so the twin is judged only
+  from that day (`judged_from` = `instruments_chosen_at` = 2026-06-01): the history before it is warm-up
+  for the code''s monthly choice (more data to choose with), not judged, and from that day the stand counts
+  the list as point-in-time (docs/FIT_VS_FORWARD.md).'
+judged_from: '2026-06-01'
 sources:
   code_ref: src/qlab/strategies/retune.py (existing wrapper)
   refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
@@ -216,10 +214,10 @@ sources:
   grid: 'cards/frab-lot-leftover.yaml: the lists the idea declares, 4 variants; owner 2026-10-31: one
     idea, one check -- code chooses among the declared values every month from the past only (docs/ONE_CHECK.md)'
   data.instruments: 'docs/RETUNE.md: data.instruments of frab-lot-leftover, the coins its book trades'
-  instruments_chosen_at: 'specs/research/frab/frab-live-own-spot-five-coins.yaml: params_fixed_at = 2026-10-10
-    of frab-live-own-spot-five-coins, the earliest documented day the list of frab-lot-leftover existed'
+  instruments_chosen_at: 'cards/frab-lot-leftover.yaml: data.honest_from = 2026-06-01 of frab-lot-leftover,
+    the earliest documented day the list of frab-lot-leftover existed'
   judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
-    = 2026-10-10); the days before are warm-up'
+    = 2026-06-01); the days before are warm-up'
   score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
     spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
     (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
@@ -260,4 +258,4 @@ strategy_capital_usd: 120.0
 regime_claim: {}
 review_answers: {}
 selects_causally: true
-instruments_chosen_at: '2026-10-10'
+instruments_chosen_at: '2026-06-01'
