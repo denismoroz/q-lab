@@ -1,0 +1,249 @@
+# Stage 2 of bv3-research-fast-release (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: bv3-research-fast-release-hl
+title: 'Bv3: страховку снимают по росту самой монеты за 12 или 24 часа, без или с 12-часовым ожиданием
+  (BTC и ETH, Binance с 2019): числа выбирает код раз в месяц только по прошлому, история Binance с 2019
+  (второй этап: hyperliquid)'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.agent.fast_release_gate:FastReleaseGate
+  base_params:
+    fast_window_hours: 12
+    fast_entry: 0
+    coins:
+    - BTC
+    - ETH
+    capital_usd: 128.5
+    spot_share: 0.5
+    hedge_threshold: 0.0
+    sticky_exit_hours: 0
+    ratchet_threshold: 0.5
+    carry_enabled: false
+    carry_fraction: 0.6
+    carry_entry_apr: 0.1
+    carry_exit_hours: 24
+    slippage: 0.0005
+    min_order_usd: 10.0
+    margin_enabled: true
+    short_leverage:
+      BTC: 3.0
+      ETH: 2.0
+    default_leverage: 1.0
+    maint_margin_rate:
+      BTC: 0.0125
+      ETH: 0.02
+    default_maint_margin_rate: 0.05
+    margin_buffer: 0.1
+    hedge_margin_headroom: 1.0
+    rebalance_at_im_share: 0.5
+    mode: paper
+  grid:
+    fast_window_hours:
+      fast_window_hours=12:
+        fast_window_hours: 12
+      fast_window_hours=24:
+        fast_window_hours: 24
+    sticky_exit_hours:
+      sticky_exit_hours=0:
+        sticky_exit_hours: 0
+      sticky_exit_hours=12:
+        sticky_exit_hours: 12
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 7.5
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1h
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-10-30'
+  instruments:
+  - BTC
+  - BTC-SPOT
+  - ETH
+  - ETH-SPOT
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 2
+unexpressed_mechanisms:
+- The card reads the coin's spot closes for the fast return; the stand's default marks a spot column at
+  its perp's price (data.spot_prices perp, as the base), so the fast return is read at that mark and the
+  spot-perp gap does not enter it.
+plain_summary: 'Держим BTC и ETH на половину денег стратегии. Когда монета падает две и четыре недели
+  подряд (её доход за 14 и за 30 дней не выше нуля), включаем страховку: продаём на бирже бессрочный контракт
+  (ставку на цену монеты без даты окончания) на ту же сумму, и падение цены гасится. Новое здесь одно:
+  страховку снимаем, как только сама монета выросла за последние 12 или 24 часа, и не ждём, пока развернётся
+  медленное правило; когда короткий рост кончился, а медленное правило всё ещё говорит «вниз», страховка
+  возвращается в тот же час. Должно зарабатывать на быстрых отскоках внутри падения, которые нынешняя
+  книга проводит под страховкой. Риск: отскок оказался ложным и цена ушла ниже без страховки, а частые
+  включения и снятия стоят комиссий. Деньги стратегии 128.5 доллара, по 64.25 на монету, как у книги Bv2
+  на прод.'
+plain_title: Страховка, которую снимают в первые часы отскока самой монеты
+differs_from_source:
+- 'One check of bv3-research-fast-release: the numbers it trades are chosen by code, every month, from
+  returns realised before the choice (the lists declared in cards/bv2-fast-release-by-own-trend.yaml,
+  funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md); the data is Binance''s history, a proxy for
+  binance''s market, judged for Binance itself: Binance''s costs and minimum leg and Binance''s facts
+  about execution (docs/VENUE_SPLIT.md).'
+- 'The twin trades only 4 named columns (BTC, BTC-SPOT, ETH, ETH-SPOT), the data.instruments of bv3-research-fast-release,
+  not the whole market: the list was chosen by 2026-10-03 and would know which coins survived if applied
+  to the history before it (survivorship), so the twin is judged only from 2026-10-03 (judged_from = instruments_chosen_at);
+  the days from 2019-09-08 are warm-up for the choice (docs/RETUNE.md, docs/FIT_VS_FORWARD.md).'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml (the two-leg mean of the perpetual''s and the spot''s fee), its
+  minimum leg is Binance''s (venues/binance.yaml, per contract where Binance states it), and the facts
+  about execution (venue_supported, atomic_execution) are Binance''s: a run that passes every rule routes
+  needs-infrastructure because the lab has no Binance order adapter. Text above that speaks of the original''s
+  or Hyperliquid''s costs and minimum leg describes the spec as it was before that day.'
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (bv3-research-fast-release) on hyperliquid''s own perpetual contracts listed at each bar; nothing
+  was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- Judged from 2026-10-03, the day the instrument list was known (instruments_chosen_at); the days before
+  it are warm-up.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
+- 'BTC-SPOT is hyperliquid''s UBTC/USDC spot token (docs/TASKS.md line 635 (spotMeta read 2026-09-22):
+  BTC is UBTC (@142), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13: UBTC, UETH, USOL are 1:1 with the perp, deep books, safe).'
+- 'ETH-SPOT is hyperliquid''s UETH/USDC spot token (docs/TASKS.md line 636 (spotMeta read 2026-09-22):
+  ETH is UETH (@151), the token production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py
+  line 13).'
+noise_universe: held
+measure_hedge_timing: true
+required_instruments:
+- BTC-SPOT
+- ETH-SPOT
+- BTC
+- ETH
+params_fixed_at: '2019-11-01'
+params_fixed_evidence: 'Inherited from stage 1 (bv3-research-fast-release): The wrapper''s first causal
+  choice (qlab.strategies.retune, docs/RETUNE.md): the data starts 2019-09-08; the longest warm-up read
+  from the parameters is 1 days (fast_window_hours = 24), so the book can first trade on 2019-09-09; a
+  candidate is eligible only after one whole month re-tuning period, so the first re-tuning after 2019-09-09
+  is 2019-10-01 and the first choice is made at the one after it, 2019-11-01. This is warm-up arithmetic
+  read generically from the parameters (every day, hour, window and lookback number, whatever the strategy
+  does with it), not a result. If the strategy needs more than the parameters show (enough instruments
+  listed on Binance, a signal that waits for history), the true first choice is later and the days before
+  it are judged as flat days. The grid is the idea''s declared lists (fast_window_hours, sticky_exit_hours),
+  4 candidates. What this does not prove: the lists were declared with the idea before its check ran;
+  what was seen of the history when they were declared is not recorded, so the choice is only as honest
+  as the lists are. The instrument list is not point-in-time before 2026-10-03. The twin trades only the
+  4 columns BTC, BTC-SPOT, ETH, ETH-SPOT (data.instruments of bv3-research-fast-release) (hourly candles
+  of every Binance perpetual take hours; these take about 2 minutes). A list chosen by hand and applied
+  to history from 2019-09-08 knows which coins existed and survived, which the days before it was chosen
+  did not; a coin Binance listed later has no candles before its listing day and enters then. The earliest
+  documented day the list existed is 2026-10-03 (params_fixed_at of bv2-research-btceth), so the twin
+  is judged only from that day (`judged_from` = `instruments_chosen_at` = 2026-10-03): the history before
+  it is warm-up for the code''s monthly choice (more data to choose with), not judged, and from that day
+  the stand counts the list as point-in-time (docs/FIT_VS_FORWARD.md).'
+judged_from: '2026-10-03'
+sources:
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/research/bv3/bv3-research-fast-release.yaml: the same window end'
+  base_params.fast_entry: 'cards/bv2-fast-release-by-own-trend.yaml, grid: fast_entry 0, 1; 0 is the card''s
+    first reading (the slow rule decides whether to hedge)'
+  base_params.coins: 'funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md: «Самый устойчивый набор
+    — BTC+ETH: в минусе 3% годовых окон, в медвежьем 2022-м +4%, в 2025–26 лучше, чем 4 монеты»'
+  base_params.capital_usd: 'derived: 257.0 * 2 / 4; per-coin capital of seed/prod_params/2026-10-02-b2.json
+    kept, SOL and AVAX dropped'
+  base_params.short_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export), BTC and ETH entries kept
+  base_params.maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export), BTC and ETH entries kept
+  base_params.spot_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.hedge_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.ratchet_threshold: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.carry_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_fraction: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_entry_apr: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.carry_exit_hours: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.slippage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.min_order_usd: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.margin_enabled: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.default_leverage: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.default_maint_margin_rate: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.margin_buffer: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only
+    export)
+  base_params.hedge_margin_headroom: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.rebalance_at_im_share: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json,
+    read-only export)
+  base_params.mode: seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)
+  base_params.fast_window_hours: 'cards/bv2-fast-release-by-own-trend.yaml, funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md:
+    the lists the idea declares, 4 variants; owner 2026-10-31: one idea, one check -- code chooses among
+    the declared values every month from the past only (docs/ONE_CHECK.md)'
+  base_params.sticky_exit_hours: 'cards/bv2-fast-release-by-own-trend.yaml, funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md:
+    the lists the idea declares, 4 variants; owner 2026-10-31: one idea, one check -- code chooses among
+    the declared values every month from the past only (docs/ONE_CHECK.md)'
+  inner_code_ref: 'src/qlab/strategies/agent/fast_release_gate.py: the code of the spec'
+  grid: 'cards/bv2-fast-release-by-own-trend.yaml, funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md:
+    the lists the idea declares, 4 variants; owner 2026-10-31: one idea, one check -- code chooses among
+    the declared values every month from the past only (docs/ONE_CHECK.md)'
+  data.instruments: 'specs/research/bv3/bv3-research-fast-release.yaml: data.instruments of bv3-research-fast-release,
+    the coins its book trades'
+  instruments_chosen_at: 'specs/research/bv2/bv2-research-btceth.yaml: params_fixed_at = 2026-10-03 of
+    bv2-research-btceth, the earliest documented day the list of bv3-research-fast-release existed'
+  judged_from: 'docs/RETUNE.md: a hand-picked list is judged only from the day it was known (instruments_chosen_at
+    = 2026-10-03); the days before are warm-up'
+  score_costs.taker_fee_bps: 'derived: (5.0 + 10.0) / 2; the perpetual''s 5 bps is the number above, Binance
+    spot''s taker for a regular user is 0.100% (10 bps), the Fees page https://www.binance.com/en/fee/schedule
+    (read 2026-10-25, recorded at docs/FRAB_BINANCE_SPOT.md line 57; the BNB discount to 0.075% is not
+    applied, it needs BNB on the account); the mean is how docs/FRAB_BINANCE_SPOT.md line 114 blends the
+    two legs'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  strategy_capital_usd: 'derived: 257.0 * 2 / 4; the spec''s own parameter capital_usd = 128.5, per-coin
+    capital of seed/prod_params/2026-10-02-b2.json kept for two coins'
+  regime_claim.bull: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от
+    режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8
+    раз меньше»'
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+  data.spot_legs.BTC: 'docs/TASKS.md line 635 (spotMeta read 2026-09-22): BTC is UBTC (@142), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13: UBTC,
+    UETH, USOL are 1:1 with the perp, deep books, safe'
+  data.spot_legs.ETH: 'docs/TASKS.md line 636 (spotMeta read 2026-09-22): ETH is UETH (@151), the token
+    production takes too; funding-rate-arbitrage/src/frab/exchanges/hyperliquid/tokens.py line 13'
+strategy_capital_usd: 128.5
+regime_claim:
+  bull: earns
+  bear: beats_market
+review_answers: {}
+selects_causally: true
+instruments_chosen_at: '2026-10-03'

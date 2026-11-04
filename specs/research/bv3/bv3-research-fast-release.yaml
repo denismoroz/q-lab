@@ -1,0 +1,137 @@
+# Researcher's experiment, docs/research/bv3-2026-11-04.md, hypothesis 1: Bv3's first check.
+# The owner's idea (ideas/inbox.yaml, idea-0001, 2026-10-27): «новая стратегия где страховка
+# снимается чаще, по разным таймфреймам ... определения тренда по более высокому таймфрейму а
+# включать по более низкому ... брать не биткоин а монету на которой работать».
+#
+# Copy of specs/agent/bv2-fast-release-by-own-trend.yaml (the implementer's spec of the narrow card,
+# same block qlab.strategies.agent.fast_release_gate): the slow rule of the live book (the coin's own
+# 14- and 30-day returns) still says whether the coin is falling; the coin's own return over the last
+# fast_window_hours bars releases the hedge as soon as it is above zero. THE CHANGES against that spec:
+#   1. sticky_exit_hours is open, 0 or 12. With 12 (the card keeps it) a release by the 12- or 24-hour
+#      return still waits 12 hours of "not needed" in a row, so the hedge is not lifted any faster than
+#      the slow rule lifts it in a sharp rally (LIMITS.md §2.4, rallies under the hedge: «BTC на 18% за
+#      2 дня»). 0 is the owner's "lifted more often" read literally. 48 of the same source list is left
+#      out: it lifts the hedge later, the opposite of the idea.
+#   2. fast_window_hours is 12 or 24 only, never 0: 0 is Bv2 itself, and Bv2 on BTC and ETH on the same
+#      data already has its own runs (specs/research/bv2/bv2-research-btceth.yaml) -- the check is
+#      "the faster release chosen monthly from the past", compared with that base, not a choice that
+#      may fall back to the base.
+#   3. data from 2019-09-08 (the whole Binance history of both legs of BTC and ETH, as
+#      bv2-research-btceth), not from 2025-06-01: the 2020-2021 and 2022 rallies and falls are where
+#      the hedge is lifted or kept, and the one check needs years of months to choose from.
+# fast_entry stays 0: the higher timeframe keeps deciding whether to hedge at all (the card's first
+# reading); its second reading drops the slow rule and is the card's own experiment, not Bv3's.
+
+idea_id: bv3-research-fast-release
+title: "Bv3: страховку снимают по росту самой монеты за 12 или 24 часа, без или с 12-часовым ожиданием (BTC и ETH, Binance с 2019)"
+code_ref: "qlab.strategies.agent.fast_release_gate:FastReleaseGate"
+
+plain_title: "Страховка, которую снимают в первые часы отскока самой монеты"
+plain_summary: >-
+  Держим BTC и ETH на половину денег стратегии. Когда монета падает две и четыре недели подряд
+  (её доход за 14 и за 30 дней не выше нуля), включаем страховку: продаём на бирже бессрочный
+  контракт (ставку на цену монеты без даты окончания) на ту же сумму, и падение цены гасится. Новое
+  здесь одно: страховку снимаем, как только сама монета выросла за последние 12 или 24 часа, и не
+  ждём, пока развернётся медленное правило; когда короткий рост кончился, а медленное правило
+  всё ещё говорит «вниз», страховка возвращается в тот же час. Должно зарабатывать на быстрых
+  отскоках внутри падения, которые нынешняя книга проводит под страховкой. Риск: отскок оказался
+  ложным и цена ушла ниже без страховки, а частые включения и снятия стоят комиссий. Деньги
+  стратегии 128.5 доллара, по 64.25 на монету, как у книги Bv2 на прод.
+
+params:
+  fast_window_hours: 12
+  fast_entry: 0
+  coins: [BTC, ETH]
+  capital_usd: 128.5
+  spot_share: 0.5
+  hedge_threshold: 0.0
+  sticky_exit_hours: 0
+  ratchet_threshold: 0.5
+  carry_enabled: false
+  carry_fraction: 0.6
+  carry_entry_apr: 0.1
+  carry_exit_hours: 24
+  slippage: 0.0005
+  min_order_usd: 10.0
+  margin_enabled: true
+  short_leverage: {BTC: 3.0, ETH: 2.0}
+  default_leverage: 1.0
+  maint_margin_rate: {BTC: 0.0125, ETH: 0.02}
+  default_maint_margin_rate: 0.05
+  margin_buffer: 0.1
+  hedge_margin_headroom: 1.0
+  rebalance_at_im_share: 0.5
+  mode: paper
+
+data:
+  source: binance
+  interval: "1h"
+  start: 2019-09-08
+  end: 2026-10-30
+  instruments: [BTC, BTC-SPOT, ETH, ETH-SPOT]
+
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+
+min_leg_notional: 10.0
+# The strategy's own money: the spec's capital_usd (two coins at 64.25), the base of every percent.
+strategy_capital_usd: 128.5
+simultaneous_legs: 2
+# Binance is the DATA proxy; orders would go to Hyperliquid (as the base; docs/VENUES.md section 9).
+execution_venue: hyperliquid
+
+# Random books for the noise bar trade only the coins this book holds (docs/HEDGE_TIMING.md).
+noise_universe: held
+
+# Whether the book picks WHEN to hedge better than chance (docs/HEDGE_TIMING.md): the question of
+# this idea is exactly when the hedge is lifted.
+measure_hedge_timing: true
+
+unexpressed_mechanisms:
+  - "The card reads the coin's spot closes for the fast return; the stand's default marks a spot column at its perp's price (data.spot_prices perp, as the base), so the fast return is read at that mark and the spot-perp gap does not enter it."
+
+required_instruments: [BTC-SPOT, ETH-SPOT, BTC, ETH]
+
+regime_claim:
+  bull: earns
+  bear: beats_market
+
+# The lists the one check chooses among, every month from the past only (docs/ONE_CHECK.md).
+choice:
+  axes:
+    fast_window_hours: [12, 24]
+    sticky_exit_hours: [0, 12]
+  source: "cards/bv2-fast-release-by-own-trend.yaml, funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md"
+
+sources:
+  "fast_window_hours": "cards/bv2-fast-release-by-own-trend.yaml, grid: fast_window_hours 0, 12, 24; 0 (the block off, Bv2 itself) left out, see the header"
+  "fast_entry": "cards/bv2-fast-release-by-own-trend.yaml, grid: fast_entry 0, 1; 0 is the card's first reading (the slow rule decides whether to hedge)"
+  "sticky_exit_hours": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md, §1 «Параметры — плато, а не пик»: «липкий выход 0/12/48 ч»; 12 is seed/prod_params/2026-10-02-b2.json; 48 left out, see the header"
+  "costs.taker_fee_bps": "night/costs.yaml, venue hyperliquid, taker_fee_bps"
+  "costs.slippage_bps": "night/costs.yaml, venue hyperliquid, slippage_bps"
+  "min_leg_notional": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), min_order_usd"
+  "strategy_capital_usd": "derived: 257.0 * 2 / 4; the spec's own parameter capital_usd = 128.5, per-coin capital of seed/prod_params/2026-10-02-b2.json kept for two coins"
+  "coins": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md: «Самый устойчивый набор — BTC+ETH: в минусе 3% годовых окон, в медвежьем 2022-м +4%, в 2025–26 лучше, чем 4 монеты»"
+  "capital_usd": "derived: 257.0 * 2 / 4; per-coin capital of seed/prod_params/2026-10-02-b2.json kept, SOL and AVAX dropped"
+  "short_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), BTC and ETH entries kept"
+  "maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export), BTC and ETH entries kept"
+  "data.instruments": "funding-rate-arbitrage/research/strategy_b_v2/LIMITS.md: «Самый устойчивый набор — BTC+ETH»; both legs of each coin, as specs/research/bv2/bv2-research-btceth.yaml"
+  "spot_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "ratchet_threshold": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_fraction": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_entry_apr": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "carry_exit_hours": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "slippage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "min_order_usd": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_enabled": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_leverage": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "default_maint_margin_rate": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "margin_buffer": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "hedge_margin_headroom": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "rebalance_at_im_share": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "mode": "seed/prod_params/2026-10-02-b2.json (frab.db strategies.params_json, read-only export)"
+  "regime_claim.bull": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"
+  "regime_claim.bear": "funding-rate-arbitrage/research/strategy_b_v2/REPORT.md: «Доход B v2 зависит от режима рынка. Бык: +27…54% в год»; «Как защита держания работает везде. В медвежий год убыток в 8 раз меньше»"

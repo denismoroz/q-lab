@@ -183,7 +183,79 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/bv2-2026-10-28.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'reviewer: baseline-mismatch: The grid has no variant that switches the new block off. `fast_entry_window_days`
+    takes only 3 and 7, and `fast_entry_drop` takes only 0.0 and 0.05. So the first variant (3 days, 0.0)
+    is already a changed rule, not Bv2. The sibling card puts an "off" value 0 first, which makes the
+    first variant the baseline spec. Add an off value (for example window 0 = the block off), or put the
+    baseline variant first.'
+  - 'reviewer: hindsight-data: `data.hand_picked: false` is wrong. The baseline `specs/research/bv2/bv2-research-btceth.yaml`
+    says SOL and AVAX were dropped because they "whipsaw the hedge", and the BTC+ETH pair comes from frab''s
+    study that had already seen 2025–26. The coin list was chosen knowing who survived. The sibling card
+    marks it `hand_picked: true` with `honest_from: 2025-06-01` and a reason. This card claims honest
+    data from 2019-09-08 without saying so. Mark the list hand-picked and judge it from the day the list
+    was known, or explain why the whole history is fair.'
+  - 'reviewer: repeats-tried: The `difference_ru` for `bv2-sig-momentum-sign` and `qlab-bv2-short-window`
+    does not hold. The final signal is "old 14|30 rule OR return over 3 or 7 days ≤ 0 (or < −5%)". That
+    is the "или" combination of 3–30 day return signs, which was already tried. The card admits the 3-
+    and 7-day windows were there. The claimed novelty, "release by the old rule only", is not a different
+    rule under an OR: the OR output only falls when both inputs fall. The 0.05 threshold is the only new
+    part, and `bv2-sig-drawdown-from-peak` and `bv2-sig-hyst` already cover a drop-by-X% entry. The card
+    must say concretely what differs from the 3/7-day "or" variant, or the idea may be a repeat.'
+  - 'reviewer: narrowed: The idea says the short window "can only turn the hedge on, not take it off",
+    and the 14/30 rule takes it off "as now". The rule''s step 5 uses a plain OR with a 12-hour sticky
+    exit. Under that, the short signal keeps the hedge on after the 14/30 rule has gone silent, which
+    is the short window holding the hedge. And if the short window alone started the hedge, it ends when
+    the window rolls over, not by the 14/30 rule. Another reading is a latch: the short window sets the
+    hedge, and only the 14/30 rule''s "not needed" (plus the sticky exit) removes it. The `readings_ru`
+    list only two readings of "sharp drop" (the threshold) and none of how the hedge is released. Add
+    the release reading as a grid variant and list it in `readings_ru`, or justify the OR.'
+  review_blocks:
+  - kind: baseline-mismatch
+    ref: new
+    text: The grid has no variant that switches the new block off. `fast_entry_window_days` takes only
+      3 and 7, and `fast_entry_drop` takes only 0.0 and 0.05. So the first variant (3 days, 0.0) is already
+      a changed rule, not Bv2. The sibling card puts an "off" value 0 first, which makes the first variant
+      the baseline spec. Add an off value (for example window 0 = the block off), or put the baseline
+      variant first.
+  - kind: hindsight-data
+    ref: new
+    text: '`data.hand_picked: false` is wrong. The baseline `specs/research/bv2/bv2-research-btceth.yaml`
+      says SOL and AVAX were dropped because they "whipsaw the hedge", and the BTC+ETH pair comes from
+      frab''s study that had already seen 2025–26. The coin list was chosen knowing who survived. The
+      sibling card marks it `hand_picked: true` with `honest_from: 2025-06-01` and a reason. This card
+      claims honest data from 2019-09-08 without saying so. Mark the list hand-picked and judge it from
+      the day the list was known, or explain why the whole history is fair.'
+  - kind: repeats-tried
+    ref: new
+    text: 'The `difference_ru` for `bv2-sig-momentum-sign` and `qlab-bv2-short-window` does not hold.
+      The final signal is "old 14|30 rule OR return over 3 or 7 days ≤ 0 (or < −5%)". That is the "или"
+      combination of 3–30 day return signs, which was already tried. The card admits the 3- and 7-day
+      windows were there. The claimed novelty, "release by the old rule only", is not a different rule
+      under an OR: the OR output only falls when both inputs fall. The 0.05 threshold is the only new
+      part, and `bv2-sig-drawdown-from-peak` and `bv2-sig-hyst` already cover a drop-by-X% entry. The
+      card must say concretely what differs from the 3/7-day "or" variant, or the idea may be a repeat.'
+  - kind: narrowed
+    ref: new
+    text: 'The idea says the short window "can only turn the hedge on, not take it off", and the 14/30
+      rule takes it off "as now". The rule''s step 5 uses a plain OR with a 12-hour sticky exit. Under
+      that, the short signal keeps the hedge on after the 14/30 rule has gone silent, which is the short
+      window holding the hedge. And if the short window alone started the hedge, it ends when the window
+      rolls over, not by the 14/30 rule. Another reading is a latch: the short window sets the hedge,
+      and only the 14/30 rule''s "not needed" (plus the sticky exit) removes it. The `readings_ru` list
+      only two readings of "sharp drop" (the threshold) and none of how the hedge is released. Add the
+      release reading as a grid variant and list it in `readings_ru`, or justify the OR.'
+  review_notes:
+  - 'In step 3, "return below minus `fast_entry_drop`; at 0.0 it is on when return ≤ 0" is a special case
+    that is easy to implement wrongly. Write one condition: return ≤ −drop.'
+  - The `kill_condition` and `observable` ("the share of switch-ons that end above the entry price after
+    72 hours") fit the idea. But the observable says "if more than half, the payment has stopped coming",
+    and the example in `plain_summary` ("second day") assumes a 3-day window. Say which window the example
+    uses.
+  - '"Perpetual contract", "closing price" and "sticky exit" are explained at their first use. "Липкий
+    выход" in `rule_ru` is explained only inside a parenthesis, so an engineer reading only the card may
+    miss it.'
 - id: idea-0007
   date: '2026-10-28'
   source: agent:researcher
@@ -193,7 +265,10 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/bv2-2026-10-28.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'vs_tried names ids that are not in night/tried.yaml: [''trend-live-top25-seasoned'']'
+  review_blocks: []
 - id: idea-0008
   date: '2026-10-28'
   source: agent:researcher
@@ -345,7 +420,44 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-10-31.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'reviewer: bad-question: The second half of `question_ru` asks whether the rule is only for FRAB or
+    for all Hyperliquid strategies. The idea already answers that: «то же касается других стратегий на
+    Hyperliquid». The owner has no choice to make there. The draft also describes the "all" outcome in
+    its own words as a general rule with a first trading hour recorded per strategy, so it could have
+    carried that reading without asking.'
+  - 'reviewer: bad-question: The first half, "send it to the researcher or to the development tasks?",
+    is a routing question about the lab''s own tooling, not a decision only the owner can make. It is
+    also vague: it never says what the owner would be choosing between in terms of consequences. The draft
+    should state a concrete, specific question. For example: should the cut date be computed from the
+    first hour a strategy actually trades, for every Hyperliquid strategy? And what counts as "actually
+    trades": the first nonzero position, or the first hour with price data?'
+  review_blocks:
+  - kind: bad-question
+    ref: new
+    text: 'The second half of `question_ru` asks whether the rule is only for FRAB or for all Hyperliquid
+      strategies. The idea already answers that: «то же касается других стратегий на Hyperliquid». The
+      owner has no choice to make there. The draft also describes the "all" outcome in its own words as
+      a general rule with a first trading hour recorded per strategy, so it could have carried that reading
+      without asking.'
+  - kind: bad-question
+    ref: new
+    text: 'The first half, "send it to the researcher or to the development tasks?", is a routing question
+      about the lab''s own tooling, not a decision only the owner can make. It is also vague: it never
+      says what the owner would be choosing between in terms of consequences. The draft should state a
+      concrete, specific question. For example: should the cut date be computed from the first hour a
+      strategy actually trades, for every Hyperliquid strategy? And what counts as "actually trades":
+      the first nonzero position, or the first hour with price data?'
+  review_notes:
+  - The draft cites `src/qlab/agents/researcher.py` for the "phrase about the cut date". That file only
+    has `CUT_SENTENCE` at line 48, and I did not confirm that it is where the cut date is calculated.
+    Name the exact place, or drop the file reference.
+  - The question packs two or three questions into one long paragraph. Split it into a single question
+    with short lead-in context.
+  - 'Terms like «отрез» and «разбор просадок» are explained only loosely at first use. Add one concrete
+    example from the idea: FRAB''s window starts in January 2025, hourly prices only from March 2026,
+    so the part before the cut comes out nearly empty.'
 - id: idea-0023
   date: '2026-10-31'
   source: agent:researcher
@@ -377,4 +489,24 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/director-2026-11-03.md
+  attempts: 0
+- id: idea-0026
+  date: '2026-11-04'
+  source: agent:researcher
+  text: 'Bv3: после быстрого снятия страховки по росту монеты за последние часы ставить её обратно не
+    сразу, как только рост кончился, а только когда цена опустилась ниже цены, по которой страховку сняли
+    — чтобы в боковике страховка не включалась и не выключалась каждый час'
+  status: new
+  card: null
+  notes: из записки docs/research/bv3-2026-11-04.md
+  attempts: 0
+- id: idea-0027
+  date: '2026-11-04'
+  source: agent:researcher
+  text: 'Bv3: по росту монеты за последние часы снимать не всю страховку, а половину, а вторую половину
+    оставлять, пока не развернётся медленное правило за 14 и 30 дней — меньше потерь, если отскок окажется
+    ложным'
+  status: new
+  card: null
+  notes: из записки docs/research/bv3-2026-11-04.md
   attempts: 0
