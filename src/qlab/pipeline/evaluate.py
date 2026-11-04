@@ -69,9 +69,10 @@ from qlab.pipeline.spec import StrategySpec
 from qlab.regimes import breakdown as regime_breakdown
 from qlab.regimes import claim_checks as regime_claim_checks
 from qlab.registry import repo
-from qlab.registry.lifecycle import StatusDecision, apply_route
-from qlab.registry.models import DataSnapshot, TrialRoute, TrialSource, TrialStatus
+from qlab.registry.lifecycle import ROUTE_TARGET, StatusDecision, apply_route
+from qlab.registry.models import DataSnapshot, Idea, TrialRoute, TrialSource, TrialStatus
 from qlab.registry.models import Spec as SpecRow
+from qlab.registry.stages import is_stage2_child
 from qlab.rules.engine import EvaluationResult
 from qlab.rules.engine import evaluate as evaluate_rules
 from qlab.rules.schema import (
@@ -1558,26 +1559,30 @@ def evaluate_spec(
         )
         decision = None
         if update_idea_status:
-            status_route, status_reason, venue_ideas = routing.route, routing.reason, None
-            if (ruleset.venue_split is not None and ruleset.venue_split.independent
-                    and (spec.execution_venue or spec.data.source) == "binance"):
-                # Independent venues (rules 2026-10-30.2, docs/VENUE_SPLIT.md): a Binance run is
-                # one venue's verdict. The idea's status is the better of the two, so a Binance
-                # reject must not close an idea whose Hyperliquid side passed or has not decided.
-                from qlab.pipeline.stage2 import parent_route
+            independent = ruleset.venue_split is not None and ruleset.venue_split.independent
+            idea_row = session.get(Idea, spec.idea_id)
+            if (independent and TrialRoute(routing.route) in ROUTE_TARGET
+                    and not (idea_row is not None and is_stage2_child(idea_row))):
+                # Independent venues (rules 2026-10-30.2, docs/VENUE_SPLIT.md): this run is one
+                # venue's verdict, whatever `execution_venue` says. The idea's status is what both
+                # venues' latest verdicts make together (`qlab.pipeline.venue_status`), the same
+                # function the second stage uses: a reject on one venue must not close an idea
+                # whose other venue passed or has not spoken. A second stage's own status follows
+                # its own route; its parent is settled by `run_stage2`.
+                from qlab.pipeline.venue_status import settle
 
-                status_route, status_reason, venue_ideas = parent_route(
-                    session, spec.idea_id, routing.route, routing.reason)
-            decision = apply_route(
-                session,
-                idea_id=spec.idea_id,
-                route=TrialRoute(status_route),
-                route_reason=status_reason,
-                trial_id=trial.id,
-                rules_version=ruleset.version,
-                run_data_end=data_end,
-                venue_ideas=venue_ideas,
-            )
+                decision = settle(session, spec.idea_id, trial_id=trial.id,
+                                  rules_version=ruleset.version, run_data_end=data_end).decision
+            else:
+                decision = apply_route(
+                    session,
+                    idea_id=spec.idea_id,
+                    route=TrialRoute(routing.route),
+                    route_reason=routing.reason,
+                    trial_id=trial.id,
+                    rules_version=ruleset.version,
+                    run_data_end=data_end,
+                )
         return trial.id, decision
 
     coverage = (

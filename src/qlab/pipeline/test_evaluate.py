@@ -2473,3 +2473,26 @@ def test_a_refused_perp_mark_line_tells_the_stand_can_price_the_spot(session, tm
                            ruleset=_ruleset([CAPITAL_FIT_GENEROUS]))
     assert result.routing.route == "not-evaluable"
     assert "declare data.spot_prices: own" in result.routing.reason
+
+
+def test_binance_data_with_a_hyperliquid_execution_venue_is_still_a_binance_verdict(
+        session, tmp_path) -> None:
+    """Found 2026-11-03: a spec on Binance data with `execution_venue: hyperliquid` did not take the
+    independent-venues path, so a Binance reject closed the idea at once. The venue of a run is its
+    data's: the reject leaves the idea open while Hyperliquid is owed."""
+    from qlab.rules.schema import VenueSplit
+
+    _register_snapshot(session, tmp_path, snapshot_id="snap-binance", instruments=INSTRUMENTS,
+                       universe_complete=True, source="binance")
+    ruleset = RuleSet(
+        version="2026-10-30.2", rules=[CAPITAL_FIT_TIGHT],
+        venue_split=VenueSplit(overall="best_of_venues", independent=True,
+                               shared_coins_history=True, rationale="t"))
+    spec = _make_spec(execution_venue="hyperliquid",
+                      data={"source": "binance", "interval": INTERVAL, "start": START,
+                            "end": END, "instruments": None})
+
+    evaluation = evaluate_spec(spec, session=session, ruleset=ruleset)
+
+    assert evaluation.routing.route == "reject"
+    assert session.get(Idea, IDEA_ID).status == IdeaStatus.BENCH  # Hyperliquid has not spoken

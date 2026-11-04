@@ -749,18 +749,29 @@ def _ensure_child(session, spec: StrategySpec, parent_id: str, *, measurement: b
 
 
 def _settle(session, result: Stage2Result, combined: Combined, *, rules_version: str | None,
-            end: date | None, parent_id: str, child_id: str, independent: bool = False) -> None:
-    """Move the parent's status by the two stages together."""
+            end: date | None, parent_id: str, child_id: str, independent: bool = False,
+            note: str = "") -> None:
+    """Move the parent's status by the two stages together.
+
+    Independent venues (rules from 2026-10-30.2) read both venues' verdicts from the registry,
+    through the same function every first-stage run uses (`qlab.pipeline.venue_status.settle`);
+    `combined` is then only what the caller expected. The older rules take `combined` as given."""
     from qlab.registry.lifecycle import apply_route
     from qlab.registry.models import Idea, TrialRoute
 
+    if independent:
+        from qlab.pipeline.venue_status import settle
+
+        settled = settle(session, parent_id, trial_id=result.trial_id,
+                         rules_version=rules_version, run_data_end=end, note=note)
+        result.combined_route = settled.view.combined.route
+        result.combined_reason = settled.reason
+        result.parent_status = session.get(Idea, parent_id).status.value
+        return
     apply_route(
         session, idea_id=parent_id, route=TrialRoute(combined.route),
         route_reason=combined.reason, trial_id=result.trial_id, rules_version=rules_version,
-        run_data_end=end, also_ideas=(child_id,),
-        # Independent venues: the second venue's data is new to a Binance rejection, so what
-        # dates the data to beat is the second venue's own earlier failures (rules 2026-10-30.2).
-        venue_ideas=(child_id,) if independent else None)
+        run_data_end=end, also_ideas=(child_id,))
     result.combined_route = combined.route
     result.combined_reason = combined.reason
     result.parent_status = session.get(Idea, parent_id).status.value
@@ -926,6 +937,14 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
                        best_of_venues=split is not None, independent=independent)
     try:
         with session_scope() as session:
+            if independent:
+                # The crash is in the ledger now (`record_failure` above): the shared function
+                # reads it, so a venue still being retried is pending and a given-up one is
+                # «не проводился: сбой»; a closed idea stays closed unless a venue passed.
+                _settle(session, result, combined, rules_version=load_latest().version,
+                        end=None, parent_id=result.parent_id, child_id=result.idea_id,
+                        independent=True)
+                return
             if stays_closed(session, result.parent_id, result.stage1_trial_id,
                             closed_before=closed_before):
                 from qlab.registry.models import Idea
@@ -940,6 +959,22 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
                     independent=independent)
     except Exception as exc:  # noqa: BLE001 - the error above is the one worth reporting
         result.error = f"{result.error}; and the idea's status was not updated: {exc}"
+
+
+def _give_up_second_venue(spec: StrategySpec, result: Stage2Result, note: str) -> None:
+    """The second stage cannot be made (`translate` refused): settle the idea with Hyperliquid
+    as a venue that cannot judge it."""
+    from qlab.registry.db import session_scope
+    from qlab.rules.loader import load_latest
+
+    record_failure(spec.idea_id, f"ValueError: {result.reason}")
+    try:
+        with session_scope() as session:
+            _settle(session, result, Combined("reject", ""), rules_version=load_latest().version,
+                    end=None, parent_id=spec.idea_id, child_id=result.idea_id, independent=True,
+                    note=note)
+    except Exception as exc:  # noqa: BLE001 - the stage's own reason is the one worth reporting
+        result.error = f"the idea's status was not updated: {exc}"
 
 
 def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
@@ -964,6 +999,11 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
     if translation.spec is None:
         result.status = "not-evaluable"
         result.reason = "; ".join(translation.problems)
+        if not measure and independent_venues():
+            # Hyperliquid cannot express the idea at all: no trial to anchor, but the venue's
+            # answer is «cannot judge», not «owed». Recorded as a permanent give-up so the shared
+            # status function stops waiting for it, and the idea is settled now.
+            _give_up_second_venue(spec, result, settle_note)
         return  # nothing to anchor a trial on: no data was ever requested
     child = translation.spec
     ruleset = load_latest()
@@ -1051,6 +1091,11 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                                               if given_up else result.reason or ""),
                                best_of_venues=ruleset.venue_split is not None,
                                independent=independent)
+            if independent:
+                _settle(session, result, combined, rules_version=ruleset.version,
+                        end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id,
+                        independent=True, note=settle_note)
+                return
             if settle_note:
                 combined = Combined(combined.route, f"{settle_note}; {combined.reason}")
             if combined.route not in PASSED and (only_a_pass_moves or stays_closed(
@@ -1063,8 +1108,7 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                 result.parent_status = session.get(Idea, spec.idea_id).status.value
                 return
             _settle(session, result, combined, rules_version=ruleset.version,
-                    end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id,
-                    independent=independent)
+                    end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id)
 
 
 # --------------------------------------------------------------------------

@@ -167,8 +167,9 @@ def _set_status(idea_id: str, status: IdeaStatus) -> None:
 
 
 def _stage1_rejects(idea_id: str = PARENT, *, version: int = 99) -> int:
-    """Stage 1 has just rejected the idea: a trial, and the move into `rejected` that it caused.
-    Returns the trial's id (what the second stage is given as `stage1_trial_id`)."""
+    """Stage 1 has just rejected the idea: a trial, and the move it causes under independent
+    venues: the idea stays open (bench) because Hyperliquid is owed. Returns the trial's id (what
+    the second stage is given as `stage1_trial_id`)."""
     with db_module.session_scope() as session:
         spec = repo.add_spec(session, idea_id=idea_id, version=version, params={},
                              data_requirements={"source": "binance"}, rebalance="1d",
@@ -176,8 +177,8 @@ def _stage1_rejects(idea_id: str = PARENT, *, version: int = 99) -> int:
         trial = repo.add_trial(session, spec_id=spec.id, config_hash="h", code_sha="c", params={},
                                status=TrialStatus.OK, metrics={}, route=TrialRoute.REJECT,
                                route_reason="r", source=TrialSource.IMPORTED)
-        repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.REJECTED,
-                        reason="trial: reject", trial_id=trial.id)
+        repo.set_status(session, idea_id=idea_id, new_status=IdeaStatus.BENCH,
+                        reason="trial: reject; the second venue is owed", trial_id=trial.id)
         return trial.id
 
 
@@ -1268,7 +1269,7 @@ def test_a_crashed_second_stage_has_not_spoken_so_a_binance_reject_does_not_stan
 
     assert result.status == "error" and "data source down" in result.error
     assert result.combined_route == "needs-forward"  # pending, tried again; not a reject
-    assert _status(PARENT) == IdeaStatus.BENCH  # the idea was open until this very flow rejected it
+    assert _status(PARENT) == IdeaStatus.BENCH  # open: Hyperliquid has not spoken
     assert result.failure["attempts"] == 1 and not result.failure["given_up"]
 
 
@@ -1302,7 +1303,6 @@ def test_an_open_idea_takes_binances_reject_after_two_crashes_in_a_row(
     one = _run(tmp_path, "reject", stage1_trial_id=first)
     assert one.failure == {**one.failure, "attempts": 1, "given_up": False}
     assert _status(PARENT) == IdeaStatus.BENCH  # waits: the venue has not spoken
-    _set_status(PARENT, IdeaStatus.REJECTED)
     second = _stage1_rejects(version=100)
     two = _run(tmp_path, "reject", stage1_trial_id=second)
     assert two.failure["attempts"] == 2 and two.failure["given_up"]
@@ -1344,7 +1344,7 @@ def test_a_later_binance_reject_does_not_close_an_idea_whose_hyperliquid_side_pa
     assert _status(CHILD) == IdeaStatus.VALIDATED   # and its second stage is not closed with it
 
 
-def test_a_binance_reject_with_no_second_stage_run_yet_rejects_as_before(
+def test_a_binance_reject_with_no_second_stage_run_yet_leaves_the_idea_open(
         registry, tmp_path, monkeypatch) -> None:
     _stand(monkeypatch, _market(), FAILING_IND)
     with db_module.session_scope() as session:
@@ -1352,7 +1352,7 @@ def test_a_binance_reject_with_no_second_stage_run_yet_rejects_as_before(
                          asset_class=AssetClass.CRYPTO_PERP, profile=Profile.OTHER, notes="")
     with db_module.session_scope() as session:
         evaluate_spec(_spec(), session=session, ruleset=FAILING_IND, check_lookahead=False)
-    assert _status(PARENT) == IdeaStatus.REJECTED  # the second venue may still revive it
+    assert _status(PARENT) == IdeaStatus.BENCH  # Hyperliquid is owed: the idea waits for it
 
 
 def test_a_pass_by_the_history_check_is_worded_as_such_in_the_report() -> None:
