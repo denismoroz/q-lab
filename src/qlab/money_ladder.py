@@ -9,7 +9,9 @@ The strict number (`min_capital_usd`, docs/MIN_CAPITAL.md) answers one question:
 EVERY position the strategy ever wanted fits the venue's minimum order. It is set by one rare tiny
 position, and it says nothing about what the strategy earns on less. This module is the READING
 that does: the same book run on a ladder of sums, the way the venue would really treat it. It
-decides nothing and moves no route; step 4 of the ladder keeps the strict rule.
+decides nothing and moves no route. Step 4 of the ladder keeps the strict rule for runs judged
+before rules 2026-11-04.2; from that version it reads the «fewer» book on the strategy's own money,
+measured at evaluation time on the judged part (`qlab.money_fit`, the same models as here).
 
 Two execution models, for a strategy whose code only produces target weights (trend, XSMOM, the
 generated ideas; nothing on the stand skips an order below the venue's minimum, so the stand's
@@ -476,6 +478,33 @@ def measure_book(*, trial_id: int, idea_id: str, venue: str, interval: str, wind
 # From the registry
 
 
+def book_runner(code_ref: str, params: Mapping[str, Any], panel, part_panel, costs, lo: int,
+                hi: int):
+    """`run_at(usd)` for `measure_book`: the strategy's own code run with every money key of its
+    params set to `usd` (`qlab.capital_floor.with_money`), backtested on rows `lo..hi`; returns
+    `(result, weights, orders)` of those rows."""
+    from qlab.capital_floor import with_money
+    from qlab.harness.strategy import capital_setup, own_costs, own_orders
+    from qlab.pipeline.evaluate import resolve_strategy
+
+    def run_at(usd: float):
+        money_params, _ = with_money(params, usd)
+        strategy = resolve_strategy(code_ref)
+        weights = strategy.target_weights(panel, money_params)
+        extra = own_costs(strategy, panel, money_params)
+        setup = capital_setup(strategy, panel, money_params)
+        placed = own_orders(strategy, panel, money_params)
+        w = weights.iloc[lo:hi + 1]
+        result = run_backtest(part_panel, w, costs, part_panel.funding,
+                              extra_cost=extra, **setup.kwargs)
+        if placed is not None:
+            placed = type(placed)(sizes=placed.sizes.iloc[lo:hi + 1],
+                                  skipped=placed.skipped.iloc[lo:hi + 1])
+        return result, w, placed
+
+    return run_at
+
+
 def measure_trial(session, trial_id: int, own_usd: float | None = None) -> MoneyLadder:
     """The reading of one stored trial: its spec and data re-created (`qlab.anomalies.rerun`),
     the judged rows, the venue it is judged for. `own_usd` is the idea's own money when the
@@ -483,7 +512,7 @@ def measure_trial(session, trial_id: int, own_usd: float | None = None) -> Money
     `RunUnavailable` when the trial cannot be re-run."""
     from qlab.anomalies.rerun import load_run
     from qlab.capital_floor import with_money
-    from qlab.harness.strategy import capital_setup, own_costs, own_orders
+    from qlab.harness.strategy import capital_setup, own_orders
     from qlab.pipeline.evaluate import resolve_strategy
     from qlab.venues.config import leg_floors, load_venue
 
@@ -502,21 +531,7 @@ def measure_trial(session, trial_id: int, own_usd: float | None = None) -> Money
     probe = own_orders(resolve_strategy(spec.code_ref), run.panel, spec.params)
     _, has_money = with_money(spec.params, 1.0)
     if probe is not None and has_money:
-        def run_at(usd: float):
-            params, _ = with_money(spec.params, usd)
-            strategy = resolve_strategy(spec.code_ref)
-            weights = strategy.target_weights(run.panel, params)
-            extra = own_costs(strategy, run.panel, params)
-            setup = capital_setup(strategy, run.panel, params)
-            placed = own_orders(strategy, run.panel, params)
-            w = weights.iloc[lo:hi + 1]
-            result = run_backtest(part_panel, w, run.costs, part_panel.funding,
-                                  extra_cost=extra, **setup.kwargs)
-            if placed is not None:
-                placed = type(placed)(sizes=placed.sizes.iloc[lo:hi + 1],
-                                      skipped=placed.skipped.iloc[lo:hi + 1])
-            return result, w, placed
-
+        run_at = book_runner(spec.code_ref, spec.params, run.panel, part_panel, run.costs, lo, hi)
         index = part_weights.index
         out = measure_book(trial_id=trial_id, idea_id=spec.idea_id, venue=venue_id,
                            interval=spec.data.interval,
@@ -649,9 +664,11 @@ def report_lines(ladders: Sequence[Any]) -> list[str]:
                 "стратегии, если она не 1 000, 3 000 или 10 000 (иначе она стоит в своём столбце).")
     title = "### Как работают на разных деньгах идеи, ждущие решения (`docs/MONEY_LADDER.md`)"
     return ["", title, "",
-            "Показание, не вердикт: строгое правило ступени 4 остаётся. «Меньше позиций» — другая "
-            "стратегия, чем измеренная; если она выглядит хорошо, её надо описать отдельным "
-            "спеком. " + ref_note, "",
+            "Показание, не вердикт. С правил 2026-11-04.2 ступень 4 судит по книге «меньше "
+            "позиций» на деньгах самой стратегии на последней трети данных (её считает оценка "
+            "прогона; держит не меньше 70% дохода книги без ограничений и совпадает с ней день в "
+            "день не меньше чем на 0.90 — помещается); прогоны по старым правилам судятся строгим "
+            "минимумом, как раньше. " + ref_note, "",
             "| идея | площадка | строгий минимум | как исполняем | $1 000 | $3 000 | $10 000 | "
             "свои деньги |", "|---|---|---|---|---|---|---|---|", *rows]
 

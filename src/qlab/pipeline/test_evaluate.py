@@ -2589,7 +2589,7 @@ def test_the_latest_rules_cut_by_data_and_inherit_everything_else() -> None:
     from qlab.rules.loader import load, load_latest
 
     latest, before = load_latest(), load("2026-11-03.1")
-    assert latest.version == "2026-11-04.1" and latest.splits_by_data
+    assert latest.splits_by_data  # 2026-11-04.1 and every version based on it
     assert latest.holdout_share.share == pytest.approx(1 / 3)
     assert {r.id for r in latest.rules} == {r.id for r in before.rules}
     assert latest.noise_bar == before.noise_bar and not before.splits_by_data

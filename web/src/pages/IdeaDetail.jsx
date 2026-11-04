@@ -22,6 +22,7 @@ import {
   RESEARCH_NOTES,
   TRIAL_ROUTE,
   routeHint,
+  routeTitle,
   label,
 } from '../labels.js'
 import { daysText, shortForwardReturn } from '../forwardReturn.js'
@@ -255,7 +256,7 @@ function Outcome({ outcome }) {
   return (
     <section className={`rounded border p-4 ${OUTCOME_STYLE[trial.route] ?? 'border-slate-200'}`}>
       <div className="text-xs uppercase tracking-wide text-slate-500">Что говорит q-lab</div>
-      <div className="mt-1 text-lg font-semibold text-slate-900">{label(TRIAL_ROUTE, trial.route)}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">{routeTitle(trial)}</div>
       <p className="text-sm text-slate-700">{routeHint(trial)}</p>
       <p className="mt-2 text-xs text-slate-500">
         <span>Как записано в реестре: </span>
