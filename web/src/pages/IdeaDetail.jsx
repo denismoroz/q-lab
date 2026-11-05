@@ -9,6 +9,7 @@ import YearView from '../components/YearView.jsx'
 import Protection from '../components/Protection.jsx'
 import ForwardCharts from '../components/ForwardCharts.jsx'
 import OverlayPanels from '../components/OverlayPanels.jsx'
+import CoverageCompare from '../components/CoverageCompare.jsx'
 import Anomalies from '../components/Anomalies.jsx'
 import Ladder from '../components/Ladder.jsx'
 import PlainTop from '../components/PlainTop.jsx'
@@ -105,6 +106,7 @@ export default function IdeaDetail() {
             <Ladder ladder={ideaQuery.data.ladder} />
             <ForwardCharts ideaId={ideaQuery.data.id} />
             <OverlayPanels ideaId={ideaQuery.data.id} />
+            <CoverageCompare block={ideaQuery.data.coverage_compare} />
             <Assessment
               assessment={ideaQuery.data.assessment}
               latestTrialId={ideaQuery.data.latest_outcome?.trial?.id}

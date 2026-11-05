@@ -327,6 +327,7 @@ def create_app(*, warm: bool = False) -> FastAPI:
         detail["ladder"] = _ladder(session, idea_id)
         detail["bench"] = (detail["ladder"] or {}).get("bench")
         detail["duplicate"] = _duplicate(idea_id)
+        detail["coverage_compare"] = _coverage_compare(idea_id)
         detail["family"] = family_of_root(detail["strategy"]["root"])
         # The idea's card (owner, 2026-11-04: «карточки кандидатов и реестр ... очень похоже на
         # дупликацию»): the registry is the one place, so the card is read on this page.
@@ -446,6 +447,21 @@ def create_app(*, warm: bool = False) -> FastAPI:
 
         mark = duplicates.load_ledger()["results"].get(idea_id)
         return None if mark is None else {**mark, "text": duplicates.reading_ru(mark)}
+
+    def _coverage_compare(idea_id: str) -> dict[str, Any] | None:
+        """The stored reading «два способа считать книгу, монеты которой появились в разное
+        время» (qlab.coverage_compare, docs/COVERAGE.md), or None. It decides nothing. Never
+        fails the page."""
+        import logging
+
+        from qlab import coverage_compare
+
+        try:
+            return coverage_compare.view(coverage_compare.load(idea_id))
+        except Exception:  # noqa: BLE001 - a reading that cannot be shown is not a failed page
+            logging.getLogger(__name__).warning("coverage compare of %s unreadable", idea_id,
+                                                exc_info=True)
+            return None
 
     def _ladder(session: Session, idea_id: str) -> dict[str, Any] | None:
         """The idea's ladder: the same seven steps for every idea, each with its outcome, the
