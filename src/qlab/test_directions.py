@@ -341,5 +341,6 @@ def test_the_shipped_directions_forbid_no_research() -> None:
     # The night's director rewrites this file; a direction with no note forbids nothing either.
     for name, direction in found.directions.researcher.items():
         assert direction.note is None or dirs.ban_reason(direction.note) is None, name
-    text = (repo / "night/directions.yaml").read_text(encoding="utf-8")
-    assert "да, делай все четыре" in text  # the owner's words
+    # The owner's words live in the code that enforces them: the director's next run rewrites the
+    # file and drops hand comments (it did on 2026-11-05).
+    assert "да, делай все четыре" in (repo / "src/qlab/directions.py").read_text(encoding="utf-8")
