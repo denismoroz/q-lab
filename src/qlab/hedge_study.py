@@ -122,6 +122,9 @@ class BookRecord:
     # the hedge's money so far by part, USD: "price" (the short's realised P&L), "funding",
     # "fees" (perp fees, margin top-up fees, liquidation penalties); price + funding - fees is
     # `hedge_acc`. "short_usd": the short's notional after the bar (0 when unhedged).
+    # "carry_usd": the carry sleeve's notional (0 when off); "liq_dist": the liquidation price
+    # over the bar's price, minus 1 (NaN without a short); "carry_funding", "carry_fees": the
+    # sleeve's running totals, USD.
     parts: dict = field(default_factory=dict)
 
 
@@ -141,7 +144,8 @@ class _StudyDriver(_bv2._Driver):
         self.rec_own = np.zeros((n, len(coins)), dtype=bool)
         self.rec_acc = np.full((n, len(coins)), np.nan)
         self.rec_parts = {k: np.full((n, len(coins)), np.nan)
-                          for k in ("price", "funding", "fees", "short_usd")}
+                          for k in ("price", "funding", "fees", "short_usd", "carry_usd",
+                                    "liq_dist", "carry_funding", "carry_fees")}
         self.rec_liq = np.zeros((n, len(coins)), dtype=bool)
         self._penalty = dict.fromkeys(coins, 0.0)
         self._gate_state = {c: {"own_prev": False, "suppress": False, "hold": False}
@@ -183,8 +187,17 @@ class _StudyDriver(_bv2._Driver):
         self.rec_parts["price"][i, k] = book.short_realized
         self.rec_parts["funding"][i, k] = book.funding_total
         self.rec_parts["fees"][i, k] = fees
-        self.rec_parts["short_usd"][i, k] = (book.short_size * float(slot.feed.px[i])
-                                             if book.in_pos else 0.0)
+        price = float(slot.feed.px[i])
+        self.rec_parts["short_usd"][i, k] = book.short_size * price if book.in_pos else 0.0
+        if book.carry_on:
+            units = book.carry_units if slot.params.margin_enabled else book.carry_target / price
+            self.rec_parts["carry_usd"][i, k] = units * price
+        else:
+            self.rec_parts["carry_usd"][i, k] = 0.0
+        liq = book.liquidation_price()
+        self.rec_parts["liq_dist"][i, k] = liq / price - 1.0 if liq is not None else np.nan
+        self.rec_parts["carry_funding"][i, k] = book.carry_funding
+        self.rec_parts["carry_fees"][i, k] = book.carry_fees
 
     def _gate(self, coin: str, own: bool, in_pos: bool, i: int) -> bool:
         """The wish handed to the book for the next bar under a veto filter (`gate_wish`)."""

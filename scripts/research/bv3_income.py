@@ -307,7 +307,162 @@ def step3(work: Path) -> dict:
     return out
 
 
-STEPS = {"0": step0, "1": step1, "2": step2, "3": step3}
+# ── step 4: earning on the reserve (frab's carry sleeve) ───────────────
+
+RESERVE = [(f, e, x) for f in (0.3, 0.6) for e in (0.05, 0.10, 0.20) for x in (24, 72)]
+
+
+def _carry_params(base: dict, grid) -> dict:
+    if grid is None:
+        return dict(base)
+    f, e, x = grid
+    return {**base, "carry_enabled": True, "carry_fraction": f, "carry_entry_apr": e,
+            "carry_exit_hours": x}
+
+
+def _sleeve_stats(rec, capital: float, mask: pd.DataFrame | None = None) -> dict:
+    """Per part: the sleeve's funding and fees (% of the strategy's money a year), its entries,
+    the share of coin-hours it is on, the liquidations, and the closest distance to liquidation
+    (worst hour and the 1% worst hours) among hours with a short."""
+    idx = rec.stepped.index
+    out = {}
+    for part, sel in (("first", idx < CUT), ("last", idx >= CUT)):
+        years = sel.sum() / 8760
+        fund = fees = 0.0
+        ons = 0
+        on_hours = held_hours = 0
+        dist = []
+        for c in rec.stepped.columns:
+            st = rec.stepped[c].to_numpy() & sel
+            if mask is not None:
+                st &= mask[c].to_numpy()
+            if not st.any():
+                continue
+            cf = rec.parts["carry_funding"][c].ffill().fillna(0.0).to_numpy()
+            ck = rec.parts["carry_fees"][c].ffill().fillna(0.0).to_numpy()
+            prev = np.r_[0.0, cf[:-1]]
+            prevk = np.r_[0.0, ck[:-1]]
+            fund += float((cf - prev)[st].sum())
+            fees += float((ck - prevk)[st].sum())
+            cu = rec.parts["carry_usd"][c].fillna(0.0).to_numpy()
+            on = cu > 0
+            ons += int((on & ~np.r_[False, on[:-1]] & st).sum())
+            on_hours += int((on & st).sum())
+            held_hours += int(st.sum())
+            d = rec.parts["liq_dist"][c].to_numpy()[st]
+            dist.extend(d[~np.isnan(d)].tolist())
+        out[part] = {
+            "carry_funding_pct_year": 100 * fund / capital / years if years else None,
+            "carry_fees_pct_year": 100 * fees / capital / years if years else None,
+            "carry_entries": ons,
+            "carry_on_share": on_hours / held_hours if held_hours else None,
+            "liq_dist_min": float(np.min(dist)) if dist else None,
+            "liq_dist_p01": float(np.quantile(dist, 0.01)) if dist else None,
+        }
+    liqs = [e for e in rec.run.log if e.get("kind") == "liquidation"]
+    out["liquidations_first"] = sum(1 for e in liqs if e["time"] < CUT)
+    out["liquidations_last"] = sum(1 for e in liqs if e["time"] >= CUT)
+    out["hedge_limited_total"] = int(rec.counts.get("hedge_limited", 0))
+    return out
+
+
+def _held_days(hours: pd.DataFrame, min_hours: int = 12) -> pd.DataFrame:
+    """Day x coin: held at least `min_hours` hours that UTC day."""
+    h = hours.copy()
+    h.index = h.index.tz_convert("UTC").tz_localize(None)
+    return h.astype(int).resample("D").sum() >= min_hours
+
+
+def step4(work: Path) -> dict:
+    out: dict = {"grid": RESERVE}
+    btc = hfu._btc(work)
+    labels = ["production"] + [f"fraction {f:g} entry {e:g} exit {x}h" for f, e, x in RESERVE]
+    grids = [None, *RESERVE]
+    # set (a): the production book with its own sleeve switched on
+    data = hfu.load(work, "set_a")
+    panel = data["panel"]
+    regime = hf.regime_of_hours(btc, panel.prices.index)
+    base = hts._params()
+    returns, rows, recs = {}, {}, {}
+    for label, g in zip(labels, grids, strict=True):
+        rec = hs.run_book(panel, _carry_params(base, g))
+        st = stand(panel, rec.run, 257.0)
+        returns[label] = st.capital_return
+        rows[label] = {"sleeve": _sleeve_stats(rec, 257.0)}
+        recs[label] = rec
+        print("set_a", label, json.dumps(measures(st.capital_return)), flush=True)
+    res_a = choose_and_report(rows, returns, regime)
+    # FRAB overlap (measurement): the live FRAB code on the same Binance data, set (a)'s coins
+    import yaml
+
+    from qlab.strategies.live.frab import LiveFrab
+
+    fp = dict(yaml.safe_load(Path("specs/frab-live.yaml").read_text())["params"])
+    coins = list(hts.SET_A)
+    fp["universe"] = [c for c in fp["universe"] if c in coins]
+    fp["leverage"] = {c: v for c, v in fp["leverage"].items() if c in coins}
+    frab_w = LiveFrab().run(panel, fp).weights
+    frab_days = _held_days(frab_w[[f"{c}-SPOT" for c in coins]].set_axis(coins, axis=1) > 0)
+    overlap = {}
+    for key in ("pick_money", "pick_regime"):
+        rec = recs[res_a[key]]
+        bv2_days = _held_days(rec.parts["carry_usd"][coins].fillna(0.0) > 0)
+        last = bv2_days.index >= CUT.tz_localize(None)
+        b = bv2_days[last]
+        f = frab_days.reindex(b.index).fillna(False)
+        both = (b & f).to_numpy().sum()
+        overlap[key] = {"bv2_carry_coin_days": int(b.to_numpy().sum()),
+                        "frab_coin_days": int(f.to_numpy().sum()),
+                        "both": int(both),
+                        "share_of_bv2_carry": float(both / max(1, b.to_numpy().sum()))}
+    res_a["frab_overlap_last"] = overlap
+    out["set_a"] = res_a
+    print("set_a overlap", json.dumps(overlap), flush=True)
+    del recs
+    # set (b'): each top-10 coin's own book (the universe book refuses the sleeve)
+    data = hfu.load(work, "set_b")
+    panel = data["panel"]
+    index = panel.prices.index
+    regime = hf.regime_of_hours(btc, index)
+    capital = hts.PER_COIN_CAPITAL * hts.TOP_K
+    rest = {k: v for k, v in base.items() if k != "coins"}
+    returns, rows = {}, {}
+    totals = {label: pd.Series(0.0, index=index[:-1]) for label in labels}
+    sleeves = {label: [] for label in labels}
+    for cd in data["coins"]:
+        sub = hts._sub_panel(panel, cd.coin)
+        in_set = np.zeros(len(index), dtype=bool)
+        in_set[cd.stepped[cd.mask]] = True
+        for label, g in zip(labels, grids, strict=True):
+            p = _carry_params({**rest, "coins": [cd.coin],
+                               "capital_usd": hts.PER_COIN_CAPITAL}, g)
+            rec = hs.run_book(sub, p)
+            st = stand(sub, rec.run, hts.PER_COIN_CAPITAL)
+            r = st.capital_return * (hts.PER_COIN_CAPITAL / capital)
+            totals[label] += r.where(in_set[:-1], 0.0)
+            mask = pd.DataFrame({cd.coin: in_set}, index=index)
+            sleeves[label].append(_sleeve_stats(rec, capital, mask))
+    for label in labels:
+        returns[label] = totals[label]
+        agg = {}
+        for part in ("first", "last"):
+            ss = [s[part] for s in sleeves[label]]
+            agg[part] = {
+                "carry_funding_pct_year": float(sum(s["carry_funding_pct_year"] or 0 for s in ss)),
+                "carry_fees_pct_year": float(sum(s["carry_fees_pct_year"] or 0 for s in ss)),
+                "carry_entries": int(sum(s["carry_entries"] for s in ss)),
+                "liq_dist_min": min((s["liq_dist_min"] for s in ss
+                                     if s["liq_dist_min"] is not None), default=None),
+            }
+        agg["liquidations_last"] = int(sum(s["liquidations_last"] for s in sleeves[label]))
+        agg["liquidations_first"] = int(sum(s["liquidations_first"] for s in sleeves[label]))
+        rows[label] = {"sleeve": agg}
+        print("set_b'", label, json.dumps(measures(returns[label])), flush=True)
+    out["set_b_prime"] = choose_and_report(rows, returns, regime)
+    return out
+
+
+STEPS = {"0": step0, "1": step1, "2": step2, "3": step3, "4": step4}
 
 
 def main() -> None:

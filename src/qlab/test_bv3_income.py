@@ -33,6 +33,21 @@ def test_the_parts_add_up_to_the_book_s_result_on_the_strategy_s_money() -> None
                                                     if k != "total"))
 
 
+def test_the_reserve_carry_is_recorded_and_the_run_is_the_live_book_s() -> None:
+    from qlab import hedge_study as hs
+
+    panel = _market()
+    params = kit.params(coins=COINS, carry_enabled=True, carry_fraction=0.6,
+                        carry_entry_apr=0.05, carry_exit_hours=24)
+    rec = hs.run_book(panel, params)
+    pd.testing.assert_frame_equal(rec.run.weights, LiveBv2().run(panel, params).weights)
+    for c in COINS:
+        carry = rec.parts["carry_usd"][c]
+        assert (carry > 0).mean() > 0.5  # funding 8.8% a year > 5%: the sleeve is mostly on
+        assert rec.parts["carry_funding"][c].dropna().iloc[-1] > 0
+        assert (rec.parts["liq_dist"][c].dropna() > 0).all()  # never past liquidation
+
+
 def test_carry_wish_adds_a_hedge_while_funding_pays() -> None:
     base = np.array([0, 0, 0, 0, 1, 0, np.nan, 0], dtype=float)
     enter = np.array([0, 1, 0, 0, 0, 0, 0, 0], dtype=bool)
