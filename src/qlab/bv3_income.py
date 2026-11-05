@@ -157,7 +157,8 @@ def rebalanced_book(prices: pd.DataFrame, funding: pd.DataFrame, members: pd.Dat
     for t in range(n - 1):
         p = px[t]
         cost = 0.0
-        for j in range(k):
+        # only coins that are members or still hold something can change
+        for j in np.flatnonzero(mem[t] | (units != 0.0) | (short != 0.0)):
             ok = mem[t, j] and not np.isnan(p[j])
             if not ok:
                 if units[j]:
