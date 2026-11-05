@@ -132,9 +132,10 @@ def test_every_tried_id_must_exist_and_the_nearest_must_be_answered() -> None:
 def test_the_grid_is_declared_within_the_cap_and_names_real_parameters() -> None:
     draft = _good()
     big = _carder(draft, grid=[*draft["carder"]["grid"],
-                               {"param": "ratchet_threshold", "values": [0.25, 0.5, 1.0],
+                               {"param": "ratchet_threshold", "values": [0.25, 0.5, 0.75, 1.0, 1.5],
                                 "meaning_ru": "Порог.", "source_ru": "Круглые значения."}])
-    assert any("12 variants, at most 8" in p for p in _check(big))
+    # the cap is 12 since 2026-11-04 (night/own_numbers.yaml): 4 x 5 = 20 is above it
+    assert any("20 variants, at most 12" in p for p in _check(big))
     alien = _carder(draft, grid=[{"param": "moon_phase", "values": [1, 2],
                                   "meaning_ru": "Фаза.", "source_ru": "Круглые значения."}])
     assert any("moon_phase" in p for p in _check(alien))
@@ -447,7 +448,7 @@ def test_a_retry_edits_the_draft_of_the_earlier_attempt_instead_of_writing_it_ag
     assert "byte for byte" in prompt and "Do NOT reread the brief" in prompt
     # the rules a full writing has are the same text in the edit prompt
     assert carder.YAML_RULE in prompt and carder.PLAIN_RULE in prompt
-    assert carder.READINGS_RULE.format(cap=8) in prompt and "DRAFT: <verdict>" in prompt
+    assert carder.READINGS_RULE.format(cap=12) in prompt and "DRAFT: <verdict>" in prompt
     assert carder.YAML_RULE in carder.INSTRUCTIONS.format(
         brief="b", draft="d", idea="i", frab="f", jargon="j", venues="v", intervals="n", cap=8,
         yaml_rule=carder.YAML_RULE, plain_rule="p", readings_rule="r", earlier="")
