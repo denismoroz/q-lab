@@ -67,3 +67,19 @@ def test_confirmed_falls_know_only_the_past() -> None:
     assert falls == [] and pivot == days[19]  # the trough is not confirmed yet
     falls, pivot = wv.confirmed_falls(c, 0.25, 7, days[79])
     assert falls == [(days[19], days[39])] and pivot == days[39]
+
+
+def test_the_tcn_output_at_an_hour_reads_no_later_hour() -> None:
+    from qlab import waves_tcn as wt
+
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=(600, 4))
+    ends = np.arange(200, 400)
+    model = wt.fit(x, ends, (x[ends, 0] > 0), epochs=1)
+    base = wt.predict(model, x, ends)
+    later = x.copy()
+    later[401:] = 100.0  # change every hour after the last end
+    assert np.allclose(wt.predict(model, later, ends), base)
+    shifted = x.copy()
+    shifted[300] += 5.0  # an hour inside some windows does matter
+    assert not np.allclose(wt.predict(model, shifted, ends), base)
