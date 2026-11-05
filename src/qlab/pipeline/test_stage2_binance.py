@@ -427,3 +427,13 @@ def test_the_report_of_a_binance_stage_says_where_the_idea_was_born() -> None:
     assert "второй этап, Binance (идея родилась на Hyperliquid" in text
     # the Hyperliquid verdict is the venue's (its stricter look rejected), not the first look's
     assert "прошла на Binance" in text and "на Hyperliquid отвергнута" in text
+
+
+def test_a_closed_idea_that_binance_cannot_decide_yet_is_said_to_stay_closed() -> None:
+    text = "\n".join(stage2.report_lines({"route": "paper"}, {
+        "status": "evaluated", "venue": "binance", "route": "needs-forward", "trial_id": 9,
+        "data_start": "2019-09-08", "data_end": "2026-11-04", "metrics": {},
+        "combined_route": "needs-forward", "independent": True, "parent_status": "rejected",
+        "stage1_route": "paper",
+        "venue_routes": {"binance": "needs-forward", "hyperliquid": "reject"}}))
+    assert "идея остаётся закрытой" in text and "открытой" not in text

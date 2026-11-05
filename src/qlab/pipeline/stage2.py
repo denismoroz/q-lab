@@ -1558,6 +1558,10 @@ def _independent_ru(binance: object, stage2: Mapping[str, object]) -> str:
     if "reject" in (b, h) and "pending" in (b, h):
         who = "Binance" if b == "reject" else "Hyperliquid"
         other = "Hyperliquid" if b == "reject" else "Binance"
+        if status in ("rejected", "retired", "decayed"):
+            # a closed idea is revived by a pass only: «рано судить» leaves it closed
+            return (f"на {who} отвергнута, на {other} ещё не решила — идея остаётся закрытой, "
+                    f"статус «{status}»: оживить её может только проход")
         return (f"на {who} отвергнута, на {other} ещё не решила — идея остаётся открытой, статус "
                 f"«{status}»: вторая площадка не договорила")
     return (f"площадки вместе пока не решают: Binance {words[b]}, Hyperliquid {words[h]}; "
