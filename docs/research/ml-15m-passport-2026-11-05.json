@@ -1,0 +1,848 @@
+{
+ "instruments": {
+  "futures/BTC": {
+   "rows": 3592800,
+   "first": "2020-01-01 00:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3594240,
+   "missing_minutes": 1440,
+   "missing_share": 0.00040064102564102563,
+   "gaps": 1,
+   "longest_gaps": [
+    {
+     "after": "2026-10-27 23:59:00+00:00",
+     "minutes_missing": 1440
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 210,
+   "spikes_reverted_next_minute": 26,
+   "zero_volume_minutes": 369,
+   "zero_volume_longest": 99,
+   "volume_spikes": 2737,
+   "trades_spikes": 524,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 0.6573160862838544,
+   "vs_cache_1h": {
+    "periods": 59880,
+    "price_mismatch": 3,
+    "volume_mismatch": 16,
+    "mismatch_share": 0.0002672010688042752,
+    "worst": [
+     {
+      "time": "2024-10-28 21:00:00+00:00",
+      "rel_price": 0.0017257717157215247,
+      "rel_volume": 1.8612976513843003
+     },
+     {
+      "time": "2024-10-28 20:00:00+00:00",
+      "rel_price": 0.0009510791366906801,
+      "rel_volume": 1.0
+     },
+     {
+      "time": "2023-11-10 15:00:00+00:00",
+      "rel_price": 0.0006955565260995389,
+      "rel_volume": 0.8991731733217754
+     },
+     {
+      "time": "2024-07-22 01:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-21 11:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   },
+   "vs_cache_1d": {
+    "periods": 2495,
+    "price_mismatch": 0,
+    "volume_mismatch": 6,
+    "mismatch_share": 0.002404809619238477,
+    "worst": [
+     {
+      "time": "2020-01-01 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-24 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-17 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-18 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-19 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "futures/ETH": {
+   "rows": 3592800,
+   "first": "2020-01-01 00:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3594240,
+   "missing_minutes": 1440,
+   "missing_share": 0.00040064102564102563,
+   "gaps": 1,
+   "longest_gaps": [
+    {
+     "after": "2026-10-27 23:59:00+00:00",
+     "minutes_missing": 1440
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 189,
+   "spikes_reverted_next_minute": 31,
+   "zero_volume_minutes": 302,
+   "zero_volume_longest": 74,
+   "volume_spikes": 2584,
+   "trades_spikes": 441,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 0.4345227568714773,
+   "vs_cache_1h": {
+    "periods": 59880,
+    "price_mismatch": 2,
+    "volume_mismatch": 16,
+    "mismatch_share": 0.0002672010688042752,
+    "worst": [
+     {
+      "time": "2024-10-28 21:00:00+00:00",
+      "rel_price": 0.009837549425944392,
+      "rel_volume": 7.7608631513499
+     },
+     {
+      "time": "2024-10-28 20:00:00+00:00",
+      "rel_price": 0.005023028838702759,
+      "rel_volume": 1.0
+     },
+     {
+      "time": "2024-07-20 22:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-21 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-21 01:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   },
+   "vs_cache_1d": {
+    "periods": 2495,
+    "price_mismatch": 0,
+    "volume_mismatch": 6,
+    "mismatch_share": 0.002404809619238477,
+    "worst": [
+     {
+      "time": "2020-01-01 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-24 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-17 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-18 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-07-19 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "futures/SOL": {
+   "rows": 3215100,
+   "first": "2020-09-14 07:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3223740,
+   "missing_minutes": 8640,
+   "missing_share": 0.00268011688287517,
+   "gaps": 3,
+   "longest_gaps": [
+    {
+     "after": "2022-02-25 23:59:00+00:00",
+     "minutes_missing": 4320
+    },
+    {
+     "after": "2022-03-31 23:59:00+00:00",
+     "minutes_missing": 2880
+    },
+    {
+     "after": "2026-10-27 23:59:00+00:00",
+     "minutes_missing": 1440
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 122,
+   "spikes_reverted_next_minute": 24,
+   "zero_volume_minutes": 473,
+   "zero_volume_longest": 74,
+   "volume_spikes": 821,
+   "trades_spikes": 223,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 1.1225203121333487,
+   "vs_cache_1h": {
+    "periods": 53585,
+    "price_mismatch": 2,
+    "volume_mismatch": 14,
+    "mismatch_share": 0.0002612671456564337,
+    "worst": [
+     {
+      "time": "2024-10-28 21:00:00+00:00",
+      "rel_price": 0.005494194279241027,
+      "rel_volume": 2.431996493534955
+     },
+     {
+      "time": "2024-10-28 20:00:00+00:00",
+      "rel_price": 0.0007940559242244349,
+      "rel_volume": 1.0
+     },
+     {
+      "time": "2020-09-14 07:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-16 23:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-16 12:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   },
+   "vs_cache_1d": {
+    "periods": 2232,
+    "price_mismatch": 0,
+    "volume_mismatch": 6,
+    "mismatch_share": 0.002688172043010753,
+    "worst": [
+     {
+      "time": "2020-09-15 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-19 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-13 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-14 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-15 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "futures/AVAX": {
+   "rows": 3209340,
+   "first": "2020-09-23 07:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3210780,
+   "missing_minutes": 1440,
+   "missing_share": 0.0004484891521686319,
+   "gaps": 1,
+   "longest_gaps": [
+    {
+     "after": "2026-10-27 23:59:00+00:00",
+     "minutes_missing": 1440
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 123,
+   "spikes_reverted_next_minute": 20,
+   "zero_volume_minutes": 570,
+   "zero_volume_longest": 74,
+   "volume_spikes": 1038,
+   "trades_spikes": 244,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 2.031106666370364,
+   "vs_cache_1h": {
+    "periods": 53489,
+    "price_mismatch": 2,
+    "volume_mismatch": 14,
+    "mismatch_share": 0.00026173605788105963,
+    "worst": [
+     {
+      "time": "2024-10-28 21:00:00+00:00",
+      "rel_price": 0.009350109661779848,
+      "rel_volume": 4.255367402479589
+     },
+     {
+      "time": "2024-10-28 20:00:00+00:00",
+      "rel_price": 0.005500634688617945,
+      "rel_volume": 1.0
+     },
+     {
+      "time": "2020-09-23 07:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-18 05:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-17 20:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   },
+   "vs_cache_1d": {
+    "periods": 2228,
+    "price_mismatch": 0,
+    "volume_mismatch": 6,
+    "mismatch_share": 0.0026929982046678637,
+    "worst": [
+     {
+      "time": "2020-09-24 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-21 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-15 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-16 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-17 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "spot/BTC": {
+   "rows": 3767332,
+   "first": "2019-09-01 00:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3769920,
+   "missing_minutes": 2588,
+   "missing_share": 0.0006864867158984806,
+   "gaps": 18,
+   "longest_gaps": [
+    {
+     "after": "2020-02-19 11:35:00+00:00",
+     "minutes_missing": 354
+    },
+    {
+     "after": "2021-04-25 04:00:00+00:00",
+     "minutes_missing": 284
+    },
+    {
+     "after": "2021-08-13 01:59:00+00:00",
+     "minutes_missing": 270
+    },
+    {
+     "after": "2020-12-21 14:09:00+00:00",
+     "minutes_missing": 230
+    },
+    {
+     "after": "2020-06-28 01:59:00+00:00",
+     "minutes_missing": 210
+    },
+    {
+     "after": "2020-04-25 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2021-04-20 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2019-11-13 01:59:00+00:00",
+     "minutes_missing": 140
+    },
+    {
+     "after": "2020-03-04 09:21:00+00:00",
+     "minutes_missing": 128
+    },
+    {
+     "after": "2019-11-25 01:59:00+00:00",
+     "minutes_missing": 120
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 219,
+   "spikes_reverted_next_minute": 15,
+   "zero_volume_minutes": 214,
+   "zero_volume_longest": 81,
+   "volume_spikes": 1655,
+   "trades_spikes": 115,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 1.1969723164224277,
+   "vs_cache_1h": {
+    "periods": 62613,
+    "price_mismatch": 3,
+    "volume_mismatch": 19,
+    "mismatch_share": 0.00031942248414865924,
+    "worst": [
+     {
+      "time": "2020-12-21 13:00:00+00:00",
+      "rel_price": 0.0015338613449306093,
+      "rel_volume": 0.23202262842809473
+     },
+     {
+      "time": "2021-04-23 01:00:00+00:00",
+      "rel_price": 0.0006268537485560888,
+      "rel_volume": 0.18843735599524758
+     },
+     {
+      "time": "2021-12-24 04:00:00+00:00",
+      "rel_price": 1.1775925337076387e-06,
+      "rel_volume": 5.4599952338807434e-05
+     },
+     {
+      "time": "2022-04-13 05:00:00+00:00",
+      "rel_price": 2.488311159343226e-07,
+      "rel_volume": 0.0011536830161571476
+     },
+     {
+      "time": "2024-06-14 05:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "spot/ETH": {
+   "rows": 3767331,
+   "first": "2019-09-01 00:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3769920,
+   "missing_minutes": 2589,
+   "missing_share": 0.0006867519735166794,
+   "gaps": 18,
+   "longest_gaps": [
+    {
+     "after": "2020-02-19 11:35:00+00:00",
+     "minutes_missing": 354
+    },
+    {
+     "after": "2021-04-25 04:00:00+00:00",
+     "minutes_missing": 284
+    },
+    {
+     "after": "2021-08-13 01:59:00+00:00",
+     "minutes_missing": 270
+    },
+    {
+     "after": "2020-12-21 14:08:00+00:00",
+     "minutes_missing": 231
+    },
+    {
+     "after": "2020-06-28 01:59:00+00:00",
+     "minutes_missing": 210
+    },
+    {
+     "after": "2020-04-25 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2021-04-20 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2019-11-13 01:59:00+00:00",
+     "minutes_missing": 140
+    },
+    {
+     "after": "2020-03-04 09:21:00+00:00",
+     "minutes_missing": 128
+    },
+    {
+     "after": "2019-11-25 01:59:00+00:00",
+     "minutes_missing": 120
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 186,
+   "spikes_reverted_next_minute": 25,
+   "zero_volume_minutes": 215,
+   "zero_volume_longest": 81,
+   "volume_spikes": 2845,
+   "trades_spikes": 296,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 0.8061094808327576,
+   "vs_cache_1h": {
+    "periods": 62613,
+    "price_mismatch": 3,
+    "volume_mismatch": 16,
+    "mismatch_share": 0.0002715091115263603,
+    "worst": [
+     {
+      "time": "2020-12-21 13:00:00+00:00",
+      "rel_price": 0.003505610615120114,
+      "rel_volume": 0.25140120239718844
+     },
+     {
+      "time": "2021-04-23 01:00:00+00:00",
+      "rel_price": 0.0018867599421048542,
+      "rel_volume": 0.14876391497307018
+     },
+     {
+      "time": "2022-04-13 05:00:00+00:00",
+      "rel_price": 3.263004705322814e-06,
+      "rel_volume": 9.216354023144913e-05
+     },
+     {
+      "time": "2019-09-08 00:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-06-14 04:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "spot/SOL": {
+   "rows": 3271335,
+   "first": "2020-08-11 06:00:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3272760,
+   "missing_minutes": 1425,
+   "missing_share": 0.0004354123125435412,
+   "gaps": 11,
+   "longest_gaps": [
+    {
+     "after": "2021-04-25 04:00:00+00:00",
+     "minutes_missing": 284
+    },
+    {
+     "after": "2021-08-13 01:59:00+00:00",
+     "minutes_missing": 270
+    },
+    {
+     "after": "2020-12-21 14:08:00+00:00",
+     "minutes_missing": 231
+    },
+    {
+     "after": "2021-04-20 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2021-09-29 06:59:00+00:00",
+     "minutes_missing": 120
+    },
+    {
+     "after": "2021-03-06 01:59:00+00:00",
+     "minutes_missing": 90
+    },
+    {
+     "after": "2023-03-24 12:39:00+00:00",
+     "minutes_missing": 80
+    },
+    {
+     "after": "2021-02-11 03:40:00+00:00",
+     "minutes_missing": 79
+    },
+    {
+     "after": "2020-11-30 05:59:00+00:00",
+     "minutes_missing": 60
+    },
+    {
+     "after": "2020-12-25 01:59:00+00:00",
+     "minutes_missing": 60
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 102,
+   "spikes_reverted_next_minute": 19,
+   "zero_volume_minutes": 22380,
+   "zero_volume_longest": 81,
+   "volume_spikes": 5295,
+   "trades_spikes": 1474,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 1.014107522692984,
+   "vs_cache_1h": {
+    "periods": 54518,
+    "price_mismatch": 2,
+    "volume_mismatch": 32,
+    "mismatch_share": 0.000605304670017242,
+    "worst": [
+     {
+      "time": "2021-04-23 01:00:00+00:00",
+      "rel_price": 0.00016281689238595298,
+      "rel_volume": 0.15162448723042787
+     },
+     {
+      "time": "2022-04-13 05:00:00+00:00",
+      "rel_price": 9.558401835207953e-05,
+      "rel_volume": 0.0005215363263956219
+     },
+     {
+      "time": "2020-08-11 06:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-04 23:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     },
+     {
+      "time": "2024-10-04 14:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  },
+  "spot/AVAX": {
+   "rows": 3210826,
+   "first": "2020-09-22 06:30:00+00:00",
+   "last": "2026-10-31 23:59:00+00:00",
+   "duplicates": 0,
+   "non_monotonic": 0,
+   "expected_minutes": 3212250,
+   "missing_minutes": 1424,
+   "missing_share": 0.00044330298077671415,
+   "gaps": 10,
+   "longest_gaps": [
+    {
+     "after": "2021-04-25 04:00:00+00:00",
+     "minutes_missing": 284
+    },
+    {
+     "after": "2021-08-13 01:59:00+00:00",
+     "minutes_missing": 270
+    },
+    {
+     "after": "2020-12-21 14:08:00+00:00",
+     "minutes_missing": 231
+    },
+    {
+     "after": "2021-04-20 01:59:00+00:00",
+     "minutes_missing": 150
+    },
+    {
+     "after": "2021-09-29 06:59:00+00:00",
+     "minutes_missing": 120
+    },
+    {
+     "after": "2021-03-06 01:59:00+00:00",
+     "minutes_missing": 90
+    },
+    {
+     "after": "2023-03-24 12:39:00+00:00",
+     "minutes_missing": 80
+    },
+    {
+     "after": "2021-02-11 03:40:00+00:00",
+     "minutes_missing": 79
+    },
+    {
+     "after": "2020-11-30 05:59:00+00:00",
+     "minutes_missing": 60
+    },
+    {
+     "after": "2020-12-25 01:59:00+00:00",
+     "minutes_missing": 60
+    }
+   ],
+   "nonpositive_prices": 0,
+   "high_below_low": 0,
+   "close_outside_range": 0,
+   "open_outside_range": 0,
+   "spikes": 95,
+   "spikes_reverted_next_minute": 12,
+   "zero_volume_minutes": 51176,
+   "zero_volume_longest": 81,
+   "volume_spikes": 10846,
+   "trades_spikes": 3618,
+   "taker_above_volume": 0,
+   "first_week_turnover_ratio": 19.622719760786058,
+   "vs_cache_1h": {
+    "periods": 53510,
+    "price_mismatch": 4,
+    "volume_mismatch": 54,
+    "mismatch_share": 0.0010278452625677443,
+    "worst": [
+     {
+      "time": "2020-12-21 13:00:00+00:00",
+      "rel_price": 0.0041705431330404386,
+      "rel_volume": 0.13924577228951585
+     },
+     {
+      "time": "2021-04-23 01:00:00+00:00",
+      "rel_price": 0.00261013181165648,
+      "rel_volume": 0.15804685573541533
+     },
+     {
+      "time": "2021-12-12 15:00:00+00:00",
+      "rel_price": 0.0009415087678004141,
+      "rel_volume": 0.02961707057159635
+     },
+     {
+      "time": "2022-04-13 05:00:00+00:00",
+      "rel_price": 0.00025726781579638036,
+      "rel_volume": 0.000509669903104859
+     },
+     {
+      "time": "2024-10-18 14:00:00+00:00",
+      "rel_price": 0.0,
+      "rel_volume": 0.0
+     }
+    ]
+   }
+  }
+ },
+ "hashes": {
+  "futures/BTC": {
+   "files": 82,
+   "sha256": "0e4f569ff0405dc6cc8621dec3b55748e8b616d2af0d7831e817b841cce863c7"
+  },
+  "futures/ETH": {
+   "files": 82,
+   "sha256": "a3139d0a286d8e3a73aa88e5705aea336a0f9e30a4221c0a0f758b10c5a5c770"
+  },
+  "futures/SOL": {
+   "files": 74,
+   "sha256": "85c674f8b610b4ecccc1f4eb09b76f8f4a93cfa4f7b9a9572420dbfe62ac8ef7"
+  },
+  "futures/AVAX": {
+   "files": 74,
+   "sha256": "44243a6d7e4e95b51212def0510e743a3de3df6914c976e5bb3b983f75364d2a"
+  },
+  "spot/BTC": {
+   "files": 86,
+   "sha256": "6f2b85aff2ba5be553f69e6500d552b0736b02b3c56b809bd7e5fb27885cf758"
+  },
+  "spot/ETH": {
+   "files": 86,
+   "sha256": "36abc86fa31a7b1d9dd3ebcf085f028349b6a0dd91616e2dd620b84148bcdc52"
+  },
+  "spot/SOL": {
+   "files": 75,
+   "sha256": "9463a14be62c005ef3d17b1d9bc9b3e6137063c371b9f1c514347a7e2c731dcd"
+  },
+  "spot/AVAX": {
+   "files": 74,
+   "sha256": "be6190f7dc721a2f495be4d6739cfe7118f547e06ddb017869c860a51efce27c"
+  }
+ },
+ "spot_vs_perp": {
+  "BTC": {
+   "perp_minutes_with_spot": 0.9993528724114896,
+   "median_abs_gap": 0.00045787625403403146,
+   "p999_abs_gap": 0.0030710722760808377,
+   "minutes_gap_over_2pct": 136
+  },
+  "ETH": {
+   "perp_minutes_with_spot": 0.999352594077043,
+   "median_abs_gap": 0.0004669442475596838,
+   "p999_abs_gap": 0.004156625487309958,
+   "minutes_gap_over_2pct": 111
+  },
+  "SOL": {
+   "perp_minutes_with_spot": 0.9995567789493328,
+   "median_abs_gap": 0.000544662322832988,
+   "p999_abs_gap": 0.030927856881804217,
+   "minutes_gap_over_2pct": 4396
+  },
+  "AVAX": {
+   "perp_minutes_with_spot": 0.9995562950637826,
+   "median_abs_gap": 0.0006190034242839584,
+   "p999_abs_gap": 0.0075978897118909,
+   "minutes_gap_over_2pct": 256
+  }
+ },
+ "stop_rule_hits": [
+  "spot/AVAX: 0.0010 of hours disagree with the cache"
+ ],
+ "seconds": 34
+}

@@ -59,7 +59,7 @@ def decision_grid(open_time: pd.DatetimeIndex, close: np.ndarray, step: int) -> 
     ret = np.full(len(taus), np.nan)
     good = ok_now & ok_next
     ret[good] = close[nxt[good]] / close[pos[good]] - 1.0
-    return pd.DataFrame({"tau": taus, "pos": pos, "ret": ret, "ok": ok_now})
+    return pd.DataFrame({"tau": taus, "pos": pos, "nxt": nxt, "ret": ret, "ok": ok_now})
 
 
 def window_summary(ch: np.ndarray, pos: np.ndarray) -> np.ndarray:

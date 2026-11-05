@@ -70,3 +70,28 @@ def test_the_tcn_encoder_is_causal() -> None:
     w2 = w.clone()
     w2[:, :, -1] += 5.0
     assert not torch.allclose(model.encode(w2, None, s), base)
+
+
+def test_training_sequences_end_before_the_embargo_and_are_contiguous() -> None:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "research"))
+    import ml_money as runner
+
+    n = 400
+    tau = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC").as_unit("ns").asi8
+    tau = np.delete(tau, [100])  # a missing decision breaks contiguity
+    g = {"tau": tau, "pos": np.arange(len(tau)), "ret": np.zeros(len(tau)),
+         "valid": np.ones(len(tau), bool), "ok": np.ones(len(tau), bool),
+         "static": np.zeros((len(tau), 21), np.float32), "summ": np.zeros((len(tau), 5)),
+         "fund": np.zeros(len(tau)), "prod": np.zeros(len(tau))}
+    d = {c: {"g60": g, "ch": np.zeros((10, 5), np.float32), "scale": 0.2, "coin": k,
+             "start": int(tau[0])} for k, c in enumerate(runner.COINS)}
+    data = runner.Data(d, 60)
+    hi = int(tau[300])
+    starts = data.starts("BTC", int(tau[0]), hi, 48)
+    assert len(starts) > 0
+    # every sequence's last decision plus its step ends by `hi`, and no sequence spans the hole
+    assert (tau[starts + 47] + 60 * 60_000_000_000 <= hi).all()
+    assert not ((starts <= 99) & (starts + 47 >= 100)).any()
