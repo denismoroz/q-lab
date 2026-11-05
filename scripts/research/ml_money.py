@@ -26,6 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 COINS = ("BTC", "ETH", "SOL", "AVAX")
 STEPS = (15, 60)
 SEQ = {15: 192, 60: 48}
+# TCN at the 15-minute step: shorter sequences and half the batches (ml-15m-5-budget-protocol)
+TCN15_SEQ, TCN15_BATCHES = 48, 30
 CUT = pd.Timestamp("2024-06-12", tz="UTC")
 START = pd.Timestamp("2022-01-01", tz="UTC")
 WARM = pd.Timedelta(days=30)
@@ -240,7 +242,7 @@ def _fit(model, data, coins, t_end, norm, penalty, batches, lr, rng, curve):
     block (the last 10% of the training span, after a further embargo); never on later data."""
     import torch
 
-    L = SEQ[data.step]
+    L = TCN15_SEQ if (data.step == 15 and model.uses_window) else SEQ[data.step]
     first = min(data.c[c]["start"] for c in coins)
     hi = t_end - EMBARGO
     val_lo = hi - int(0.1 * (hi - first))
@@ -337,9 +339,10 @@ def walk_forward(cfg: dict, work_s: str) -> dict:
         mu, sd = np.nan_to_num(mu), np.where(np.isnan(sd), 1.0, sd)
         norm = (mu, sd, cfg["model"] == "tcn")
         curve = []
+        budget = (TCN15_BATCHES if (cfg["step"] == 15 and cfg["model"] == "tcn") else BATCHES) \
+            * EPOCHS
         if scope in ("shared", "finetune"):
-            _fit(shared, data, train_coins, t_end, norm, cfg["penalty"], BATCHES * EPOCHS, lr,
-                 rng, curve)
+            _fit(shared, data, train_coins, t_end, norm, cfg["penalty"], budget, lr, rng, curve)
             models = dict.fromkeys(COINS, shared)
             if scope == "finetune":
                 models = {}
@@ -349,8 +352,8 @@ def walk_forward(cfg: dict, work_s: str) -> dict:
                                      lr * FT_LR, rng, [])
         else:
             for c in COINS:
-                per[c] = _fit(per[c], data, [c], t_end, norm, cfg["penalty"], BATCHES * EPOCHS,
-                              lr, rng, curve)
+                per[c] = _fit(per[c], data, [c], t_end, norm, cfg["penalty"], budget, lr, rng,
+                              curve)
             models = per
         curves[str(q0.date())] = curve
         for c in COINS:
@@ -466,14 +469,15 @@ def _configs_phase1():
 
 
 def phase2_configs(work: Path) -> list[dict]:
+    """The scopes for the best (model, penalty) pair of each step by the first period's seed-mean
+    money (ml-15m-5-budget-protocol)."""
     p1 = json.loads((work / "ml-phase1.json").read_text())["results"]
     cfgs = []
     for s in STEPS:
-        for m in ("linear", "tcn"):
-            best = max(PENALTIES, key=lambda p, s=s, m=m: p1[f"{s}m {m} {p} shared"]["mean"]
-                       ["first"]["money"])
-            for scope in ("per_coin", "finetune"):
-                cfgs.append({"step": s, "model": m, "penalty": best, "scope": scope})
+        cands = [k for k, v in p1.items() if v["cfg"]["step"] == s]
+        best = p1[max(cands, key=lambda k: p1[k]["mean"]["first"]["money"])]["cfg"]
+        for scope in ("per_coin", "finetune"):
+            cfgs.append({**best, "scope": scope})
     return cfgs
 
 
