@@ -395,6 +395,7 @@ def create_app(*, warm: bool = False) -> FastAPI:
             is_stage2_child,
             latest_routed,
             other_venue_child,
+            stage2_child,
         )
 
         if is_stage2_child(idea):
@@ -420,6 +421,11 @@ def create_app(*, warm: bool = False) -> FastAPI:
             }
 
         parent = session.get(Idea, parent_id)
+        # An idea born on Hyperliquid with a Binance stage may also have its stricter look on
+        # Hyperliquid (`<idea>-hl`, the live engine's floor): part of its Hyperliquid verdict.
+        strict = stage2_child(session, parent_id)
+        stricter = (stage(strict.id) if strict is not None and strict.id != child_id
+                    and child_id.endswith("-bn") else None)
         return {
             "role": "child" if idea.id == child_id else "parent",
             "parent_id": parent_id,
@@ -427,6 +433,7 @@ def create_app(*, warm: bool = False) -> FastAPI:
             "parent_status": parent.status.value if parent is not None else None,
             "stage1": stage(parent_id),
             "stage2": stage(child_id),
+            "stage_strict": stricter,
         }
 
     def _causal_twin(session: Session, idea: Idea) -> dict[str, Any] | None:

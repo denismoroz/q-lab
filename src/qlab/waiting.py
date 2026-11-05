@@ -538,20 +538,19 @@ def binance_stage_plan(session, idea, routed, path: Path | None, skip: str | Non
 
     if bn_config is None or not bn_config.enabled or routed is None or routed[0].route is None:
         return None
-    if (routed[1].data_requirements or {}).get("source") != "hyperliquid":
-        return None
-    if path is not None:
-        try:
-            if stage2.second_venue_of(load_spec(path)) != "binance":
-                return None
-        except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
+    if (routed[1].data_requirements or {}).get("source") != "hyperliquid" or path is None:
+        return None  # (an idea with no spec file of its own -- a book, a card -- is not re-run)
+    try:
+        if stage2.second_venue_of(load_spec(path)) != "binance":
             return None
+    except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
+        return None
     child = binance_child(session, idea.id)
     child_routed = None if child is None else latest_routed(session, child.id)
     if child_routed is None:
         if not binance_stage_possible(session, idea.id, routed[1].code_ref):
             return None
-        return Plan(idea.id, BINANCE_STEP, path.as_posix() if path else None, None, skip is None,
+        return Plan(idea.id, BINANCE_STEP, path.as_posix(), None, skip is None,
                     skip or "на Binance ещё не прогонялась: идея родилась на Hyperliquid",
                     skip=skip)
     if getattr(child_routed[0].route, "value", child_routed[0].route) in STAGE2_WAITING:

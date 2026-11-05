@@ -209,9 +209,12 @@ function pct(value) {
 // the run of the idea's own venue; the status comes from the best of the two (docs/VENUE_SPLIT.md).
 const VENUE_NAME = { binance: 'Binance', hyperliquid: 'Hyperliquid' }
 
+// An idea born on Hyperliquid has its Binance stage as stage 2 (owner, 2026-11-05) and may keep
+// its stricter look on Hyperliquid (the live engine's volume floor) as `stage_strict`.
 function VenueStanding({ idea }) {
   const ts = idea?.two_stage
   const stages = [ts?.stage1, ts?.stage2].filter((st) => st?.trial)
+  const strict = ts?.stage_strict?.trial ? ts.stage_strict : null
   if (stages.length < 2) return null
   const status = idea.bench?.label_ru ?? label(IDEA_STATUS, idea.status)
   return (
@@ -228,6 +231,13 @@ function VenueStanding({ idea }) {
             <span className="text-xs text-slate-400">(прогон #{st.trial.id})</span>
           </li>
         ))}
+        {strict && (
+          <li key={strict.idea_id}>
+            {VENUE_NAME[strict.venue] ?? strict.venue}, строгая проверка (порог объёма живого
+            движка): {routeTitle(strict.trial)}{' '}
+            <span className="text-xs text-slate-400">(прогон #{strict.trial.id})</span>
+          </li>
+        )}
       </ul>
       <p className="mt-1 text-xs text-slate-500">Ниже — подробно прогон площадки этой идеи.</p>
     </div>
