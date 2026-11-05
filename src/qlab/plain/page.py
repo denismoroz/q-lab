@@ -191,7 +191,7 @@ def plain_page(session: Session, idea: Idea, *, root: Path | None = None,
                cards: Mapping[str, Mapping[str, Any]] | None = None,
                texts: Texts | None = None) -> dict[str, Any]:
     """Everything the top of the idea's page shows (see the module docstring)."""
-    from qlab.registry.stages import is_stage2_child, stage2_child
+    from qlab.registry.stages import is_stage2_child, other_venue_child
 
     texts = texts if texts is not None else load_texts(root)
     cards = cards or {}
@@ -229,7 +229,7 @@ def plain_page(session: Session, idea: Idea, *, root: Path | None = None,
         if base_view is not None:
             items = difference(own_view, base_view, words)
     second_stage = is_stage2_child(idea)
-    child = None if second_stage else stage2_child(session, idea.id)
+    child = None if second_stage else other_venue_child(session, idea.id)
 
     base_name = family.base_name if family is not None else "как в основной версии"
     payload: dict[str, Any] = {

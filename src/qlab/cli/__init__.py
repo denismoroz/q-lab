@@ -1083,8 +1083,9 @@ def restamp_run_cmd(
 
 
 second_venue_app = typer.Typer(
-    help="The queue of ideas rejected on Binance whose Hyperliquid side was never run "
-    "(docs/VENUE_SPLIT.md).", no_args_is_help=True)
+    help="The queue of closed ideas whose other venue was never run: rejected on Binance with no "
+    "Hyperliquid run, or born on Hyperliquid with no Binance run (docs/VENUE_SPLIT.md).",
+    no_args_is_help=True)
 app.add_typer(second_venue_app, name="second-venue")
 
 
@@ -1106,9 +1107,61 @@ def second_venue_count_cmd() -> None:
     typer.echo(f"owed: {numbers['owed']}; {numbers['max_per_night']} a night; "
                f"nights: {numbers['nights']}")
     for cand in owed:
-        typer.echo(f"  {cand.idea_id}  rejected {cand.rejected_on}  ({cand.spec_path})")
+        typer.echo(f"  {cand.idea_id}  rejected {cand.rejected_on}  owed: {cand.venue}  "
+                   f"({cand.spec_path})")
     for idea, why in sorted(refused.items()):
         typer.echo(f"  not queued: {idea}: {why}")
+
+
+@second_venue_app.command("binance")
+def second_venue_binance_cmd(
+    idea: list[str] = typer.Option(  # noqa: B008
+        [], "--idea", "--only", help="Only these ideas (repeat the option)"),
+    all_owed: bool = typer.Option(
+        False, "--all", help="Every idea born on Hyperliquid whose Binance stage is owed"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List the ideas and what their Binance stage would be"),
+    noise_trials: int = typer.Option(200, "--noise-trials"),
+    allow_heavy: bool = typer.Option(
+        False, "--allow-heavy", help="Run a closed idea whose data is too heavy for a night"),
+) -> None:
+    """The Binance stage of ideas born on Hyperliquid (`<idea>-bn`, night/stage2_binance.yaml;
+    owner 2026-11-05: «почему вот эта стратегия не тестировалась на бинансе?»). With --dry-run:
+    every such idea with its Binance plan (coins kept and dropped, window, heavy or not, about
+    how long), nothing run. Otherwise the named ideas (or --all owed ones) are run: an open idea
+    is settled by both venues, a closed one goes through the queue of closed ideas (only a pass
+    revives it). Code only: no agent, no tokens."""
+    from datetime import date as _date
+
+    from qlab import binance_stage, hl_fetch, night, second_venue
+    from qlab.registry.db import session_scope
+
+    end = night.last_closed_day()
+    limit = second_venue.load_config().max_minutes_per_night
+    with session_scope() as session:
+        rows = binance_stage.plan(session, end=end, cost=hl_fetch.load_config(),
+                                  limit_minutes=limit)
+    if idea:
+        rows = [r for r in rows if r.idea_id in idea]
+    if dry_run:
+        for line in binance_stage.plan_lines(rows):
+            typer.echo(line)
+        owed = [r for r in rows if r.owed]
+        total = sum(r.minutes or 0 for r in owed)
+        typer.echo(f"owed: {len(owed)} of {len(rows)}; about {total:.0f} minutes in all")
+        return
+    names = list(idea) if idea else [r.idea_id for r in rows if r.owed] if all_owed else []
+    if not names:
+        typer.echo("nothing to run: name ideas with --idea, or --all", err=True)
+        raise typer.Exit(code=1)
+    for result in binance_stage.run(names, end=end, noise_trials=noise_trials,
+                                    allow_heavy=allow_heavy, day=_date.today()):
+        why = result.get("error") or result.get("why") or ""
+        typer.echo(f"{result.get('idea')}: {result.get('action')} "
+                   f"{result.get('route_after') or ''} trial {result.get('trial')} "
+                   f"status {result.get('status')} {why}")
+        for line in result.get("lines") or []:
+            typer.echo(f"  - {line}")
 
 
 @second_venue_app.command("run")
@@ -1387,11 +1440,12 @@ def retire_cmd(
             typer.echo(f"{idea_id}: {was.value} -> retired")
             # The second stage is the second look at the same mechanism: it closes with the
             # first (owner, 2026-10-29, docs/EVALUATION_PATHS.md, Р10).
-            closed = close_second_stage(
-                session, parent_id=idea_id, closed_as=IdeaStatus.RETIRED,
-                reason=f"the first stage {idea_id} was retired: {reason}")
-            if closed is not None:
-                typer.echo(f"{closed}: second stage of {idea_id} -> retired")
+            for venue in ("hyperliquid", "binance"):
+                closed = close_second_stage(
+                    session, parent_id=idea_id, closed_as=IdeaStatus.RETIRED,
+                    reason=f"the first stage {idea_id} was retired: {reason}", venue=venue)
+                if closed is not None:
+                    typer.echo(f"{closed}: second stage of {idea_id} -> retired")
 
 
 @app.command("families")

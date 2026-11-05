@@ -649,19 +649,18 @@ class StageRun:
 def stage_runs(session: Session, idea_id: str) -> tuple[bool, list[StageRun]] | None:
     """The stages to draw for `idea_id`, in order, and whether the idea has two. None when
     the idea does not exist. An idea with a second stage (or a second stage itself) lists
-    stage 1 (the parent) and stage 2 (the child, `<parent>-hl`); any other idea has one
-    stage, the run of its own."""
+    stage 1 (the parent) and its second stages (the children, `<parent>-hl` and, for an idea born
+    on Hyperliquid, `<parent>-bn`); any other idea has one stage, the run of its own."""
     from qlab.registry.models import Idea
-    from qlab.registry.stages import is_stage2_child, latest_routed, stage2_child
+    from qlab.registry.stages import is_stage2_child, latest_routed, stage2_children
 
     idea = session.get(Idea, idea_id)
     if idea is None:
         return None
-    if is_stage2_child(idea):
-        parent_id, child_id = idea.parent_id, idea.id
-    else:
-        child = stage2_child(session, idea.id)
-        parent_id, child_id = idea.id, None if child is None else child.id
+    parent_id = idea.parent_id if is_stage2_child(idea) else idea.id
+    children = [c.id for c in stage2_children(session, parent_id)]
+    if is_stage2_child(idea) and idea.id not in children:
+        children.append(idea.id)
 
     def stage(number: int, stage_idea_id: str) -> StageRun:
         found = latest_routed(session, stage_idea_id)
@@ -673,14 +672,30 @@ def stage_runs(session: Session, idea_id: str) -> tuple[bool, list[StageRun]] | 
                         (spec.data_requirements or {}).get("source"), trial.started_at)
 
     stages = [stage(1, parent_id)]
-    if child_id is not None:
-        stages.append(stage(2, child_id))
-    return child_id is not None, stages
+    stages += [stage(number, child) for number, child in enumerate(children, start=2)]
+    return bool(children), stages
 
 
 NO_SECOND_STAGE_YET_RU = ("На Hyperliquid ещё не прогонялась: второй этап этой идеи ночь пока не "
                           "записала.")
 NO_SECOND_STAGE_NEEDED_RU = "Вторая площадка не нужна: прогон идеи и так на Hyperliquid."
+NO_BINANCE_VERSION_RU = ("На Binance не прогоняется: у этой идеи нет версии на данных Binance "
+                         "(книга на бумаге или в деньгах проверяется настоящей торговлей, или "
+                         "стратегия умеет только Hyperliquid).")
+
+
+def _binance_owed(session: Session, idea_id: str) -> bool:
+    """Whether the Binance stage of an idea born on Hyperliquid can be made
+    (`qlab.pipeline.venue_status.binance_stage_possible`)."""
+    from qlab.pipeline.venue_status import binance_stage_possible
+    from qlab.registry.stages import latest_routed
+
+    found = latest_routed(session, idea_id)
+    return found is not None and binance_stage_possible(session, idea_id, found[1].code_ref)
+
+
+NO_BINANCE_STAGE_YET_RU = ("На Binance ещё не прогонялась: идея родилась на Hyperliquid, её "
+                           "проверку на истории Binance ночь пока не записала.")
 NO_RUN_RU = "У этого этапа ещё нет прогона: идея ещё не прогонялась."
 NOT_STORED_RU = ("Ряд по дням для этого прогона ещё не сохранён. Он появится в ближайший "
                  "ночной прогон; сейчас построить: `uv run qlab forward-series rebuild --all`.")
@@ -733,7 +748,13 @@ def forward_view(session: Session, idea_id: str, *, store: Path | None = None
                     entry["message"] = FORWARD_ONLY_RU
         out.append(entry)
     second = None
-    if not two_stage:
+    root = stages[0]
+    on_binance = any(s.source == "binance" for s in stages[1:])
+    if root.source == "hyperliquid" and not on_binance:
+        # born on Hyperliquid: its other venue is Binance (owner, 2026-11-05)
+        second = (NO_BINANCE_STAGE_YET_RU if _binance_owed(session, root.idea_id)
+                  else NO_BINANCE_VERSION_RU)
+    elif not two_stage:
         second = (NO_SECOND_STAGE_NEEDED_RU if own.source == "hyperliquid"
                   else NO_SECOND_STAGE_YET_RU)
     return {"idea_id": idea_id, "passed": passed, "two_stage": two_stage, "stages": out,

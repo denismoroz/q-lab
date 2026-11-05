@@ -387,18 +387,21 @@ def create_app(*, warm: bool = False) -> FastAPI:
         """Both stages of a generated idea's evaluation side by side
         (docs/TWO_STAGE.md): stage 1 on Binance's long history under the idea
         itself, stage 2 -- the same mechanism on Hyperliquid -- under its child.
+        For an idea born on Hyperliquid the other venue is Binance: stage 2 is its
+        `<idea>-bn` child when it has one (owner, 2026-11-05).
         Shown on both pages; null for an idea with no second stage."""
         from qlab.registry.stages import (
             data_range,
             is_stage2_child,
             latest_routed,
+            other_venue_child,
             stage2_child,
         )
 
         if is_stage2_child(idea):
             parent_id, child_id = idea.parent_id, idea.id
         else:
-            child = stage2_child(session, idea.id)
+            child = other_venue_child(session, idea.id)
             if child is None:
                 return None
             parent_id, child_id = idea.id, child.id
@@ -418,6 +421,11 @@ def create_app(*, warm: bool = False) -> FastAPI:
             }
 
         parent = session.get(Idea, parent_id)
+        # An idea born on Hyperliquid with a Binance stage may also have its stricter look on
+        # Hyperliquid (`<idea>-hl`, the live engine's floor): part of its Hyperliquid verdict.
+        strict = stage2_child(session, parent_id)
+        stricter = (stage(strict.id) if strict is not None and strict.id != child_id
+                    and child_id.endswith("-bn") else None)
         return {
             "role": "child" if idea.id == child_id else "parent",
             "parent_id": parent_id,
@@ -425,6 +433,7 @@ def create_app(*, warm: bool = False) -> FastAPI:
             "parent_status": parent.status.value if parent is not None else None,
             "stage1": stage(parent_id),
             "stage2": stage(child_id),
+            "stage_strict": stricter,
         }
 
     def _causal_twin(session: Session, idea: Idea) -> dict[str, Any] | None:

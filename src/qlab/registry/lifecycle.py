@@ -208,13 +208,15 @@ def apply_route(
             trial_id=trial_id,
         )
         if decision.new_status == IdeaStatus.REJECTED:
-            close_second_stage(
-                session,
-                parent_id=idea_id,
-                closed_as=IdeaStatus.REJECTED,
-                reason=f"the first stage {idea_id} was rejected by trial {trial_id}",
-                rules_version=rules_version,
-            )
+            for venue in ("hyperliquid", "binance"):
+                close_second_stage(
+                    session,
+                    parent_id=idea_id,
+                    closed_as=IdeaStatus.REJECTED,
+                    reason=f"the first stage {idea_id} was rejected by trial {trial_id}",
+                    rules_version=rules_version,
+                    venue=venue,
+                )
     return decision
 
 
@@ -232,8 +234,10 @@ def close_second_stage(
     closed_as: IdeaStatus,
     reason: str,
     rules_version: str | None = None,
+    venue: str = "hyperliquid",
 ) -> str | None:
-    """Close the second stage (`<parent>-hl`, docs/TWO_STAGE.md) of an idea that was just closed.
+    """Close the second stage (`<parent>-hl`, or `<parent>-bn` with `venue="binance"`,
+    docs/TWO_STAGE.md) of an idea that was just closed.
 
     A second stage is the second look at its parent's mechanism; when the parent is rejected or
     retired there is nothing left for it to confirm, and before this existed it stayed
@@ -243,7 +247,7 @@ def close_second_stage(
     which a parent's closing does not undo), is left alone. Returns the child's id when it moved."""
     if closed_as not in (IdeaStatus.REJECTED, IdeaStatus.RETIRED):
         raise ValueError(f"a second stage closes as rejected or retired, not {closed_as.value}")
-    child = stage2_child(session, parent_id)
+    child = stage2_child(session, parent_id, venue)
     if child is None or child.status in CLOSED_STATUSES or child.status in PRODUCTION_STATUSES:
         return None
     repo.set_status(

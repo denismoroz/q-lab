@@ -205,24 +205,40 @@ def hl_family(session, first: str, second: str | None):
     return t
 
 
-def test_a_hyperliquid_only_idea_is_judged_by_its_one_venue(session) -> None:
+def test_a_hyperliquid_only_idea_is_judged_by_its_one_venue(session, monkeypatch) -> None:
+    monkeypatch.setattr(stage2, "strategy_sources", lambda code_ref: ("hyperliquid",))
     t = hl_family(session, "paper", None)
     settled = _settle(session, "h", t)
     assert settled.view.binance is None and not settled.view.hl_owed
     assert status(session, "h") == IdeaStatus.VALIDATED
 
 
-def test_a_hyperliquid_only_reject_closes_it_nothing_is_owed_from_binance(session) -> None:
+def test_a_hyperliquid_only_reject_closes_it_when_binance_cannot_judge_it(
+        session, monkeypatch) -> None:
+    monkeypatch.setattr(stage2, "strategy_sources", lambda code_ref: ("hyperliquid",))
     t = hl_family(session, "reject", None)
     _settle(session, "h", t)
     assert status(session, "h") == IdeaStatus.REJECTED
 
 
-def test_a_hyperliquid_only_idea_whose_stricter_second_look_rejects_is_rejected(session) -> None:
+def test_a_hyperliquid_reject_with_binance_not_yet_run_leaves_the_idea_open(session) -> None:
+    """Owner, 2026-11-05: «почему вот эта стратегия не тестировалась на бинансе?». An idea born
+    on Hyperliquid owes a Binance verdict as a Binance idea owes a Hyperliquid one."""
+    t = hl_family(session, "reject", None)
+    settled = _settle(session, "h", t)
+    assert settled.view.bn_owed and settled.view.binance == "needs-forward"
+    assert settled.view.combined.route == "needs-forward"
+    assert status(session, "h") == IdeaStatus.BENCH
+    assert "Binance has not been run yet" in settled.reason
+
+
+def test_a_hyperliquid_only_idea_whose_stricter_second_look_rejects_is_rejected(
+        session, monkeypatch) -> None:
     """The case of trend-research-flat-choice-hl-ov-gate-enter (2026-11-03): the first look on
     Hyperliquid said paper, the same venue under the live engine's liquidity floor rejected. It
     was read as «passed on Binance» and parked on the bench; both are Hyperliquid, both must
-    pass."""
+    pass. (Binance cannot judge it here; with a Binance stage owed it would wait for it.)"""
+    monkeypatch.setattr(stage2, "strategy_sources", lambda code_ref: ("hyperliquid",))
     t = hl_family(session, "paper", "reject")
     settled = _settle(session, "h", t)
     assert settled.view.binance is None and settled.view.hyperliquid == "reject"
@@ -243,8 +259,9 @@ def test_a_hyperliquid_first_look_that_waits_keeps_the_idea_open_whatever_the_se
     assert status(session, "h") == IdeaStatus.BENCH
 
 
-def test_a_second_stage_run_settles_its_parent(session) -> None:
+def test_a_second_stage_run_settles_its_parent(session, monkeypatch) -> None:
     """The same function from the other side: the id of the second stage names the family."""
+    monkeypatch.setattr(stage2, "strategy_sources", lambda code_ref: ("hyperliquid",))
     t = hl_family(session, "paper", "reject")
     assert venue_status.family_root(session, "h-hl") == "h"
     _settle(session, "h-hl", t)

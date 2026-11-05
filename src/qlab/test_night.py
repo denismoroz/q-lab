@@ -666,8 +666,9 @@ def test_a_generator_idea_that_only_waits_for_data_takes_no_place(tmp_path, monk
               "gen-venue-hl": "needs-forward"}
     monkeypatch.setattr("qlab.registry.stages.latest_routed", lambda s, idea: (
         (SimpleNamespace(route=routes[idea]), None) if idea in routes else None))
-    monkeypatch.setattr("qlab.registry.stages.stage2_child", lambda s, idea: (
-        SimpleNamespace(id="gen-venue-hl") if idea == "gen-venue" else None))
+    monkeypatch.setattr("qlab.registry.stages.stage2_child", lambda s, idea, venue="hyperliquid": (
+        SimpleNamespace(id="gen-venue-hl") if idea == "gen-venue" and venue == "hyperliquid"
+        else None))
     limits = tmp_path / "limits.yaml"
     limits.write_text("max_active_strategies: 6\n", encoding="utf-8")
     assert night.strategy_slots(session, {"strategies": {}}, limits) == (

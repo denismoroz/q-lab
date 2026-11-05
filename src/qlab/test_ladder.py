@@ -32,6 +32,15 @@ from qlab.registry.models import (
 RETUNE = "qlab.strategies.retune:Retune"
 
 
+@pytest.fixture(autouse=True)
+def no_binance_stage(monkeypatch):
+    """The ideas of these tests stand for strategies whose Binance stage cannot be made (no Binance
+    panel), so step 2 shows the older reasons; the Binance stage of an idea born on Hyperliquid
+    (`<idea>-bn`, owner 2026-11-05) has its own tests (qlab/pipeline/test_stage2_binance.py)."""
+    monkeypatch.setattr("qlab.pipeline.venue_status.binance_stage_possible",
+                        lambda *a, **k: False)
+
+
 @pytest.fixture()
 def session():
     engine = create_engine("sqlite+pysqlite:///:memory:",
