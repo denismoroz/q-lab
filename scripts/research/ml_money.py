@@ -413,12 +413,12 @@ def _short(ev):
     return {p: {k: round(v, 3) for k, v in ev[p].items() if k != "per_coin"} for p in ev}
 
 
-def run_configs(work: Path, cfgs: list[dict], tag: str) -> dict:
+def run_configs(work: Path, cfgs: list[dict], tag: str, workers: int = 6) -> dict:
     """Every configuration with three seeds; per seed and for the seed-average share."""
     d = _load(work)
     results = {}
     jobs = [(c, seed) for c in cfgs for seed in SEEDS]
-    with ProcessPoolExecutor(max_workers=6) as pool:
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         futs = [(c, seed, pool.submit(walk_forward, {**c, "seed": seed}, str(work)))
                 for c, seed in jobs]
         got: dict = {}
@@ -512,9 +512,12 @@ def sanity(work: Path) -> None:
     base = ch["best_cfg"]
     cfgs = [{**base, "shuffle": True}]
     cfgs += [{**base, "ablate": g} for g in ("minutes", "waves", "long_returns", "imbalance")]
-    if base["scope"] == "shared":
-        cfgs.append({**base, "train_coins": ["BTC", "ETH"]})
-    out = run_configs(work, cfgs, "sanity")
+    # the placebo needs a model that can decide for a coin it never saw: the best shared one
+    allr = _all_results(work)
+    shared = [k for k, v in allr.items() if v["cfg"]["scope"] == "shared"]
+    best_shared = allr[max(shared, key=lambda k: allr[k]["mean"]["first"]["money"])]["cfg"]
+    cfgs.append({**best_shared, "train_coins": ["BTC", "ETH"]})
+    out = run_configs(work, cfgs, "sanity", workers=9)
     out["chosen"] = ch
     (work / "ml-sanity.json").write_text(json.dumps(out, indent=1, default=str))
 
