@@ -1,0 +1,30 @@
+{
+ "rerun": {
+  "first": {
+   "money": 26.535,
+   "dd": -54.28,
+   "changes_per_coin_year": 42.441,
+   "fees": 2.134
+  },
+  "last": {
+   "money": 3.051,
+   "dd": -60.9,
+   "changes_per_coin_year": 15.501,
+   "fees": 0.757
+  }
+ },
+ "original": {
+  "first": {
+   "money": 26.535,
+   "dd": -54.28,
+   "changes_per_coin_year": 42.441,
+   "fees": 2.134
+  },
+  "last": {
+   "money": 3.051,
+   "dd": -60.9,
+   "changes_per_coin_year": 15.501,
+   "fees": 0.757
+  }
+ }
+}
