@@ -180,5 +180,28 @@ def confirmed_falls(close: pd.Series, x: float, min_days: int,
     return list(zip(falls["peak"], falls["trough"], strict=True)), last_pivot
 
 
-__all__ = ["causal_atrous", "confirmed_falls", "daily_sigma", "directional_change",
+def fall_weights(px: np.ndarray, falls: list[tuple[int, int, int]], kind: str,
+                 min_depth: float = 0.0) -> np.ndarray:
+    """Per hour, what being unhedged in it costs inside a big fall (the yardstick of
+    docs/research/waves-3-coverage-protocol-2026-11-05.md), per unit of position:
+    "to_trough" -- the drop still to come to the fall's trough; "hour" -- the hour's own fall.
+    Falls shallower than `min_depth` weigh nothing; hours outside falls weigh nothing."""
+    w = np.zeros(len(px))
+    for p0, p1, _ in falls:
+        depth = 1.0 - px[p1] / px[p0]
+        if depth < min_depth:
+            continue
+        seg = px[p0:p1 + 1]
+        if kind == "to_trough":
+            w[p0:p1 + 1] = np.clip((seg - px[p1]) / seg, 0.0, None)
+        elif kind == "hour":
+            nxt = px[p0 + 1:p1 + 2]
+            drop = np.clip((seg[:len(nxt)] - nxt) / seg[:len(nxt)], 0.0, None)
+            w[p0:p0 + len(drop)] = drop
+        else:
+            raise ValueError(kind)
+    return np.nan_to_num(w)
+
+
+__all__ = ["causal_atrous", "fall_weights", "confirmed_falls", "daily_sigma", "directional_change",
            "load_minutes", "online_jump", "structure_state"]

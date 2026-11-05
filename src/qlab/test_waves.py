@@ -83,3 +83,14 @@ def test_the_tcn_output_at_an_hour_reads_no_later_hour() -> None:
     shifted = x.copy()
     shifted[300] += 5.0  # an hour inside some windows does matter
     assert not np.allclose(wt.predict(model, shifted, ends), base)
+
+
+def test_fall_weights_price_what_an_unhedged_hour_costs() -> None:
+    px = np.array([100, 100, 90, 80, 60, 70, 80.0])
+    falls = [(1, 4, 6)]
+    w = wv.fall_weights(px, falls, "to_trough")
+    assert w[0] == 0 and w[5] == 0
+    assert w[1] == pytest.approx(0.4) and w[3] == pytest.approx(0.25) and w[4] == 0
+    h = wv.fall_weights(px, falls, "hour")
+    assert h[1] == pytest.approx(0.1) and h[3] == pytest.approx(0.25) and h[4] == 0
+    assert wv.fall_weights(px, falls, "to_trough", min_depth=0.5).sum() == 0
