@@ -180,82 +180,30 @@ ideas:
   text: 'Bv2: добавить третье, короткое окно (несколько дней), которое может только включить страховку,
     но не снять её; снимает страховку, как сейчас, правило 14 и 30 дней. Цель — резкие падения посреди
     роста, не добавляя перестановок в боковике.'
-  status: new
-  card: null
-  notes: из записки docs/research/bv2-2026-10-28.md
-  attempts: 1
-  problems:
-  - 'reviewer: baseline-mismatch: The grid has no variant that switches the new block off. `fast_entry_window_days`
-    takes only 3 and 7, and `fast_entry_drop` takes only 0.0 and 0.05. So the first variant (3 days, 0.0)
-    is already a changed rule, not Bv2. The sibling card puts an "off" value 0 first, which makes the
-    first variant the baseline spec. Add an off value (for example window 0 = the block off), or put the
-    baseline variant first.'
-  - 'reviewer: hindsight-data: `data.hand_picked: false` is wrong. The baseline `specs/research/bv2/bv2-research-btceth.yaml`
-    says SOL and AVAX were dropped because they "whipsaw the hedge", and the BTC+ETH pair comes from frab''s
-    study that had already seen 2025–26. The coin list was chosen knowing who survived. The sibling card
-    marks it `hand_picked: true` with `honest_from: 2025-06-01` and a reason. This card claims honest
-    data from 2019-09-08 without saying so. Mark the list hand-picked and judge it from the day the list
-    was known, or explain why the whole history is fair.'
-  - 'reviewer: repeats-tried: The `difference_ru` for `bv2-sig-momentum-sign` and `qlab-bv2-short-window`
-    does not hold. The final signal is "old 14|30 rule OR return over 3 or 7 days ≤ 0 (or < −5%)". That
-    is the "или" combination of 3–30 day return signs, which was already tried. The card admits the 3-
-    and 7-day windows were there. The claimed novelty, "release by the old rule only", is not a different
-    rule under an OR: the OR output only falls when both inputs fall. The 0.05 threshold is the only new
-    part, and `bv2-sig-drawdown-from-peak` and `bv2-sig-hyst` already cover a drop-by-X% entry. The card
-    must say concretely what differs from the 3/7-day "or" variant, or the idea may be a repeat.'
-  - 'reviewer: narrowed: The idea says the short window "can only turn the hedge on, not take it off",
-    and the 14/30 rule takes it off "as now". The rule''s step 5 uses a plain OR with a 12-hour sticky
-    exit. Under that, the short signal keeps the hedge on after the 14/30 rule has gone silent, which
-    is the short window holding the hedge. And if the short window alone started the hedge, it ends when
-    the window rolls over, not by the 14/30 rule. Another reading is a latch: the short window sets the
-    hedge, and only the 14/30 rule''s "not needed" (plus the sticky exit) removes it. The `readings_ru`
-    list only two readings of "sharp drop" (the threshold) and none of how the hedge is released. Add
-    the release reading as a grid variant and list it in `readings_ru`, or justify the OR.'
-  review_blocks:
-  - kind: baseline-mismatch
-    ref: new
-    text: The grid has no variant that switches the new block off. `fast_entry_window_days` takes only
-      3 and 7, and `fast_entry_drop` takes only 0.0 and 0.05. So the first variant (3 days, 0.0) is already
-      a changed rule, not Bv2. The sibling card puts an "off" value 0 first, which makes the first variant
-      the baseline spec. Add an off value (for example window 0 = the block off), or put the baseline
-      variant first.
-  - kind: hindsight-data
-    ref: new
-    text: '`data.hand_picked: false` is wrong. The baseline `specs/research/bv2/bv2-research-btceth.yaml`
-      says SOL and AVAX were dropped because they "whipsaw the hedge", and the BTC+ETH pair comes from
-      frab''s study that had already seen 2025–26. The coin list was chosen knowing who survived. The
-      sibling card marks it `hand_picked: true` with `honest_from: 2025-06-01` and a reason. This card
-      claims honest data from 2019-09-08 without saying so. Mark the list hand-picked and judge it from
-      the day the list was known, or explain why the whole history is fair.'
-  - kind: repeats-tried
-    ref: new
-    text: 'The `difference_ru` for `bv2-sig-momentum-sign` and `qlab-bv2-short-window` does not hold.
-      The final signal is "old 14|30 rule OR return over 3 or 7 days ≤ 0 (or < −5%)". That is the "или"
-      combination of 3–30 day return signs, which was already tried. The card admits the 3- and 7-day
-      windows were there. The claimed novelty, "release by the old rule only", is not a different rule
-      under an OR: the OR output only falls when both inputs fall. The 0.05 threshold is the only new
-      part, and `bv2-sig-drawdown-from-peak` and `bv2-sig-hyst` already cover a drop-by-X% entry. The
-      card must say concretely what differs from the 3/7-day "or" variant, or the idea may be a repeat.'
-  - kind: narrowed
-    ref: new
-    text: 'The idea says the short window "can only turn the hedge on, not take it off", and the 14/30
-      rule takes it off "as now". The rule''s step 5 uses a plain OR with a 12-hour sticky exit. Under
-      that, the short signal keeps the hedge on after the 14/30 rule has gone silent, which is the short
-      window holding the hedge. And if the short window alone started the hedge, it ends when the window
-      rolls over, not by the 14/30 rule. Another reading is a latch: the short window sets the hedge,
-      and only the 14/30 rule''s "not needed" (plus the sticky exit) removes it. The `readings_ru` list
-      only two readings of "sharp drop" (the threshold) and none of how the hedge is released. Add the
-      release reading as a grid variant and list it in `readings_ru`, or justify the OR.'
+  status: carded
+  card: cards/bv2-fast-entry-third-window.yaml
+  notes: карточка написана 2026-11-05; в очереди реализации
+  attempts: 2
+  problems: []
+  review_blocks: []
   review_notes:
-  - 'In step 3, "return below minus `fast_entry_drop`; at 0.0 it is on when return ≤ 0" is a special case
-    that is easy to implement wrongly. Write one condition: return ≤ −drop.'
-  - The `kill_condition` and `observable` ("the share of switch-ons that end above the entry price after
-    72 hours") fit the idea. But the observable says "if more than half, the payment has stopped coming",
-    and the example in `plain_summary` ("second day") assumes a 3-day window. Say which window the example
-    uses.
-  - '"Perpetual contract", "closing price" and "sticky exit" are explained at their first use. "Липкий
-    выход" in `rule_ru` is explained only inside a parenthesis, so an engineer reading only the card may
-    miss it.'
+  - The grid has 12 variants, but the window-0 ones are not all different. With `fast_entry_window_days`
+    0, a `fast_entry_drop` of 0.05 or a `fast_entry_latch` of 1 changes nothing, so four variants repeat
+    the baseline. Either say so in `source_ru` or skip those combinations, which would also free grid
+    slots.
+  - 'The latch''s release condition could hold the hedge for a very long time. The mark clears only after
+    the old 14|30 rule has switched on and then off again. If the 3-day drop was a short shake-out and
+    the old rule never fires, the hedge stays on indefinitely. The idea''s "the 14/30 rule takes it off
+    as now" may also mean something milder: the old rule''s "not needed" plus the 12-hour sticky exit.
+    State this risk in `rule_ru` or `difference_ru`, or add a time limit on the mark as a variant.'
+  - 'In `difference_ru` for `bv2-sig-momentum-sign`, "совпадает с тем «или» и повтор его" is clumsy. Suggested
+    wording: "совпадает с тем «или», то есть повторяет его".'
+  - 'In the latch description, "включился и снова выключился" is the "on, then off" test on the old signal.
+    A short example would help the engineer: the old rule is silent, the 3-day drop sets the mark, the
+    old rule turns on a week later, then off, and the mark clears.'
+  - 'Both added `readings_ru` entries use the word "защёлка" (latch) and the "или" (OR) form. Explain
+    "защёлка" at first use, for example "как кнопка с фиксацией: включил и держится, пока не отпустят
+    другим сигналом".'
 - id: idea-0007
   date: '2026-10-28'
   source: agent:researcher
@@ -265,10 +213,45 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/bv2-2026-10-28.md
-  attempts: 1
+  attempts: 2
   problems:
-  - 'vs_tried names ids that are not in night/tried.yaml: [''trend-live-top25-seasoned'']'
-  review_blocks: []
+  - 'reviewer: rule-incomplete: When `perp_must_exist_on` is `hyperliquid`, the rule has to check whether
+    a Hyperliquid contract existed on the review date. But `data` is Binance only (`venue: binance`, a
+    Binance panel). Hyperliquid listing dates and price history are not in that panel, and the card does
+    not say where they come from. It also does not say whether the hedge in that variant still runs on
+    the Binance contract, as the baseline''s `differs_from_source` does, or on the Hyperliquid one. An
+    engineer would have to guess the data source and the leg.'
+  - 'reviewer: rule-incomplete: The card does not say how the new block handles a few cases.'
+  review_blocks:
+  - kind: rule-incomplete
+    ref: new
+    text: 'When `perp_must_exist_on` is `hyperliquid`, the rule has to check whether a Hyperliquid contract
+      existed on the review date. But `data` is Binance only (`venue: binance`, a Binance panel). Hyperliquid
+      listing dates and price history are not in that panel, and the card does not say where they come
+      from. It also does not say whether the hedge in that variant still runs on the Binance contract,
+      as the baseline''s `differs_from_source` does, or on the Hyperliquid one. An engineer would have
+      to guess the data source and the leg.'
+  - kind: rule-incomplete
+    ref: new
+    text: The card does not say how the new block handles a few cases.
+  review_notes:
+  - '`data.start: 2023-04-28` is inherited from the baseline''s snapshot. The project rule is that a list
+    a code rule could have built on every past day is judged from the start of the data, not from the
+    day it was written down. If the all-coins panel has Binance history before 2023-04-28 (other experiments
+    use "Binance с 2019"), say why it starts later. If it does not have that history, say so.'
+  - '`perp_must_exist_on` does not follow the wording "ten most liquid coins, … and a perpetual with the
+    needed history". With `hyperliquid` the history check has to apply to the Hyperliquid contract too,
+    and the card does not say that it does. The readings are all in the grid, which is fine, but readings
+    1 and 2 only live in the `min_history_days` values 30 and 90, and the cross-combination (Hyperliquid
+    contract, 90 days) needs the Hyperliquid history, which is the gap in the first BLOCK.'
+  - '`vs_tried` entries `bv2-fixed-slow-windows-30-60` and `qlab-regime-detector-btc30` are not near this
+    idea. They are harmless, but the entry that matters is `bv2-research-top10-pool` (the baseline) plus
+    `qlab-bv2-top10-liquid-list`, whose result line says the variants cannot be told apart on those data.
+    Say what power the new check has to see a difference between the hand list and the code list.'
+  - '`plain_summary`: the 43-coin list is described as "составили вручную" in 4 of 175 weeks, but the
+    example "60 монет … 12 отсеяны" is invented. Label the example as illustrative, not measured.'
+  - The `kill_condition` and `observable` compare against the hand-list ten. That is a comparison of two
+    books, not a judgement of the idea on its own, so say which of the two the stand's verdict uses.
 - id: idea-0008
   date: '2026-10-28'
   source: agent:researcher
@@ -479,7 +462,37 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-11-02.md
-  attempts: 0
+  attempts: 1
+  problems:
+  - 'reviewer: bad-question: The draft asks the owner to allow a new read-only exchange query. It never
+    says why the export q-lab already pulls from the FRAB host (`export_queries`) can''t give the wallet
+    balance. `src/qlab/strategy_pnl.py:36-39` and `docs/FRAB_LIVE.md:258` show an earlier comparison already
+    used the account''s own spot value (about $2 against about $3.7 from the fills). FRAB''s `ledger.compute_equity`
+    (`ledger.py:314-406`) also takes the per-coin wallet balance (`spot_balances_by_coin`). If the host''s
+    equity snapshots or wallet snapshots hold those balances, adding that table to the export is an engineering
+    task for the researcher, not an owner decision. Only the owner can answer a question about new exchange
+    access, so the draft must first check what the host stores. If it can''t be done from stored data,
+    it must say that and name the one thing the owner has to allow.'
+  review_blocks:
+  - kind: bad-question
+    ref: new
+    text: The draft asks the owner to allow a new read-only exchange query. It never says why the export
+      q-lab already pulls from the FRAB host (`export_queries`) can't give the wallet balance. `src/qlab/strategy_pnl.py:36-39`
+      and `docs/FRAB_LIVE.md:258` show an earlier comparison already used the account's own spot value
+      (about $2 against about $3.7 from the fills). FRAB's `ledger.compute_equity` (`ledger.py:314-406`)
+      also takes the per-coin wallet balance (`spot_balances_by_coin`). If the host's equity snapshots
+      or wallet snapshots hold those balances, adding that table to the export is an engineering task
+      for the researcher, not an owner decision. Only the owner can answer a question about new exchange
+      access, so the draft must first check what the host stores. If it can't be done from stored data,
+      it must say that and name the one thing the owner has to allow.
+  review_notes:
+  - The claim that the stand has no way to check this is not backed by a file. Cite the export query list
+    or the host tables that were checked.
+  - '"прибор", "ряд денег" and "сверка" appear without a first-use explanation, and `cards/SCHEMA.md`
+    asks for plain words. Say "расчёт денег стратегии по записям сделок против настоящего баланса кошелька".'
+  - The two branches of the answer are clear. The branch "биткоина на кошельке нет" should name where
+    the series is built (`qlab.strategy_pnl`, dust taken from the fill records) so the researcher can
+    act on it right away.
 - id: idea-0025
   date: '2026-11-03'
   source: agent:director
@@ -518,4 +531,15 @@ ideas:
   status: new
   card: null
   notes: 'сказано о Bv2 и Bv3 (монеты со страховкой: когда включать и снимать страховку), 2026-11-04'
+  attempts: 0
+- id: idea-0029
+  date: '2026-11-05'
+  source: agent:researcher
+  text: 'Разбор просадок FRAB в файле улик строить по варианту, где монета оценена своей ценой и учтён
+    остаток после округления до лота, а не по основному: в основном обе ноги оценены одной ценой, и просадкой
+    там может быть только комиссия, поэтому разбор пуст по устройству, даже когда отрез начнётся с первого
+    часа торговли'
+  status: new
+  card: null
+  notes: из записки docs/research/frab-2026-11-05.md
   attempts: 0

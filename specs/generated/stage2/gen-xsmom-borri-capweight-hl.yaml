@@ -24,7 +24,7 @@ data:
   include_spot: false
   spot_prices: perp
   start: '2025-01-01'
-  end: '2026-10-30'
+  end: '2026-10-31'
   min_daily_volume_usd: 1000000.0
 costs:
   taker_fee_bps: 4.5
@@ -48,7 +48,7 @@ differs_from_source:
   engine uses; stage 1 had no floor.
 - The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $10.
 - 'Judged from 2025-01-30: the first day hyperliquid has the 5 coins the portfolio rule needs at once
-  (snapshot 28dfb67cb8ccbb062b7d64b0b02a24a790494f951c83a39a2f823444d3fac90b); the days before are warm-up
+  (snapshot 33c1837936081c87510b759e35ce3ad302064f08708c8b0a4ba62ed0996cd89d); the days before are warm-up
   with no book.'
 noise_universe: panel
 measure_hedge_timing: false

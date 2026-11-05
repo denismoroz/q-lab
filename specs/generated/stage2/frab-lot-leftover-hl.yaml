@@ -61,7 +61,7 @@ data:
   include_spot: false
   spot_prices: own
   start: '2025-01-01'
-  end: '2026-11-03'
+  end: '2026-11-04'
   instruments:
   - AVAX
   - AVAX-SPOT

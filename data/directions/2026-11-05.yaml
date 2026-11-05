@@ -1,0 +1,117 @@
+# The research director's directions (qlab.directions, docs/DIRECTOR.md).
+# Written by CODE from the director agent's memo after validation -- do not edit the
+# lists by hand (the next director run replaces them). The one hand edit that belongs
+# to the owner: `pending_owner_review: false` once the first directions are reviewed
+# (or `qlab director --approve`). While it is true the generator and the researcher
+# ignore this file.
+date: '2026-11-05'
+memo: docs/research/director-2026-11-05.md
+pending_owner_review: false
+generator:
+  prefer_mechanisms:
+  - perp-funding-extreme-rebound
+  - classic-carry
+  pause_mechanisms:
+  - id: crypto-short-term-reversal
+    why: Каталог всё ещё велит брать все монеты подряд, а эффект живёт на малооборотных, поэтому испытание
+      ушло бы на выборку без эффекта.
+  - id: crypto-low-vol
+    why: Собирается только версия из работы, где эффекта не нашли, единственная попытка получила отказ,
+      новых работ с числами нет.
+researcher:
+  frab:
+    priority: high
+    note: 'Начать со сверки живых сделок со стендом: дневной разброс живой книги снова выше всех отрезков
+      стенда. Назвать, чего стенд не учитывает; это разбор стенда, а не подбор чисел под живые дни. Затем
+      просьба владельца о децентрализованных биржах.'
+  bv3:
+    priority: high
+    note: null
+  bv2:
+    priority: normal
+    note: null
+    repeats:
+    - question: Нужна ли доля страховки по силе сигнала вместо страховки целиком
+      answered_in: docs/research/bv2-2026-11-01.md
+    - question: Лучше ли частичная страховка, чем страховка целиком, на данных до отреза
+      answered_in: docs/research/bv2-2026-11-01.md
+  trend:
+    priority: normal
+    note: 'Начать с того, чего фреймворк пока не может сказать о стратегии, и с выжившего, который ждёт
+      владельца: на какой основе он стоит.'
+    repeats:
+    - question: Зачем стратегии такая большая книга и можно ли покупать монеты понемногу
+      answered_in: docs/research/trend-2026-10-30.md
+    - question: Нужен ли выключатель боковика для ручного списка монет
+      answered_in: docs/research/trend-2026-10-30.md
+  xsmom:
+    priority: low
+    note: Выжившие стоят на одной основе; когда придёт ход, начать с вопросов из раздела о том, чего фреймворк
+      пока не может сказать.
+    repeats:
+    - question: Переживает ли прибыль издержки и правило о капитале
+      answered_in: docs/research/xsmom-2026-10-30.md
+    - question: Какие выжившие действительно ждут владельца
+      answered_in: docs/research/xsmom-2026-10-30.md
+  frab-binance-spot:
+    priority: low
+    note: Главный вопрос отвечен; когда придёт ход, начать с пожеланий владельца, которые записка ещё
+      не закрыла.
+    repeats:
+    - question: Остаётся ли прибыль после всех издержек на бюджетах владельца
+      answered_in: docs/research/frab-binance-spot-2026-11-03.md
+catalogue_requests:
+- family: reversal
+  look_for: Работы о возврате цены на бессрочных контрактах и среди монет наших площадок; запись о том,
+    как механизм собирается с отбором малооборотных монет.
+  why: Механизм на паузе, пока каталог ведёт генератор к выборке без эффекта.
+- family: funding-and-basis
+  look_for: Работы с окном усреднения ставки и сроком пересмотра в сутках; работы о положении ставки среди
+    её прошлых значений.
+  why: На семействе стоят живые деньги, а собираемых по таблице механизмов нет.
+- family: momentum
+  look_for: Работы о фильтрах тренда на нескольких шагах времени и о продолжении движения на бессрочных
+    контрактах с учётом издержек и платы за финансирование.
+  why: Нужны источники для направления владельца по Bv3, а генераторные попытки получили отказ при издержках.
+- family: low-volatility
+  look_for: Полные тексты работ, нашедших премию за спокойные монеты, с окнами и сроками в сутках.
+  why: Собирается только версия из работы, где эффекта не нашли.
+data_requests:
+- what: Открытый интерес и объёмы принудительных закрытий по монетам на Hyperliquid и Binance; если истории
+    нет, начать хранить её сейчас.
+  why: Без них не проверить механизм предупреждения об обвале дохода от ставки.
+- what: История ставок и цен децентрализованных бирж бессрочных контрактов на одной сетке с имеющимися
+    площадками.
+  why: Владелец просит найти такие биржи для FRAB.
+- what: Цены мелким шагом времени по монетам Bv2 и Bv3, если их ещё нет.
+  why: 'Направление владельца по Bv3: включать страховку по мелкому шагу времени.'
+code_requests:
+- repo: qlab
+  what: Блок масштабирования портфеля по разбросу самого портфеля.
+  why: Без него механизм продолжения движения с управлением разбросом не собирается.
+  strategy: null
+- repo: qlab
+  what: Блоки положения ставки финансирования среди её прошлых значений и правила входа по порогу с выходом
+    при возврате.
+  why: Нужны механизмам отскока после крайней ставки и схождения цены контракта с ценой монеты.
+  strategy: null
+- repo: qlab
+  what: Обеспечить детектору затухания историю стенда для основной бумажной книги тренда.
+  why: Основная бумажная книга тренда всё ещё без наблюдения.
+  strategy: trend
+- repo: qlab
+  what: Считать выживших в файле доказательств по основам, а не по надстройкам, и цену выжившего — по
+    числу разных основ.
+  why: Пять выживших xsmom стоят на одной основе, и цена находки занижена.
+  strategy: null
+- repo: qlab
+  what: Выключатель для вида вызова разведчика, который подряд ничего не даёт.
+  why: Разведчик ни разу не дал черновика, а токены тратит.
+  strategy: null
+propose_close_family: []
+problems:
+- 'researcher.bv3: the note has a digit in it (a direction is not a parameter value): the note is dropped'
+- 'researcher.bv2: the note has a digit in it (a direction is not a parameter value): the note is dropped'
+- 'code_requests: ''Возможность для страховки Bv3 брать тренд самой монеты и сочетать крупный шаг времени
+  для тренда с мелким для включения; если уже есть, ничего не менять.'' has a digit in it (a request asks
+  for a capability, not a value): ignored'
