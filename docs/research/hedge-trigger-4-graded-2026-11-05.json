@@ -1,0 +1,260 @@
+{
+ "grid": [
+  [
+   "graded",
+   0.02,
+   null
+  ],
+  [
+   "graded",
+   0.05,
+   null
+  ],
+  [
+   "graded",
+   0.1,
+   null
+  ],
+  [
+   "graded",
+   0.2,
+   null
+  ],
+  [
+   "graded",
+   0.3,
+   null
+  ],
+  [
+   "downside",
+   0.5,
+   0.3
+  ],
+  [
+   "downside",
+   0.5,
+   0.5
+  ],
+  [
+   "downside",
+   0.7,
+   0.3
+  ],
+  [
+   "downside",
+   0.7,
+   0.5
+  ]
+ ],
+ "set_a": {
+  "rows": {
+   "production": {
+    "cap_ann_first": 58.46471467523129,
+    "cap_max_dd_first": -19.71967457893109,
+    "fees_year_first": 2.4768921498960936,
+    "ons_first": 359,
+    "cap_ann_last": 17.078108664337417,
+    "cap_max_dd_last": -19.999172018799598,
+    "fees_year_last": 2.818540862297647,
+    "ons_last": 220
+   },
+   "graded 0.02": {
+    "cap_ann_first": 64.58969476906728,
+    "cap_max_dd_first": -30.66022016267196,
+    "fees_year_first": 3.845896703181888,
+    "ons_first": 292,
+    "cap_ann_last": 10.400941953024525,
+    "cap_max_dd_last": -32.584139226149475,
+    "fees_year_last": 4.721987299233106,
+    "ons_last": 184
+   },
+   "graded 0.05": {
+    "cap_ann_first": 65.74246786850074,
+    "cap_max_dd_first": -35.77317094537564,
+    "fees_year_first": 2.4967494036910116,
+    "ons_first": 237,
+    "cap_ann_last": 8.434732489034607,
+    "cap_max_dd_last": -36.61739842740797,
+    "fees_year_last": 2.82759932589229,
+    "ons_last": 137
+   },
+   "graded 0.1": {
+    "cap_ann_first": 64.94815403815457,
+    "cap_max_dd_first": -42.674407538429904,
+    "fees_year_first": 1.677099134922304,
+    "ons_first": 166,
+    "cap_ann_last": 6.773965516700222,
+    "cap_max_dd_last": -37.35902864835685,
+    "fees_year_last": 1.679021047337754,
+    "ons_last": 95
+   },
+   "graded 0.2": {
+    "cap_ann_first": 63.70531272772328,
+    "cap_max_dd_first": -50.79235841890642,
+    "fees_year_first": 0.9734467275503528,
+    "ons_first": 123,
+    "cap_ann_last": 4.537082814024661,
+    "cap_max_dd_last": -42.63613168375183,
+    "fees_year_last": 0.8784040162933932,
+    "ons_last": 59
+   },
+   "graded 0.3": {
+    "cap_ann_first": 63.095543122810064,
+    "cap_max_dd_first": -57.466601581406415,
+    "fees_year_first": 0.6573096177455475,
+    "ons_first": 93,
+    "cap_ann_last": 0.6662307113468376,
+    "cap_max_dd_last": -49.10361077061871,
+    "fees_year_last": 0.559042028261468,
+    "ons_last": 43
+   },
+   "downside 0.5 share 0.3": {
+    "cap_ann_first": 49.824299263574794,
+    "cap_max_dd_first": -61.068972998031356,
+    "fees_year_first": 1.6184900768417652,
+    "ons_first": 303,
+    "cap_ann_last": 9.286701871682792,
+    "cap_max_dd_last": -48.7012361979587,
+    "fees_year_last": 1.362061914305819,
+    "ons_last": 191
+   },
+   "downside 0.5 share 0.5": {
+    "cap_ann_first": 57.33726190812036,
+    "cap_max_dd_first": -48.87980408779966,
+    "fees_year_first": 1.9709615161656697,
+    "ons_first": 359,
+    "cap_ann_last": 11.45513446119023,
+    "cap_max_dd_last": -40.77446660931152,
+    "fees_year_last": 1.863884941169128,
+    "ons_last": 220
+   },
+   "downside 0.7 share 0.3": {
+    "cap_ann_first": 52.04362712885152,
+    "cap_max_dd_first": -53.175646840221226,
+    "fees_year_first": 1.2689419280512995,
+    "ons_first": 289,
+    "cap_ann_last": 4.837716771698139,
+    "cap_max_dd_last": -51.98748144911225,
+    "fees_year_last": 1.0543313549491022,
+    "ons_last": 186
+   },
+   "downside 0.7 share 0.5": {
+    "cap_ann_first": 59.37140572167379,
+    "cap_max_dd_first": -43.28948281451517,
+    "fees_year_first": 1.7276217367650797,
+    "ons_first": 359,
+    "cap_ann_last": 9.332578750535555,
+    "cap_max_dd_last": -42.52324623631104,
+    "fees_year_last": 1.641407113811421,
+    "ons_last": 220
+   }
+  },
+  "pick": "production"
+ },
+ "set_b": {
+  "rows": {
+   "production": {
+    "cap_ann_first": 30.654231596649957,
+    "cap_max_dd_first": -20.2805772077574,
+    "fees_year_first": 3.2453561606664243,
+    "ons_first": 1089,
+    "cap_ann_last": 9.701593099038746,
+    "cap_max_dd_last": -32.77921261245502,
+    "fees_year_last": 3.0276075653702783,
+    "ons_last": 533
+   },
+   "graded 0.02": {
+    "cap_ann_first": 32.199931190842825,
+    "cap_max_dd_first": -43.14959230149231,
+    "fees_year_first": 4.3225015398868445,
+    "ons_first": 909,
+    "cap_ann_last": 2.6624045382991812,
+    "cap_max_dd_last": -40.915584131613045,
+    "fees_year_last": 4.34957800019478,
+    "ons_last": 437
+   },
+   "graded 0.05": {
+    "cap_ann_first": 32.52711427161636,
+    "cap_max_dd_first": -47.86334614022216,
+    "fees_year_first": 3.210448638229711,
+    "ons_first": 753,
+    "cap_ann_last": 2.9339669616884168,
+    "cap_max_dd_last": -42.33533189702339,
+    "fees_year_last": 3.029116769921028,
+    "ons_last": 362
+   },
+   "graded 0.1": {
+    "cap_ann_first": 34.296561844811336,
+    "cap_max_dd_first": -48.28312558171861,
+    "fees_year_first": 2.3480897820003532,
+    "ons_first": 579,
+    "cap_ann_last": 0.725728184278556,
+    "cap_max_dd_last": -44.14351634741705,
+    "fees_year_last": 2.1592123638053473,
+    "ons_last": 273
+   },
+   "graded 0.2": {
+    "cap_ann_first": 32.731425952666434,
+    "cap_max_dd_first": -60.62047932046235,
+    "fees_year_first": 1.647090177220168,
+    "ons_first": 420,
+    "cap_ann_last": -3.014713543317786,
+    "cap_max_dd_last": -51.743181616197276,
+    "fees_year_last": 1.4666601255561158,
+    "ons_last": 190
+   },
+   "graded 0.3": {
+    "cap_ann_first": 33.142466165487235,
+    "cap_max_dd_first": -63.471668500236376,
+    "fees_year_first": 1.2678303634780246,
+    "ons_first": 316,
+    "cap_ann_last": -6.078511926465316,
+    "cap_max_dd_last": -54.900212200989216,
+    "fees_year_last": 1.1412012066437305,
+    "ons_last": 155
+   },
+   "downside 0.5 share 0.3": {
+    "cap_ann_first": 30.850020256293835,
+    "cap_max_dd_first": -60.60622455686466,
+    "fees_year_first": 2.459029994666941,
+    "ons_first": 860,
+    "cap_ann_last": 3.8597949576831185,
+    "cap_max_dd_last": -48.14480958296864,
+    "fees_year_last": 1.9616819703136816,
+    "ons_last": 366
+   },
+   "downside 0.5 share 0.5": {
+    "cap_ann_first": 30.383528658633725,
+    "cap_max_dd_first": -46.10078049578833,
+    "fees_year_first": 2.801009498960921,
+    "ons_first": 1080,
+    "cap_ann_last": 7.121204469382447,
+    "cap_max_dd_last": -40.27196487795829,
+    "fees_year_last": 2.3660406481851792,
+    "ons_last": 512
+   },
+   "downside 0.7 share 0.3": {
+    "cap_ann_first": 30.275514964644003,
+    "cap_max_dd_first": -59.438183660561435,
+    "fees_year_first": 2.1040340725588753,
+    "ons_first": 777,
+    "cap_ann_last": 0.4529200098988848,
+    "cap_max_dd_last": -47.55246048224257,
+    "fees_year_last": 1.6375682316071545,
+    "ons_last": 334
+   },
+   "downside 0.7 share 0.5": {
+    "cap_ann_first": 30.226198170617135,
+    "cap_max_dd_first": -44.66087158238421,
+    "fees_year_first": 2.597126655756592,
+    "ons_first": 1080,
+    "cap_ann_last": 4.432299728368337,
+    "cap_max_dd_last": -41.43937530439611,
+    "fees_year_last": 2.214414914054635,
+    "ons_last": 511
+   }
+  },
+  "pick": "production"
+ },
+ "seconds": 198
+}
