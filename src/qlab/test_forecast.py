@@ -30,3 +30,12 @@ def test_auc_and_correlations() -> None:
     assert fc.spearman(x, x ** 3) == pytest.approx(1.0)
     assert fc.hit_rate(np.array([1, -1, 1.0]), np.array([2, -3, -1.0])) == pytest.approx(2 / 3)
     assert fc.r2_vs_zero(np.zeros(5), np.ones(5)) == pytest.approx(0.0)
+
+
+def test_ema_features_do_not_read_later_bars() -> None:
+    rng = np.random.default_rng(1)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 3000)))
+    full = fc.ema_features(close)
+    head = fc.ema_features(close[:2000])
+    assert full.shape == (3000, 13)
+    assert np.allclose(full[:2000], head, equal_nan=True)

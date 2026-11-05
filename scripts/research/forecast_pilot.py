@@ -37,6 +37,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--minutes", type=Path, default=Path("/Users/d/prj/q-lab/data/raw/binance/1m"))
+    ap.add_argument("--features", choices=["base", "ema", "ema_only"], default="base")
     a = ap.parse_args()
     t0 = time.time()
     import torch
@@ -52,6 +53,18 @@ def main() -> None:
     tau, pos = g["tau"], g["pos"]
     logc = np.where(g["ok"], np.log(close.to_numpy()[np.clip(pos, 0, None)]), np.nan)
     X = np.column_stack([g["static"], g["summ"]]).astype(np.float64)
+    if a.features != "base":
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent))
+        import waves as wr
+
+        ema = fc.ema_features(np.exp(logc))
+        if a.features == "ema":
+            X = np.column_stack([X, ema])
+        else:  # EMA and the longer returns only (forecast-pilot-ema-protocol)
+            cols = [wr.FEATURES.index(f) for f in ("ret1", "ret7", "ret30", "btc_ret7")]
+            X = np.column_stack([ema, g["static"][:, cols]]).astype(np.float64)
     dates = pd.to_datetime(tau, utc=True).tz_localize(None).to_numpy()
     targets, pasts = {}, {}
     for h in H:
@@ -271,7 +284,9 @@ def main() -> None:
                 res["classes"][f"{h}h {side} k={k}"] = rows
         print("classes", h, round(time.time() - t0), "s", flush=True)
     res["seconds"] = round(time.time() - t0)
-    (a.work / "forecast.json").write_text(json.dumps(res, indent=1, default=str))
+    res["features"] = a.features
+    name = "forecast.json" if a.features == "base" else f"forecast-{a.features}.json"
+    (a.work / name).write_text(json.dumps(res, indent=1, default=str))
     print("written", res["seconds"], "s")
 
 

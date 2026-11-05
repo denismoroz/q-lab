@@ -73,6 +73,26 @@ def r2_vs_zero(pred: np.ndarray, y: np.ndarray) -> float:
         float("nan")
 
 
+EMA_SPANS = (12, 24, 72, 168, 720)
+EMA_CROSSES = ((12, 72), (24, 168), (72, 720))
+
+
+def ema_features(close: np.ndarray) -> np.ndarray:
+    """13 price-free EMA features per hourly bar (docs/research/forecast-pilot-ema-protocol):
+    distance of the close to each EMA, three crossovers and each EMA's slope over a quarter of its
+    span, all in units of the past 720 hours' hourly volatility scaled to the horizon. Reads only
+    bars up to and including each bar."""
+    import pandas as pd
+
+    c = pd.Series(close).ffill()
+    sig = np.log(c).diff().rolling(720, min_periods=360).std()
+    ema = {n: c.ewm(span=n, adjust=False).mean() for n in EMA_SPANS}
+    cols = [(c / ema[n] - 1.0) / (sig * np.sqrt(n)) for n in EMA_SPANS]
+    cols += [(ema[f] - ema[s]) / (c * sig * np.sqrt(s)) for f, s in EMA_CROSSES]
+    cols += [(ema[n] - ema[n].shift(n // 4)) / (c * sig * np.sqrt(n / 4)) for n in EMA_SPANS]
+    return np.column_stack([x.to_numpy() for x in cols]).clip(-20, 20)
+
+
 class ForecastTCN(nn.Module):
     """The small causal encoder of `ml_money.TCNPolicy` with `n_out` linear outputs."""
 
