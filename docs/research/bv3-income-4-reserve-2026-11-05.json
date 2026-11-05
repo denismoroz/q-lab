@@ -1,0 +1,830 @@
+{
+ "grid": [
+  [
+   0.3,
+   0.05,
+   24
+  ],
+  [
+   0.3,
+   0.05,
+   72
+  ],
+  [
+   0.3,
+   0.1,
+   24
+  ],
+  [
+   0.3,
+   0.1,
+   72
+  ],
+  [
+   0.3,
+   0.2,
+   24
+  ],
+  [
+   0.3,
+   0.2,
+   72
+  ],
+  [
+   0.6,
+   0.05,
+   24
+  ],
+  [
+   0.6,
+   0.05,
+   72
+  ],
+  [
+   0.6,
+   0.1,
+   24
+  ],
+  [
+   0.6,
+   0.1,
+   72
+  ],
+  [
+   0.6,
+   0.2,
+   24
+  ],
+  [
+   0.6,
+   0.2,
+   72
+  ]
+ ],
+ "set_a": {
+  "table": {
+   "production": {
+    "ann_first": 58.46471467523128,
+    "dd_first": -19.71967457893109,
+    "ann_last": 17.078108664337417,
+    "dd_last": -19.999172018799598,
+    "p_last": 0.0675,
+    "ann_first_bull": 158.44191472701957,
+    "ann_first_bear": -22.070812877557728,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.0,
+      "carry_fees_pct_year": 0.0,
+      "carry_entries": 0,
+      "carry_on_share": 0.0,
+      "liq_dist_min": 0.1768255578855542,
+      "liq_dist_p01": 0.3332944217863724
+     },
+     "last": {
+      "carry_funding_pct_year": 0.0,
+      "carry_fees_pct_year": 0.0,
+      "carry_entries": 0,
+      "carry_on_share": 0.0,
+      "liq_dist_min": 2.0118097045901973,
+      "liq_dist_p01": 2.2683454876858664
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 11
+    }
+   },
+   "fraction 0.3 entry 0.05 exit 24h": {
+    "ann_first": 46.0251207807958,
+    "dd_first": -14.799461040018592,
+    "ann_last": 12.304892904302468,
+    "dd_last": -15.227991098195828,
+    "p_last": 0.081,
+    "ann_first_bull": 123.40701807482614,
+    "ann_first_bear": -16.027573425145537,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 1.2358680810247427,
+      "carry_fees_pct_year": 0.20601280223106042,
+      "carry_entries": 75,
+      "carry_on_share": 0.2684645049911593,
+      "liq_dist_min": 0.15790271015346713,
+      "liq_dist_p01": 0.36795574120490304
+     },
+     "last": {
+      "carry_funding_pct_year": 0.26448863787916466,
+      "carry_fees_pct_year": 0.18346098992438487,
+      "carry_entries": 26,
+      "carry_on_share": 0.2163569752406494,
+      "liq_dist_min": 1.6868689562925057,
+      "liq_dist_p01": 1.9341678425081401
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -35.034896652193424
+   },
+   "fraction 0.3 entry 0.05 exit 72h": {
+    "ann_first": 46.22657198779666,
+    "dd_first": -15.212777888924478,
+    "ann_last": 12.622121356638296,
+    "dd_last": -14.924938470583077,
+    "p_last": 0.0745,
+    "ann_first_bull": 123.72479760839929,
+    "ann_first_bear": -15.997552954104773,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 1.3884519825058987,
+      "carry_fees_pct_year": 0.024602899003392284,
+      "carry_entries": 24,
+      "carry_on_share": 0.2830760020605065,
+      "liq_dist_min": 0.15790271015346713,
+      "liq_dist_p01": 0.3705236442058802
+     },
+     "last": {
+      "carry_funding_pct_year": 0.3377314535408187,
+      "carry_fees_pct_year": 0.043635676751980365,
+      "carry_entries": 5,
+      "carry_on_share": 0.23969158565202817,
+      "liq_dist_min": 1.081400216332832,
+      "liq_dist_p01": 1.344493716557879
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -34.71711711862028
+   },
+   "fraction 0.3 entry 0.1 exit 24h": {
+    "ann_first": 46.02338539277096,
+    "dd_first": -14.865872072810848,
+    "ann_last": 12.49981028000315,
+    "dd_last": -14.936841731028561,
+    "p_last": 0.0765,
+    "ann_first_bull": 123.41738560053221,
+    "ann_first_bear": -16.076255851038816,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 1.2304958074042802,
+      "carry_fees_pct_year": 0.1743274899023756,
+      "carry_entries": 66,
+      "carry_on_share": 0.25538446545171034,
+      "liq_dist_min": 0.15790271015346713,
+      "liq_dist_p01": 0.3690538125718551
+     },
+     "last": {
+      "carry_funding_pct_year": 0.23709167320210567,
+      "carry_fees_pct_year": 0.08556759651542006,
+      "carry_entries": 12,
+      "carry_on_share": 0.1703582203917437,
+      "liq_dist_min": 1.753876454790272,
+      "liq_dist_p01": 2.000972544900263
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 1
+    },
+    "worst_regime_delta": -35.02452912648735
+   },
+   "fraction 0.3 entry 0.1 exit 72h": {
+    "ann_first": 46.226051677199436,
+    "dd_first": -15.21131037674155,
+    "ann_last": 12.614012038181372,
+    "dd_last": -14.904837071866059,
+    "p_last": 0.0745,
+    "ann_first_bull": 123.72480832913575,
+    "ann_first_bear": -16.000842557058835,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 1.3887996250567256,
+      "carry_fees_pct_year": 0.024578582498403605,
+      "carry_entries": 24,
+      "carry_on_share": 0.28290893396633576,
+      "liq_dist_min": 0.15790271015346713,
+      "liq_dist_p01": 0.3705236442058802
+     },
+     "last": {
+      "carry_funding_pct_year": 0.31798932087718706,
+      "carry_fees_pct_year": 0.028520298920871857,
+      "carry_entries": 3,
+      "carry_on_share": 0.21395048129878838,
+      "liq_dist_min": 1.0791429777253994,
+      "liq_dist_p01": 1.340821402488861
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -34.71710639788381
+   },
+   "fraction 0.3 entry 0.2 exit 24h": {
+    "ann_first": 46.11582158120413,
+    "dd_first": -15.267042836514943,
+    "ann_last": 12.705926850915159,
+    "dd_last": -15.004941429894183,
+    "p_last": 0.075,
+    "ann_first_bull": 123.88278299622343,
+    "ann_first_bear": -16.220601961491408,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.9975446341334264,
+      "carry_fees_pct_year": 0.03419111462763219,
+      "carry_entries": 22,
+      "carry_on_share": 0.1351998552076517,
+      "liq_dist_min": 0.2771285168957507,
+      "liq_dist_p01": 0.42960999689152407
+     },
+     "last": {
+      "carry_funding_pct_year": 0.0691085683053389,
+      "carry_fees_pct_year": 0.007293777638439306,
+      "carry_entries": 1,
+      "carry_on_share": 0.031978832431396965,
+      "liq_dist_min": 1.889737659395359,
+      "liq_dist_p01": 2.156393125348974
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 1
+    },
+    "worst_regime_delta": -34.55913173079614
+   },
+   "fraction 0.3 entry 0.2 exit 72h": {
+    "ann_first": 46.27027087224985,
+    "dd_first": -15.267159432137213,
+    "ann_last": 12.829822285487088,
+    "dd_last": -15.001187557123732,
+    "p_last": 0.073,
+    "ann_first_bull": 123.86734968523321,
+    "ann_first_bear": -16.03685652992276,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 1.3072737932735181,
+      "carry_fees_pct_year": 0.01792242066443876,
+      "carry_entries": 20,
+      "carry_on_share": 0.22167847745276845,
+      "liq_dist_min": 0.2771285168957507,
+      "liq_dist_p01": 0.3564902050905186
+     },
+     "last": {
+      "carry_funding_pct_year": 0.20312113622248887,
+      "carry_fees_pct_year": 0.017905751885455855,
+      "carry_entries": 1,
+      "carry_on_share": 0.1246946985297639,
+      "liq_dist_min": 1.0871765565013018,
+      "liq_dist_p01": 1.34204046665452
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 1
+    },
+    "worst_regime_delta": -34.57456504178636
+   },
+   "fraction 0.6 entry 0.05 exit 24h": {
+    "ann_first": 41.62720393709007,
+    "dd_first": -12.466381730839293,
+    "ann_last": 8.352670042944784,
+    "dd_last": -14.918932363463256,
+    "p_last": 0.1205,
+    "ann_first_bull": 107.01646968334718,
+    "ann_first_bear": -11.302660084730308,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 6.14436432710686,
+      "carry_fees_pct_year": 1.3867120297157276,
+      "carry_entries": 326,
+      "carry_on_share": 0.913751096384368,
+      "liq_dist_min": 0.25047788578515573,
+      "liq_dist_p01": 0.44283243509590275
+     },
+     "last": {
+      "carry_funding_pct_year": 1.2887100919784142,
+      "carry_fees_pct_year": 2.4371975479038595,
+      "carry_entries": 251,
+      "carry_on_share": 0.8415425506441262,
+      "liq_dist_min": 1.3351875510155446,
+      "liq_dist_p01": 1.5724917085965244
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -51.42544504367238
+   },
+   "fraction 0.6 entry 0.05 exit 72h": {
+    "ann_first": 43.327841316184205,
+    "dd_first": -12.58173937092879,
+    "ann_last": 10.239495914470101,
+    "dd_last": -12.603992387167434,
+    "p_last": 0.075,
+    "ann_first_bull": 109.35344015707324,
+    "ann_first_bear": -10.210963622472557,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 6.671663542044754,
+      "carry_fees_pct_year": 0.2611977345648366,
+      "carry_entries": 109,
+      "carry_on_share": 0.9748075236331741,
+      "liq_dist_min": 0.15253247337716447,
+      "liq_dist_p01": 0.3709536234791923
+     },
+     "last": {
+      "carry_funding_pct_year": 1.2692222306141394,
+      "carry_fees_pct_year": 0.35836396170027146,
+      "carry_entries": 35,
+      "carry_on_share": 0.958395191801159,
+      "liq_dist_min": 0.6540466976721511,
+      "liq_dist_p01": 0.8862821099197822
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -49.08847456994633
+   },
+   "fraction 0.6 entry 0.1 exit 24h": {
+    "ann_first": 41.76075568929101,
+    "dd_first": -12.200004590483493,
+    "ann_last": 9.24116679296247,
+    "dd_last": -13.695673177340023,
+    "p_last": 0.098,
+    "ann_first_bull": 107.04027538651887,
+    "ann_first_bear": -11.081236513288289,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 6.086594647181081,
+      "carry_fees_pct_year": 1.1558091251676639,
+      "carry_entries": 280,
+      "carry_on_share": 0.8725270441477438,
+      "liq_dist_min": 0.25047788578515573,
+      "liq_dist_p01": 0.443736780684508
+     },
+     "last": {
+      "carry_funding_pct_year": 1.225614997218244,
+      "carry_fees_pct_year": 1.5357686474329075,
+      "carry_entries": 159,
+      "carry_on_share": 0.6897777884200949,
+      "liq_dist_min": 1.428557409857048,
+      "liq_dist_p01": 1.6737494362673448
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -51.401639340500694
+   },
+   "fraction 0.6 entry 0.1 exit 72h": {
+    "ann_first": 43.3793839066398,
+    "dd_first": -12.515914080231338,
+    "ann_last": 10.277900265092986,
+    "dd_last": -12.532428992568967,
+    "p_last": 0.074,
+    "ann_first_bull": 109.40452250629333,
+    "ann_first_bear": -10.130388105435381,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 6.694831241689853,
+      "carry_fees_pct_year": 0.2278308239567823,
+      "carry_entries": 102,
+      "carry_on_share": 0.9649435449065115,
+      "liq_dist_min": 0.15253247337716447,
+      "liq_dist_p01": 0.3709093967855777
+     },
+     "last": {
+      "carry_funding_pct_year": 1.2357363479247248,
+      "carry_fees_pct_year": 0.2671658566309281,
+      "carry_entries": 26,
+      "carry_on_share": 0.9066855035678368,
+      "liq_dist_min": 0.6515496271185872,
+      "liq_dist_p01": 0.8825012954108458
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -49.03739222072623
+   },
+   "fraction 0.6 entry 0.2 exit 24h": {
+    "ann_first": 42.39900371211819,
+    "dd_first": -12.317187819447062,
+    "ann_last": 10.075709244134371,
+    "dd_last": -12.297977423121754,
+    "p_last": 0.0765,
+    "ann_first_bull": 108.84745360082229,
+    "ann_first_bear": -10.778945603597103,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.373014651561706,
+      "carry_fees_pct_year": 0.20352173554809652,
+      "carry_entries": 83,
+      "carry_on_share": 0.49901847494674706,
+      "liq_dist_min": 0.27021493186348633,
+      "liq_dist_p01": 0.4362272370114026
+     },
+     "last": {
+      "carry_funding_pct_year": 0.40530947209657375,
+      "carry_fees_pct_year": 0.06353407283954096,
+      "carry_entries": 5,
+      "carry_on_share": 0.12292275274172693,
+      "liq_dist_min": 1.6416900049923142,
+      "liq_dist_p01": 1.8896622959217222
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 2
+    },
+    "worst_regime_delta": -49.594461126197274
+   },
+   "fraction 0.6 entry 0.2 exit 72h": {
+    "ann_first": 42.95314609200597,
+    "dd_first": -12.317191249173366,
+    "ann_last": 10.699764381686183,
+    "dd_last": -12.303999141293714,
+    "p_last": 0.0685,
+    "ann_first_bull": 109.21611710871663,
+    "ann_first_bear": -10.335697744259717,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.795483622527765,
+      "carry_fees_pct_year": 0.0892800003563433,
+      "carry_entries": 69,
+      "carry_on_share": 0.7327676222033497,
+      "liq_dist_min": 0.2708872244891558,
+      "liq_dist_p01": 0.36336787087346206
+     },
+     "last": {
+      "carry_funding_pct_year": 1.1312320650357108,
+      "carry_fees_pct_year": 0.09154371132380162,
+      "carry_entries": 4,
+      "carry_on_share": 0.42387816675446577,
+      "liq_dist_min": 0.637657471142554,
+      "liq_dist_p01": 0.8545327672713335
+     },
+     "liquidations_first": 0,
+     "liquidations_last": 0,
+     "hedge_limited_total": 0
+    },
+    "worst_regime_delta": -49.225797618302934
+   }
+  },
+  "pick_money": "fraction 0.3 entry 0.2 exit 72h",
+  "pick_regime": "fraction 0.3 entry 0.2 exit 24h",
+  "frab_overlap_last": {
+   "pick_money": {
+    "bv2_carry_coin_days": 434,
+    "frab_coin_days": 3010,
+    "both": 434,
+    "share_of_bv2_carry": 1.0
+   },
+   "pick_regime": {
+    "bv2_carry_coin_days": 112,
+    "frab_coin_days": 3010,
+    "both": 112,
+    "share_of_bv2_carry": 1.0
+   }
+  }
+ },
+ "set_b_prime": {
+  "table": {
+   "production": {
+    "ann_first": 32.60273847336738,
+    "dd_first": -18.204060186994255,
+    "ann_last": 9.514231301874162,
+    "dd_last": -32.06368963145679,
+    "p_last": 0.2165,
+    "ann_first_bull": 101.92657045202346,
+    "ann_first_bear": -22.36004619024786,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.0,
+      "carry_fees_pct_year": 0.0,
+      "carry_entries": 0,
+      "liq_dist_min": 0.1768255578855542
+     },
+     "last": {
+      "carry_funding_pct_year": 0.0,
+      "carry_fees_pct_year": 0.0,
+      "carry_entries": 0,
+      "liq_dist_min": 0.6244891235455308
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 0
+    }
+   },
+   "fraction 0.3 entry 0.05 exit 24h": {
+    "ann_first": 25.11610643575089,
+    "dd_first": -13.66520024326997,
+    "ann_last": 5.6291923639659665,
+    "dd_last": -24.13390097886311,
+    "p_last": 0.271,
+    "ann_first_bull": 77.4158656430151,
+    "ann_first_bear": -15.715730469757478,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.4943472324098971,
+      "carry_fees_pct_year": 0.08240512089242416,
+      "carry_entries": 75,
+      "liq_dist_min": 0.15790271015346713
+     },
+     "last": {
+      "carry_funding_pct_year": 0.10579545515166587,
+      "carry_fees_pct_year": 0.07338439596975393,
+      "carry_entries": 26,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.51070480900836
+   },
+   "fraction 0.3 entry 0.05 exit 72h": {
+    "ann_first": 25.20513822917763,
+    "dd_first": -13.578759250872906,
+    "ann_last": 5.681977476725937,
+    "dd_last": -24.050307116353725,
+    "p_last": 0.2685,
+    "ann_first_bull": 77.4484891199396,
+    "ann_first_bear": -15.605616354655307,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.5553807930023595,
+      "carry_fees_pct_year": 0.009841159601356914,
+      "carry_entries": 24,
+      "liq_dist_min": 0.15790271015346713
+     },
+     "last": {
+      "carry_funding_pct_year": 0.1350925814163275,
+      "carry_fees_pct_year": 0.017454270700792147,
+      "carry_entries": 5,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.47808133208386
+   },
+   "fraction 0.3 entry 0.1 exit 24h": {
+    "ann_first": 25.128093216365524,
+    "dd_first": -13.669294257698194,
+    "ann_last": 5.627454274735859,
+    "dd_last": -24.09104833461783,
+    "p_last": 0.2695,
+    "ann_first_bull": 77.43488245253776,
+    "ann_first_bear": -15.713993072491778,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.4921983229617121,
+      "carry_fees_pct_year": 0.06973099596095024,
+      "carry_entries": 66,
+      "liq_dist_min": 0.15790271015346713
+     },
+     "last": {
+      "carry_funding_pct_year": 0.09483666928084226,
+      "carry_fees_pct_year": 0.03422703860616803,
+      "carry_entries": 12,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.49168799948569
+   },
+   "fraction 0.3 entry 0.1 exit 72h": {
+    "ann_first": 25.205538042742386,
+    "dd_first": -13.577933032817423,
+    "ann_last": 5.680471971185114,
+    "dd_last": -24.04279605001976,
+    "p_last": 0.268,
+    "ann_first_bull": 77.44889197792341,
+    "ann_first_bear": -15.605334462349,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.5555198500226902,
+      "carry_fees_pct_year": 0.009831432999361444,
+      "carry_entries": 24,
+      "liq_dist_min": 0.15790271015346713
+     },
+     "last": {
+      "carry_funding_pct_year": 0.1271957283508748,
+      "carry_fees_pct_year": 0.011408119568348743,
+      "carry_entries": 3,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.477678474100045
+   },
+   "fraction 0.3 entry 0.2 exit 24h": {
+    "ann_first": 25.10222652880988,
+    "dd_first": -13.616867607976058,
+    "ann_last": 5.606696996115106,
+    "dd_last": -24.108235643145825,
+    "p_last": 0.271,
+    "ann_first_bull": 77.41203821371856,
+    "ann_first_bear": -15.749940175427147,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.39901785365337056,
+      "carry_fees_pct_year": 0.013676445851052876,
+      "carry_entries": 22,
+      "liq_dist_min": 0.2771285168957507
+     },
+     "last": {
+      "carry_funding_pct_year": 0.027643427322135563,
+      "carry_fees_pct_year": 0.002917511055375723,
+      "carry_entries": 1,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.514532238304895
+   },
+   "fraction 0.3 entry 0.2 exit 72h": {
+    "ann_first": 25.20379099188772,
+    "dd_first": -13.60500233893026,
+    "ann_last": 5.658332033961282,
+    "dd_last": -24.0768464719816,
+    "p_last": 0.27,
+    "ann_first_bull": 77.52095477594898,
+    "ann_first_bear": -15.68004085950931,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 0.5229095173094073,
+      "carry_fees_pct_year": 0.0071689682657755036,
+      "carry_entries": 20,
+      "liq_dist_min": 0.2771285168957507
+     },
+     "last": {
+      "carry_funding_pct_year": 0.08124845448899555,
+      "carry_fees_pct_year": 0.007162300754182342,
+      "carry_entries": 1,
+      "liq_dist_min": 0.952111613941212
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -24.405615676074476
+   },
+   "fraction 0.6 entry 0.05 exit 24h": {
+    "ann_first": 24.139540179980703,
+    "dd_first": -11.452824394700956,
+    "ann_last": 4.610662105295201,
+    "dd_last": -18.618189347666096,
+    "p_last": 0.2645,
+    "ann_first_bull": 68.46231374810692,
+    "ann_first_bear": -10.818771019951994,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.231717301551213,
+      "carry_fees_pct_year": 1.0978635802356826,
+      "carry_entries": 783,
+      "liq_dist_min": 0.25047788578515573
+     },
+     "last": {
+      "carry_funding_pct_year": 1.1886273351468937,
+      "carry_fees_pct_year": 2.011379167624163,
+      "carry_entries": 596,
+      "liq_dist_min": 0.5801519419593393
+     },
+     "liquidations_last": 1,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -33.46425670391653
+   },
+   "fraction 0.6 entry 0.05 exit 72h": {
+    "ann_first": 25.094267923095387,
+    "dd_first": -11.54935200394207,
+    "ann_last": 5.625856755473013,
+    "dd_last": -17.621551251538907,
+    "p_last": 0.2085,
+    "ann_first_bull": 70.21042160534019,
+    "ann_first_bear": -10.812450803732633,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.22240032561925,
+      "carry_fees_pct_year": 0.3022987116548539,
+      "carry_entries": 338,
+      "liq_dist_min": 0.15253247337716447
+     },
+     "last": {
+      "carry_funding_pct_year": 1.114154614047579,
+      "carry_fees_pct_year": 0.2831967743859816,
+      "carry_entries": 86,
+      "liq_dist_min": 0.595490312835429
+     },
+     "liquidations_last": 1,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -31.716148846683268
+   },
+   "fraction 0.6 entry 0.1 exit 24h": {
+    "ann_first": 24.25369404543328,
+    "dd_first": -11.271705902301976,
+    "ann_last": 4.940960434182046,
+    "dd_last": -18.174500400291183,
+    "p_last": 0.246,
+    "ann_first_bull": 68.60626231527161,
+    "ann_first_bear": -10.72036560841893,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.2062668133243895,
+      "carry_fees_pct_year": 0.9167195094215556,
+      "carry_entries": 676,
+      "liq_dist_min": 0.25047788578515573
+     },
+     "last": {
+      "carry_funding_pct_year": 1.1663850095034503,
+      "carry_fees_pct_year": 1.4905736642067022,
+      "carry_entries": 448,
+      "liq_dist_min": 0.5785215526447893
+     },
+     "liquidations_last": 1,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -33.32030813675185
+   },
+   "fraction 0.6 entry 0.1 exit 72h": {
+    "ann_first": 25.19136828494635,
+    "dd_first": -11.467982782056307,
+    "ann_last": 5.658681722304107,
+    "dd_last": -17.55834627293525,
+    "p_last": 0.205,
+    "ann_first_bull": 70.32224491357479,
+    "ann_first_bear": -10.721041763131327,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 5.24675803875518,
+      "carry_fees_pct_year": 0.2565051929159894,
+      "carry_entries": 309,
+      "liq_dist_min": 0.15253247337716447
+     },
+     "last": {
+      "carry_funding_pct_year": 1.1604694276672782,
+      "carry_fees_pct_year": 0.23610501125890324,
+      "carry_entries": 73,
+      "liq_dist_min": 0.595490312835429
+     },
+     "liquidations_last": 1,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -31.604325538448663
+   },
+   "fraction 0.6 entry 0.2 exit 24h": {
+    "ann_first": 24.245634393779774,
+    "dd_first": -11.25325968154347,
+    "ann_last": 5.290298520452903,
+    "dd_last": -17.089414027278213,
+    "p_last": 0.2255,
+    "ann_first_bull": 68.32563562486555,
+    "ann_first_bear": -10.471032620619699,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 4.823835768150717,
+      "carry_fees_pct_year": 0.18433028475716995,
+      "carry_entries": 229,
+      "liq_dist_min": 0.27021493186348633
+     },
+     "last": {
+      "carry_funding_pct_year": 0.47590788798826805,
+      "carry_fees_pct_year": 0.09820466268942506,
+      "carry_entries": 23,
+      "liq_dist_min": 0.6782943971082755
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 2
+    },
+    "worst_regime_delta": -33.6009348271579
+   },
+   "fraction 0.6 entry 0.2 exit 72h": {
+    "ann_first": 25.062362836461144,
+    "dd_first": -10.962702585013117,
+    "ann_last": 5.514232049024964,
+    "dd_last": -17.343137773465994,
+    "p_last": 0.215,
+    "ann_first_bull": 69.79096183984372,
+    "ann_first_bear": -10.07712122088793,
+    "sleeve": {
+     "first": {
+      "carry_funding_pct_year": 4.816002811154277,
+      "carry_fees_pct_year": 0.09936161155674932,
+      "carry_entries": 199,
+      "liq_dist_min": 0.2771039947342422
+     },
+     "last": {
+      "carry_funding_pct_year": 0.9817796655148426,
+      "carry_fees_pct_year": 0.06613066007527375,
+      "carry_entries": 12,
+      "liq_dist_min": 0.637657471142554
+     },
+     "liquidations_last": 0,
+     "liquidations_first": 1
+    },
+    "worst_regime_delta": -32.13560861217974
+   }
+  },
+  "pick_money": "fraction 0.3 entry 0.1 exit 72h",
+  "pick_regime": "fraction 0.3 entry 0.2 exit 72h"
+ },
+ "seconds": 983
+}
