@@ -481,9 +481,46 @@ Hyperliquid: отказ на Binance закрывал идею сразу, по�
 **Не входит:** двойники (`-causal`, `-binance`) остаются отдельными идеями со своими статусами; одна
 идея на данных Hyperliquid не получает вердикта Binance от двойника.
 
+## Идея, родившаяся на Hyperliquid, тоже проверяется на Binance (2026-11-05)
+
+**Что было не так.** Второй этап шёл только в одну сторону: идея, проверенная на Binance, получала
+этап на Hyperliquid (`<идея>-hl`), а идея, чей собственный спек написан на данных Hyperliquid
+(опыты исследователя вроде `trend-research-flat-choice-hl` и её надстройки, книги FRAB и Bv2 на
+Hyperliquid), не получала Binance никогда. Её «второй этап» был тем же Hyperliquid со строгим порогом
+объёма, а лестница писала «версии этой идеи на данных Binance нет». Владелец 2026-11-05, на странице
+`trend-research-flat-choice-hl-ov-gate-enter`: «почему вот эта стратегия не тестировалась на
+бинансе?», затем «да, делай и прогоняй все».
+
+**Что теперь.** У такой идеи есть этап на Binance, `<идея>-bn` (`night/stage2_binance.yaml`): тот же
+механизм и те же числа на истории Binance с 2019-09-08 (код, который сам выбирает числа, выбирает их
+заново на данных Binance по своему же правилу; правила 2026-11-04 судят последнюю треть окна, как
+любой прогон), комиссии из строки `binance` таблицы `night/costs.yaml` (для книги из двух ног — их
+среднее, 7.5 б.п.), минимальная ножка Binance ($5, `venues/binance.yaml`), имена монет переведены
+обратно (kPEPE → 1000PEPE, токен моста UBTC → BTC-SPOT), монеты, которых на Binance нет, выброшены и
+пересчитаны в заметках спека. Адаптера заявок на Binance у нас нет, поэтому проход там — «нужна
+инфраструктура», как у любого прохода на Binance.
+
+- **Открытая идея** получает этап на Binance в ночи ждущих (`qlab.waiting`, шаг `stage2-bn`), как
+  идея с Binance получает Hyperliquid.
+- **Закрытая идея** (отвергнута на Hyperliquid до того, как её посмотрели на Binance) попадает в
+  очередь закрытых идей (`night/second_venue.yaml`) по тому же правилу, что и отвергнутые на Binance:
+  данные Binance — данные, которых отказ не видел. Проход оживляет идею, всё остальное оставляет
+  закрытой.
+- **Пока Binance не проводился**, но этап можно сделать, Binance «в долгу»: отказ Hyperliquid не
+  закрывает открытую идею, как отказ Binance не закрывал идею, ждущую Hyperliquid. Долга нет у книг на
+  бумаге и в деньгах (их проверка — настоящая торговля), у стратегий без панели Binance, у идей с
+  занятым именем `-bn` и после двух сбоев подряд.
+- Статус по-прежнему решает одна функция (`venue_status.settle`): Binance — последний прогон `-bn`,
+  Hyperliquid — свой прогон вместе со строгим взглядом `-hl`; итог — лучшая площадка.
+- Лестница: ступень 2 (Binance) показывает прогон `-bn` или пишет, что он в долгу; пункт 10 стандарта
+  видит пробел, пока Binance не проводился. На странице идеи блок «по двум площадкам» и графики
+  показывают этап на Binance.
+- Руками: `qlab second-venue binance --dry-run` — список всех таких идей с планом (монеты, окно,
+  тяжело ли для ночи, сколько примерно минут); `qlab second-venue binance --idea ИДЕЯ` или `--all` —
+  прогнать.
+
 ## Чего здесь нет
 
-- Обратного двойника (идея с Hyperliquid получает версию на Binance): следующая фаза.
 - Адаптера заявок на Binance: ни q-lab, ни `frab` его не имеют; владелец сказал, что на счёте Binance
   «какие-то копейки», доступ к фьючерсам не подтверждён. Пока адаптера нет, любой проход на Binance —
   «нужна инфраструктура».
@@ -496,7 +533,10 @@ Hyperliquid: отказ на Binance закрывал идею сразу, по�
 
 `src/qlab/venue_split.py` (спек для Binance), `src/qlab/costs.py` (строка `binance`, среднее двух
 ног), `src/qlab/venues/config.py` и `src/qlab/harness/metrics.py` (`min_capital_usd(…, floors)`),
-`src/qlab/pipeline/stage2.py` (`combine`, ножка Hyperliquid), `src/qlab/pipeline/venue_status.py` (одна функция статуса), `src/qlab/pipeline/confirm.py` (история
+`src/qlab/pipeline/stage2.py` (`combine`, ножка Hyperliquid; `config_for("binance")`, этап на
+Binance для идей с Hyperliquid), `src/qlab/binance_stage.py` (план и ручной прогон этапа на Binance),
+`src/qlab/pipeline/venue_status.py` (одна функция статуса), `src/qlab/pipeline/confirm.py` (история
 на общих монетах), `src/qlab/rules/schema.py` (`VenueSplit`), `rules/2026-10-30.1.yaml`,
 `src/qlab/anomalies/scan.py`, `src/qlab/ladder.py`, `web/src/components/Ladder.jsx`; тесты —
-`src/qlab/test_venue_split.py`, `test_ladder.py`, `pipeline/test_stage2.py`, `pipeline/test_venue_status.py`.
+`src/qlab/test_venue_split.py`, `test_ladder.py`, `pipeline/test_stage2.py`, `pipeline/test_venue_status.py`,
+`pipeline/test_stage2_binance.py`.

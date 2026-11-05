@@ -296,7 +296,8 @@ class Plan:
     idea_id: str
     step: str
     """"idea": the spec of the idea, unchanged, on the fresh tail; "stage2": its second
-    stage on Hyperliquid (`qlab.pipeline.stage2`)."""
+    stage on Hyperliquid (`qlab.pipeline.stage2`); "stage2-bn": the Binance stage of an idea born
+    on Hyperliquid (`<idea>-bn`, owner 2026-11-05)."""
     spec_path: str | None
     route: str | None
     due: bool
@@ -352,9 +353,11 @@ def cap_rechecks(plans: list[Plan], limit: int) -> list[Plan]:
 
 def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list[Path]],
                  stage2_config=None, coverage_days: int | None = None,
-                 current_rules: str | None = None, recheck: Recheck | None = None) -> list[Plan]:
+                 current_rules: str | None = None, recheck: Recheck | None = None,
+                 binance_config=None) -> list[Plan]:
     """Every idea waiting for data and whether tonight re-runs it; with `recheck`, every decided
-    open idea too, on its schedule. Reads only."""
+    open idea too, on its schedule; with `binance_config`, the Binance stage of every open idea
+    born on Hyperliquid (`binance_stage_plan`). Reads only."""
     from qlab.night import is_generator_idea
     from qlab.pipeline.stage2 import survives
     from qlab.registry.models import Idea, IdeaStatus
@@ -392,6 +395,10 @@ def plan_waiting(session, *, end: date, watched: set[str], specs: dict[str, list
                 continue  # a noise book or a bare card: not an idea anybody can re-run
             plans.append(_plan_for(idea.id, "idea", path, skip, read_basis(session, idea.id),
                                    end, coverage_days, current_rules))
+        if in_work and (bn_plan := binance_stage_plan(
+                session, idea, routed, path, skip, end=end, bn_config=binance_config,
+                coverage_days=coverage_days, current_rules=current_rules)) is not None:
+            plans.append(bn_plan)
         child = stage2_child(session, idea.id)
         # `<idea>-hl` may be another idea (bv2-research-shared-pool-hl): nothing is written there
         child_taken = child is None and child_id_taken(session, idea.id)
@@ -494,7 +501,7 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
     m = outcome.metrics or {}
     if outcome.skipped:  # stage 1 no longer lets the idea through, or stage 2 is switched off
         return {**_entry(plan, end), "action": "wait", "why": outcome.skipped, "due_end": None}
-    return {"idea": plan.idea_id, "step": "stage2",
+    return {"idea": plan.idea_id, "step": plan.step,
             "action": "error" if outcome.error else "rerun",
             "route_before": plan.route, "route_after": outcome.route,
             "reason": outcome.reason, "trial": outcome.trial_id,
@@ -504,6 +511,53 @@ def _rerun_stage2(plan: Plan, end: date, *, stage1: dict | None, noise_trials: i
             "combined": outcome.combined_route, "status": outcome.parent_status
             or _status(plan.idea_id), "data_end": outcome.data_end, "why": plan.why,
             "lines": stage2.report_lines({"route": route}, dataclasses.asdict(outcome))}
+
+
+BINANCE_STEP = "stage2-bn"
+"""The plan step of the Binance stage of an idea born on Hyperliquid."""
+
+
+def step_venue(step: str) -> str:
+    """The second venue a plan's step runs on."""
+    return "binance" if step == BINANCE_STEP else "hyperliquid"
+
+
+def binance_stage_plan(session, idea, routed, path: Path | None, skip: str | None, *, end: date,
+                       bn_config, coverage_days: int | None, current_rules: str | None
+                       ) -> Plan | None:
+    """The Binance stage owed by an open idea born on Hyperliquid (its latest run is on
+    Hyperliquid's data, `<idea>-bn`), as `plan_waiting` gives a Binance idea its Hyperliquid stage:
+    none run yet -- run it tonight; one that decided nothing yet -- on the same schedule as any
+    waiting idea. None when the idea is not born on Hyperliquid or the stage cannot be made
+    (`qlab.pipeline.venue_status.binance_stage_possible`). Owner, 2026-11-05: «почему вот эта
+    стратегия не тестировалась на бинансе?»; «да, делай и прогоняй все»."""
+    from qlab.pipeline import stage2
+    from qlab.pipeline.spec import load_spec
+    from qlab.pipeline.venue_status import binance_stage_possible
+    from qlab.registry.stages import binance_child, latest_routed
+
+    if bn_config is None or not bn_config.enabled or routed is None or routed[0].route is None:
+        return None
+    if (routed[1].data_requirements or {}).get("source") != "hyperliquid":
+        return None
+    if path is not None:
+        try:
+            if stage2.second_venue_of(load_spec(path)) != "binance":
+                return None
+        except Exception:  # noqa: BLE001 - an unloadable spec fails loudly in its own run
+            return None
+    child = binance_child(session, idea.id)
+    child_routed = None if child is None else latest_routed(session, child.id)
+    if child_routed is None:
+        if not binance_stage_possible(session, idea.id, routed[1].code_ref):
+            return None
+        return Plan(idea.id, BINANCE_STEP, path.as_posix() if path else None, None, skip is None,
+                    skip or "на Binance ещё не прогонялась: идея родилась на Hyperliquid",
+                    skip=skip)
+    if getattr(child_routed[0].route, "value", child_routed[0].route) in STAGE2_WAITING:
+        return _plan_for(idea.id, BINANCE_STEP, path, skip, read_basis(session, child.id), end,
+                         coverage_days, current_rules)
+    return None
 
 
 HAND_COMMAND = "qlab twins run --only {idea}"
@@ -531,15 +585,18 @@ def _estimate(plan: Plan, end: date, stage2_config, cost, last_seconds: float | 
                 if plan.step == "idea":
                     estimates.append(hl_fetch.estimate(spec, session, cost))
                 elif stage2_config is not None:
+                    venue = step_venue(plan.step)
+                    config = (stage2_config if venue == "hyperliquid"
+                              else stage2.config_for(venue))
                     names = None
                     if (spec.data.instruments is not None
                             or spec.required_instruments is not None):
-                        # Hyperliquid's listing is asked once for the whole stage
+                        # the venue's listing is asked once for the whole stage
                         cache = listing if listing is not None else {}
-                        if "names" not in cache:
-                            cache["names"] = stage2.venue_listing()
-                        names = cache["names"]
-                    translation = stage2.translate(spec, stage2_config, venue_names=names)
+                        if venue not in cache:
+                            cache[venue] = stage2.venue_listing(venue)
+                        names = cache[venue]
+                    translation = stage2.translate(spec, config, venue_names=names)
                     if translation.spec is not None:
                         estimates.append(hl_fetch.estimate(translation.spec, session, cost))
     except Exception:  # noqa: BLE001 - an estimate is advice
@@ -585,6 +642,12 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
         stage2_config = None
         state.setdefault("waiting_notes", []).append(f"night/stage2.yaml не прочитан: {exc}")
     try:
+        binance_config = stage2.config_for("binance")
+    except (OSError, ValueError) as exc:  # the same for the Binance stage of Hyperliquid ideas
+        binance_config = None
+        state.setdefault("waiting_notes", []).append(
+            f"night/stage2_binance.yaml не прочитан: {exc}")
+    try:
         recheck = load_recheck()
     except (OSError, ValueError) as exc:  # a broken config switches the schedule off, loudly
         recheck = None
@@ -596,7 +659,8 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
             plans = plan_waiting(session, end=end, watched=watched_idea_ids(watch),
                                  specs=spec_files(spec_dir), stage2_config=stage2_config,
                                  coverage_days=ruleset.regime_coverage_days,
-                                 current_rules=ruleset.version, recheck=recheck)
+                                 current_rules=ruleset.version, recheck=recheck,
+                                 binance_config=binance_config)
     except Exception as exc:  # noqa: BLE001 - a report line, not a failed night
         state.setdefault("waiting_notes", []).append(
             f"список ждущих идей не составлен: {type(exc).__name__}: {exc}")
@@ -650,7 +714,8 @@ def waiting_stage(day: date, end: date, state: dict, *, watch: list[str], noise_
                 entry = {**_entry(plan, end), "why": "первый этап не дал исхода: второй ждёт"}
             else:
                 entry = _rerun_stage2(plan, end, stage1=stage1, noise_trials=noise_trials,
-                                      config=stage2_config)
+                                      config=(binance_config if plan.step == BINANCE_STEP
+                                              else stage2_config))
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             entry = {"idea": plan.idea_id, "step": plan.step, "action": "error",
                      "route_before": plan.route, "error": f"{type(exc).__name__}: {exc}"}
@@ -751,7 +816,8 @@ def report_lines(entries: list[dict], notes: list[str] | None = None,
         return lines
     lines += ["| идея | что | вперёд, дней: есть из нужных | исход: было → стало | статус | "
               "следующий прогон / причина |", "|---|---|---:|---|---|---|"]
-    step = {"idea": "описание на свежем хвосте", "stage2": "второй этап (Hyperliquid)"}
+    step = {"idea": "описание на свежем хвосте", "stage2": "второй этап (Hyperliquid)",
+            BINANCE_STEP: "второй этап (Binance; идея родилась на Hyperliquid)"}
     kind = {"recheck": " — решённая, по расписанию"}
     for e in sorted(entries, key=lambda e: (e["action"] == "wait", e["idea"], e["step"])):
         if e["action"] == "error":
@@ -772,7 +838,7 @@ def report_lines(entries: list[dict], notes: list[str] | None = None,
         lines.append(f"| {e['idea']} | {what} | {_days(e)} | {route} | "
                      f"{e.get('status') or '—'} | {when} |")
     for e in sorted(entries, key=lambda e: e["idea"]):
-        if e["step"] == "stage2" and e["action"] == "rerun" and e.get("lines"):
+        if e["step"] in ("stage2", BINANCE_STEP) and e["action"] == "rerun" and e.get("lines"):
             lines += ["", f"Второй этап `{e['idea']}`, подробно:", *[f"- {x}" for x in e["lines"]]]
     if any("**(изменился)**" in ln for ln in lines):
         lines += ["", "Исход изменился там, где стоит пометка; статус идеи меняет код по правилам "
@@ -781,8 +847,9 @@ def report_lines(entries: list[dict], notes: list[str] | None = None,
     return lines
 
 
-__all__ = ["Basis", "DECIDED_ROUTES", "Due", "Plan", "Recheck", "SECTION_TITLE", "WAITING_ROUTES",
-           "cap_rechecks", "days_before_decision", "decide_due", "decide_recheck_due",
+__all__ = ["BINANCE_STEP", "Basis", "DECIDED_ROUTES", "Due", "Plan", "Recheck", "SECTION_TITLE",
+           "WAITING_ROUTES", "binance_stage_plan", "cap_rechecks", "days_before_decision",
+           "decide_due", "decide_recheck_due",
            "followed_ideas", "load_recheck", "new_survivor", "plan_waiting", "read_basis",
-           "report_lines", "rerun_idea", "rerun_stage2", "spec_files", "waiting_stage",
-           "watched_idea_ids"]
+           "report_lines", "rerun_idea", "rerun_stage2", "spec_files", "step_venue",
+           "waiting_stage", "watched_idea_ids"]

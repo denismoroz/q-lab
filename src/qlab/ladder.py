@@ -66,8 +66,10 @@ from qlab import capital_text
 from qlab.registry.lifecycle import CLOSED_STATUSES
 from qlab.registry.models import AnomalyScan, Idea, IdeaStatus, Spec, Trial, Verdict
 from qlab.registry.stages import (
+    binance_child,
     child_id,
     child_id_taken,
+    child_venue,
     data_range,
     is_stage2_child,
     latest_routed,
@@ -958,9 +960,52 @@ def _no_second_stage(session: Session, idea: Idea, own: _Run, ledgers: Ledgers) 
                     + (" (в журнале надстроек он значится в долгу)" if owed else ""))
 
 
+def _binance_stage_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None,
+                        ledgers: Ledgers) -> Step | None:
+    """Step 2 of an idea born on Hyperliquid from its Binance stage (`<idea>-bn`, owner
+    2026-11-05: «почему вот эта стратегия не тестировалась на бинансе?»): its run, or why it has
+    none yet while it can still be made; None when the stage cannot be made at all (the older
+    reasons then speak)."""
+    from qlab.pipeline.stage2 import failure_key
+    from qlab.pipeline.venue_status import binance_stage_possible
+
+    bn = binance_child(session, idea.id)
+    run = None if bn is None else _latest_run(session, bn.id)
+    if run is not None:
+        return _from_run(session, 2, run, other=bn.id,
+                         prefix=f"версия на Binance «{bn.id}» (тот же механизм и те же числа на "
+                                "истории Binance): ")
+    failed = ledgers.stage2_failures.get(failure_key(idea.id, BINANCE)) or {}
+    if failed.get("given_up"):
+        return _not_run(2, Reason.STAGE2_FAILED,
+                        f"прогон на Binance упал ({failed.get('attempts')} раз подряд"
+                        + ("; причина постоянная" if failed.get("permanent") else "")
+                        + f"): {_short(str(failed.get('error')), 220)}")
+    if own is None or own.venue != "hyperliquid" or spec is None \
+            or not binance_stage_possible(session, idea.id, spec.code_ref):
+        return None
+    if idea.status == IdeaStatus.REJECTED:
+        return _not_run(2, Reason.SECOND_VENUE_QUEUED,
+                        "идея родилась на Hyperliquid и закрыта там до того, как её посмотрели на "
+                        "Binance; Binance ещё не смотрел, ночь берёт такие идеи по очереди, самые "
+                        "старые первыми")
+    if idea.status in CLOSED_STATUSES:
+        return None
+    return _not_run(2, Reason.WAITS_FOR_NIGHT,
+                    "идея родилась на Hyperliquid; её проверка на истории Binance (тот же механизм "
+                    f"и те же числа, «{child_id(idea.id, BINANCE)}») ещё не записана — её сделает "
+                    "ночь")
+
+
 def _twin_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None,
                ledgers: Ledgers) -> Step:
-    """Step 2 of an idea whose own run is not on Binance: a Binance version of it, or why not."""
+    """Step 2 of an idea whose own run is not on Binance: its Binance stage (`<idea>-bn`, an idea
+    born on Hyperliquid) when it has run, else a Binance version of it of the older kinds (a
+    causal twin, a researcher's `-binance`), else the Binance stage owed, else why not."""
+    bn = binance_child(session, idea.id)
+    if bn is not None and _latest_run(session, bn.id) is not None:
+        return _binance_stage_step(session, idea, own, spec, ledgers)
+    owed = _binance_stage_step(session, idea, own, spec, ledgers)
     for suffix in (TWIN_SUFFIX, BINANCE_SUFFIX):
         other = session.get(Idea, idea.id + suffix)
         if other is None or other.parent_id != idea.id:
@@ -977,6 +1022,8 @@ def _twin_step(session: Session, idea: Idea, own: _Run | None, spec: Spec | None
             tail = f"; её второй этап «{hl.id}»: {_route_ru(hl_run.route)}"
         return _suffixed(
             _from_run(session, 2, run, other=other.id, prefix=f"{kind} «{other.id}»: "), tail)
+    if owed is not None:
+        return owed
     if _selects_by_code(spec):
         return _not_run(2, Reason.NO_BINANCE_VERSION,
                         "числа здесь уже выбирает код, но версии этой идеи на данных Binance нет")
@@ -1022,6 +1069,14 @@ def _steps23(session: Session, idea: Idea, own: _Run | None, spec: Spec | None,
     if own is None:
         reason, why = _blocker(session, idea, ledgers)
         return _not_run(2, reason, why), _not_run(3, reason, why)
+    if is_stage2_child(idea) and child_venue(idea) == BINANCE:
+        # the Binance stage of an idea born on Hyperliquid: it is step 2, its parent step 3
+        parent = _latest_run(session, idea.parent_id) if idea.parent_id else None
+        first = (_from_run(session, 3, parent, other=idea.parent_id,
+                           prefix=f"первый этап «{idea.parent_id}» (идея родилась здесь): ")
+                 if parent is not None else
+                 _not_run(3, Reason.WAITS_FOR_NIGHT, "у первого этапа нет прогона"))
+        return _from_run(session, 2, own), first
     if is_stage2_child(idea):
         parent = _latest_run(session, idea.parent_id) if idea.parent_id else None
         first = (_from_run(session, 2, parent, other=idea.parent_id,

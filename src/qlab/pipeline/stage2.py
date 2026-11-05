@@ -21,6 +21,14 @@ budget guard has nothing to guard (a test pins that).
 * `run_stage2` -- the whole step: child idea, translation, window, run, verdict,
   the parent's status, all of it written to the registry;
 * `report_lines` -- the stages side by side, in plain Russian.
+
+The other way round (owner, 2026-11-05, on an idea born on Hyperliquid: «почему вот эта стратегия
+не тестировалась на бинансе?»; «да, делай и прогоняй все»): an idea whose own spec is on
+Hyperliquid's data gets a Binance stage under `<idea>-bn`, by the same functions with the Binance
+config (`night/stage2_binance.yaml`, `config_for`): the same mechanism and numbers on Binance's
+perpetuals since 2019, Binance's costs and minimum leg, coin names mapped back (kPEPE -> 1000PEPE,
+a bridge token UBTC -> BTC-SPOT), coins Binance lacks dropped and counted. Binance has no order
+adapter of ours, so a pass there is `needs-infrastructure`, as for every Binance pass.
 """
 
 from __future__ import annotations
@@ -38,14 +46,17 @@ import yaml
 
 from qlab import knowable_coins, tree_writes
 from qlab.capital_text import CAP_NUMBERS, numbers_ru
-from qlab.costs import venue_costs
+from qlab.costs import two_legged, venue_costs
 from qlab.pipeline import confirm
 from qlab.pipeline.spec import SpecCosts, SpecData, StrategySpec
-from qlab.registry.stages import CHILD_SUFFIX, NOTES_PREFIX
+from qlab.registry.stages import BINANCE, HYPERLIQUID, NOTES_PREFIX, child_id
 from qlab.venues.config import load_venue
 from qlab.year_view import year_keys, years_line
 
 CONFIG = Path("night/stage2.yaml")
+BINANCE_CONFIG = Path("night/stage2_binance.yaml")
+"""The second stage of an idea born on Hyperliquid: the same step, on Binance."""
+VENUE_TITLE = {HYPERLIQUID: "Hyperliquid", BINANCE: "Binance"}
 SPEC_DIR = Path("specs/generated/stage2")
 FAILURES = Path("data/stage2/failures.json")
 """The second stages that crashed and have not been decided since: parent id -> attempts so far,
@@ -99,15 +110,24 @@ class Stage2Config:
     second stage's money came from coins under the live engine's $1M a day).
     Stage 2 takes the stricter of this and stage 1's own floor; a named instrument list keeps
     stage 1's. Cited in `cost_sources`."""
+    two_leg_taker_fee_bps: float | None = None
+    """The venue's fee for a book whose two legs (spot against a perpetual) move together
+    (`qlab.costs.two_legged`): Binance's row has one, Hyperliquid's does not."""
 
 
 def load_config(path: Path = CONFIG) -> Stage2Config:
     """`night/stage2.yaml`. A missing key is an error: nothing here has a default
     value, for the same reason a spec's costs have none."""
+    return _load_config(path)
+
+
+def _load_config(path: Path) -> Stage2Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     try:
         costs = raw["costs"]
-        sources = {str(k): " ".join(str(v).split()) for k, v in costs["sources"].items()}
+        sources = {str(k): " ".join(str(v).split())
+                   for k, v in (costs["sources"] or {}).items()}
+        two_leg = None
         if "taker_fee_bps" in costs:  # numbers of its own: a config written before the table
             taker, slippage = float(costs["taker_fee_bps"]), float(costs["slippage_bps"])
         else:  # the venue's row of the cost table (qlab.costs, night/costs.yaml): one source
@@ -117,17 +137,21 @@ def load_config(path: Path = CONFIG) -> Stage2Config:
             taker, slippage = row.taker_fee_bps, row.slippage_bps
             sources.update({"costs.taker_fee_bps": row.sources["taker_fee_bps"],
                             "costs.slippage_bps": row.sources["slippage_bps"]})
+            two_leg = row.two_leg_taker_fee_bps
+            if two_leg is not None:
+                sources["costs.two_leg_taker_fee_bps"] = row.sources["two_leg_taker_fee_bps"]
         config = Stage2Config(
             enabled=bool(raw["enabled"]), venue=str(raw["venue"]),
             data_start=date.fromisoformat(str(raw["data_start"])),
             taker_fee_bps=taker, slippage_bps=slippage, cost_sources=sources,
             stage1_survives=tuple(str(r) for r in raw["stage1_survives"]),
             spot_legs={str(coin): SpotLeg(str(leg["token"]), " ".join(str(leg["source"]).split()))
-                       for coin, leg in raw["spot_legs"].items()},
+                       for coin, leg in (raw["spot_legs"] or {}).items()},
             no_spot={str(coin): " ".join(str(leg["source"]).split())
-                     for coin, leg in raw["no_spot"].items()},
+                     for coin, leg in (raw["no_spot"] or {}).items()},
             min_daily_volume_usd=(None if raw.get("min_daily_volume_usd") is None
-                                  else float(raw["min_daily_volume_usd"])))
+                                  else float(raw["min_daily_volume_usd"])),
+            two_leg_taker_fee_bps=two_leg)
     except KeyError as missing:
         raise ValueError(f"{path}: missing key {missing}") from None
     cited = {"costs.taker_fee_bps", "costs.slippage_bps"}
@@ -137,6 +161,31 @@ def load_config(path: Path = CONFIG) -> Stage2Config:
     if absent:
         raise ValueError(f"{path}: no source for {sorted(absent)}")
     return config
+
+
+def config_for(venue: str) -> Stage2Config:
+    """The second stage's config for a second venue: Hyperliquid's (`night/stage2.yaml`) or
+    Binance's (`night/stage2_binance.yaml`, for an idea born on Hyperliquid)."""
+    return _load_config(BINANCE_CONFIG) if venue == BINANCE else load_config()
+
+
+def second_venue_of(spec: StrategySpec) -> str:
+    """The venue an idea's second stage is judged on: Binance for a spec on Hyperliquid's own
+    data, Hyperliquid for anything else (a Binance spec; an idea that declares lists of values
+    runs its check on Binance's history whatever venue its file names, docs/ONE_CHECK.md)."""
+    from qlab import one_check
+
+    if spec.data.source == HYPERLIQUID and not one_check.declares_lists(spec):
+        return BINANCE
+    return HYPERLIQUID
+
+
+def failure_key(parent_id: str, venue: str = HYPERLIQUID) -> str:
+    """The key of an idea's second stage in the ledger of crashes (`FAILURES`): the parent's id for
+    the Hyperliquid stage (as it always was), the child's id for the Binance one, so the two
+    stages of an idea born on Hyperliquid (its stricter look there and its Binance stage) never
+    count each other's crashes."""
+    return parent_id if venue == HYPERLIQUID else child_id(parent_id, venue)
 
 
 def stricter_floor(stage1: float | None, venue: float | None) -> float | None:
@@ -202,14 +251,40 @@ def venue_name(name: str, venue_names: Collection[str]) -> str | None:
     return None
 
 
-def venue_listing() -> list[str]:
+def venue_listing(venue: str = HYPERLIQUID) -> list[str]:
     """What Hyperliquid lists: its perpetual contracts and, as `<coin>-SPOT`, the coins that
     also have a USDC-quoted spot token (`qlab.data.sources.hyperliquid.discover_spot_universe`,
     the lab's own resolution of spot tokens: the token named like the coin, else "U" + coin).
-    Stage 1's spot columns are matched against the second list."""
+    Stage 1's spot columns are matched against the second list. For `binance`: Binance's
+    perpetuals and their spot columns, the listing kept a month
+    (`qlab.one_check.binance_listing`)."""
+    if venue == BINANCE:
+        from qlab import one_check
+
+        return one_check.binance_listing()
     from qlab.data.sources.hyperliquid import discover_spot_universe, discover_universe
 
     return [*discover_universe(), *discover_spot_universe()]
+
+
+def hyperliquid_token_coins(path: Path = CONFIG) -> dict[str, str]:
+    """Hyperliquid's bridge tokens of the lab's verified spot legs, back to their coins
+    (`night/stage2.yaml` spot_legs, UBTC -> BTC): how a Hyperliquid spec that names the token is
+    read on Binance. Empty when the config cannot be read."""
+    try:
+        legs = _load_config(path).spot_legs
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    return {leg.token: coin for coin, leg in legs.items()}
+
+
+def canonical_name(name: str, token_coins: Mapping[str, str]) -> str:
+    """A Hyperliquid column named by its bridge token (`UBTC-SPOT`) under the coin's name
+    (`BTC-SPOT`); any other name as it is."""
+    coin = spot_coin(name)
+    if coin is not None and coin in token_coins:
+        return f"{token_coins[coin]}{SPOT_SUFFIX}"
+    return name
 
 
 def spot_coin(name: str) -> str | None:
@@ -223,6 +298,9 @@ def absence_reason(name: str, config: Stage2Config) -> str:
     coin = spot_coin(name)
     if coin is None:
         return f"{name} is not listed on {config.venue}"
+    if config.venue != HYPERLIQUID:
+        return (f"{name} has no {config.venue} spot leg: the lab's listing of {config.venue} "
+                f"(qlab.one_check.binance_listing) has no spot column {name}")
     base = coin
     for prefix in _UNIT_PREFIXES:
         if coin.startswith(prefix) and len(coin) > len(prefix):
@@ -260,6 +338,12 @@ def _spot_legs(instruments: list[str], config: Stage2Config
     for name in instruments:
         coin = spot_coin(name)
         if coin is None:
+            continue
+        if config.venue != HYPERLIQUID:
+            citation = ("src/qlab/data/sources/binance.py: Binance's own spot market of the coin, "
+                        f"{coin}USDT, the lab's column {name}")
+            notes.append(f"{name} is {config.venue}'s own {coin}USDT spot market ({citation}).")
+            sources[f"data.spot_legs.{coin}"] = citation
             continue
         leg = config.spot_legs.get(coin)
         if leg is not None:
@@ -407,7 +491,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     problems: list[str] = []
     dropped: list[str] = []
     data = spec.data
-    instruments = data.instruments
+    reverse = config.venue != HYPERLIQUID
+    # Back to Binance (an idea born on Hyperliquid): a column Hyperliquid names by its bridge token
+    # is read under its coin first (UBTC-SPOT -> BTC-SPOT); kPEPE -> 1000PEPE is `venue_name`'s.
+    tokens = hyperliquid_token_coins() if reverse else {}
+    instruments = (None if data.instruments is None
+                   else [canonical_name(n, tokens) for n in data.instruments])
     no_data = dict(no_data or {})
     if no_data and venue_names is not None:
         # A contract with no candle in the window is a coin the venue does not list for this run,
@@ -421,7 +510,8 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         if not instruments:
             problems.append(f"none of the {len(data.instruments)} instruments of stage 1 is "
                             f"listed on {config.venue}")
-    required = spec.required_instruments
+    required = (None if spec.required_instruments is None
+                else [canonical_name(n, tokens) for n in spec.required_instruments])
     unavailable: list[str] = []
     if required is not None and venue_names is not None:
         mapped = [venue_name(n, venue_names) or n for n in required]
@@ -434,6 +524,7 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         listed = set(instruments) if instruments is not None else set(venue_names)
 
         def held(coin: str) -> str | None:
+            coin = spot_coin(canonical_name(f"{coin}{SPOT_SUFFIX}", tokens)) or coin
             perp = venue_name(coin, venue_names)
             if perp is None or perp not in listed or f"{perp}{SPOT_SUFFIX}" not in listed:
                 return None
@@ -453,7 +544,11 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     child_data = SpecData(
         source=config.venue, interval=data.interval, include_spot=data.include_spot,
         spot_prices=data.spot_prices, spot_source=None,
-        start=max(data.start, config.data_start), end=data.end, instruments=instruments,
+        # Back to Binance the window is Binance's whole history: the Hyperliquid start was where
+        # Hyperliquid's data begins, not a choice of the idea (a coin listed later starts when its
+        # candles do).
+        start=config.data_start if reverse else max(data.start, config.data_start),
+        end=data.end, instruments=instruments,
         # The venue's floor is how its live engine picks coins from the listing, so it applies
         # to a strategy that picks from the venue's whole listing; a named list (Bv2's coins
         # and their spot tokens, FRAB's) is traded live whatever its volume, and the floor
@@ -484,6 +579,16 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
         f"The costs are {config.venue}'s (published base-tier taker fee, frab's slippage "
         f"estimate), not stage 1's.",
     ]
+    if reverse:
+        notes.append(
+            f"The idea was born on Hyperliquid ({spec.idea_id}'s own data is Hyperliquid's); this "
+            f"is its {config.venue} verdict, judged independently (docs/VENUE_SPLIT.md; owner, "
+            "2026-11-05: «почему вот эта стратегия не тестировалась на бинансе?»). The data starts "
+            f"with {config.venue}'s archive on {config.data_start}, not on Hyperliquid's first "
+            "day; numbers inside the parameters (a wrapper's scoring costs, its grid) are stage "
+            "1's, unchanged, and a wrapper that chooses by code chooses again on this data. The "
+            "facts about execution are this venue's: the lab has no order adapter here, so a pass "
+            "is needs-infrastructure.")
     if child_data.min_daily_volume_usd != data.min_daily_volume_usd:
         before = ("no floor" if data.min_daily_volume_usd is None
                   else f"${data.min_daily_volume_usd:,.0f}")
@@ -508,8 +613,17 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
     if known_from is not None:
         notes.append(f"Judged from {known_from}, the day the instrument list was known "
                      "(instruments_chosen_at); the days before it are warm-up.")
-    sources = {k: v for k, v in spec.sources.items() if k != "costs" and not k.startswith("costs.")}
-    sources.update(config.cost_sources)
+    sources = {k: v for k, v in spec.sources.items() if k != "costs" and not k.startswith("costs.")
+               and not (reverse and k.startswith("data.spot_legs."))}
+    sources.update({k: v for k, v in config.cost_sources.items()
+                    if k != "costs.two_leg_taker_fee_bps"})
+    taker = config.taker_fee_bps
+    if config.two_leg_taker_fee_bps is not None and two_legged(spec):
+        # Spot against a perpetual on this venue: both legs' fees, the table's two-leg number.
+        taker = config.two_leg_taker_fee_bps
+        sources["costs.taker_fee_bps"] = config.cost_sources["costs.two_leg_taker_fee_bps"]
+        notes.append(f"The book has {spec.simultaneous_legs} legs that move together: the taker "
+                     f"fee is {config.venue}'s two-leg number of night/costs.yaml, {taker:g} bp.")
     min_leg = spec.min_leg_notional
     if (spec.execution_venue or spec.data.source) != config.venue:
         # Stage 1 was judged for another venue (Binance, docs/VENUE_SPLIT.md), with that venue's
@@ -519,8 +633,12 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
             min_leg = venue.min_leg_notional_usd
             sources["min_leg_notional"] = (
                 f"venues/{config.venue}.yaml min_leg_notional_usd: {min_leg:g}, the venue's own "
-                "minimum order (funding-rate-arbitrage/research/SCREENING.md section 2: "
-                "«HL ~$10»)")
+                + ("minimum order (funding-rate-arbitrage/research/SCREENING.md section 2: "
+                   "«HL ~$10»)" if not reverse else
+                   "MIN_NOTIONAL of the ordinary contract (exchangeInfo read 2026-10-30, 516 of "
+                   "522 contracts); the contracts that differ are read per contract "
+                   "(min_leg_notional_by_instrument, "
+                   "seed/venue_facts/2026-10-30-binance_um_min_notional.csv)"))
             notes.append(f"The minimum leg is {config.venue}'s own, ${min_leg:g} "
                          f"(venues/{config.venue}.yaml), not stage 1's ${spec.min_leg_notional:g}.")
     spot_notes, spot_sources = _spot_legs(instruments or [], config)
@@ -540,13 +658,17 @@ def translate(spec: StrategySpec, config: Stage2Config, *,
                 or f"the list's hand-picked date {list_day} (stage 1 spec {spec.idea_id})")
         else:
             sources.pop("instruments_chosen_at", None)
-    child = spec.model_copy(update={**own_list,
-        "idea_id": f"{spec.idea_id}{CHILD_SUFFIX}",
+    reverse_only: dict[str, object] = {}
+    if reverse:
+        # The facts about execution are the data's venue's (docs/VENUE_SPLIT.md): no
+        # `execution_venue` naming Hyperliquid survives the move to Binance.
+        reverse_only = {"execution_venue": None}
+    child = spec.model_copy(update={**own_list, **reverse_only,
+        "idea_id": child_id(spec.idea_id, config.venue),
         "title": f"{spec.title} (второй этап: {config.venue})",
         "params": params,
         "data": child_data,
-        "costs": SpecCosts(taker_fee_bps=config.taker_fee_bps,
-                           slippage_bps=config.slippage_bps),
+        "costs": SpecCosts(taker_fee_bps=taker, slippage_bps=config.slippage_bps),
         "required_instruments": required,
         "min_leg_notional": min_leg,
         "exploratory": None,
@@ -671,6 +793,18 @@ def combine_venues(binance: str | None, hyperliquid: str | None, *, why: str = "
     if h == "pending":
         return Combined(str(hyperliquid), f"{seen}{tail}")
     return Combined("not-evaluable", f"neither venue could judge the idea; {seen}{tail}")
+
+
+def combine_for(config: Stage2Config, stage1_route: str, stage2_route: str | None, *,
+                why: str = "", best_of_venues: bool = False,
+                independent: bool = False) -> Combined:
+    """`combine` with the venues in their places: for an idea born on Hyperliquid (the Binance
+    config) stage 1 is the Hyperliquid verdict and stage 2 the Binance one. Only independent venues
+    (rules from 2026-10-30.2) ever judged such an idea, so that direction is `combine_venues`."""
+    if config.venue == BINANCE:
+        return combine_venues(stage2_route, stage1_route or None, why=why)
+    return combine(stage1_route, stage2_route, config=config, stage2_reason=why,
+                   best_of_venues=best_of_venues, independent=independent)
 
 
 def parent_route(session, idea_id: str, route: str, reason: str
@@ -816,6 +950,11 @@ class Stage2Result:
     failure: dict | None = None
     """The idea's crashes in a row when this run crashed (`record_failure`): attempts, whether it
     is given up on."""
+    venue_routes: dict | None = None
+    """The route standing for each venue after the run, as the shared status function read them
+    from the registry ({"binance": ..., "hyperliquid": ...}; independent venues only): what the
+    report names, so an idea born on Hyperliquid whose stricter look there rejected is not called
+    passed there because its first look was."""
 
 
 def write_spec(spec: StrategySpec, parent_id: str, spec_dir: Path) -> Path:
@@ -841,11 +980,14 @@ def _ensure_child(session, spec: StrategySpec, parent_id: str, *, measurement: b
         raise ValueError(f"stage 2 of {parent_id!r}: the idea is not in the registry")
     child = session.get(Idea, spec.idea_id)
     if child is None:
+        venue = VENUE_TITLE.get(spec.data.source, spec.data.source)
         child = repo.upsert_idea(
             session, id=spec.idea_id, title=spec.title, source_type=parent.source_type,
             asset_class=AssetClass.CRYPTO_PERP, profile=parent.profile,
             notes=f"{NOTES_PREFIX}{parent_id} (docs/TWO_STAGE.md): the same mechanism and "
-                  "parameters on Hyperliquid"
+                  f"parameters on {venue}"
+                  + ("; the idea was born on Hyperliquid, this is its Binance verdict "
+                     "(docs/VENUE_SPLIT.md)" if spec.data.source == BINANCE else "")
                   + ("; a MEASUREMENT run by hand on an idea that did not survive stage 1, "
                      "its parent's status is not touched" if measurement else ""))
     child.parent_id = parent_id
@@ -868,6 +1010,8 @@ def _settle(session, result: Stage2Result, combined: Combined, *, rules_version:
 
         settled = settle(session, parent_id, trial_id=result.trial_id,
                          rules_version=rules_version, run_data_end=end, note=note)
+        result.venue_routes = {"binance": settled.view.binance,
+                               "hyperliquid": settled.view.hyperliquid}
         result.combined_route = settled.view.combined.route
         result.combined_reason = settled.reason
         result.parent_status = session.get(Idea, parent_id).status.value
@@ -899,11 +1043,12 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
     queue of closed ideas says there why a closed idea was looked at again);
     `only_a_pass_moves` leaves the idea's status alone unless the venues together pass it (a
     closed idea is revived by a pass, never reopened by a result that cannot decide yet)."""
-    result = Stage2Result(parent_id=spec.idea_id, idea_id=f"{spec.idea_id}{CHILD_SUFFIX}",
+    result = Stage2Result(parent_id=spec.idea_id, idea_id=child_id(spec.idea_id),
                           stage1_route=stage1_route, stage1_trial_id=stage1_trial_id,
                           measurement=measure)
     try:
         config = config or load_config()
+        result.idea_id = child_id(spec.idea_id, config.venue)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         # Stage 1 is on record and must stay so: a broken config is this result's error.
         result.status = "error"
@@ -911,14 +1056,15 @@ def run_stage2(spec: StrategySpec, *, stage1_route: str | None, stage1_trial_id:
         return result
     result.venue = config.venue
     if not config.enabled:
-        result.skipped = "stage 2 is switched off (night/stage2.yaml)"
+        result.skipped = ("stage 2 is switched off (night/stage2.yaml)" if config.venue != BINANCE
+                          else "stage 2 is switched off (night/stage2_binance.yaml)")
         return result
     if not measure and not survives(stage1_route, config):
         result.skipped = (f"stage 1 routed {stage1_route}: only survivors go on" if stage1_route
                           else "the idea has no stage 1 run to anchor a second stage on")
         return result
     try:
-        if _id_taken(spec.idea_id):
+        if _id_taken(spec.idea_id, config.venue):
             result.skipped = (f"the second stage's idea id {result.idea_id!r} belongs to another "
                               f"idea of the registry, not to a second stage of {spec.idea_id!r}")
             return result
@@ -1002,12 +1148,12 @@ def stays_closed(session, parent_id: str, stage1_trial_id: int | None, *,
     return not just_now
 
 
-def _id_taken(parent_id: str) -> bool:
+def _id_taken(parent_id: str, venue: str = HYPERLIQUID) -> bool:
     from qlab.registry.db import session_scope
     from qlab.registry.stages import child_id_taken
 
     with session_scope() as session:
-        return child_id_taken(session, parent_id)
+        return child_id_taken(session, parent_id, venue)
 
 
 def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
@@ -1025,20 +1171,20 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
     split = load_latest().venue_split
     independent = split is not None and split.independent
     result.independent = independent
-    failure = record_failure(result.parent_id, result.error or "")
+    failure = record_failure(failure_key(result.parent_id, config.venue), result.error or "")
     result.failure = failure
     gave_up = bool(independent and failure["given_up"])
     why = result.error or ""
     if gave_up:
         how = ("постоянная причина" if failure["permanent"]
                else f"{failure['attempts']} попытки подряд")
-        why = f"Hyperliquid не проводился: сбой ({how}): {why}"
+        why = f"{VENUE_TITLE.get(config.venue, config.venue)} не проводился: сбой ({how}): {why}"
     # A crashed second stage has not spoken: for independent venues that is "error" (pending, tried
-    # again) until it is given up on, then "none" (the venue did not judge, Binance's verdict
-    # stands); never a pass.
-    combined = combine(result.stage1_route or "", ("none" if gave_up else "error")
-                       if independent else None, config=config, stage2_reason=why,
-                       best_of_venues=split is not None, independent=independent)
+    # again) until it is given up on, then "none" (the venue did not judge, the first venue's
+    # verdict stands); never a pass.
+    combined = combine_for(config, result.stage1_route or "", ("none" if gave_up else "error")
+                           if independent else None, why=why,
+                           best_of_venues=split is not None, independent=independent)
     try:
         with session_scope() as session:
             if independent:
@@ -1065,13 +1211,14 @@ def _settle_after_error(result: Stage2Result, config: Stage2Config, *,
         result.error = f"{result.error}; and the idea's status was not updated: {exc}"
 
 
-def _give_up_second_venue(spec: StrategySpec, result: Stage2Result, note: str) -> None:
-    """The second stage cannot be made (`translate` refused): settle the idea with Hyperliquid
-    as a venue that cannot judge it."""
+def _give_up_second_venue(spec: StrategySpec, result: Stage2Result, note: str,
+                          venue: str = HYPERLIQUID) -> None:
+    """The second stage cannot be made (`translate` refused): settle the idea with the second
+    venue as one that cannot judge it."""
     from qlab.registry.db import session_scope
     from qlab.rules.loader import load_latest
 
-    record_failure(spec.idea_id, f"ValueError: {result.reason}")
+    record_failure(failure_key(spec.idea_id, venue), f"ValueError: {result.reason}")
     try:
         with session_scope() as session:
             _settle(session, result, Combined("reject", ""), rules_version=load_latest().version,
@@ -1093,7 +1240,7 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
 
     if spec.data.instruments is not None or spec.required_instruments is not None:
         if venue_names is None:
-            venue_names = venue_listing()
+            venue_names = venue_listing(config.venue)
     no_data = (coins_without_data(spec, config, venue_names)
                if spec.data.instruments is not None else {})
     translation = translate(spec, config, venue_names=venue_names, no_data=no_data)
@@ -1105,10 +1252,10 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.status = "not-evaluable"
         result.reason = "; ".join(translation.problems)
         if not measure and independent_venues():
-            # Hyperliquid cannot express the idea at all: no trial to anchor, but the venue's
+            # The venue cannot express the idea at all: no trial to anchor, but the venue's
             # answer is «cannot judge», not «owed». Recorded as a permanent give-up so the shared
             # status function stops waiting for it, and the idea is settled now.
-            _give_up_second_venue(spec, result, settle_note)
+            _give_up_second_venue(spec, result, settle_note, config.venue)
         return  # nothing to anchor a trial on: no data was ever requested
     child = translation.spec
     ruleset = load_latest()
@@ -1145,8 +1292,10 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
                              + "; ".join(problems))
 
         reviewer = None
-        if (ruleset.stage2_confirmation is not None
+        if (ruleset.stage2_confirmation is not None and config.venue == HYPERLIQUID
                 and result.stage1_route in confirm.STAGE1_CONFIRMS):
+            # (Binance's window is the long one: its noise bar decides on its own, and stage 1's
+            # Hyperliquid history is too short to be compared with.)
             # Only a stage 1 that decided can be confirmed; a stage 1 that waits passes nothing.
             # A measurement shows the check too; it still moves no idea's status.
             shared = (ruleset.venue_split is not None
@@ -1174,14 +1323,15 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
         result.route = str(evaluation.routing.route)
         result.reason = evaluation.routing.reason
         gave_up = False
+        key = failure_key(spec.idea_id, config.venue)
         if result.route == "error":
             # The stand caught the strategy's exception and wrote an error trial: a crash all the
             # same, counted like one that left this function.
-            failure = record_failure(spec.idea_id, result.reason or "error")
+            failure = record_failure(key, result.reason or "error")
             result.failure = failure
             gave_up = failure["given_up"]
         else:
-            clear_failure(spec.idea_id)  # it answered: earlier crashes no longer count
+            clear_failure(key)  # it answered: earlier crashes no longer count
         result.status = "not-evaluable" if result.route == "not-evaluable" else "evaluated"
         metrics = evaluation.metrics or {}
         result.metrics = {k: metrics[k] for k in RESULT_METRICS if k in metrics}
@@ -1190,12 +1340,13 @@ def _run(spec: StrategySpec, result: Stage2Result, config: Stage2Config, *,
             independent = ruleset.venue_split is not None and ruleset.venue_split.independent
             result.independent = independent
             given_up = bool(gave_up and independent)
-            combined = combine(result.stage1_route or "", "none" if given_up else result.route,
-                               config=config,
-                               stage2_reason=(f"Hyperliquid не проводился: сбой: {result.reason}"
-                                              if given_up else result.reason or ""),
-                               best_of_venues=ruleset.venue_split is not None,
-                               independent=independent)
+            word = VENUE_TITLE.get(config.venue, config.venue)
+            combined = combine_for(config, result.stage1_route or "",
+                                   "none" if given_up else result.route,
+                                   why=(f"{word} не проводился: сбой: {result.reason}"
+                                        if given_up else result.reason or ""),
+                                   best_of_venues=ruleset.venue_split is not None,
+                                   independent=independent)
             if independent:
                 _settle(session, result, combined, rules_version=ruleset.version,
                         end=child.data.end, parent_id=spec.idea_id, child_id=child.idea_id,
@@ -1244,34 +1395,41 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
         return []
     lines: list[str] = []
     stage1_route = stage2.get("stage1_route") or stage1.get("route")
+    venue = str(stage2.get("venue") or HYPERLIQUID)
+    word = VENUE_TITLE.get(venue, venue)
+    suffix = "-bn" if venue == BINANCE else "-hl"
+    config_file = "night/stage2_binance.yaml" if venue == BINANCE else "night/stage2.yaml"
     if stage2.get("status") == "skipped":
         if stage2.get("skipped", "").startswith("stage 2 is switched off"):
-            return ["второй этап (проверка на Hyperliquid) выключен в `night/stage2.yaml`"]
+            return [f"второй этап (проверка на {word}) выключен в `{config_file}`"]
         if stage2.get("skipped", "").startswith("the second stage's idea id"):
-            return ["второй этап не проводился: имя для него (`<идея>-hl`) уже занято другой идеей "
-                    "реестра, и писать в неё чужие испытания нельзя; идее нужно другое имя "
+            return [f"второй этап не проводился: имя для него (`<идея>{suffix}`) уже занято другой "
+                    "идеей реестра, и писать в неё чужие испытания нельзя; идее нужно другое имя "
                     "второго этапа"]
-        return [f"второй этап (тот же механизм на Hyperliquid) не проводился: на первом этапе "
-                f"исход «{_route_ru(str(stage1_route))}», а на Hyperliquid проверяют только "
+        return [f"второй этап (тот же механизм на {word}) не проводился: на первом этапе "
+                f"исход «{_route_ru(str(stage1_route))}», а на {word} проверяют только "
                 "тех, кто прошёл первый"]
-    head = ("второй этап, Hyperliquid (тот же механизм и те же числа; комиссии Hyperliquid; "
+    head = (f"второй этап, {word} (тот же механизм и те же числа; комиссии {word}; "
             "код без агента, токены не тратятся)")
+    if venue == BINANCE:
+        head = ("второй этап, Binance (идея родилась на Hyperliquid; тот же механизм и те же "
+                "числа на истории Binance; комиссии Binance; код без агента, токены не тратятся)")
     if stage2.get("measurement"):
-        head = ("ЗАМЕР на Hyperliquid (тот же механизм и те же числа; запущен вручную, статус "
+        head = (f"ЗАМЕР на {word} (тот же механизм и те же числа; запущен вручную, статус "
                 "идеи не меняет)")
     if stage2.get("status") == "error":
         lines.append(f"{head}: не завершился — {stage2.get('error')}; повторится при следующем "
                      "запуске, пока идея ждёт")
     elif stage2.get("status") == "not-evaluable":
         needed, most = stage2.get("needed_coins"), stage2.get("most_coins")
-        why = (f"на Hyperliquid ни в один день не набиралось {needed} монет сразу, которые "
+        why = (f"на {word} ни в один день не набиралось {needed} монет сразу, которые "
                f"нужны правилу портфеля (больше всего было {most})"
                if needed is not None and stage2.get("judged_from") is None
                and stage2.get("full_share") is None else stage2.get("reason"))
         lines.append(f"{head}: проверить нечем — {why}. Это не отказ: идея просто ждёт")
     else:
         from_day = stage2.get("judged_from")
-        window = (f"считается с {from_day} — первого дня, когда на Hyperliquid хватает монет "
+        window = (f"считается с {from_day} — первого дня, когда на {word} хватает монет "
                   f"({stage2.get('needed_coins')} сразу), до {stage2.get('data_end')}"
                   if from_day else f"{stage2.get('data_start')} — {stage2.get('data_end')}")
         metrics = stage2.get("metrics") or {}
@@ -1290,11 +1448,11 @@ def report_lines(stage1: Mapping[str, object], stage2: Mapping[str, object] | No
         if confirmation:
             lines.extend(_confirmation_ru(confirmation))
     if stage2.get("dropped"):
-        lines.append("монет первого этапа, которых нет на Hyperliquid, не торгуем: "
+        lines.append(f"монет первого этапа, которых нет на {word}, не торгуем: "
                      f"{len(stage2['dropped'])}")  # type: ignore[arg-type]
     if stage2.get("dropped_candidates"):
         lines.append("монет из списка, среди которых код выбирает, без контракта или без обычного "
-                     "рынка на Hyperliquid, в выбор не берём: "
+                     f"рынка на {word}, в выбор не берём: "
                      f"{len(stage2['dropped_candidates'])}")  # type: ignore[arg-type]
     if stage2.get("no_data"):
         lines.append("из них в списке площадки, но без свечей в окне (сняты с торгов раньше), "
@@ -1352,13 +1510,25 @@ def _confirmation_ru(c: Mapping[str, object]) -> list[str]:
 
 
 def _independent_ru(binance: object, stage2: Mapping[str, object]) -> str:
-    """The total of two venues judged independently (rules 2026-10-30.2), in words."""
+    """The total of two venues judged independently (rules 2026-10-30.2), in words. `binance` is
+    stage 1's route; for an idea born on Hyperliquid (a Binance second stage) stage 1 is the
+    Hyperliquid verdict and the second stage's route the Binance one."""
     status = stage2.get("parent_status")
-    hl_route = stage2.get("route")
-    b, h = venue_state(str(binance) if binance else None), venue_state(
-        str(hl_route) if hl_route else None)
+    second = stage2.get("route")
+    reverse = stage2.get("venue") == BINANCE
+    first_state = venue_state(str(binance) if binance else None)
+    second_state = venue_state(str(second) if second else None)
     if stage2.get("status") == "error":
-        h = "pending"  # a crashed run has not spoken; it is tried again
+        second_state = "pending"  # a crashed run has not spoken; it is tried again
+    b, h = (second_state, first_state) if reverse else (first_state, second_state)
+    routes = stage2.get("venue_routes")
+    if isinstance(routes, Mapping):
+        # what the shared status function read from the registry (both looks of a venue), where
+        # it read anything
+        if routes.get("binance") is not None:
+            b = venue_state(routes["binance"])
+        if routes.get("hyperliquid") is not None:
+            h = venue_state(routes["hyperliquid"])
     words = {"pass": "прошла", "reject": "отвергнута", "pending": "ещё не решила",
              "none": "не проводилась"}
     confirmation = stage2.get("confirmation") or {}
@@ -1378,7 +1548,7 @@ def _independent_ru(binance: object, stage2: Mapping[str, object]) -> str:
     if b == "pass":
         tail = ("; отказ на Hyperliquid записан со своим диапазоном данных "
                 f"(по {stage2.get('data_end')}), воскресить его можно только на данных, которых "
-                "тогда не было" if h == "reject" else "")
+                "тогда не было" if h == "reject" and not reverse else "")
         return (f"прошла на Binance (нужна инфраструктура: адаптера Binance у нас нет), на "
                 f"Hyperliquid {words[h]}; статус «{status}»{tail}")
     if b == "reject" and h == "reject":
@@ -1425,7 +1595,9 @@ def _combined_ru(stage1_route: object, stage2: Mapping[str, object]) -> str:
             "Пройти надо обоим")
 
 
-__all__ = ["BookWindow", "CONFIG", "Combined", "SPEC_DIR", "SpotLeg", "Stage2Config",
-           "Stage2Result", "Translation", "absence_reason", "book_window", "combine",
-           "load_config", "map_instruments", "report_lines", "run_stage2", "spot_coin",
-           "survives", "translate", "venue_listing", "venue_name", "write_spec"]
+__all__ = ["BINANCE_CONFIG", "BookWindow", "CONFIG", "Combined", "SPEC_DIR", "SpotLeg",
+           "Stage2Config", "Stage2Result", "Translation", "absence_reason", "book_window",
+           "canonical_name", "combine", "combine_for", "config_for", "failure_key",
+           "hyperliquid_token_coins", "load_config", "map_instruments", "report_lines",
+           "run_stage2", "second_venue_of", "spot_coin", "survives", "translate",
+           "venue_listing", "venue_name", "write_spec"]

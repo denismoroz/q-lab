@@ -44,10 +44,16 @@ def describe(view: SpecView, *, parent_id: str | None = None, child_id: str | No
     if coins_line:
         lines.append(coins_line)
     if is_second_stage and parent_id:
-        lines.append("Это вторая проверка той же идеи: тот же механизм и те же числа (или те же "
-                     "списки, из которых выбирает код), но на данных Hyperliquid; "
-                     f"первая — {parent_id}.")
+        if source == "binance":
+            lines.append("Это вторая проверка той же идеи: идея родилась на Hyperliquid, а здесь "
+                         "тот же механизм и те же числа на истории Binance; "
+                         f"первая — {parent_id}.")
+        else:
+            lines.append("Это вторая проверка той же идеи: тот же механизм и те же числа (или те "
+                         "же списки, из которых выбирает код), но на данных Hyperliquid; "
+                         f"первая — {parent_id}.")
     elif child_id:
-        lines.append(f"Вторая проверка этой идеи, на Hyperliquid, записана отдельно: {child_id}.")
+        where = "на Binance" if child_id.endswith("-bn") else "на Hyperliquid"
+        lines.append(f"Вторая проверка этой идеи, {where}, записана отдельно: {child_id}.")
     lines.append(SPLIT_LINE)
     return {"venue": source, "lines": lines}

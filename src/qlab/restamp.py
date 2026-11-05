@@ -243,6 +243,9 @@ class Item:
     stage, because the first stage's run is up to date."""
     child_id: str | None = None
     variant: bool = False
+    bn_child_id: str | None = None
+    """The Binance stage (`<idea>-bn`) of an idea born on Hyperliquid: recomputed with the idea,
+    or alone when only it is stale (step "stage2-bn")."""
 
 
 def _pick_spec(session, idea, specs: Mapping[str, list[Path]], watch: Collection[str]
@@ -279,7 +282,7 @@ def find_items(session, *, specs: Mapping[str, list[Path]], watch: Collection[st
     from qlab.overlay_variants import is_variant_id
     from qlab.pipeline.stage2 import survives
     from qlab.registry.models import Idea
-    from qlab.registry.stages import is_stage2_child, stage2_child
+    from qlab.registry.stages import binance_child, is_stage2_child, stage2_child
 
     wanted: set[str] | None = None
     if only is not None:
@@ -309,8 +312,11 @@ def find_items(session, *, specs: Mapping[str, list[Path]], watch: Collection[st
             continue
         child = stage2_child(session, idea.id)
         child_view = run_view(session, child.id) if child is not None else None
+        bn = binance_child(session, idea.id)
+        bn_view = run_view(session, bn.id) if bn is not None else None
         reasons = stale_reasons(own, stand, rules)
         child_reasons = stale_reasons(child_view, stand, rules)
+        bn_reasons = stale_reasons(bn_view, stand, rules) if bn_view is not None else []
         tried = ledger.get(idea.id) or {}
         failed_before = tried.get("status") == "error"
         same_versions = tried.get("stand") == stand and tried.get("rules") == rules
@@ -328,6 +334,8 @@ def find_items(session, *, specs: Mapping[str, list[Path]], watch: Collection[st
             steps = ["idea"]
         elif child_reasons and goes_on:
             steps = ["stage2"]
+        if bn_reasons and not steps:
+            steps = ["stage2-bn"]
         if not steps:
             continue
         path, why = _pick_spec(session, idea, specs, watch)
@@ -339,8 +347,9 @@ def find_items(session, *, specs: Mapping[str, list[Path]], watch: Collection[st
         items.append(Item(
             idea_id=idea.id, spec_path=path, status=idea.status.value, route=own["route"],
             trial_id=own["trial"], passed=passed,
-            reasons=reasons or child_reasons, steps=steps,
-            child_id=child.id if child is not None else None, variant=is_variant_id(idea.id)))
+            reasons=reasons or child_reasons or bn_reasons, steps=steps,
+            child_id=child.id if child is not None else None, variant=is_variant_id(idea.id),
+            bn_child_id=bn.id if bn is not None else None))
     items.sort(key=lambda i: (not i.passed, -len(i.reasons), -i.trial_id, i.idea_id))
     return items, skipped
 
@@ -524,12 +533,16 @@ class _Run:
         started = time.monotonic()
         with session_scope() as session:
             before = {"idea": run_view(session, item.idea_id),
-                      "stage2": run_view(session, item.child_id)}
+                      "stage2": run_view(session, item.child_id),
+                      "stage2_bn": run_view(session, item.bn_child_id)}
         entry: dict[str, Any] = {
             "idea": item.idea_id, "action": "restamped", "steps": item.steps,
             "reasons": item.reasons, "variant": item.variant, "before": before, "notes": []}
         try:
-            self.recompute(item, entry, before)
+            if item.steps != ["stage2-bn"]:
+                self.recompute(item, entry, before)
+            if item.bn_child_id is not None and entry["action"] != "error":
+                self.recompute_binance(item, entry, before)
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             entry.update(action="error", error=f"{type(exc).__name__}: {exc}")
         elapsed = time.monotonic() - started
@@ -538,7 +551,8 @@ class _Run:
         entry["slow"] = elapsed > self.cfg.slow_idea_minutes * 60
         with session_scope() as session:
             entry["after"] = {"idea": run_view(session, item.idea_id),
-                              "stage2": run_view(session, item.child_id)}
+                              "stage2": run_view(session, item.child_id),
+                              "stage2_bn": run_view(session, item.bn_child_id)}
         if entry["action"] != "error":
             self.series(item, entry)
         self.record(item, entry)
@@ -587,6 +601,27 @@ class _Run:
                 and not survives(stage1.get("route_after"), self.stage2_config):
             entry["notes"].append("первый этап больше не пропускает дальше")
         self.variant_comparison(item, entry, end)
+
+    def recompute_binance(self, item: Item, entry: dict, before: dict) -> None:
+        """The Binance stage of an idea born on Hyperliquid (`<idea>-bn`), on the same day the
+        idea's own run saw (owner, 2026-11-05)."""
+        from qlab import waiting
+        from qlab.pipeline import stage2
+
+        own, bn = before["idea"], before.get("stage2_bn")
+        end = _date((own or bn)["end"])
+        plan = waiting.Plan(item.idea_id, waiting.BINANCE_STEP, item.spec_path.as_posix(),
+                            item.route, True, "пересчёт: " + _reasons_ru(item.reasons))
+        if "stage2-bn" not in entry["steps"]:
+            entry["steps"] = [*entry["steps"], "stage2-bn"]
+        stage1 = entry.get("stage1")  # tonight's first stage, when it ran (`_brief` of it)
+        second = waiting.rerun_stage2(plan, end, stage1=stage1, noise_trials=self.noise_trials,
+                                      config=stage2.config_for("binance"))
+        entry["stage2_bn"] = _brief(second)
+        if second["action"] == "error":
+            entry.update(action="error", error=f"этап на Binance: {second.get('error')}")
+        elif second["action"] == "wait":
+            entry["notes"].append(f"этап на Binance не проведён: {second.get('why')}")
 
     def variant_comparison(self, item: Item, entry: dict, end: date) -> None:
         """An overlay variant's stored comparison with its base, rebuilt on the new run
@@ -721,7 +756,8 @@ def entry_lines(e: Mapping) -> list[str]:
     head = f"**{e['idea']}**"
     why = _reasons_ru(e.get("reasons") or [])
     if e["action"] == "would-restamp":
-        steps = " и ".join({"idea": "первый этап", "stage2": "второй этап"}[s]
+        steps = " и ".join({"idea": "первый этап", "stage2": "второй этап",
+                            "stage2-bn": "этап на Binance"}[s]
                            for s in e.get("steps") or [])
         return [f"- {head}: был бы пересчитан ({steps}); причина: {why}"]
     before, after = e.get("before") or {}, e.get("after") or {}
@@ -737,7 +773,8 @@ def entry_lines(e: Mapping) -> list[str]:
             else f"{e.get('seconds', 0):.0f} с"
         slow = " (**дольше нормы**, см. `night/restamp.yaml`)" if e.get("slow") else ""
         lines = [f"- {head}: пересчитана ({took}{slow}); причина: {why}; {status}."]
-    for title, key in (("Первый этап", "idea"), ("Второй этап (Hyperliquid)", "stage2")):
+    for title, key in (("Первый этап", "idea"), ("Второй этап (Hyperliquid)", "stage2"),
+                       ("Этап на Binance (идея родилась на Hyperliquid)", "stage2_bn")):
         line = stage_line(title, before.get(key), after.get(key))
         if line:
             lines.append(f"    - {line}")
@@ -820,7 +857,7 @@ def page_note(block: Mapping | None) -> str | None:
 def _moved_route(e: Mapping) -> bool:
     b, a = (e.get("before") or {}), (e.get("after") or {})
     return any(b.get(k) and a.get(k) and b[k]["route"] != a[k]["route"]
-               for k in ("idea", "stage2"))
+               for k in ("idea", "stage2", "stage2_bn"))
 
 
 def _moved_status(e: Mapping) -> bool:

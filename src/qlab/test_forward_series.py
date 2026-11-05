@@ -269,7 +269,7 @@ def test_a_stage_without_a_run_says_the_idea_was_not_run(session, store) -> None
     assert view["stages"][0]["message"] == fs.NO_RUN_RU
 
 
-def test_a_hyperliquid_only_idea_says_the_second_venue_is_not_needed(session, store) -> None:
+def test_a_hyperliquid_idea_says_binance_has_not_been_run_yet(session, store) -> None:
     _idea(session, "solo", IdeaStatus.VALIDATED)
     _run(session, "solo", TrialRoute.PAPER, "hyperliquid")
     _idea(session, "alpha", IdeaStatus.VALIDATED)
@@ -278,7 +278,8 @@ def test_a_hyperliquid_only_idea_says_the_second_venue_is_not_needed(session, st
     solo = fs.forward_view(session, "solo", store=store)
     two = fs.forward_view(session, "alpha-hl", store=store)
 
-    assert solo["second_stage_message"].startswith("Вторая площадка не нужна")
+    # born on Hyperliquid: its other venue is Binance (owner, 2026-11-05)
+    assert solo["second_stage_message"] in (fs.NO_BINANCE_STAGE_YET_RU, fs.NO_BINANCE_VERSION_RU)
     assert two["two_stage"] is True and two["second_stage_message"] is None
 
 

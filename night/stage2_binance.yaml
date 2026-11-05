@@ -1,0 +1,52 @@
+# The second stage the other way round: an idea BORN on Hyperliquid (its own spec's data is
+# Hyperliquid's) is judged on Binance too (qlab.pipeline.stage2, docs/TWO_STAGE.md,
+# docs/VENUE_SPLIT.md).
+#
+# Owner, 2026-10-30: Binance and Hyperliquid are judged independently, the idea's status is the
+# best venue's, and «если проходит одна но не проходит другая нужно чтобы была причина почему не
+# проходит». Until 2026-11-05 the second stage went one way only (Binance -> Hyperliquid), so an
+# idea written on Hyperliquid never had a Binance verdict. Owner, 2026-11-05, on
+# trend-research-flat-choice-hl-ov-gate-enter: «почему вот эта стратегия не тестировалась на
+# бинансе?», then «да, делай и прогоняй все».
+#
+# The SAME mechanism with the SAME parameter values (nothing refitted; a wrapper that chooses its
+# numbers by code chooses them again on Binance's own data, by its own rule) is built on Binance's
+# perpetuals and judged there, with Binance's costs, its minimum leg and its facts about execution
+# (the lab has no Binance order adapter: a pass is `needs-infrastructure`). The child idea is
+# `<idea>-bn`. Code only: no agent, no tokens.
+
+enabled: true
+
+venue: binance
+
+# The first day of the lab's Binance archive (docs/VENUES.md: Binance USDT perpetuals, «свечи с
+# 2019-09-08 (первый день в архиве лаборатории)»; the raw cache's files start that day,
+# data/raw/binance/1d/*__2019-09-08__*). A coin listed later starts when its candles do: the
+# panel holds every perpetual from the day it was listed (delisted ones included).
+data_start: 2019-09-08
+
+# Binance's costs are the `binance` row of the cost table (night/costs.yaml, qlab.costs,
+# docs/COSTS.md); a book with two legs that move together (spot against a perpetual,
+# simultaneous_legs >= 2) takes the row's two_leg_taker_fee_bps, as every Binance spec does.
+costs:
+  sources: {}
+
+# No liquidity floor of the venue's own: the lab has no live engine on Binance, so there is no
+# rule of how it would pick coins. A spec's own floor is kept.
+min_daily_volume_usd: null
+
+# Spot legs need no table here: Binance's spot columns are `<coin>-SPOT` of Binance's own spot
+# market (qlab.data.sources.binance), the same name the lab gives Hyperliquid's tokens. A
+# Hyperliquid spec that names a bridge token instead of its coin is mapped back by the token table
+# of night/stage2.yaml (UBTC -> BTC-SPOT, ...).
+spot_legs: {}
+no_spot: {}
+
+# The routes of the first stage (the idea's own Hyperliquid run) that go on. Under independent
+# venues (rules from 2026-10-30.2) every routed run goes on whatever it said; this list is read
+# only by the older rules, as in night/stage2.yaml.
+stage1_survives:
+  - paper
+  - shelf
+  - needs-infrastructure
+  - needs-forward

@@ -22,6 +22,12 @@ Which ideas: status `rejected`, not a second stage and not noise, whose latest r
 Binance's data, with exactly one spec file the Hyperliquid side can express (a spec on Binance's
 data whose coins and spot legs Hyperliquid lists, `qlab.pipeline.stage2.translate`), and no
 Hyperliquid run judged under independent venues yet. Code only: no agent, no tokens.
+
+The other way round (owner, 2026-11-05, on an idea born on Hyperliquid and closed there: «почему вот
+эта стратегия не тестировалась на бинансе?»; «да, делай и прогоняй все»): a rejected idea whose
+latest run is on HYPERLIQUID's data and whose spec is on Hyperliquid was closed before Binance was
+looked at. Binance is owed by the same rule, and the same queue runs its Binance stage
+(`<idea>-bn`, `night/stage2_binance.yaml`): a pass revives the idea, anything else leaves it closed.
 """
 
 from __future__ import annotations
@@ -40,6 +46,9 @@ from qlab import attempts
 CONFIG = Path("night/second_venue.yaml")
 LEDGER = Path("data/second_venue/ledger.json")
 SPEC_DIR = Path("specs")
+HYPERLIQUID = "hyperliquid"
+BINANCE = "binance"
+VENUE_WORD = {HYPERLIQUID: "Hyperliquid", BINANCE: "Binance"}
 FIRST_RULES = "2026-10-30.2"
 """The first rules version that judges the two venues independently."""
 SECTION_TITLE = "Вторая площадка для закрытых идей"
@@ -81,6 +90,9 @@ class Candidate:
     """The day of the rejection (the idea's last transition into `rejected`)."""
     last_outcome: str | None = None
     last_day: str | None = None
+    venue: str = "hyperliquid"
+    """The venue that is owed: Hyperliquid for an idea rejected on Binance, Binance for an idea
+    born on Hyperliquid and rejected there."""
 
 
 def load_ledger(path: Path = LEDGER) -> dict:
@@ -139,20 +151,28 @@ def _listing_names(session) -> list[str] | None:
 
 
 def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: Config,
-                    stage2_config=None, names: list[str] | None = None
+                    stage2_config=None, names: list[str] | None = None,
+                    binance_config=None, binance_names: list[str] | None = None
                     ) -> tuple[list[Candidate], dict[str, str]]:
-    """(the rejected ideas whose Hyperliquid side is owed, oldest rejection first; the closed
-    ideas that cannot be queued with the reason each). Reads only."""
+    """(the rejected ideas whose other venue is owed, oldest rejection first; the closed ideas that
+    cannot be queued with the reason each). Reads only, but for Binance's listing (kept a month,
+    `qlab.one_check.binance_listing`) when a Hyperliquid idea names coins and `binance_names` is
+    not given."""
     from qlab.harness.version import is_older
     from qlab.pipeline import stage2
     from qlab.pipeline.spec import load_spec
     from qlab.registry.models import Idea, IdeaStatus
-    from qlab.registry.stages import is_stage2_child, latest_routed, stage2_child
+    from qlab.registry.stages import child_id_taken, is_stage2_child, latest_routed, stage2_child
     from qlab.twin_stage import goes_to_stage2
     from qlab.waiting import _pick_spec
 
     if stage2_config is None:
         stage2_config = stage2.load_config()
+    if binance_config is None:
+        try:
+            binance_config = stage2.config_for(BINANCE)
+        except (OSError, ValueError):
+            binance_config = None  # no Binance stage: Hyperliquid ideas are not queued
     if names is None:
         names = _listing_names(session)
     found: list[Candidate] = []
@@ -168,8 +188,16 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
             continue  # a dossier from before the lab: nothing to run
         trial, spec_row = routed
         route = getattr(trial.route, "value", trial.route)
-        if route != "reject" or (spec_row.data_requirements or {}).get("source") != "binance":
-            continue  # a reject on Hyperliquid's own data has no Binance side to wait for here
+        source = (spec_row.data_requirements or {}).get("source")
+        if source == "binance" and route == "reject":
+            venue = HYPERLIQUID
+        elif (source == HYPERLIQUID and idea.status == IdeaStatus.REJECTED
+              and binance_config is not None and binance_config.enabled):
+            # Born on Hyperliquid and closed there (by its own run or its stricter look), before
+            # Binance was looked at: Binance is owed.
+            venue = BINANCE
+        else:
+            continue
         path, skip = _pick_spec(specs, idea.id)
         if path is None:
             refused[idea.id] = skip or "нет файла спека"
@@ -179,14 +207,28 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
         except Exception as exc:  # noqa: BLE001 - a broken file is its own reason
             refused[idea.id] = f"спек не читается: {type(exc).__name__}"
             continue
-        if not goes_to_stage2(spec):
+        if venue == HYPERLIQUID and not goes_to_stage2(spec):
             refused[idea.id] = "спек не на данных Binance: переносить на Hyperliquid нечего"
             continue
-        child = stage2_child(session, idea.id)
+        if venue == BINANCE:
+            if stage2.second_venue_of(spec) != BINANCE:
+                continue  # its check runs on Binance already (docs/ONE_CHECK.md)
+            if child_id_taken(session, idea.id, BINANCE):
+                refused[idea.id] = (f"имя {idea.id}-bn занято другой идеей: писать туда "
+                                    "Binance нельзя")
+                continue
+            only_on = stage2.strategy_sources(spec.code_ref)
+            if only_on is not None and BINANCE not in only_on:
+                refused[idea.id] = ("у стратегии нет версии на данных Binance (она объявляет "
+                                    f"только {', '.join(only_on)})")
+                continue
+        child = stage2_child(session, idea.id, venue)
         child_run = None if child is None else latest_routed(session, child.id)
         if child_run is not None:
             from qlab.forward_series import _rules_version
 
+            if venue == BINANCE:
+                continue  # a Binance stage exists only under independent venues: judged
             if not is_older(_rules_version(session, child_run[0].id), FIRST_RULES):
                 continue  # already judged on Hyperliquid by independent venues
         entry = ledger.get(idea.id) or {}
@@ -205,17 +247,28 @@ def find_candidates(session, specs: dict, *, ledger: dict, today: date, config: 
                 due = today
             if due > today:
                 continue
-        if names is None and (spec.data.instruments is not None
-                              or spec.required_instruments is not None):
-            refused[idea.id] = "в реестре нет снимка Hyperliquid со списком монет"
+        listed = names
+        if venue == BINANCE and (spec.data.instruments is not None
+                                 or spec.required_instruments is not None):
+            if binance_names is None:
+                try:
+                    binance_names = stage2.venue_listing(BINANCE)
+                except Exception:  # noqa: BLE001 - no listing: the idea waits, with the reason
+                    binance_names = []
+            listed = binance_names or None
+        if listed is None and (spec.data.instruments is not None
+                               or spec.required_instruments is not None):
+            refused[idea.id] = ("в реестре нет снимка Hyperliquid со списком монет"
+                                if venue == HYPERLIQUID else "списка монет Binance нет под рукой")
             continue
-        translation = stage2.translate(spec, stage2_config, venue_names=names)
+        translation = stage2.translate(spec, stage2_config if venue == HYPERLIQUID
+                                       else binance_config, venue_names=listed)
         if translation.spec is None or translation.unavailable:
-            refused[idea.id] = ("Hyperliquid не может выразить спек: "
+            refused[idea.id] = (f"{VENUE_WORD[venue]} не может выразить спек: "
                                 + "; ".join([*translation.problems, *translation.unavailable]))
             continue
         found.append(Candidate(idea.id, path, trial.id, _rejected_on(session, idea),
-                               entry.get("outcome"), entry.get("day")))
+                               entry.get("outcome"), entry.get("day"), venue))
     found.sort(key=lambda c: (c.rejected_on, c.idea_id))
     return found, refused
 
@@ -228,6 +281,11 @@ def counts(candidates: list[Candidate], config: Config) -> dict:
 
 
 def settle_note(c: Candidate) -> str:
+    if c.venue == BINANCE:
+        return (f"second-venue queue (night/second_venue.yaml): the idea was born on Hyperliquid "
+                f"and rejected there on {c.rejected_on} (trial {c.stage1_trial}), and Binance had "
+                "not been run (owner, 2026-11-05: «почему вот эта стратегия не тестировалась на "
+                "бинансе?»); Binance's data is data that rejection did not see")
     return (f"second-venue queue (night/second_venue.yaml): the idea was rejected on Binance on "
             f"{c.rejected_on} (trial {c.stage1_trial}), before the venues were judged "
             "independently, and Hyperliquid had not been run; Hyperliquid's data is data that "
@@ -235,7 +293,8 @@ def settle_note(c: Candidate) -> str:
 
 
 def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None, cost,
-              last_seconds: float | None = None):
+              last_seconds: float | None = None, binance_config=None,
+              binance_names: list[str] | None = None):
     """The estimate for the Hyperliquid run of `cand` (`qlab.hl_fetch`): the data to fetch, or the
     time the idea took last time when that is longer; None when neither can be made (the run
     itself then reports whatever is wrong)."""
@@ -246,6 +305,8 @@ def _estimate(cand: Candidate, end: date, stage2_config, names: list[str] | None
 
     try:
         spec = night.with_end(load_spec(cand.spec_path), end)
+        if cand.venue == BINANCE:
+            stage2_config, names = binance_config or stage2.config_for(BINANCE), binance_names
         translation = stage2.translate(spec, stage2_config, venue_names=names)
         if translation.spec is None:
             return None if last_seconds is None else hl_fetch.total([], last_seconds)
@@ -291,11 +352,20 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
     if not stage2_config.enabled:
         block["note"] = "второй этап выключен в night/stage2.yaml"
         return
+    try:
+        binance_config = stage2.config_for(BINANCE)
+    except (OSError, ValueError) as exc:
+        binance_config = None
+        block["note"] = f"night/stage2_binance.yaml не прочитан: {exc}"
     ledger = load_ledger(ledger_path)
+    # Binance's listing is read only when a Hyperliquid idea that names coins is looked at
+    # (`find_candidates`); the run itself reads it again from the month's cache.
+    binance_names: list[str] | None = None
     with session_scope() as session:
         candidates, refused = find_candidates(
             session, waiting.spec_files(spec_dir), ledger=ledger, today=day, config=config,
-            stage2_config=stage2_config)
+            stage2_config=stage2_config, binance_config=binance_config,
+            binance_names=binance_names)
         names = _listing_names(session)
     if only:
         candidates = [c for c in candidates if c.idea_id in only]
@@ -326,9 +396,12 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
                      if f"second_venue:{c.idea_id}" not in done]
             break
         entry = {"idea": cand.idea_id, "rejected_on": cand.rejected_on.isoformat(),
-                 "stage1_trial": cand.stage1_trial, "at": attempts.now_iso()}
+                 "stage1_trial": cand.stage1_trial, "at": attempts.now_iso(),
+                 "venue": cand.venue}
         last = hl_fetch.last_seconds(ledger.get(cand.idea_id), "second_venue", cand.idea_id)
-        est = _estimate(cand, end, stage2_config, names, cost, last)
+        est = _estimate(cand, end, stage2_config, names, cost, last,
+                        **({"binance_config": binance_config, "binance_names": binance_names}
+                           if cand.venue == BINANCE else {}))
         heavy = None if est is None or allow_heavy else hl_fetch.heavy_reason(
             est, config.max_minutes_per_night)
         if heavy is not None:
@@ -350,15 +423,19 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
             block["entries"].append(entry)
             continue
         handled += 1
-        plan = waiting.Plan(cand.idea_id, "stage2", cand.spec_path.as_posix(), "reject", True,
+        reverse = cand.venue == BINANCE
+        plan = waiting.Plan(cand.idea_id, waiting.BINANCE_STEP if reverse else "stage2",
+                            cand.spec_path.as_posix(), "reject", True,
                             "вторая площадка не проводилась")
         try:
             result = waiting.rerun_stage2(
-                plan, end, stage1=None, noise_trials=noise_trials, config=stage2_config,
+                plan, end, stage1=None, noise_trials=noise_trials,
+                config=binance_config if reverse else stage2_config,
                 settle_note=settle_note(cand), only_a_pass_moves=True)
         except Exception as exc:  # noqa: BLE001 - one idea's failure must not stop the others
             result = {"action": "error", "error": f"{type(exc).__name__}: {exc}"}
-            stage2.record_failure(cand.idea_id, result["error"], today=day)
+            stage2.record_failure(stage2.failure_key(cand.idea_id, cand.venue), result["error"],
+                                  today=day)
         entry.update(
             action=result.get("action"), route=result.get("route_after"),
             trial=result.get("trial"), status=result.get("status"), error=result.get("error"),
@@ -368,7 +445,8 @@ def second_venue_stage(day: date, end: date, state: dict, *, noise_trials: int =
             "error": result.get("error"), "route": result.get("route_after"),
             "parent_status": result.get("status"),
             "skipped": result.get("why") if result.get("action") == "wait" else None})
-        if word == "error" and (stage2.load_failures().get(cand.idea_id) or {}).get("given_up"):
+        key_failure = stage2.failure_key(cand.idea_id, cand.venue)
+        if word == "error" and (stage2.load_failures().get(key_failure) or {}).get("given_up"):
             word = "failed"  # a crash that will not pass: the side is «не проводился: сбой»
         entry["outcome"] = word
         ledger[cand.idea_id] = {"day": day.isoformat(), "outcome": word,
@@ -402,7 +480,9 @@ def report_lines(block: dict | None) -> list[str]:
         "каждую ночь код берёт самые старые такие идеи и считает их на Hyperliquid "
         "(`night/second_venue.yaml`, `docs/VENUE_SPLIT.md`). Прошла — идея оживает по обычным "
         "правилам, переход назван в журнале; не прошла или рано судить — закрытая идея остаётся "
-        "закрытой.", ""]
+        "закрытой. Так же в обратную сторону: идея, которая родилась на Hyperliquid и закрыта там "
+        "до того, как её посмотрели на Binance, считается на истории Binance "
+        "(`night/stage2_binance.yaml`).", ""]
     owed, nights = block.get("owed"), block.get("nights")
     if owed is not None:
         lines.append(f"В очереди: {owed}, ночей {nights} при {block.get('max_per_night')} "
@@ -411,6 +491,8 @@ def report_lines(block: dict | None) -> list[str]:
         lines.append(f"- {block['note']}")
     words = {"revived": "оживлена: прошла на Hyperliquid",
              "rejected": "отвергнута и на Hyperliquid",
+             "revived-binance": "оживлена: прошла на Binance",
+             "rejected-binance": "отвергнута и на Binance",
              "undecided": "рано судить: закрыта, посмотрим снова через "
                           "`retry_after_days`", "not-evaluable": "проверить нечем",
              "error": "прогон упал, повторится", "skipped": "не проводилась", "passed": "прошла",
@@ -418,8 +500,12 @@ def report_lines(block: dict | None) -> list[str]:
              "heavy": "не запускалась: данные слишком тяжелы за ночь",
              "deferred": "не запускалась: не уместилась в остаток времени этапа"}
     for e in attempts.latest_per_idea(block.get("entries") or []):
-        lines.append(f"- `{e['idea']}` (отвергнута {e['rejected_on']}): "
-                     f"{words.get(e.get('outcome'), e.get('outcome'))}"
+        outcome = e.get("outcome")
+        if e.get("venue") == BINANCE and f"{outcome}-binance" in words:
+            outcome = f"{outcome}-binance"
+        where = " на Hyperliquid" if e.get("venue") == BINANCE else ""
+        lines.append(f"- `{e['idea']}` (отвергнута{where} {e['rejected_on']}): "
+                     f"{words.get(outcome, outcome)}"
                      + (f"; статус «{e['status']}»" if e.get("status") else "")
                      + attempts.earlier_attempt_note(e, block.get("attempt_at")))
         if e.get("outcome") in ("heavy", "deferred") and e.get("why"):

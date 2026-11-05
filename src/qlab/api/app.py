@@ -387,18 +387,20 @@ def create_app(*, warm: bool = False) -> FastAPI:
         """Both stages of a generated idea's evaluation side by side
         (docs/TWO_STAGE.md): stage 1 on Binance's long history under the idea
         itself, stage 2 -- the same mechanism on Hyperliquid -- under its child.
+        For an idea born on Hyperliquid the other venue is Binance: stage 2 is its
+        `<idea>-bn` child when it has one (owner, 2026-11-05).
         Shown on both pages; null for an idea with no second stage."""
         from qlab.registry.stages import (
             data_range,
             is_stage2_child,
             latest_routed,
-            stage2_child,
+            other_venue_child,
         )
 
         if is_stage2_child(idea):
             parent_id, child_id = idea.parent_id, idea.id
         else:
-            child = stage2_child(session, idea.id)
+            child = other_venue_child(session, idea.id)
             if child is None:
                 return None
             parent_id, child_id = idea.id, child.id

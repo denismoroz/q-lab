@@ -41,10 +41,17 @@ const STAGE_TITLE = {
   2: 'Этап 2 — Hyperliquid',
 }
 
+// An idea born on Hyperliquid has its Binance stage as a second (or third) stage (owner,
+// 2026-11-05): a stage after the first is named by its own venue.
 export function stageTitle(stage, twoStage) {
   const venue = stage.venue ? `, ${stage.venue}` : ''
   if (!twoStage) return `Площадка${venue || ' не названа'}`
-  return stage.stage === 1 ? `${STAGE_TITLE[1]}${venue}` : STAGE_TITLE[2]
+  if (stage.stage === 1) {
+    return stage.venue === 'Hyperliquid' ? `Этап 1${venue}` : `${STAGE_TITLE[1]}${venue}`
+  }
+  return stage.venue && stage.venue !== 'Hyperliquid'
+    ? `Этап ${stage.stage} — ${stage.venue}`
+    : stage.stage === 2 ? STAGE_TITLE[2] : `Этап ${stage.stage} — Hyperliquid`
 }
 
 // What a stage draws: the whole window when the file has it, else the forward part alone (a file
@@ -304,7 +311,7 @@ export default function ForwardCharts({ ideaId }) {
         {view.stages.map((stage) => (
           <StageChart key={stage.stage} stage={stage} twoStage={view.two_stage} showHold={showHold} />
         ))}
-        {!view.two_stage && view.second_stage_message && (
+        {view.second_stage_message && (
           <p className="text-sm text-slate-500" data-testid="second-stage-note">
             {view.second_stage_message}
           </p>
