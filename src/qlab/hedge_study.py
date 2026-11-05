@@ -129,9 +129,10 @@ class _StudyDriver(_bv2._Driver):
     """Bv2's driver plus a recorder, an optional gate on the book's own wish, and optional
     external wishes (the `hedge_by` mechanism). With neither, the book is the production one."""
 
-    def __init__(self, panel, p, rule, gates=None, wishes=None) -> None:
+    def __init__(self, panel, p, rule, gates=None, wishes=None, shares=None) -> None:
         self._wishes = wishes
         self._gates = gates or {}
+        self._shares = shares or {}
         super().__init__(panel, p, None, rule, None, None)
         n, coins = self.n, self.coins
         self._col = {c: k for k, c in enumerate(coins)}
@@ -170,6 +171,10 @@ class _StudyDriver(_bv2._Driver):
                 self._gate_state[coin] = {"own_prev": bool(book.in_pos), "suppress": False,
                                           "hold": False}
             book.hedge_prev = self._gate(coin, own, bool(book.in_pos), i)
+        if coin in self._shares and not np.isnan(self._shares[coin][i]):
+            # the share of the spot the hedge covers on the next bar (frab's partial-hedge
+            # mechanism resizes the short to it; needs partial_hedge_share < 1 in the params)
+            book.hedge_share_prev = float(self._shares[coin][i])
         self.rec_stepped[i, k] = True
         self.rec_in_pos[i, k] = bool(book.in_pos)
         self.rec_own[i, k] = own
@@ -199,7 +204,8 @@ class _StudyDriver(_bv2._Driver):
 
 def run_book(panel: MarketPanel, params: Mapping[str, object],
              gates: Mapping[str, tuple[np.ndarray | None, np.ndarray | None]] | None = None,
-             wishes: Mapping[str, np.ndarray] | None = None) -> BookRecord:
+             wishes: Mapping[str, np.ndarray] | None = None,
+             shares: Mapping[str, np.ndarray] | None = None) -> BookRecord:
     """Run the live Bv2 book (frab's code) on `panel` and record it bar by bar.
 
     `gates[coin] = (veto_on, veto_off)`: bool arrays on the panel's index, the filter's condition
@@ -214,7 +220,9 @@ def run_book(panel: MarketPanel, params: Mapping[str, object],
         params["coins"] = rule.coins(panel)
     _bv2._require_frab_support(params)
     p = _bv2.B2Params.from_dict(params)
-    driver = _StudyDriver(panel, p, rule, gates=gates, wishes=wishes)
+    if shares and not p.partial_hedge_share < 1.0:
+        raise ValueError("shares need partial_hedge_share < 1: frab resizes a hedge only then")
+    driver = _StudyDriver(panel, p, rule, gates=gates, wishes=wishes, shares=shares)
     run = driver.go()
     index, coins = panel.prices.index, list(p.coins)
 

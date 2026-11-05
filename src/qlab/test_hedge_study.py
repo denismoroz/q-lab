@@ -170,6 +170,23 @@ def test_the_false_share_counts_an_on_without_a_fall_as_false() -> None:
     assert hs.false_share(ev, "off") == (0.0, 1)
 
 
+def test_a_share_handed_to_the_book_sizes_its_hedge() -> None:
+    panel = _market()
+    params = kit.params(coins=COINS, partial_hedge_share=0.5)
+    n = len(panel.prices.index)
+    half = hs.run_book(panel, params, shares={c: np.full(n, 0.5) for c in COINS})
+    full = hs.run_book(panel, params, shares={c: np.full(n, 1.0) for c in COINS})
+    for c in COINS:
+        for rec, share in ((half, 0.5), (full, 1.0)):
+            w = rec.run.weights
+            on = rec.in_pos[c] & rec.stepped[c]
+            covered = (-w[c][on] / w[f"{c}-SPOT"][on]).dropna()  # short / spot, same price
+            assert len(covered) > 100
+            assert covered.median() == pytest.approx(share, abs=0.05)
+    with pytest.raises(ValueError, match="partial_hedge_share"):
+        hs.run_book(panel, kit.params(coins=COINS), shares={c: np.full(n, 0.5) for c in COINS})
+
+
 def test_episode_parts_add_up_to_the_episode_money() -> None:
     panel, params = _market(), kit.params(coins=COINS)
     rec = hs.run_book(panel, params)

@@ -384,7 +384,85 @@ def task3(work: Path) -> dict:
     return out
 
 
-TASKS = {"1": task1, "2": task2, "3": task3}
+# ── task 4 ──────────────────────────────────────────────────────────────
+
+GRADED = [("graded", d, None) for d in (0.02, 0.05, 0.10, 0.20, 0.30)] + \
+    [("downside", q, s) for q in (0.5, 0.7) for s in (0.3, 0.5)]
+
+
+def book_run(panel, bparams, capital, gates=None, wishes=None, shares=None, coins_all=None):
+    """Like `hedge_trigger_study._book_money`, with shares, and the capital return series."""
+    from qlab.harness.run import run_backtest
+
+    nan = np.full(len(panel.prices.index), np.nan)
+    if wishes:
+        wishes = {c: wishes.get(c, nan) for c in coins_all}
+    if shares:
+        shares = {c: shares.get(c, nan) for c in coins_all}
+    rec = hs.run_book(panel, bparams, gates=gates or None, wishes=wishes or None,
+                      shares=shares or None)
+    base = (rec.run.book_equity / capital).rename("capital_base")
+    res = run_backtest(panel, rec.run.weights, hts.COSTS, panel.funding, capital_base=base,
+                       capital_reinvested=False)
+    r = res.capital_return
+    out = {}
+    for part, sel in (("first", r.index < CUT), ("last", r.index >= CUT)):
+        out[f"cap_ann_{part}"] = float(r[sel].sum() * 8760 / int(sel.sum()) * 100)
+        out[f"cap_max_dd_{part}"] = 100 * hf.max_drawdown(r[sel].to_numpy())
+        out[f"fees_year_{part}"] = float((res.cost * base.reindex(res.cost.index).ffill())[sel]
+                                         .sum() * 100 / YEARS[part])
+        ons = 0
+        for c in rec.stepped.columns:
+            ev = hs.events(rec, c)
+            if len(ev):
+                d = ev["decision"]
+                ons += int(((ev["kind"] == "on") & ((d < CUT) if part == "first"
+                                                     else (d >= CUT))).sum())
+        out[f"ons_{part}"] = ons
+    return out, r
+
+
+def downside_pct(perp: pd.Series) -> pd.Series:
+    r = np.log(perp.ffill()).diff()
+    dvol = np.sqrt((r.clip(upper=0.0) ** 2).rolling(720, min_periods=360).mean())
+    return hs.past_percentile(dvol)
+
+
+def task4(work: Path) -> dict:
+    out: dict = {"grid": GRADED}
+    for name in ("set_a", "set_b"):
+        data = load(work, name)
+        coins, panel = data["coins"], data["panel"]
+        coins_all = [cd.coin for cd in coins]
+        returns = {}
+        rows = {}
+        bparams, capital = _book_params(name, coins_all)
+        rows["production"], returns["production"] = book_run(panel, bparams, capital,
+                                                             coins_all=coins_all)
+        pct = {c: downside_pct(panel.prices[c]).to_numpy() for c in coins_all}
+        for kind, a, b in GRADED:
+            label = f"{kind} {a:g}" + (f" share {b:g}" if b is not None else "")
+            if kind == "graded":
+                bp, _ = _book_params(name, coins_all, {"graded_hedge_depth": a})
+                rows[label], returns[label] = book_run(panel, bp, capital, coins_all=coins_all)
+            else:
+                bp, _ = _book_params(name, coins_all, {"partial_hedge_share": 0.5})
+                shares = {c: np.where(np.isnan(pct[c]), 1.0, np.where(pct[c] < a, b, 1.0))
+                          for c in coins_all}
+                rows[label], returns[label] = book_run(panel, bp, capital, shares=shares,
+                                                       coins_all=coins_all)
+            print(name, label, json.dumps(rows[label]), flush=True)
+        prod = rows["production"]
+        allowed = [k for k in rows if k != "production"
+                   and rows[k]["cap_max_dd_first"] >= prod["cap_max_dd_first"]]
+        pick = max(allowed, key=lambda k: rows[k]["cap_ann_first"]) if allowed else "production"
+        pd.DataFrame(returns).to_parquet(work / f"graded-returns-{name}.parquet")
+        out[name] = {"rows": rows, "pick": pick}
+        print(name, "pick", pick, flush=True)
+    return out
+
+
+TASKS = {"1": task1, "2": task2, "3": task3, "4": task4}
 
 
 def main() -> None:
