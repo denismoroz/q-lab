@@ -119,6 +119,10 @@ class BookRecord:
     hedge_acc: pd.DataFrame  # hedge money so far, USD, by the book's accounts
     liquidated: pd.DataFrame  # a liquidation closed the hedge on the bar
     counts: dict = field(default_factory=dict)
+    # the hedge's money so far by part, USD: "price" (the short's realised P&L), "funding",
+    # "fees" (perp fees, margin top-up fees, liquidation penalties); price + funding - fees is
+    # `hedge_acc`. "short_usd": the short's notional after the bar (0 when unhedged).
+    parts: dict = field(default_factory=dict)
 
 
 class _StudyDriver(_bv2._Driver):
@@ -135,6 +139,8 @@ class _StudyDriver(_bv2._Driver):
         self.rec_in_pos = np.zeros((n, len(coins)), dtype=bool)
         self.rec_own = np.zeros((n, len(coins)), dtype=bool)
         self.rec_acc = np.full((n, len(coins)), np.nan)
+        self.rec_parts = {k: np.full((n, len(coins)), np.nan)
+                          for k in ("price", "funding", "fees", "short_usd")}
         self.rec_liq = np.zeros((n, len(coins)), dtype=bool)
         self._penalty = dict.fromkeys(coins, 0.0)
         self._gate_state = {c: {"own_prev": False, "suppress": False, "hold": False}
@@ -167,8 +173,13 @@ class _StudyDriver(_bv2._Driver):
         self.rec_stepped[i, k] = True
         self.rec_in_pos[i, k] = bool(book.in_pos)
         self.rec_own[i, k] = own
-        self.rec_acc[i, k] = (book.short_realized + book.funding_total - book.perp_fees
-                              - book.margin_fees - self._penalty[coin])
+        fees = book.perp_fees + book.margin_fees + self._penalty[coin]
+        self.rec_acc[i, k] = book.short_realized + book.funding_total - fees
+        self.rec_parts["price"][i, k] = book.short_realized
+        self.rec_parts["funding"][i, k] = book.funding_total
+        self.rec_parts["fees"][i, k] = fees
+        self.rec_parts["short_usd"][i, k] = (book.short_size * float(slot.feed.px[i])
+                                             if book.in_pos else 0.0)
 
     def _gate(self, coin: str, own: bool, in_pos: bool, i: int) -> bool:
         """The wish handed to the book for the next bar under a veto filter (`gate_wish`)."""
@@ -212,7 +223,8 @@ def run_book(panel: MarketPanel, params: Mapping[str, object],
 
     return BookRecord(run=run, stepped=frame(driver.rec_stepped), in_pos=frame(driver.rec_in_pos),
                       own=frame(driver.rec_own), hedge_acc=frame(driver.rec_acc),
-                      liquidated=frame(driver.rec_liq), counts=dict(run.counts))
+                      liquidated=frame(driver.rec_liq), counts=dict(run.counts),
+                      parts={k: frame(v) for k, v in driver.rec_parts.items()})
 
 
 def events(record: BookRecord, coin: str) -> pd.DataFrame:
@@ -246,6 +258,33 @@ def events(record: BookRecord, coin: str) -> pd.DataFrame:
     out = pd.DataFrame(rows, columns=["fill", "decision", "kind", "liquidation", "money", "end",
                                       "_acc0"])
     return out.drop(columns="_acc0")
+
+
+def episodes(record: BookRecord, coin: str) -> pd.DataFrame:
+    """Each closed hedge episode of the coin: `start` (decision bar of the on), `fill`, `end`
+    (the bar it closed), `hours`, and its money by part (USD, the book's accounts, from the bar
+    before the open fill to the close fill): `price`, `funding`, `fees`, `money`, plus
+    `notional` (the short's notional right after it opened)."""
+    st = record.stepped[coin].to_numpy()
+    at = np.flatnonzero(st)
+    pos = record.in_pos[coin].to_numpy()[at]
+    parts = {k: record.parts[k][coin].to_numpy()[at] for k in ("price", "funding", "fees")}
+    short = record.parts["short_usd"][coin].to_numpy()[at]
+    index = record.stepped.index
+    rows, open_j = [], None
+    for j in range(1, len(at)):
+        if pos[j] and not pos[j - 1]:
+            open_j = j
+        elif pos[j - 1] and not pos[j] and open_j is not None:
+            d = {k: v[j] - v[open_j - 1] for k, v in parts.items()}
+            rows.append({"start": index[at[open_j - 1]], "fill": index[at[open_j]],
+                         "end": index[at[j]],
+                         "hours": (index[at[j]] - index[at[open_j]]) / pd.Timedelta(hours=1),
+                         **d, "money": d["price"] + d["funding"] - d["fees"],
+                         "notional": short[open_j]})
+            open_j = None
+    return pd.DataFrame(rows, columns=["start", "fill", "end", "hours", "price", "funding",
+                                       "fees", "money", "notional"])
 
 
 # ── 3. variants ──────────────────────────────────────────────────────────
@@ -523,7 +562,8 @@ def declared_variants(with_btc: bool = True) -> list[Variant]:
 
 
 __all__ = [
-    "BookRecord", "StudyPanel", "Variant", "bootstrap_drop", "declared_variants", "events",
+    "BookRecord", "StudyPanel", "Variant", "bootstrap_drop", "declared_variants", "episodes",
+    "events",
     "false_share", "features", "gate_wish", "hedge_money", "hedged_from_wish", "label_events",
     "load_panel", "past_percentile", "run_book", "split_date", "trigger_wish",
 ]

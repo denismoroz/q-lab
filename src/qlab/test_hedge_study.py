@@ -168,3 +168,16 @@ def test_the_false_share_counts_an_on_without_a_fall_as_false() -> None:
                        "ret_7d": [-0.1, 0.0, 0.2, 0.3, -0.5]})
     assert hs.false_share(ev, "on") == (pytest.approx(2 / 3), 3)
     assert hs.false_share(ev, "off") == (0.0, 1)
+
+
+def test_episode_parts_add_up_to_the_episode_money() -> None:
+    panel, params = _market(), kit.params(coins=COINS)
+    rec = hs.run_book(panel, params)
+    for c in COINS:
+        ep = hs.episodes(rec, c)
+        ev = hs.events(rec, c)
+        on = ev[(ev["kind"] == "on") & ev["money"].notna()]
+        assert len(ep) == len(on) > 0
+        assert np.allclose(ep["money"].to_numpy(), on["money"].to_numpy())
+        assert np.allclose(ep["money"], ep["price"] + ep["funding"] - ep["fees"])
+        assert (ep["fees"] > 0).all() and (ep["notional"] > 0).all() and (ep["hours"] > 0).all()
