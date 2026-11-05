@@ -307,6 +307,8 @@ def main() -> None:
                     keep.append(it["falls"][d]["peak"].isin(days))
                 fl = fl[np.concatenate([k.to_numpy() for k in keep])]
             cut = CUT.tz_localize(None)
+            for col in ("peak", "trough", "next_peak"):
+                fl[col] = pd.to_datetime(fl[col])
             res["labels"][f"X{d[0]} N{d[1]}"] = {
                 part: {"n": int(len(g)), "depth": float(g["depth"].mean()) if len(g) else None,
                        "days": float((g["trough"] - g["peak"]).dt.days.mean()) if len(g) else None,
