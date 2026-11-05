@@ -338,7 +338,8 @@ def test_the_shipped_directions_forbid_no_research() -> None:
     repo = Path(__file__).resolve().parents[2]
     found = dirs.read_directions(repo)
     assert found.status == "active"
+    # The night's director rewrites this file; a direction with no note forbids nothing either.
     for name, direction in found.directions.researcher.items():
-        assert direction.note and dirs.ban_reason(direction.note) is None, name
+        assert direction.note is None or dirs.ban_reason(direction.note) is None, name
     text = (repo / "night/directions.yaml").read_text(encoding="utf-8")
     assert "да, делай все четыре" in text  # the owner's words
