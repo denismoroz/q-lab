@@ -39,3 +39,18 @@ def test_ema_features_do_not_read_later_bars() -> None:
     head = fc.ema_features(close[:2000])
     assert full.shape == (3000, 13)
     assert np.allclose(full[:2000], head, equal_nan=True)
+
+
+def test_standard_indicators_do_not_read_later_bars() -> None:
+    import pandas as pd
+
+    rng = np.random.default_rng(2)
+    n = 3000
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h", tz="UTC")
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, n)))
+    bars = pd.DataFrame({"close": close, "high": close * 1.004, "low": close * 0.996,
+                         "volume": rng.uniform(1, 2, n)}, index=idx)
+    full = fc.standard_features(bars)
+    head = fc.standard_features(bars.iloc[:2000])
+    assert full.shape == (n, len(fc.STANDARD_NAMES)) == (n, 32)
+    assert np.allclose(full[:2000], head, equal_nan=True)

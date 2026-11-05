@@ -37,7 +37,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--minutes", type=Path, default=Path("/Users/d/prj/q-lab/data/raw/binance/1m"))
-    ap.add_argument("--features", choices=["base", "ema", "ema_only"], default="base")
+    ap.add_argument("--features", choices=["base", "ema", "ema_only", "std", "std_only"],
+                    default="base")
     a = ap.parse_args()
     t0 = time.time()
     import torch
@@ -59,12 +60,24 @@ def main() -> None:
         sys.path.insert(0, str(Path(__file__).parent))
         import waves as wr
 
-        ema = fc.ema_features(np.exp(logc))
-        if a.features == "ema":
-            X = np.column_stack([X, ema])
-        else:  # EMA and the longer returns only (forecast-pilot-ema-protocol)
-            cols = [wr.FEATURES.index(f) for f in ("ret1", "ret7", "ret30", "btc_ret7")]
-            X = np.column_stack([ema, g["static"][:, cols]]).astype(np.float64)
+        if a.features.startswith("ema"):
+            extra = fc.ema_features(np.exp(logc))
+        else:  # the standard set on hourly bars built from the minutes
+            m = pd.concat([pd.read_parquet(f, columns=["open_time", "high", "low", "close",
+                                                       "volume"])
+                           for f in sorted((a.minutes / "futures" / "BTC").glob("*.parquet"))])
+            m = m.drop_duplicates("open_time").set_index("open_time").sort_index()
+            hb = m.groupby(m.index.floor("h")).agg(
+                {"high": "max", "low": "min", "close": "last", "volume": "sum"})
+            hb.index = pd.DatetimeIndex(hb.index).as_unit("ns")
+            labels_h = pd.to_datetime(tau - HOUR, utc=True)  # the hour that closes at tau
+            hb = hb.reindex(pd.DatetimeIndex(labels_h).as_unit("ns"))
+            extra = fc.standard_features(hb)
+        cols = [wr.FEATURES.index(f) for f in ("ret1", "ret7", "ret30", "btc_ret7")]
+        if a.features in ("ema", "std"):
+            X = np.column_stack([X, extra])
+        else:  # the indicators and the longer returns only
+            X = np.column_stack([extra, g["static"][:, cols]]).astype(np.float64)
     dates = pd.to_datetime(tau, utc=True).tz_localize(None).to_numpy()
     targets, pasts = {}, {}
     for h in H:

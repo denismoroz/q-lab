@@ -93,6 +93,68 @@ def ema_features(close: np.ndarray) -> np.ndarray:
     return np.column_stack([x.to_numpy() for x in cols]).clip(-20, 20)
 
 
+STANDARD_NAMES = (
+    [f"ema_dist_{n}" for n in EMA_SPANS] + [f"ema_cross_{f}_{s}" for f, s in EMA_CROSSES]
+    + [f"ema_slope_{n}" for n in EMA_SPANS]
+    + ["macd", "macd_signal", "macd_hist", "rsi_14h", "rsi_14d", "boll_b", "boll_width",
+       "atr_rel", "atr_vs_median", "adx", "di_diff", "di_plus", "donchian_24", "donchian_168",
+       "donchian_720", "obv_slope_24", "obv_slope_168", "vwap_24", "vwap_168"])
+
+
+def _rsi(c, n):
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
+    return 100 - 100 / (1 + up / dn)
+
+
+def standard_features(bars, day_index=None) -> np.ndarray:
+    """The 32 standard indicators (docs/research/forecast-pilot-standard-protocol) on hourly bars
+    (`bars`: DataFrame with close, high, low, volume, indexed by the bar's open time, UTC), each
+    known at the bar's close and read only from bars up to it. RSI over 14 days is computed on
+    daily closes and applied to the hours of the next day."""
+    import pandas as pd
+
+    c = bars["close"].ffill()
+    hi, lo, v = bars["high"].ffill(), bars["low"].ffill(), bars["volume"].fillna(0.0)
+    sig = np.log(c).diff().rolling(720, min_periods=360).std()
+    ema = pd.DataFrame(ema_features(c.to_numpy()), index=bars.index)
+    e12, e26 = c.ewm(span=12, adjust=False).mean(), c.ewm(span=26, adjust=False).mean()
+    macd = e12 - e26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    scale = c * sig * np.sqrt(26)
+    cols = [macd / scale, signal / scale, (macd - signal) / scale]
+    cols.append((_rsi(c, 14) - 50) / 50)
+    daily = c.groupby(c.index.floor("D")).last()
+    rsi_d = (_rsi(daily, 14) - 50) / 50
+    cols.append(pd.Series(rsi_d.shift(1).reindex(c.index.floor("D")).to_numpy(), index=c.index))
+    ma, sd = c.rolling(20).mean(), c.rolling(20).std()
+    cols += [(c - (ma - 2 * sd)) / (4 * sd) - 0.5, (4 * sd / ma) / (sig * np.sqrt(20))]
+    tr = pd.concat([hi - lo, (hi - c.shift()).abs(), (lo - c.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1 / 14, adjust=False).mean()
+    cols += [(atr / c) / sig, atr / atr.rolling(90 * 24, min_periods=30 * 24).median()]
+    upm, dnm = hi.diff(), -lo.diff()
+    plus = upm.where((upm > dnm) & (upm > 0), 0.0)
+    minus = dnm.where((dnm > upm) & (dnm > 0), 0.0)
+    atr_w = tr.ewm(alpha=1 / 14, adjust=False).mean()
+    pdi = 100 * plus.ewm(alpha=1 / 14, adjust=False).mean() / atr_w
+    mdi = 100 * minus.ewm(alpha=1 / 14, adjust=False).mean() / atr_w
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi)
+    adx = dx.ewm(alpha=1 / 14, adjust=False).mean()
+    cols += [adx / 100, (pdi - mdi) / 100, pdi / 100]
+    for n in (24, 168, 720):
+        h_n, l_n = hi.rolling(n).max(), lo.rolling(n).min()
+        cols.append((c - l_n) / (h_n - l_n) - 0.5)
+    obv = (np.sign(c.diff()).fillna(0) * v).cumsum()
+    for n in (24, 168):
+        cols.append((obv - obv.shift(n)) / v.rolling(n).sum())
+    for n in (24, 168):
+        vwap = (c * v).rolling(n).sum() / v.rolling(n).sum()
+        cols.append((c / vwap - 1) / (sig * np.sqrt(n)))
+    std = np.column_stack([ema.to_numpy()] + [x.to_numpy() for x in cols])
+    return np.nan_to_num(std, nan=np.nan, posinf=np.nan, neginf=np.nan).clip(-20, 20)
+
+
 class ForecastTCN(nn.Module):
     """The small causal encoder of `ml_money.TCNPolicy` with `n_out` linear outputs."""
 
