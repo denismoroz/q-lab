@@ -95,3 +95,13 @@ def test_training_sequences_end_before_the_embargo_and_are_contiguous() -> None:
     # every sequence's last decision plus its step ends by `hi`, and no sequence spans the hole
     assert (tau[starts + 47] + 60 * 60_000_000_000 <= hi).all()
     assert not ((starts <= 99) & (starts + 47 >= 100)).any()
+
+
+def test_a_batch_of_sequences_keeps_one_money_per_sequence_and_step() -> None:
+    model = mm.make_policy("linear", 3)
+    enc = torch.zeros(5, 7, 3 + mm.CHANNELS)
+    scale = torch.tensor([1.0, 2.0, 0.0, 1.0, 1.0])
+    shares, money = mm.unroll(model, enc, torch.full((5, 7), 0.01), torch.zeros(5, 7), scale,
+                              torch.zeros(5))
+    assert shares.shape == (5, 7) and money.shape == (5, 7)
+    assert torch.all(money[2] == 0)  # a zero scale earns nothing: rows are not mixed

@@ -223,7 +223,7 @@ def _money(model, batch, penalty, cost_mult):
 
     w, summ, stat, ret, fund, scale, valid = batch
     enc = model.encode(w, summ, stat)
-    _, money = mm.unroll(model, enc, ret, fund, scale[:, None], torch.zeros(len(scale)),
+    _, money = mm.unroll(model, enc, ret, fund, scale, torch.zeros(len(scale)),
                          cost_mult)
     money = money * valid  # a step without a known price says nothing (declared treatment)
     if penalty == "sortino":
