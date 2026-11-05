@@ -462,7 +462,176 @@ def task4(work: Path) -> dict:
     return out
 
 
-TASKS = {"1": task1, "2": task2, "3": task3, "4": task4}
+# ── task 5 ──────────────────────────────────────────────────────────────
+
+PURGE = pd.Timedelta(days=15)  # the regime label reads 15 days ahead
+
+
+def _regime_sums(per_bar: np.ndarray, weight: np.ndarray, index, regime) -> dict:
+    """Money per year (per unit of `weight`-year: coin-years or calendar years) on the first 2/3
+    (purged) by regime, on the first 2/3 whole, and on the last third."""
+    first = index < CUT - PURGE
+    out = {}
+    for key, sel in (("bull", first & (regime == "bull")), ("bear", first & (regime == "bear")),
+                     ("first", index < CUT), ("last", index >= CUT)):
+        w = weight[sel].sum() / 8760
+        out[key] = float(100 * per_bar[sel].sum() / w) if w else np.nan
+    return out
+
+
+def _scores(table: dict[str, dict]) -> pd.DataFrame:
+    t = pd.DataFrame(table).T
+    p = t.loc["production"]
+    d = t - p
+    return pd.DataFrame({"old": d["first"], "robust": np.minimum(d["bull"], d["bear"]),
+                         "last": d["last"], "bull": d["bull"], "bear": d["bear"]})
+
+
+def task5(work: Path) -> dict:
+    btc = _btc(work)
+    out: dict = {}
+    trials = pd.read_csv(hts.TRIALS)
+    for name in ("set_a", "set_b"):
+        data = load(work, name)
+        coins, panel = data["coins"], data["panel"]
+        index = panel.prices.index
+        regime = hf.regime_of_hours(btc, index)
+        coins_all = [cd.coin for cd in coins]
+        res = {}
+        # first study: hedge money per unit of position, per coin-year
+        variants = {v.name: v for v in hs.declared_variants()}
+        table = {}
+        for vname, v in [("production", None), *variants.items()]:
+            total = np.zeros(len(index))
+            weight = np.zeros(len(index))
+            for cd in coins:
+                h = hts.variant_hedged(v, cd)
+                m = hs.hedge_money(cd.perp, cd.funding, h, hts.SWITCH_COST)
+                pos = cd.stepped[cd.mask]
+                total[pos] += m[cd.mask]
+                weight[pos] += 1
+            table[vname] = _regime_sums(total, weight, index, regime)
+        s1 = _scores(table).drop(index="production")
+        eligible = trials[trials["set"] == name].set_index("variant")["eligible"]
+        s1["eligible"] = eligible.reindex(s1.index).fillna(False).astype(bool)
+        s1["kind"] = ["trigger" if variants[k].kind == "trigger" else "filter" for k in s1.index]
+        res["study1"] = {"spearman_old": hf.spearman(s1["old"], s1["last"]),
+                         "spearman_robust": hf.spearman(s1["robust"], s1["last"])}
+        picks = {}
+        for kind in ("filter", "trigger"):
+            sub = s1[(s1["kind"] == kind) & s1["eligible"]]
+            picks[kind] = sub["robust"].idxmax()
+        bparams, capital = _book_params(name, coins_all)
+        prod_book, _ = book_run(panel, bparams, capital, coins_all=coins_all)
+        res["production_book"] = prod_book
+        res["study1"]["picks"] = {}
+        for kind, vname in picks.items():
+            g, w = hts._full_gates(variants[vname], coins)
+            book, _ = book_run(panel, bparams, capital, gates=g, wishes=w, coins_all=coins_all)
+            res["study1"]["picks"][kind] = {"variant": vname, **s1.loc[vname].to_dict(),
+                                            "book": book}
+            print(name, "study1", kind, vname, json.dumps(book), flush=True)
+        s1.to_csv(work / f"robust-study1-{name}.csv")
+        # task 3: the simplified book per unit of position
+        z = np.load(work / f"band-{name}.npz")
+        mean, count = z["mean"].astype(np.float64), z["count"]
+        names = [f"x{x:g} y{y:g} h{h} c{c}" for x, y, h, c in BAND_GRID]
+        weight = (count > 0).astype(float)
+        table = {("production" if k == 0 else names[k]): _regime_sums(mean[k], weight, index,
+                                                                      regime)
+                 for k in range(len(names))}
+        s3 = _scores(table).drop(index="production")
+        res["task3"] = {"spearman_old": hf.spearman(s3["old"], s3["last"]),
+                        "spearman_robust": hf.spearman(s3["robust"], s3["last"])}
+        k3 = s3["robust"].idxmax()
+        x, y, h, c = BAND_GRID[names.index(k3)]
+        w = {coin: hf.band_wish(panel.prices[coin].to_numpy(dtype=float), x, y, h, c)
+             for coin in coins_all}
+        book, _ = book_run(panel, bparams, capital, wishes=w, coins_all=coins_all)
+        res["task3"]["pick"] = {"variant": k3, **s3.loc[k3].to_dict(), "book": book}
+        print(name, "task3", k3, json.dumps(book), flush=True)
+        # task 4: the real book on the strategy's money
+        r4 = pd.read_parquet(work / f"graded-returns-{name}.parquet")
+        table = {}
+        for col in r4.columns:
+            r = r4[col].reindex(index).fillna(0.0).to_numpy()
+            table[col] = _regime_sums(r, np.ones(len(index)), index, regime)
+        s4 = _scores(table).drop(index="production")
+        res["task4"] = {"spearman_old": hf.spearman(s4["old"], s4["last"]),
+                        "spearman_robust": hf.spearman(s4["robust"], s4["last"]),
+                        "pick": {"variant": s4["robust"].idxmax(),
+                                 **s4.loc[s4["robust"].idxmax()].to_dict()},
+                        "table": s4.to_dict("index")}
+        out[name] = res
+    return out
+
+
+# ── task 6 ──────────────────────────────────────────────────────────────
+
+SPOT_COST = (10.0 + 0.9) / 1e4
+
+
+def simple_book_money(cd, perp_full: pd.Series, book: str) -> np.ndarray:
+    """Per stepped bar, money per unit of position of one simple book (protocol, task 6)."""
+    px = cd.perp
+    ret = np.zeros(len(px))
+    ret[:-1] = px[1:] / px[:-1] - 1.0
+    ret = np.nan_to_num(ret)
+    fund = np.zeros(len(px))
+    fund[:-1] = np.nan_to_num(cd.funding[1:])
+    at = cd.index[cd.stepped]
+    new_day = np.r_[True, at[1:].floor("D") != at[:-1].floor("D")]
+    if book == "bv2":
+        return ret + hs.hedge_money(px, cd.funding, cd.in_pos, hts.SWITCH_COST)
+    if book.startswith("hedge"):
+        share = float(book.split()[1])
+        # a constant share kept by a daily trade of about share * |day's move|
+        day_move = pd.Series(np.abs(ret)).groupby(np.cumsum(new_day)).transform("sum").to_numpy()
+        cost = np.where(new_day, share * day_move * hts.SWITCH_COST, 0.0)
+        return ret + share * (-ret + fund) - cost
+    if book == "spot":
+        return ret
+    k = float(book.split()[1])
+    expo = hf.downside_vol_exposure(perp_full, scale=k)[cd.stepped]
+    change = np.abs(np.diff(expo, prepend=expo[0]))
+    return expo * ret - change * SPOT_COST
+
+
+def task6(work: Path) -> dict:
+    books = ["spot", "hedge 0.3", "hedge 0.5", "hedge 1.0", "downside 0.75", "downside 1.0",
+             "downside 1.5", "bv2"]
+    out: dict = {}
+    for name in ("set_a", "set_b"):
+        data = load(work, name)
+        coins, panel = data["coins"], data["panel"]
+        index = panel.prices.index
+        first = index < CUT
+        res = {}
+        for book in books:
+            total = np.zeros(len(index))
+            count = np.zeros(len(index))
+            for cd in coins:
+                m = simple_book_money(cd, panel.prices[cd.coin], book)
+                pos = cd.stepped[cd.mask]
+                total[pos] += m[cd.mask]
+                count[pos] += 1
+            mean = np.where(count > 0, total / np.maximum(count, 1), 0.0)
+            row = {}
+            for part, sel in (("first", first), ("last", ~first)):
+                row[f"money_{part}"] = float(100 * mean[sel].sum() / YEARS[part])
+                row[f"dd_{part}"] = float(100 * hf.max_drawdown(mean[sel]))
+            res[book] = row
+        for row in res.values():
+            for part in ("first", "last"):
+                gain = row[f"dd_{part}"] - res["spot"][f"dd_{part}"]
+                give = res["spot"][f"money_{part}"] - row[f"money_{part}"]
+                row[f"price_{part}"] = float(give / gain) if gain > 0.5 else None
+        out[name] = res
+        print(name, json.dumps(res), flush=True)
+    return out
+
+
+TASKS = {"1": task1, "2": task2, "3": task3, "4": task4, "5": task5, "6": task6}
 
 
 def main() -> None:
