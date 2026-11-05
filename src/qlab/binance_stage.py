@@ -225,9 +225,11 @@ def run(idea_ids: list[str], *, end: date, noise_trials: int = 200,
     if closed:
         state: dict = {"done": {}}
         night.STATE_DIR = Path("data/restamp/runs")
+        # A hand run names its ideas: the night's per-night cap does not apply (on 2026-11-05 a hand
+        # run of 18 trend ideas ran 4 closed ones and skipped 11 under the night's cap of 4).
         second_venue.second_venue_stage(day or date.today(), end, state,
                                         noise_trials=noise_trials, only=closed,
-                                        allow_heavy=allow_heavy)
+                                        max_new=len(closed), allow_heavy=allow_heavy)
         block = state.get("second_venue") or {}
         seen = set()
         for e in block.get("entries") or []:
