@@ -1,0 +1,323 @@
+# Stage 2 of trend-live-full-universe (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: trend-live-full-universe-bn
+title: 'Trend TSMOM ensemble, live frab code, every discovered instrument (222) (второй этап: binance)'
+code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+params:
+  coins:
+  - 0G
+  - 2Z
+  - AAVE
+  - ACE
+  - ADA
+  - AERO
+  - AI
+  - AI16Z
+  - AIXBT
+  - ALGO
+  - ALT
+  - ANIME
+  - APE
+  - APEX
+  - APT
+  - AR
+  - ARB
+  - ARK
+  - ASTER
+  - ATOM
+  - AVAX
+  - AVNT
+  - AXS
+  - AZTEC
+  - BABY
+  - BADGER
+  - BANANA
+  - BCH
+  - BERA
+  - BIGTIME
+  - BIO
+  - BLAST
+  - BLUR
+  - BNB
+  - BNT
+  - BOME
+  - BRETT
+  - BSV
+  - BTC
+  - CAKE
+  - CASHCAT
+  - CATI
+  - CC
+  - CELO
+  - CFX
+  - CHILLGUY
+  - CHIP
+  - COMP
+  - CRV
+  - CYBER
+  - DASH
+  - DOGE
+  - DOOD
+  - DOT
+  - DYDX
+  - DYM
+  - EIGEN
+  - ENA
+  - ENS
+  - ETC
+  - ETH
+  - ETHFI
+  - FARTCOIN
+  - FET
+  - FIL
+  - FOGO
+  - FTM
+  - FTT
+  - FXS
+  - GALA
+  - GAS
+  - GMT
+  - GMX
+  - GOAT
+  - GRAM
+  - GRASS
+  - GRIFFAIN
+  - HBAR
+  - HEMI
+  - HMSTR
+  - HPOS
+  - HYPE
+  - HYPER
+  - ICP
+  - ILV
+  - IMX
+  - INIT
+  - INJ
+  - IO
+  - IOTA
+  - IP
+  - JELLY
+  - JTO
+  - JUP
+  - KAITO
+  - KAS
+  - LAUNCHCOIN
+  - LAYER
+  - LDO
+  - LINEA
+  - LINK
+  - LISTA
+  - LIT
+  - LTC
+  - MANTA
+  - MAV
+  - MAVIA
+  - ME
+  - MEGA
+  - MELANIA
+  - MEME
+  - MERL
+  - MET
+  - MEW
+  - MINA
+  - MKR
+  - MNT
+  - MON
+  - MOODENG
+  - MORPHO
+  - MOVE
+  - MYRO
+  - NEAR
+  - NEIROETH
+  - NEO
+  - NIL
+  - NOT
+  - NTRN
+  - NXPC
+  - OGN
+  - OM
+  - OMNI
+  - ONDO
+  - OP
+  - ORBS
+  - ORDI
+  - PAXG
+  - PENDLE
+  - PENGU
+  - PEOPLE
+  - PIXEL
+  - PNUT
+  - POL
+  - POLYX
+  - PONS
+  - POPCAT
+  - PROMPT
+  - PROVE
+  - PUMP
+  - PURR
+  - PYTH
+  - RDNT
+  - RENDER
+  - REQ
+  - RESOLV
+  - REZ
+  - RLB
+  - RSR
+  - RUNE
+  - S
+  - SAGA
+  - SAND
+  - SCR
+  - SEI
+  - SKR
+  - SKY
+  - SNX
+  - SOL
+  - SOPH
+  - SPX
+  - STABLE
+  - STBL
+  - STG
+  - STRK
+  - STX
+  - SUI
+  - SUPER
+  - SUSHI
+  - SYRUP
+  - TAO
+  - TIA
+  - TNSR
+  - TON
+  - TRB
+  - TRUMP
+  - TRX
+  - TST
+  - TURBO
+  - UMA
+  - UNI
+  - USELESS
+  - USTC
+  - USUAL
+  - VINE
+  - VIRTUAL
+  - VVV
+  - W
+  - WCT
+  - WIF
+  - WLD
+  - WLFI
+  - XAI
+  - XLM
+  - XMR
+  - XPL
+  - XRP
+  - YGG
+  - YZY
+  - ZEC
+  - ZEN
+  - ZEREBRO
+  - ZETA
+  - ZK
+  - ZORA
+  - ZRO
+  - kBONK
+  - kDOGS
+  - kFLOKI
+  - kLUNC
+  - kNEIRO
+  - kPEPE
+  - kSHIB
+  lookbacks:
+  - 30
+  - 60
+  - 90
+  - 120
+  vol_window: 30
+  vol_target_daily: 0.02
+  leverage_cap: 3.0
+  risk_scale: 0.2
+  min_history_days: 151
+  book_vol_target_ann: 0.14
+  book_vol_window_days: 60
+  book_vol_min_days: 20
+  book_vol_scale_min: 0.25
+  book_vol_scale_max: 2.0
+  book_vol_prior_ann: 0.3
+  capital_usd: 3000.0
+  min_order_usd: 10.0
+data:
+  source: binance
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-11-04'
+costs:
+  taker_fee_bps: 5.0
+  slippage_bps: 0.9
+min_leg_notional: 5.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (trend-live-full-universe) on binance''s own perpetual contracts listed at each bar; nothing
+  was refitted.'
+- The costs are binance's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- 'The idea was born on Hyperliquid (trend-live-full-universe''s own data is Hyperliquid''s); this is
+  its binance verdict, judged independently (docs/VENUE_SPLIT.md; owner, 2026-11-05: «почему вот эта стратегия
+  не тестировалась на бинансе?»). The data starts with binance''s archive on 2019-09-08, not on Hyperliquid''s
+  first day; numbers inside the parameters (a wrapper''s scoring costs, its grid) are stage 1''s, unchanged,
+  and a wrapper that chooses by code chooses again on this data. The facts about execution are this venue''s:
+  the lab has no order adapter here, so a pass is needs-infrastructure.'
+- The minimum leg is binance's own, $5 (venues/binance.yaml), not stage 1's $10.
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2026-09-14'
+params_fixed_evidence: 'Inherited from stage 1 (trend-live-full-universe): params as specs/trend-live.yaml
+  (frab 5bb0d2f, 40ba28a, b661918, 2026-09-14); the universe is every discovered instrument, which involves
+  no choice
+
+  '
+sources:
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5, the venue''s own MIN_NOTIONAL of the
+    ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); the contracts that differ
+    are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
+  coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)
+  lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin DEFAULT_COINS)
+  vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults;
+    25-coin DEFAULT_COINS)
+  capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  min_order_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py (TrendParams defaults; 25-coin
+    DEFAULT_COINS)
+  costs.taker_fee_bps: 'owner 2026-10-30, asked which fee tier his Binance account sits on: «у меня обычный
+    аккаунт» (a regular account: no VIP tier, no volume discount), so the regular-user rate stands; docs/FRAB_BINANCE_SPOT.md
+    line 113: Binance USDⓈ-M perpetual taker, a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
+    (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not be read, the article
+    gives the rate as its example)'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+regime_claim: {}
+review_answers: {}
+selects_causally: false

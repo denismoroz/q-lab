@@ -1,0 +1,132 @@
+# Stage 2 of trend-retune-weekly (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: trend-retune-weekly-bn
+title: 'Trend (живой код) с перенастройкой раз в неделю: выбор монет и периодов только по прошлому (второй
+  этап: binance)'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+  base_params:
+    coins: null
+    capital_usd: 3000.0
+    lookbacks:
+    - 30
+    - 60
+    - 90
+    - 120
+    vol_window: 30
+    vol_target_daily: 0.02
+    leverage_cap: 3.0
+    risk_scale: 0.2
+    book_vol_target_ann: 0.14
+    book_vol_window_days: 60
+    book_vol_min_days: 20
+    book_vol_scale_min: 0.25
+    book_vol_scale_max: 2.0
+    book_vol_prior_ann: 0.3
+    min_history_days: 151
+    top_k_requires_history: true
+  grid:
+    universe:
+      cap:
+        top_k_by_market_cap: 25
+        exclude_tags:
+        - stablecoin
+      volume:
+        top_k_by_volume: 25
+    lookbacks:
+      ens:
+        lookbacks:
+        - 30
+        - 60
+        - 90
+        - 120
+      l30:
+        lookbacks:
+        - 30
+      l60:
+        lookbacks:
+        - 60
+      l90:
+        lookbacks:
+        - 90
+      l120:
+        lookbacks:
+        - 120
+  refit_every: W
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 3.5
+    slippage_bps: 0.9
+data:
+  source: binance
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2019-09-08'
+  end: '2026-11-04'
+costs:
+  taker_fee_bps: 5.0
+  slippage_bps: 0.9
+min_leg_notional: 5.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (trend-retune-weekly) on binance''s own perpetual contracts listed at each bar; nothing was
+  refitted.'
+- The costs are binance's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- 'The idea was born on Hyperliquid (trend-retune-weekly''s own data is Hyperliquid''s); this is its binance
+  verdict, judged independently (docs/VENUE_SPLIT.md; owner, 2026-11-05: «почему вот эта стратегия не
+  тестировалась на бинансе?»). The data starts with binance''s archive on 2019-09-08, not on Hyperliquid''s
+  first day; numbers inside the parameters (a wrapper''s scoring costs, its grid) are stage 1''s, unchanged,
+  and a wrapper that chooses by code chooses again on this data. The facts about execution are this venue''s:
+  the lab has no order adapter here, so a pass is needs-infrastructure.'
+- The minimum leg is binance's own, $5 (venues/binance.yaml), not stage 1's $10.
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2025-06-09'
+params_fixed_evidence: 'Inherited from stage 1 (trend-retune-weekly): The wrapper''s first causal choice
+  (qlab.strategies.retune): the inner strategy''s warm-up of 151 daily closes from 2025-01-01 plus one
+  whole re-tuning period -- warm-up arithmetic, not a result. Grid values come from sources: lookbacks
+  30/60/90/120 and their ensemble from frab research/trend_following (2026-09-14); the market-cap universe
+  rule declared 2026-10-02 (q-lab f7577f4), the volume rule 2026-09-22 (c6bf6a7). Both rules'' fixed results
+  were known when this grid was declared on 2026-10-02: that is the part of the grid that stays in-sample.
+
+  '
+sources:
+  strategy_capital_usd: 'the spec''s own parameter base_params.capital_usd = 3000: specs/trend-live-top25.yaml
+    (frab TrendParams defaults) and docs/TREND_LIVE_REPLAY.md (the 151-day rule)'
+  inner_code_ref: src/qlab/strategies/live/trend.py
+  base_params: specs/trend-live-top25.yaml (frab TrendParams defaults) and docs/TREND_LIVE_REPLAY.md (the
+    151-day rule)
+  grid: 'docs/RETUNE.md (grid: market-cap or volume rule, 25 coins; lookbacks 30, 60, 90, 120 and their
+    ensemble from frab research)'
+  refit_every: 'владелец 2026-10-02: «раз в неделю/день или месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs: 'specs/trend-live-top25.yaml costs: the spec''s own costs'
+  min_leg_notional: 'venues/binance.yaml min_leg_notional_usd: 5, the venue''s own MIN_NOTIONAL of the
+    ordinary contract (exchangeInfo read 2026-10-30, 516 of 522 contracts); the contracts that differ
+    are read per contract (min_leg_notional_by_instrument, seed/venue_facts/2026-10-30-binance_um_min_notional.csv)'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  costs.taker_fee_bps: 'owner 2026-10-30, asked which fee tier his Binance account sits on: «у меня обычный
+    аккаунт» (a regular account: no VIP tier, no volume discount), so the regular-user rate stands; docs/FRAB_BINANCE_SPOT.md
+    line 113: Binance USDⓈ-M perpetual taker, a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
+    (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not be read, the article
+    gives the rate as its example)'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+strategy_capital_usd: 3000.0
+regime_claim:
+  bull: earns
+  bear: earns
+review_answers: {}
+selects_causally: true
