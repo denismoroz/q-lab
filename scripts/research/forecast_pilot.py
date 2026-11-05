@@ -33,39 +33,30 @@ def _boot(dates, stat):
     return hf.block_bootstrap(dates, stat, block_days=30, draws=300)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--work", type=Path, required=True)
-    ap.add_argument("--minutes", type=Path, default=Path("/Users/d/prj/q-lab/data/raw/binance/1m"))
-    ap.add_argument("--features", choices=["base", "ema", "ema_only", "std", "std_only"],
-                    default="base")
-    a = ap.parse_args()
-    t0 = time.time()
-    import torch
-    from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
-    from sklearn.linear_model import LogisticRegression, Ridge
-
-    with open(a.work / "ml" / "BTC.pkl", "rb") as fh:
+def prepare_data(work: Path, minutes: Path, features: str) -> dict:
+    """The decision grid, features, targets and classes of one feature set (the names of
+    the features in `names`)."""
+    with open(work / "ml" / "BTC.pkl", "rb") as fh:
         d = pickle.load(fh)
     g = d["g60"]
     close = pd.concat([pd.read_parquet(f, columns=["open_time", "close"]) for f in
-                       sorted((a.minutes / "futures" / "BTC").glob("*.parquet"))])
+                       sorted((minutes / "futures" / "BTC").glob("*.parquet"))])
     close = close.drop_duplicates("open_time").set_index("open_time").sort_index()["close"]
     tau, pos = g["tau"], g["pos"]
     logc = np.where(g["ok"], np.log(close.to_numpy()[np.clip(pos, 0, None)]), np.nan)
     X = np.column_stack([g["static"], g["summ"]]).astype(np.float64)
-    if a.features != "base":
+    if features != "base":
         import sys
 
         sys.path.insert(0, str(Path(__file__).parent))
         import waves as wr
 
-        if a.features.startswith("ema"):
+        if features.startswith("ema"):
             extra = fc.ema_features(np.exp(logc))
         else:  # the standard set on hourly bars built from the minutes
             m = pd.concat([pd.read_parquet(f, columns=["open_time", "high", "low", "close",
                                                        "volume"])
-                           for f in sorted((a.minutes / "futures" / "BTC").glob("*.parquet"))])
+                           for f in sorted((minutes / "futures" / "BTC").glob("*.parquet"))])
             m = m.drop_duplicates("open_time").set_index("open_time").sort_index()
             hb = m.groupby(m.index.floor("h")).agg(
                 {"high": "max", "low": "min", "close": "last", "volume": "sum"})
@@ -74,7 +65,7 @@ def main() -> None:
             hb = hb.reindex(pd.DatetimeIndex(labels_h).as_unit("ns"))
             extra = fc.standard_features(hb)
         cols = [wr.FEATURES.index(f) for f in ("ret1", "ret7", "ret30", "btc_ret7")]
-        if a.features in ("ema", "std"):
+        if features in ("ema", "std"):
             X = np.column_stack([X, extra])
         else:  # the indicators and the longer returns only
             X = np.column_stack([extra, g["static"][:, cols]]).astype(np.float64)
@@ -88,6 +79,36 @@ def main() -> None:
             z = targets[h]
             labels[(h, "fall", k)] = np.where(np.isnan(z), np.nan, (z < -k).astype(float))
             labels[(h, "rise", k)] = np.where(np.isnan(z), np.nan, (z > k).astype(float))
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    import waves as wr
+
+    base_names = list(wr.FEATURES) + ["min_ret", "min_range", "min_volume", "min_imbalance",
+                                      "min_trades"]
+    long_names = ["ret1", "ret7", "ret30", "btc_ret7"]
+    names = {"base": base_names, "ema": base_names + list(fc.STANDARD_NAMES[:13]),
+             "ema_only": list(fc.STANDARD_NAMES[:13]) + long_names,
+             "std": base_names + list(fc.STANDARD_NAMES),
+             "std_only": list(fc.STANDARD_NAMES) + long_names}[features]
+    return {"d": d, "tau": tau, "pos": pos, "X": X, "dates": dates, "targets": targets,
+            "pasts": pasts, "labels": labels, "names": names}
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--work", type=Path, required=True)
+    ap.add_argument("--minutes", type=Path, default=Path("/Users/d/prj/q-lab/data/raw/binance/1m"))
+    ap.add_argument("--features", choices=["base", "ema", "ema_only", "std", "std_only"],
+                    default="base")
+    a = ap.parse_args()
+    t0 = time.time()
+    import torch
+    from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+    from sklearn.linear_model import LogisticRegression, Ridge
+
+    D = prepare_data(a.work, a.minutes, a.features)
+    d, tau, pos, X, dates = D["d"], D["tau"], D["pos"], D["X"], D["dates"]
+    targets, pasts, labels = D["targets"], D["pasts"], D["labels"]
     retrains = pd.date_range(START, pd.Timestamp("2026-11-01", tz="UTC"), freq="6MS")
     preds: dict = {}
     rng = np.random.default_rng(5)
