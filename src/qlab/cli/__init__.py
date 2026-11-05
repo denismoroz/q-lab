@@ -3335,6 +3335,45 @@ def scout_evidence(
             typer.echo(f"  held by {', '.join(held['carded_by'])}: {held['id']}")
 
 
+@app.command("coverage-compare")
+def coverage_compare_cmd(
+    idea: list[str] = typer.Argument(  # noqa: B008
+        None, help="Ideas to measure (default with --all: every open idea whose judged window is "
+                   "cut by the complete-book rule)"),
+    all_ideas: bool = typer.Option(False, "--all", help="Every such open idea"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Store the reading for the idea page"),
+    data_end: str = typer.Option("base", "--data-end", help="'base': the idea's last run; "
+                                 "'night': the last closed day"),
+) -> None:
+    """A book whose coins were listed at different times, counted two ways side by side
+    (docs/COVERAGE.md): as the stand judges it (from the day all its legs have history) and with
+    each coin entering as it appears, over the longer window. Decides nothing. Reads the spec file
+    and the cached data; the longer window's snapshot is built from the raw cache if no snapshot
+    answers it."""
+    from qlab import coverage_compare, night, overlay_stage
+
+    with session_scope() as session:
+        ids = list(idea or [])
+        if all_ideas:
+            ids += [i for i in coverage_compare.candidates(session) if i not in ids]
+        if not ids:
+            typer.echo("no ideas named (pass IDEA ... or --all)")
+            raise typer.Exit(code=1)
+        for idea_id in ids:
+            spec = coverage_compare.spec_for_idea(session, idea_id)
+            if spec is None:
+                typer.echo(f"{idea_id}: no spec file")
+                continue
+            end = (overlay_stage.last_run_end(session, idea_id)
+                   if data_end == "base" else None) or night.last_closed_day()
+            payload = coverage_compare.measure_idea(session, spec, data_end=end)
+            if save:
+                coverage_compare.save(payload)
+            for line in coverage_compare.lines_ru(payload):
+                typer.echo(line)
+            typer.echo(f"  ({payload['seconds']['total']:.0f} с)")
+
+
 from qlab.anomalies.cli import anomalies_app, anomaly_app  # noqa: E402 - registered last
 
 app.add_typer(anomalies_app, name="anomalies")
