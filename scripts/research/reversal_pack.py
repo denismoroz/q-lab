@@ -216,6 +216,13 @@ def _job(args):
 
     D = load(work, names, "15m", key, side, fs)
     apply = {tf: load(work, names, tf, key, side, fs) for tf in ("15m",) + LARGE}
+    # columns that are empty in the training events (the random walk has no volume, taker flow,
+    # funding or spot) are left out: the boosting cannot bin an all-missing column
+    keep = ~np.all(np.isnan(D["X"]), axis=0)
+    if not keep.all():
+        D["X"] = D["X"][:, keep]
+        for A in apply.values():
+            A["X"] = A["X"][:, keep]
     if planted is not None:
         for A in [D, *apply.values()]:
             A["y"] = rr.planted_labels(A, planted)
