@@ -239,13 +239,19 @@ def _net_job(args):
     return seed, k, p, rows
 
 
+def _init(work: Path) -> None:
+    """Each worker loads the data itself (spawned, not forked: forking after torch and OpenMP
+    were loaded hung the first run)."""
+    _D.update(load(work))
+
+
 def run(work: Path) -> None:
     t0 = time.time()
     _D.update(load(work))
     print("loaded", len(_D["tau"]), round(time.time() - t0), "s", flush=True)
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn")
     jobs = [(m, h, k) for m in ("ridge", "gbm") for h in H for k in range(-1, NULL_LIN)]
-    with ctx.Pool(12) as pool:
+    with ctx.Pool(12, initializer=_init, initargs=(work,)) as pool:
         tab = pool.map(_tab_job, jobs, chunksize=4)
     print("tables", round(time.time() - t0), "s", flush=True)
     out: dict = {"tabular": {}, "net": {}}
@@ -262,7 +268,7 @@ def run(work: Path) -> None:
                     row[part][c] = _ic(real[5], _D["y"][h], parts_of(h)[part] & (_D["coin"] == i))
             out["tabular"][f"{m} z{h}h"] = row
     net_jobs = [(s, -1) for s in SEEDS] + [(0, k) for k in range(NULL_NET)]
-    with ctx.Pool(len(net_jobs)) as pool:
+    with ctx.Pool(len(net_jobs), initializer=_init, initargs=(work,)) as pool:
         nets = pool.map(_net_job, net_jobs)
     print("nets", round(time.time() - t0), "s", flush=True)
     real_p = np.nanmean(np.stack([n[2] for n in nets if n[1] < 0]), 0)
