@@ -43,7 +43,7 @@ def prepare_data(work: Path, minutes: Path, features: str, coin: str = "BTC") ->
                        sorted((minutes / "futures" / coin).glob("*.parquet"))])
     close = close.drop_duplicates("open_time").set_index("open_time").sort_index()["close"]
     tau, pos = g["tau"], g["pos"]
-    logc = np.where(g["ok"], np.log(close.to_numpy()[np.clip(pos, 0, None)]), np.nan)
+    logc = np.where(g["valid"], np.log(close.to_numpy()[np.clip(pos, 0, None)]), np.nan)
     X = np.column_stack([g["static"], g["summ"]]).astype(np.float64)
     if features != "base":
         import sys

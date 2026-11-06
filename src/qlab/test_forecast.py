@@ -54,3 +54,25 @@ def test_standard_indicators_do_not_read_later_bars() -> None:
     head = fc.standard_features(bars.iloc[:2000])
     assert full.shape == (n, len(fc.STANDARD_NAMES)) == (n, 32)
     assert np.allclose(full[:2000], head, equal_nan=True)
+
+
+def test_the_daily_rsi_is_current_at_every_hour_and_reads_only_the_past() -> None:
+    import pandas as pd
+
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2022-01-01", periods=24 * 60, freq="h", tz="UTC")
+    c = pd.Series(100 * np.exp(np.cumsum(rng.normal(0, 0.01, len(idx)))), index=idx)
+    r = fc.rsi_daily(c, 14)
+    t = 24 * 40  # a 00:00 hour
+    c2 = c.copy()
+    c2.iloc[t] *= 1.05  # the close of this very hour moves the RSI at this hour
+    assert not np.isclose(fc.rsi_daily(c2, 14).iloc[t], r.iloc[t])
+    c3 = c.copy()
+    c3.iloc[t + 1:] *= 1.3
+    assert np.allclose(fc.rsi_daily(c3, 14).iloc[: t + 1], r.iloc[: t + 1], equal_nan=True)
+
+
+def test_winsorised_z_clips_and_keeps_missing() -> None:
+    z = np.array([-5.0, -1.0, np.nan, 2.0, 7.0])
+    w = fc.winsorised(z, 3.0)
+    assert w[0] == -3.0 and w[4] == 3.0 and w[1] == -1.0 and np.isnan(w[2])

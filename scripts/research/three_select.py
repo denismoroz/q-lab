@@ -78,10 +78,11 @@ def select(name, kind, X, y, m, tau, h, gap, rng, info=None):
                 # every 6th hour and 5 penalties: the full L1-logistic search took minutes per
                 # window (recorded in the memo as a speed change)
                 g6 = max(1, gap_rows // 6)
-                est = LogisticRegressionCV(Cs=5, cv=TimeSeriesSplit(4, gap=g6), penalty="l1",
-                                           solver="liblinear", scoring="roc_auc", tol=1e-3,
-                                           max_iter=200).fit(_std(X, m)[rows][::6],
-                                                             y[rows][::6])
+                # audit fix: a fine penalty grid and the current API (l1_ratios=[1] is L1)
+                est = LogisticRegressionCV(Cs=np.logspace(-3, 1, 20), l1_ratios=[1.0],
+                                           cv=TimeSeriesSplit(4, gap=g6), solver="saga",
+                                           scoring="roc_auc", tol=1e-3, max_iter=300).fit(
+                    _std(X, m)[rows][::6], y[rows][::6])
                 coef = est.coef_[0]
                 if info is not None:
                     info.update(C=float(np.ravel(est.C_)[0]), estimator=repr(est))
@@ -94,6 +95,28 @@ def select(name, kind, X, y, m, tau, h, gap, rng, info=None):
         if info is not None:
             info.update(estimator=repr(r), n_features=int(r.n_features_))
         return np.flatnonzero(r.support_)
+    if name == "l1rank":
+        # audit fix: the L1 penalty chosen by the folds' rank IC, not by squared error
+        from scipy.stats import spearmanr
+        from sklearn.linear_model import Lasso, lasso_path
+
+        xs = _std(X, m)[rows][::2]
+        ys = y[rows][::2]
+        if kind == "cls":
+            ys = ys - ys.mean()
+        alphas, _, _ = lasso_path(xs, ys, n_alphas=30)
+        score = np.zeros(len(alphas))
+        for tr, te in TimeSeriesSplit(4, gap=max(1, gap_rows // 2)).split(xs):
+            _, coefs, _ = lasso_path(xs[tr], ys[tr], alphas=alphas)
+            pred = xs[te] @ coefs
+            for a in range(len(alphas)):
+                if np.ptp(pred[:, a]) > 0:
+                    score[a] += spearmanr(pred[:, a], ys[te]).statistic
+        best = float(alphas[int(np.argmax(score))])
+        coef = Lasso(alpha=best, max_iter=5000).fit(xs, ys).coef_
+        if info is not None:
+            info.update(alpha=best, fold_rank_ic=[float(v / 4) for v in score])
+        return np.flatnonzero(np.abs(coef) > 0)
     if name == "sfm":
         b0 = tau[rows].max() - BLOCK
         blk = m & (tau >= b0)

@@ -108,11 +108,29 @@ def _rsi(c, n):
     return 100 - 100 / (1 + up / dn)
 
 
+def rsi_daily(c, n):
+    """RSI over closes spaced 24 hours apart and ending at each hour (a daily RSI that is current
+    at every hour; the audit found the calendar-day version one day stale at 00:00 decisions).
+    `c`: hourly closes on a regular hourly index."""
+    import pandas as pd
+
+    out = pd.Series(np.nan, index=c.index)
+    for k in range(24):
+        sub = c.iloc[k::24]
+        out.iloc[k::24] = _rsi(sub, n).to_numpy()
+    return out
+
+
+def winsorised(z: np.ndarray, limit: float = 3.0) -> np.ndarray:
+    """z clipped to [-limit, limit] (NaN kept): the fat-tailed target's declared variant."""
+    return np.clip(z, -limit, limit)
+
+
 def standard_features(bars, day_index=None) -> np.ndarray:
     """The 32 standard indicators (docs/research/forecast-pilot-standard-protocol) on hourly bars
     (`bars`: DataFrame with close, high, low, volume, indexed by the bar's open time, UTC), each
     known at the bar's close and read only from bars up to it. RSI over 14 days is computed on
-    daily closes and applied to the hours of the next day."""
+    closes 24 hours apart ending at the hour (`rsi_daily`)."""
     import pandas as pd
 
     c = bars["close"].ffill()
@@ -125,9 +143,7 @@ def standard_features(bars, day_index=None) -> np.ndarray:
     scale = c * sig * np.sqrt(26)
     cols = [macd / scale, signal / scale, (macd - signal) / scale]
     cols.append((_rsi(c, 14) - 50) / 50)
-    daily = c.groupby(c.index.floor("D")).last()
-    rsi_d = (_rsi(daily, 14) - 50) / 50
-    cols.append(pd.Series(rsi_d.shift(1).reindex(c.index.floor("D")).to_numpy(), index=c.index))
+    cols.append((rsi_daily(c, 14) - 50) / 50)
     ma, sd = c.rolling(20).mean(), c.rolling(20).std()
     cols += [(c - (ma - 2 * sd)) / (4 * sd) - 0.5, (4 * sd / ma) / (sig * np.sqrt(20))]
     tr = pd.concat([hi - lo, (hi - c.shift()).abs(), (lo - c.shift()).abs()], axis=1).max(axis=1)

@@ -64,7 +64,7 @@ def build(work: Path, minutes: Path, variant: str, coin: str = "BTC") -> dict:
     m = load_minutes(minutes, coin)
     assert len(m) == len(d["ch"]), "minute rows differ from the prepared channels"
     p = np.clip(pos, 0, None)
-    logc = np.where(d["g60"]["ok"], np.log(m["close"].to_numpy()[p]), np.nan)
+    logc = np.where(d["g60"]["valid"], np.log(m["close"].to_numpy()[p]), np.nan)
     info: dict = {}
     seq = None
     if variant == "a":
@@ -95,11 +95,28 @@ def build(work: Path, minutes: Path, variant: str, coin: str = "BTC") -> dict:
         seq = fi.bar_windows(ch, end, tau, L)
     B, b_names = fi.size_baseline(logc, tau)
     Xv = np.column_stack([base, tab]).astype(np.float64)
+    names = base_names + tab_names
+    keep, dropped = drop_duplicate_columns(Xv, names)
+    Xv, names = Xv[:, keep], [names[k] for k in keep]
+    info["dropped_duplicates"] = dropped
     labels = {(h, s): D["labels"][(h, s, K)] for h in H for s in SIDES}
     return {"d": d, "tau": tau, "pos": pos, "dates": D["dates"], "X": Xv,
-            "names": base_names + tab_names, "seq": seq, "targets": D["targets"],
+            "names": names, "seq": seq, "targets": D["targets"],
             "pasts": D["pasts"], "labels": labels, "B": B, "b_names": b_names, "logc": logc,
             "info": info}
+
+
+def drop_duplicate_columns(X: np.ndarray, names: list[str]) -> tuple[list[int], list[str]]:
+    """Positions of the columns to keep (the first of each set of identical columns) and the
+    names of the dropped copies (the audit: BTC's btc_ret7 is its ret7; imb1d is imb24)."""
+    keep, dropped = [], []
+    for j in range(X.shape[1]):
+        dup = next((k for k in keep if np.allclose(X[:, j], X[:, k], equal_nan=True)), None)
+        if dup is None:
+            keep.append(j)
+        else:
+            dropped.append(f"{names[j]} = {names[dup]}")
+    return keep, dropped
 
 
 def parts(tau: np.ndarray, h: int) -> dict:
