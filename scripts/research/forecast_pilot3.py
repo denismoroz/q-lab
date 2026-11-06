@@ -408,6 +408,61 @@ def combine(work: Path) -> None:
                       "trials": out["trials"]}, indent=1))
 
 
+def combine_extra(work: Path) -> None:
+    """The declared passes of the sign and triple-barrier targets, per coin and horizon."""
+    out: dict = {"sign": {}, "barrier": {}, "passed": []}
+    for c in COINS:
+        f = work / f"forecast3-extra-{c}.json"
+        if not f.exists():
+            continue
+        r = json.loads(f.read_text())
+        for h in H:
+            fam = max(("logit", "gbc"), key=lambda f_: r["sign"][f"{h}h {f_}"]["real"]["first"][
+                "auc"][0])
+            x, prev = r["sign"][f"{h}h {fam}"], r["sign"][f"{h}h previous sign"]
+            row: dict = {"model": fam, "previous_direction": prev["direction"]}
+            ok = True
+            for part in ("first", "last"):
+                auc_, hit = x["real"][part]["auc"], x["real"][part]["hit"]
+                pa, qa = _pct(auc_[0], x["null"][part]["auc"])
+                ph, qh = _pct(hit[0], x["null"][part]["hit"])
+                good = auc_[0] > qa and hit[0] > qh and hit[0] > prev[part]["hit"]
+                row[part] = {"auc": auc_, "auc_null_pct": pa, "auc_null_q95": qa, "hit": hit,
+                             "hit_null_pct": ph, "hit_null_q95": qh,
+                             "previous_hit": prev[part]["hit"], "pass": good}
+                ok &= good
+            row["pass"] = ok
+            out["sign"][f"{c} {h}h"] = row
+            if ok:
+                out["passed"].append(f"{c} sign {h}h")
+            for kk in (1.0, 1.5):
+                b = r["barrier"]
+                fam = max(("logit", "gbc"), key=lambda f_: np.mean(
+                    [b[f"{h}h k={kk} {s} {f_}"]["real"]["first"][0] for s in ("up", "down")]))
+                base = max(("size logit", "size gbc"), key=lambda b_: np.mean(
+                    [b[f"{h}h k={kk} {s} {b_}"]["real"]["first"][0] for s in ("up", "down")]))
+                row = {"model": fam, "baseline": base, "shares": r["shares"][f"{h}h k={kk}"]}
+                for s in ("up", "down"):
+                    row[s] = {}
+                    for part in ("first", "last"):
+                        a_ = b[f"{h}h k={kk} {s} {fam}"]["real"][part]
+                        pc, q95 = _pct(a_[0], b[f"{h}h k={kk} {s} {fam}"]["null"][part])
+                        row[s][part] = {"auc": a_, "size_auc": b[f"{h}h k={kk} {s} {base}"][
+                            "real"][part], "null_pct": pc, "null_q95": q95}
+                ud = r["updown"][f"{h}h k={kk} {fam} vs {base}"]
+                above = all(row[s][p]["auc"][0] > row[s][p]["null_q95"]
+                            for s in ("up", "down") for p in ("first", "last"))
+                vs = [ud[p]["vs_size"] for p in ("first", "last")]
+                side = all(v[1] > 0 for v in vs) or all(v[2] < 0 for v in vs)
+                row["updown"] = ud
+                row["pass"] = bool(above and side)
+                out["barrier"][f"{c} {h}h k={kk}"] = row
+                if row["pass"]:
+                    out["passed"].append(f"{c} barrier {h}h k={kk}")
+    (work / "forecast3-extra.json").write_text(json.dumps(out, indent=1))
+    print(json.dumps(out["passed"], indent=1))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", type=Path, required=True)
@@ -419,6 +474,7 @@ def main() -> None:
     a = ap.parse_args()
     if a.combine:
         combine(a.work)
+        combine_extra(a.work)
     elif a.pooled:
         run_pooled(a.work)
     elif a.extra:
