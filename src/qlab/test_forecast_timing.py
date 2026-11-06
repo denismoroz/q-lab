@@ -51,3 +51,27 @@ def test_exit_waits_for_a_high_forecast_or_the_maximum_wait() -> None:
     out = ft.delay_wish(own, ft.DelayGate(np.full(7, 0.1), entry=False, exit=True, q=0.25,
                                           wait=1), start_in_pos=True)
     assert out.tolist() == [True, True, True, False, False, False, False]
+
+
+def test_the_size_gate_without_a_forecast_is_the_books_own_wish_at_full_size() -> None:
+    own = np.array([0, 1, 1, 0, 0, 1], dtype=bool)
+    gate = ft.SizeGate(np.full(6, np.nan), None)
+    wish, share = ft.size_wish(own, gate)
+    assert np.array_equal(wish, own) and (share == 1.0).all()
+
+
+def test_the_size_moves_only_by_the_band_and_an_opening_takes_the_target() -> None:
+    own = np.array([0, 1, 1, 1, 1, 1], dtype=bool)
+    inside = np.array([0.5, 0.6, 0.7, 0.9, 0.55, 0.5])
+    wish, share = ft.size_wish(own, ft.SizeGate(inside, None, band=0.25))
+    assert wish.tolist() == own.tolist()
+    # opens at 0.6; 0.7 is inside the band; 0.9 is 0.3 away; 0.55 is 0.35 back; 0.5 stays
+    assert share[1:].tolist() == [0.6, 0.6, 0.9, 0.55, 0.55]
+
+
+def test_the_extra_hedge_opens_on_the_condition_and_is_held_for_the_hold() -> None:
+    own = np.zeros(8, dtype=bool)
+    extra = np.array([0, 1, 0, 0, 0, 0, 0, 0], dtype=bool)
+    wish, share = ft.size_wish(own, ft.SizeGate(np.full(8, np.nan), extra, beta=0.5, hold=3))
+    assert wish.tolist() == [False, True, True, True, False, False, False, False]
+    assert (share[1:4] == 0.5).all()

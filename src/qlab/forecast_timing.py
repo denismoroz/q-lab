@@ -96,4 +96,83 @@ def run_book_delay(panel, params: Mapping[str, object],
                          parts={k: frame(v) for k, v in driver.rec_parts.items()})
 
 
-__all__ = ["DelayGate", "delay_wish", "past_percentile", "run_book_delay"]
+@dataclass
+class SizeGate:
+    """The hedge's size from a forecast while Bv2 decides on/off (docs/research/
+    forecast-size-protocol-2026-11-06.md). While the book wants the hedge, the share is
+    `inside[i]` (NaN: 1); while it does not, `extra[i]` opens a hedge of `beta`, held until the
+    condition has been gone `hold` hours. The held share moves only by at least `band`; an
+    opening takes the current target. `shares` receives the share handed to the book per bar."""
+
+    inside: np.ndarray
+    extra: np.ndarray | None
+    beta: float = 0.5
+    band: float = 0.25
+    hold: int = 12
+    shares: np.ndarray = field(init=False)
+    _held: float = field(default=1.0, init=False)
+    _extra_on: bool = field(default=False, init=False)
+    _off: int = field(default=0, init=False)
+
+    def __post_init__(self) -> None:
+        self.shares = np.ones(len(self.inside))
+
+    def step(self, own: bool, in_pos: bool, i: int) -> bool:
+        if own:
+            self._extra_on, self._off = False, 0
+            target = 1.0 if np.isnan(self.inside[i]) else float(self.inside[i])
+            wish = True
+        else:
+            cond = self.extra is not None and bool(self.extra[i])
+            if cond:
+                self._extra_on, self._off = True, 0
+            elif self._extra_on:
+                self._off += 1
+                if self._off >= self.hold:
+                    self._extra_on = False
+            wish = self._extra_on
+            target = self.beta if wish else self._held
+        if wish and not in_pos:
+            self._held = target
+        elif wish and abs(target - self._held) >= self.band - 1e-12:
+            self._held = target
+        self.shares[i] = self._held
+        return wish
+
+
+def size_wish(own: np.ndarray, gate: SizeGate, start_in_pos: bool = False
+              ) -> tuple[np.ndarray, np.ndarray]:
+    """The array version of `SizeGate` (the hedge is open after a bar when the handed wish
+    was on): (wish, share) per bar."""
+    out = np.zeros(len(own), dtype=bool)
+    in_pos = bool(start_in_pos)
+    for i, w in enumerate(own):
+        out[i] = gate.step(bool(w), in_pos, i)
+        in_pos = out[i]
+    return out, gate.shares.copy()
+
+
+def run_book_size(panel, params: Mapping[str, object], gates: Mapping[str, SizeGate]
+                  ) -> hs.BookRecord:
+    """frab's book in its partial-hedge mode with a `SizeGate` per coin handing it the wish and
+    the share; a gate with no forecast hands the book's own wish and a share of 1."""
+    params = {**dict(params), "partial_hedge_share": 0.5}  # enables resizing; shares override
+    p = _bv2.B2Params.from_dict(params)
+    _bv2._require_frab_support(params)
+    driver = _DelayDriver(panel, p, None, gates=dict(gates),
+                          shares={c: g.shares for c, g in gates.items()})
+    run = driver.go()
+    index, coins = panel.prices.index, list(p.coins)
+
+    def frame(a):
+        return pd.DataFrame(a, index=index, columns=coins)
+
+    return hs.BookRecord(run=run, stepped=frame(driver.rec_stepped),
+                         in_pos=frame(driver.rec_in_pos), own=frame(driver.rec_own),
+                         hedge_acc=frame(driver.rec_acc), liquidated=frame(driver.rec_liq),
+                         counts=dict(run.counts),
+                         parts={k: frame(v) for k, v in driver.rec_parts.items()})
+
+
+__all__ = ["DelayGate", "SizeGate", "delay_wish", "past_percentile", "run_book_delay",
+           "run_book_size", "size_wish"]
