@@ -235,3 +235,41 @@ __all__ = ["NULLS", "bar_window_means", "bar_windows", "bars_from_ids", "calenda
            "clean_minutes", "day_block_source", "dollar_bar_ids", "minute_sigma",
            "minute_summaries", "other_day_source", "shuffled_labels", "size_baseline",
            "time_bar_ids", "within_day_source"]
+
+
+# ── simpler targets (pilot 3 addendum) ───────────────────────────────────────
+
+
+def past_h_sigma(logc: np.ndarray, h: int, window: int = 8760, min_obs: int = 2160
+                 ) -> np.ndarray:
+    """Standard deviation of the h-step log returns that had ENDED by each step, over the last
+    `window` steps (the scale of `forecast.z_target`)."""
+    fwd = np.full(len(logc), np.nan)
+    fwd[: len(logc) - h] = logc[h:] - logc[: len(logc) - h]
+    ended = pd.Series(fwd).shift(h)
+    return ended.rolling(window, min_periods=min_obs).std().to_numpy()
+
+
+def triple_barrier(close: np.ndarray, open_ns: np.ndarray, pos: np.ndarray, tau: np.ndarray,
+                   h: int, width: np.ndarray, chunk: int = 4000) -> np.ndarray:
+    """Per decision: +1 if the minute closes after `tau` reach log C(tau) + width before
+    log C(tau) - width within h hours, -1 for the lower barrier first, 0 if neither (time out),
+    NaN if the window has a missing minute or no width. C(tau) is the close of minute `pos`."""
+    n_min = 60 * h
+    logm = np.log(close.astype(np.float64))
+    out = np.full(len(tau), np.nan)
+    end = pos + n_min
+    ok = (pos >= 0) & (end < len(close)) & ~np.isnan(width)
+    idx_ok = np.flatnonzero(ok)
+    good = open_ns[end[idx_ok]] == tau[idx_ok] + (n_min - 1) * MINUTE
+    idx_ok = idx_ok[good]
+    steps = np.arange(1, n_min + 1)
+    for b in range(0, len(idx_ok), chunk):
+        ii = idx_ok[b:b + chunk]
+        rel = logm[pos[ii][:, None] + steps[None, :]] - logm[pos[ii]][:, None]
+        w = width[ii][:, None]
+        up, dn = rel >= w, rel <= -w
+        first_up = np.where(up.any(1), up.argmax(1), n_min)
+        first_dn = np.where(dn.any(1), dn.argmax(1), n_min)
+        out[ii] = np.where(first_up < first_dn, 1.0, np.where(first_dn < first_up, -1.0, 0.0))
+    return out

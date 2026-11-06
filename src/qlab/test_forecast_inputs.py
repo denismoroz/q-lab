@@ -111,3 +111,30 @@ def test_shuffled_labels_touch_only_the_masked_rows() -> None:
     out = fi.shuffled_labels(y, mask, tau, "other day", np.random.default_rng(4))
     assert np.array_equal(out[~mask], y[~mask])
     assert sorted(out[mask]) == sorted(y[mask])
+
+
+def test_triple_barrier_labels_the_first_touch() -> None:
+    n = 400
+    t = pd.date_range("2022-01-01", periods=n, freq="min", tz="UTC").as_unit("ns").asi8
+    close = np.full(n, 100.0)
+    close[61:70] = 100 * np.exp(0.02)  # decision at minute 60 (pos 59 is C(t)): up first
+    close[130:140] = 100 * np.exp(-0.02)  # decision at minute 120: down first
+    pos = np.array([59, 119, 239, 350])
+    tau = t[pos] + fi.MINUTE
+    width = np.array([0.01, 0.01, 0.01, 0.01])
+    lab = fi.triple_barrier(close, t, pos, tau, 1, width)
+    assert lab[0] == 1 and lab[1] == -1 and lab[2] == 0
+    assert np.isnan(lab[3])  # the window runs past the data
+    gap_t = t.copy()
+    gap_t[250:] += 5 * fi.MINUTE  # a gap inside the third window
+    assert np.isnan(fi.triple_barrier(close, gap_t, pos[2:3], tau[2:3], 1, width[2:3])[0])
+
+
+def test_the_barrier_width_reads_only_ended_returns() -> None:
+    rng = np.random.default_rng(5)
+    logc = np.cumsum(rng.normal(0, 0.01, 6000))
+    later = logc.copy()
+    later[4000:] += 3.0
+    a = fi.past_h_sigma(logc, 24, window=1000, min_obs=200)
+    b = fi.past_h_sigma(later, 24, window=1000, min_obs=200)
+    assert np.allclose(a[:4000], b[:4000], equal_nan=True)  # step 4000 itself is known at 4000

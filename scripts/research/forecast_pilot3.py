@@ -61,8 +61,9 @@ def _fit_predict(make, scaled, kind, X, m, y, sel):
     return mod.predict(xp) if kind == "reg" else mod.predict_proba(xp)[:, 1]
 
 
-def _walk(make, scaled, kind, X, tau, start, h, y, rng=None):
-    """Half-yearly walk-forward predictions; with `rng`, trained on the primary null's labels."""
+def _walk(make, scaled, kind, X, tau, start, h, y, rng=None, center=False):
+    """Half-yearly walk-forward predictions; with `rng`, trained on the primary null's labels;
+    with `center`, minus the share of positives in that half-year's training rows."""
     p = np.full(len(tau), np.nan)
     for q0, q1 in zip(RETRAINS[:-1], RETRAINS[1:], strict=True):
         m = (tau + h * HOUR + (h * HOUR + DAY) <= q0.value) & ~np.isnan(y) & (tau >= start)
@@ -71,6 +72,8 @@ def _walk(make, scaled, kind, X, tau, start, h, y, rng=None):
             continue
         yy = y if rng is None else fi.shuffled_labels(y, m, tau, "other day", rng)
         p[sel] = _fit_predict(make, scaled, kind, X, m, yy, sel)
+        if center:
+            p[sel] -= np.mean(yy[m])
     return p
 
 
@@ -164,6 +167,114 @@ def run_coin(work: Path, coin: str, variant: str) -> None:
     out["seconds"] = round(time.time() - t0)
     (work / f"forecast3-{coin}-{variant}.json").write_text(json.dumps(out, indent=1))
     print("written", coin, variant, out["seconds"], "s", flush=True)
+
+
+def _updown_stats(dates, pu, pd_, bu, bd, lu, ld, mask):
+    """(up - down) AUC of a model, and the same minus the size baseline's, with intervals."""
+    ok = mask & ~np.isnan(pu) & ~np.isnan(pd_) & ~np.isnan(bu) & ~np.isnan(bd) & ~np.isnan(lu)
+    a = [x[ok] for x in (pu, pd_, bu, bd, lu, ld)]
+
+    def model(r):
+        return fc.auc(a[0][r], a[4][r]) - fc.auc(a[1][r], a[5][r])
+
+    def vs_size(r):
+        return model(r) - (fc.auc(a[2][r], a[4][r]) - fc.auc(a[3][r], a[5][r]))
+
+    return {"up_minus_down": fp._boot(dates[ok], model),
+            "vs_size": fp._boot(dates[ok], vs_size)}
+
+
+def run_extra(work: Path, coin: str) -> None:
+    """The sign and triple-barrier targets, on the variant the coin chose for the z target."""
+    t0 = time.time()
+    variant = json.loads((work / "forecast3.json").read_text())["choice"][coin]["variant"]
+    V = fp2.build(work, MINUTES, variant, coin)
+    tau, X, B, start, dates = V["tau"], V["X"], V["B"], V["d"]["start"], V["dates"]
+    logc, pos = V["logc"], np.clip(V["pos"], 0, None)
+    m = fp2.load_minutes(MINUTES, coin)
+    close, open_ns = m["close"].to_numpy(), m.index.asi8
+    models = _models()
+    out: dict = {"coin": coin, "variant": variant, "sign": {}, "barrier": {}, "shares": {},
+                 "updown": {}}
+    for h in H:
+        parts = fp2.parts(tau, h)
+        fwd = fc.forward_return(logc, h)
+        up = np.where(np.isnan(fwd), np.nan, (fwd > 0).astype(float))
+        ysig = np.where(np.isnan(fwd), np.nan, np.where(fwd > 0, 1.0, -1.0))
+        past = logc - np.r_[np.full(h, np.nan), logc[:-h]]
+        # the previous sign, continuation or reversal chosen on the first period
+        hit1 = fc.hit_rate(past[parts["first"]], ysig[parts["first"]])
+        prev = past if hit1 >= 0.5 else -past
+        out["sign"][f"{h}h previous sign"] = {
+            "direction": "continuation" if hit1 >= 0.5 else "reversal",
+            **{part: {"hit": fc.hit_rate(prev[mk], ysig[mk]), "auc": _point("cls", prev, up, mk)}
+               for part, mk in parts.items()}}
+        for name in ("logit", "gbc"):
+            make, scaled, kind = models[name]
+            p = _walk(make, scaled, kind, X, tau, start, h, up, center=True)
+            row = {}
+            for part, mk in parts.items():
+                ok = mk & ~np.isnan(p) & ~np.isnan(up)
+                pp, yy, ys = p[ok], up[ok], ysig[ok]
+                row[part] = {"auc": fp._boot(dates[ok], lambda r, pp=pp, yy=yy: fc.auc(pp[r],
+                                                                                         yy[r])),
+                             "hit": fp._boot(dates[ok], lambda r, pp=pp, ys=ys: fc.hit_rate(
+                                 pp[r], ys[r]))}
+            draws = {part: {"auc": [], "hit": []} for part in parts}
+            for k in range(DRAWS):
+                rng = np.random.default_rng(50_000 * (1 + COINS.index(coin)) + 100 * k + h)
+                q = _walk(make, scaled, kind, X, tau, start, h, up, rng, center=True)
+                for part, mk in parts.items():
+                    ok = mk & ~np.isnan(q) & ~np.isnan(up)
+                    draws[part]["auc"].append(fc.auc(q[ok], up[ok]))
+                    draws[part]["hit"].append(fc.hit_rate(q[ok], ysig[ok]))
+            out["sign"][f"{h}h {name}"] = {"real": row, "null": draws}
+            print(coin, "sign", h, name, round(time.time() - t0), "s", flush=True)
+        sig = fi.past_h_sigma(logc, h)
+        for kk in (1.0, 1.5):
+            lab = fi.triple_barrier(close, open_ns, pos, tau, h, kk * sig)
+            first = parts["first"] & ~np.isnan(lab)
+            last = parts["last"] & ~np.isnan(lab)
+            out["shares"][f"{h}h k={kk}"] = {
+                part: {"up": float((lab[mk] == 1).mean()), "down": float((lab[mk] == -1).mean()),
+                       "timeout": float((lab[mk] == 0).mean())}
+                for part, mk in (("first", first), ("last", last))}
+            sides = {"up": np.where(np.isnan(lab), np.nan, (lab == 1).astype(float)),
+                     "down": np.where(np.isnan(lab), np.nan, (lab == -1).astype(float))}
+            preds = {}
+            for side, y in sides.items():
+                for name in ("logit", "gbc"):
+                    make, scaled, kind = models[name]
+                    p = _walk(make, scaled, kind, X, tau, start, h, y)
+                    preds[(side, name)] = p
+                    draws = {part: [] for part in parts}
+                    for k in range(DRAWS):
+                        rng = np.random.default_rng(90_000 * (1 + COINS.index(coin)) + 100 * k
+                                                    + 10 * h + int(kk * 2) + (side == "up"))
+                        q = _walk(make, scaled, kind, X, tau, start, h, y, rng)
+                        for part, mk in parts.items():
+                            draws[part].append(_point("cls", q, y, mk))
+                    out["barrier"][f"{h}h k={kk} {side} {name}"] = {
+                        "real": {part: _boot("cls", p, y, mk, dates)
+                                 for part, mk in parts.items()},
+                        "null": draws}
+                    sp = _walk(make, scaled, kind, B, tau, start, h, y)
+                    preds[(side, "size " + name)] = sp
+                    out["barrier"][f"{h}h k={kk} {side} size {name}"] = {
+                        "real": {part: _boot("cls", sp, y, mk, dates)
+                                 for part, mk in parts.items()}}
+                    print(coin, "barrier", h, kk, side, name, round(time.time() - t0), "s",
+                          flush=True)
+            for fam in ("logit", "gbc"):
+                for base in ("size logit", "size gbc"):
+                    out["updown"][f"{h}h k={kk} {fam} vs {base}"] = {
+                        part: _updown_stats(dates, preds[("up", fam)], preds[("down", fam)],
+                                            preds[("up", base)], preds[("down", base)],
+                                            sides["up"], sides["down"], mk)
+                        for part, mk in parts.items()}
+    out["seconds"] = round(time.time() - t0)
+    (work / f"forecast3-extra-{coin}.json").write_text(json.dumps(out, indent=1))
+    print("written extra", coin, out["seconds"], "s", flush=True)
 
 
 def run_pooled(work: Path) -> None:
@@ -303,12 +414,15 @@ def main() -> None:
     ap.add_argument("--coin", choices=COINS)
     ap.add_argument("--variant", choices=VARIANTS)
     ap.add_argument("--pooled", action="store_true")
+    ap.add_argument("--extra", action="store_true", help="the sign and triple-barrier targets")
     ap.add_argument("--combine", action="store_true")
     a = ap.parse_args()
     if a.combine:
         combine(a.work)
     elif a.pooled:
         run_pooled(a.work)
+    elif a.extra:
+        run_extra(a.work, a.coin)
     else:
         run_coin(a.work, a.coin, a.variant)
 
