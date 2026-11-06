@@ -174,7 +174,7 @@ def run_books(work: Path, procs: int) -> None:
             continue
         book, use, zh = key.split()
         coin = book.split("@")[0]
-        _, _, _, _, kind, x, y = n.split()
+        _, _, _, kind, x, y = n.split()
         x, y = float(x), float(y)
         for ic in ICS:
             for seed in range(SEEDS):
