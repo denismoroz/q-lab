@@ -67,13 +67,17 @@ def select(name, kind, X, y, m, tau, h, gap, rng):
         g2 = max(1, gap_rows // 2)
         if name == "l1":
             if kind == "reg":
-                est = LassoCV(cv=TimeSeriesSplit(4, gap=g2), n_alphas=20, max_iter=2000,
+                est = LassoCV(cv=TimeSeriesSplit(4, gap=g2), alphas=20, max_iter=2000,
                               random_state=0).fit(xs, ys)
                 coef = est.coef_
             else:
-                est = LogisticRegressionCV(Cs=8, cv=TimeSeriesSplit(4, gap=g2), penalty="l1",
-                                           solver="liblinear", scoring="roc_auc",
-                                           max_iter=200).fit(xs, ys)
+                # every 6th hour and 5 penalties: the full L1-logistic search took minutes per
+                # window (recorded in the memo as a speed change)
+                g6 = max(1, gap_rows // 6)
+                est = LogisticRegressionCV(Cs=5, cv=TimeSeriesSplit(4, gap=g6), penalty="l1",
+                                           solver="liblinear", scoring="roc_auc", tol=1e-3,
+                                           max_iter=200).fit(_std(X, m)[rows][::6],
+                                                             y[rows][::6])
                 coef = est.coef_[0]
             return np.flatnonzero(np.abs(coef) > 0)
         est = Ridge(alpha=10) if kind == "reg" else LogisticRegression(C=0.1, max_iter=300)
