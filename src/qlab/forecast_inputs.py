@@ -273,3 +273,73 @@ def triple_barrier(close: np.ndarray, open_ns: np.ndarray, pos: np.ndarray, tau:
         first_dn = np.where(dn.any(1), dn.argmax(1), n_min)
         out[ii] = np.where(first_up < first_dn, 1.0, np.where(first_dn < first_up, -1.0, 0.0))
     return out
+
+
+# ── lead-lag features and the minute-horizon target (three checks) ──────────
+
+LEAD_WINDOWS = (1, 5, 15, 30, 60, 240)
+
+
+def minute_z_target(close: np.ndarray, open_ns: np.ndarray, pos: np.ndarray, k: int,
+                    window: int = 8760, min_obs: int = 2160) -> tuple[np.ndarray, np.ndarray]:
+    """Per decision at minute `pos` (its close is C(t)): z of the next k-minute log return and
+    of the k minutes before, scaled by the mean and deviation of the k-minute returns that had
+    ended at the past `window` decisions. NaN across a gap in the minutes."""
+    logm = np.log(close.astype(np.float64))
+    n = len(close)
+    fwd = np.full(len(pos), np.nan)
+    past = np.full(len(pos), np.nan)
+    ok_f = (pos >= 0) & (pos + k < n)
+    i = np.flatnonzero(ok_f)
+    good = open_ns[pos[i] + k] == open_ns[pos[i]] + k * MINUTE
+    fwd[i[good]] = logm[pos[i[good]] + k] - logm[pos[i[good]]]
+    ok_p = pos - k >= 0
+    i = np.flatnonzero(ok_p)
+    good = open_ns[pos[i]] == open_ns[pos[i] - k] + k * MINUTE
+    past[i[good]] = logm[pos[i[good]]] - logm[pos[i[good]] - k]
+    s = pd.Series(past)
+    mu = s.rolling(window, min_periods=min_obs).mean().to_numpy()
+    sd = s.rolling(window, min_periods=min_obs).std().to_numpy()
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return (fwd - mu) / sd, (past - mu) / sd
+
+
+def leader_features(alt: pd.DataFrame, lead: pd.DataFrame, pos: np.ndarray, name: str,
+                    windows=LEAD_WINDOWS) -> tuple[np.ndarray, list[str]]:
+    """At the alt's decision minute `pos` (inclusive): the leader's log return over the last k
+    minutes in units of its past-day minute sigma times sqrt(k), the leader's taker-buy
+    imbalance over them, and the alt's residual return (its return minus beta times the
+    leader's, beta from the past 720 hourly decisions) in units of its own sigma. Past only."""
+    ia = pd.DatetimeIndex(alt.index).as_unit("ns").asi8
+    il = pd.DatetimeIndex(lead.index).as_unit("ns").asi8
+    p = np.clip(pos, 0, None)
+    lp = np.searchsorted(il, ia[p])
+    match = (pos >= 0) & (lp < len(il)) & (il[np.clip(lp, 0, len(il) - 1)] == ia[p])
+    lp = np.where(match, lp, 0)
+    la = np.log(alt["close"].to_numpy(dtype=np.float64))
+    ll = np.log(lead["close"].to_numpy(dtype=np.float64))
+    sa = minute_sigma(alt["close"]).to_numpy()
+    sl = minute_sigma(lead["close"]).to_numpy()
+    cb = np.r_[0.0, np.cumsum(lead["taker_buy_base"].to_numpy(dtype=np.float64))]
+    cv = np.r_[0.0, np.cumsum(lead["volume"].to_numpy(dtype=np.float64))]
+    # beta of the alt's hourly return on the leader's, over the past 720 decisions
+    ra = np.where((p >= 60) & match, la[p] - la[np.clip(p - 60, 0, None)], np.nan)
+    rl = np.where((lp >= 60) & match, ll[lp] - ll[np.clip(lp - 60, 0, None)], np.nan)
+    sra, srl = pd.Series(ra), pd.Series(rl)
+    beta = (sra.rolling(720, min_periods=240).cov(srl)
+            / srl.rolling(720, min_periods=240).var()).to_numpy()
+    cols, names = [], []
+    for k in windows:
+        okl = match & (lp - k >= 0)
+        oka = (pos - k >= 0)
+        r_l = np.where(okl, ll[lp] - ll[np.clip(lp - k, 0, None)], np.nan)
+        r_a = np.where(oka, la[p] - la[np.clip(p - k, 0, None)], np.nan)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cols.append(np.clip(r_l / (sl[lp] * np.sqrt(k)), -10, 10))
+            vol = cv[lp + 1] - cv[np.clip(lp + 1 - k, 0, None)]
+            imb = (cb[lp + 1] - cb[np.clip(lp + 1 - k, 0, None)]) / vol - 0.5
+            cols.append(np.where(okl & (vol > 0), np.clip(imb, -0.5, 0.5), np.nan))
+            cols.append(np.clip((r_a - beta * r_l) / (sa[p] * np.sqrt(k)), -10, 10))
+        names += [f"{name}_ret{k}", f"{name}_imb{k}", f"res_{name}_{k}"]
+    x = np.column_stack(cols)
+    return np.nan_to_num(x, nan=np.nan, posinf=np.nan, neginf=np.nan), names

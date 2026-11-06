@@ -138,3 +138,27 @@ def test_the_barrier_width_reads_only_ended_returns() -> None:
     a = fi.past_h_sigma(logc, 24, window=1000, min_obs=200)
     b = fi.past_h_sigma(later, 24, window=1000, min_obs=200)
     assert np.allclose(a[:4000], b[:4000], equal_nan=True)  # step 4000 itself is known at 4000
+
+
+def test_leader_features_read_only_minutes_up_to_the_decision() -> None:
+    alt, lead = _minutes(5 * 1440, seed=7), _minutes(5 * 1440, seed=8)
+    cut = 4 * 1440 + 3
+    alt2, lead2 = _later_changed(alt, cut), _later_changed(lead, cut)
+    pos = np.arange(1500, cut, 60)  # decision minutes before the first changed one
+    a, names = fi.leader_features(alt, lead, pos, "L")
+    b, _ = fi.leader_features(alt2, lead2, pos, "L")
+    assert len(names) == a.shape[1] == 18
+    assert np.allclose(a, b, equal_nan=True)
+
+
+def test_the_minute_target_scaling_reads_only_ended_returns() -> None:
+    m = _minutes(30 * 1440, seed=9)
+    close, open_ns = m["close"].to_numpy(), m.index.asi8
+    pos = np.arange(59, len(m) - 20, 60)
+    z, past = fi.minute_z_target(close, open_ns, pos, 15, window=200, min_obs=50)
+    close2 = close.copy()
+    close2[20 * 1440:] *= 1.3
+    z2, past2 = fi.minute_z_target(close2, open_ns, pos, 15, window=200, min_obs=50)
+    k = np.searchsorted(pos, 20 * 1440 - 16)  # decisions whose next 15 minutes end before
+    assert np.allclose(z[:k], z2[:k], equal_nan=True)
+    assert np.allclose(past[:k], past2[:k], equal_nan=True)
