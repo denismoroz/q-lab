@@ -138,7 +138,7 @@ def _map_job(args):
     for part in out:
         X, fs = out[part].pop("_X"), out[part].pop("_fwd")
         call = np.sign(X - med1) * sgn
-        ok = (call != 0) & (fs != 0)
+        ok = (call != 0) & (fs[:, None] != 0)
         out[part]["hit"] = [float(np.mean((call[:, j] == fs)[ok[:, j]])) for j in range(X.shape[1])]
         out[part].pop("fwd_sign")
     return coin, target, out
