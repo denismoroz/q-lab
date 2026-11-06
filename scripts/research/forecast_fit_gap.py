@@ -64,7 +64,7 @@ def walk_with_fit(make, scaled, kind, X, tau, start, h, y, rng=None, center=Fals
             lambda a, b: fc.auc(a, b))
         row = {"retrain": str(q0.date()), "train_rows": int(m.sum()),
                "in_sample": score(pred(xt), yy[m])}
-        if hasattr(mod, "n_iter_"):
+        if hasattr(mod, "do_early_stopping_"):
             row["trees_kept_of_200"] = int(mod.n_iter_)
             if getattr(mod, "do_early_stopping_", False):
                 val = _inner_split(len(xt), yy[m], kind == "cls")
