@@ -56,3 +56,39 @@ def test_bar_features_read_only_bars_up_to_them() -> None:
     f2 = rv.bar_features(b2, rv.bar_sigma(b2["close"].to_numpy()))
     assert f.shape[1] == len(rv.FEATURE_NAMES) - 7
     assert np.allclose(f[:1000], f2[:1000], equal_nan=True)
+
+
+def _minute_frame(n: int, seed: int) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2022-01-01", periods=n, freq="min", tz="UTC").as_unit("ns")
+    c = 100 * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
+    o = np.r_[c[0], c[:-1]]
+    v = rng.uniform(1, 10, n)
+    return pd.DataFrame({"open": o, "high": np.maximum(o, c) * 1.0003,
+                         "low": np.minimum(o, c) * 0.9997, "close": c, "volume": v,
+                         "trades": rng.integers(5, 50, n).astype(float),
+                         "taker_buy_base": v * rng.uniform(0.3, 0.7, n)}, index=idx)
+
+
+def test_the_reversal_pack_reads_only_bars_up_to_the_event() -> None:
+    m = _minute_frame(30 * 1440, 6)
+    cut = 25 * 1440  # minutes from here on change
+    m2 = m.copy()
+    for col in ("open", "high", "low", "close", "volume", "taker_buy_base"):
+        m2.iloc[cut:, m2.columns.get_loc(col)] *= 1.3
+
+    def pack(frame):
+        b = rv.make_bars(frame, 15)
+        c = b["close"].to_numpy()
+        s = rv.bar_sigma(c)
+        ev = rv.wave_events(c, s, 0.5, 1.5)
+        bf = rv.bar_features(b, s)
+        f = (np.zeros(len(b)), np.zeros(len(b)))
+        x = rv.reversal_pack(b, ev, s, bf, f, np.zeros(len(b)), np.zeros((len(ev["bar"]), 4)))
+        return x, b["end"].to_numpy()[ev["bar"].astype(int)]
+
+    x, end = pack(m)
+    x2, _ = pack(m2)
+    k = int(np.sum(end <= m.index.asi8[cut]))
+    assert x.shape[1] == len(rv.PACK_NAMES) and k > 20
+    assert np.allclose(x[:k], x2[:k], equal_nan=True)
