@@ -23,7 +23,7 @@ HOUR = 3_600_000_000_000
 DAY = 24 * HOUR
 BLOCK = 8 * 7 * DAY
 NULL_LIN = 50
-NULL_NET = 10
+NULL_NET = 5  # shrunk from the declared 10: the net would take over an hour (declared rule)
 SEEDS = (0, 1, 2)
 _D: dict = {}
 
@@ -145,12 +145,12 @@ class Net:
         return M()
 
 
-def walk_net(seed: int, rng=None, epochs: int = 10, patience: int = 2, stride: int = 2):
+def walk_net(seed: int, rng=None, epochs: int = 8, patience: int = 2, stride: int = 4):
     import torch
 
     from qlab import forecast as fc
 
-    torch.set_num_threads(4)
+    torch.set_num_threads(1)
     X, seq, tau = _D["X"], _D["seq"], _D["tau"]
     Y = np.column_stack([_D["y"][h] for h in H])
     hz = np.array(H)
