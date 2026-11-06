@@ -58,11 +58,19 @@ def main() -> None:
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--minutes", type=Path, default=Path("/Users/d/prj/q-lab/data/raw/binance/1m"))
     ap.add_argument("--variant")
+    ap.add_argument("--coin", help="pilot 3: the coin; the variant defaults to its choice in "
+                    "DIR/forecast3.json and the output is DIR/forecast3-select-<coin>.json")
     a = ap.parse_args()
     t0 = time.time()
-    variant = a.variant or json.loads((a.work / "forecast2.json").read_text())["choice"][
-        "variant"]
-    V = fp2.build(a.work, a.minutes, variant)
+    if a.coin:
+        variant = a.variant or json.loads((a.work / "forecast3.json").read_text())["choice"][
+            a.coin]["variant"]
+        dest = a.work / f"forecast3-select-{a.coin}.json"
+    else:
+        variant = a.variant or json.loads((a.work / "forecast2.json").read_text())["choice"][
+            "variant"]
+        dest = a.work / "forecast2-select.json"
+    V = fp2.build(a.work, a.minutes, variant, a.coin or "BTC")
     tau, d = V["tau"], V["d"]
     extra, extra_names = fi.calendar_and_size(V["logc"], tau)
     X = np.column_stack([V["X"], extra])
@@ -195,7 +203,8 @@ def main() -> None:
     out["trials"] = {"configurations": len(TARGETS) * (1 + 5 + n_cl + 2),
                      "fits": len(TARGETS) * (len(FOLDS) + 5 + n_cl * len(FOLDS) + 20)}
     out["seconds"] = round(time.time() - t0)
-    (a.work / "forecast2-select.json").write_text(json.dumps(out, indent=1, default=str))
+    out["coin"] = a.coin or "BTC"
+    dest.write_text(json.dumps(out, indent=1, default=str))
     print("written", out["seconds"], "s")
 
 
