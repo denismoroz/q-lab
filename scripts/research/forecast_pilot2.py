@@ -37,11 +37,11 @@ SEQ_LEN = {"a": mm.WINDOW, "c": 96, "d": 168, "e": 96}
 HOUR, DAY = fp.HOUR, fp.DAY
 
 
-def load_minutes(minutes: Path) -> pd.DataFrame:
+def load_minutes(minutes: Path, coin: str = "BTC") -> pd.DataFrame:
     cols = ["open_time", "high", "low", "close", "volume", "quote_volume", "trades",
             "taker_buy_base"]
     m = pd.concat([pd.read_parquet(f, columns=cols)
-                   for f in sorted((minutes / "futures" / "BTC").glob("*.parquet"))])
+                   for f in sorted((minutes / "futures" / coin).glob("*.parquet"))])
     m = m.drop_duplicates("open_time").set_index("open_time").sort_index()
     m.index = pd.DatetimeIndex(m.index).as_unit("ns")
     return m
@@ -54,14 +54,14 @@ def dollar_amount(m: pd.DataFrame) -> float:
     return float(2 * hourly.median())
 
 
-def build(work: Path, minutes: Path, variant: str) -> dict:
+def build(work: Path, minutes: Path, variant: str, coin: str = "BTC") -> dict:
     """The common base (21 wave + 32 standard features), the variant's fast input for the tables
     and its sequence for the TCN (None for b), the targets, the classes and the size baseline."""
-    D = fp.prepare_data(work, minutes, "std")
+    D = fp.prepare_data(work, minutes, "std", coin)
     d, tau, pos, X = D["d"], D["tau"], D["pos"], D["X"]
     base = np.column_stack([X[:, :21], X[:, 26:]])
     base_names = D["names"][:21] + D["names"][26:]
-    m = load_minutes(minutes)
+    m = load_minutes(minutes, coin)
     assert len(m) == len(d["ch"]), "minute rows differ from the prepared channels"
     p = np.clip(pos, 0, None)
     logc = np.where(d["g60"]["ok"], np.log(m["close"].to_numpy()[p]), np.nan)

@@ -33,14 +33,14 @@ def _boot(dates, stat):
     return hf.block_bootstrap(dates, stat, block_days=30, draws=300)
 
 
-def prepare_data(work: Path, minutes: Path, features: str) -> dict:
+def prepare_data(work: Path, minutes: Path, features: str, coin: str = "BTC") -> dict:
     """The decision grid, features, targets and classes of one feature set (the names of
     the features in `names`)."""
-    with open(work / "ml" / "BTC.pkl", "rb") as fh:
+    with open(work / "ml" / f"{coin}.pkl", "rb") as fh:
         d = pickle.load(fh)
     g = d["g60"]
     close = pd.concat([pd.read_parquet(f, columns=["open_time", "close"]) for f in
-                       sorted((minutes / "futures" / "BTC").glob("*.parquet"))])
+                       sorted((minutes / "futures" / coin).glob("*.parquet"))])
     close = close.drop_duplicates("open_time").set_index("open_time").sort_index()["close"]
     tau, pos = g["tau"], g["pos"]
     logc = np.where(g["ok"], np.log(close.to_numpy()[np.clip(pos, 0, None)]), np.nan)
@@ -56,7 +56,7 @@ def prepare_data(work: Path, minutes: Path, features: str) -> dict:
         else:  # the standard set on hourly bars built from the minutes
             m = pd.concat([pd.read_parquet(f, columns=["open_time", "high", "low", "close",
                                                        "volume"])
-                           for f in sorted((minutes / "futures" / "BTC").glob("*.parquet"))])
+                           for f in sorted((minutes / "futures" / coin).glob("*.parquet"))])
             m = m.drop_duplicates("open_time").set_index("open_time").sort_index()
             hb = m.groupby(m.index.floor("h")).agg(
                 {"high": "max", "low": "min", "close": "last", "volume": "sum"})
