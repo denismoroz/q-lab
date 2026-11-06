@@ -198,7 +198,7 @@ def _run(job):
                                    exit=kind in ("exit", "both"), q=q, wait=wait)
     rec = ft.run_book_delay(panel, params, gates)
     m, r = money(rec, panel, capital)
-    return m, r.to_numpy(), r.index.asi8
+    return m, r
 
 
 def run_books(work: Path, procs: int) -> None:
@@ -229,6 +229,13 @@ def run_books(work: Path, procs: int) -> None:
     idx2 = books["BTC+AVAX"][0].prices.index
     assert idx2.equals(books["BTC"][0].prices.index), "the two-coin index differs from BTC's"
     _G.update(books=books, pct=pct)
+    coverage = {}
+    for k, v in pct.items():
+        if k.endswith("_real"):
+            coin = k.split("_")[1]
+            idx = books[coin][0].prices.index
+            coverage[k] = float(np.mean(~np.isnan(v[idx >= FIRST0 + pd.Timedelta(days=35)])))
+    print("hint coverage after 2022-02", coverage, flush=True)
     print("panels and percentiles", round(time.time() - t0), "s", flush=True)
 
     ctx = mp.get_context("fork")
@@ -241,8 +248,7 @@ def run_books(work: Path, procs: int) -> None:
     with ctx.Pool(procs) as pool:
         got = pool.map(_run, jobs)
     res = {n: g[0] for n, g in zip(names, got, strict=True)}
-    ret = {n: pd.Series(g[1], index=pd.DatetimeIndex(g[2], tz="UTC"))
-           for n, g in zip(names, got, strict=True)}
+    ret = {n: g[1] for n, g in zip(names, got, strict=True)}
     print("variants", len(jobs), round(time.time() - t0), "s", flush=True)
 
     # choice on the first period, per coin
@@ -288,7 +294,7 @@ def run_books(work: Path, procs: int) -> None:
         got = pool.map(_run, jobs2)
     for n, g in zip(names2, got, strict=True):
         res[n] = g[0]
-        ret[n] = pd.Series(g[1], index=pd.DatetimeIndex(g[2], tz="UTC"))
+        ret[n] = g[1]
     print("placebos and two-coin book", len(jobs2), round(time.time() - t0), "s", flush=True)
 
     # judgement on the last third
@@ -314,7 +320,7 @@ def run_books(work: Path, procs: int) -> None:
                        "placebo_gain_ann_last": plac, "drawdown_ok": bool(dd_ok),
                        "pass": bool(g_ann > 0 and g_p is not None and g_p < 0.05 and dd_ok
                                     and all(g_ann > x for x in plac))}
-    out = {"results": res, "choice": choice, "judge": judge,
+    out = {"results": res, "choice": choice, "judge": judge, "coverage": coverage,
            "trials": {"variants": len(GRID) * len(SERIES), "productions": 4,
                       "placebos": sum(1 for n in names2 if "placebo" in n),
                       "two_coin_chosen": sum(int(bool(v)) for v in two_of.values())},
