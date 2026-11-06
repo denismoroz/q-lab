@@ -42,8 +42,9 @@ def _gbm(kind, **kw):
                validation_fraction=None, **kw)
 
 
-def select(name, kind, X, y, m, tau, h, gap, rng):
-    """Feature columns kept by selector `name`, from the training rows `m` only."""
+def select(name, kind, X, y, m, tau, h, gap, rng, info=None):
+    """Feature columns kept by selector `name`, from the training rows `m` only; `info`, when
+    given, receives what was fitted (the chosen penalty, the objects as instantiated)."""
     from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
     from sklearn.feature_selection import (
         RFECV,
@@ -70,6 +71,9 @@ def select(name, kind, X, y, m, tau, h, gap, rng):
                 est = LassoCV(cv=TimeSeriesSplit(4, gap=g2), alphas=20, max_iter=2000,
                               random_state=0).fit(xs, ys)
                 coef = est.coef_
+                if info is not None:
+                    info.update(alpha=float(est.alpha_), estimator=repr(est),
+                                alpha_grid=[float(est.alphas_.max()), float(est.alphas_.min())])
             else:
                 # every 6th hour and 5 penalties: the full L1-logistic search took minutes per
                 # window (recorded in the memo as a speed change)
@@ -79,12 +83,16 @@ def select(name, kind, X, y, m, tau, h, gap, rng):
                                            max_iter=200).fit(_std(X, m)[rows][::6],
                                                              y[rows][::6])
                 coef = est.coef_[0]
+                if info is not None:
+                    info.update(C=float(np.ravel(est.C_)[0]), estimator=repr(est))
             return np.flatnonzero(np.abs(coef) > 0)
         est = Ridge(alpha=10) if kind == "reg" else LogisticRegression(C=0.1, max_iter=300)
         scoring = (make_scorer(lambda a, b: fc.pearson(np.asarray(b), np.asarray(a)))
                    if kind == "reg" else "roc_auc")
         r = RFECV(est, step=4, cv=TimeSeriesSplit(3, gap=g2), scoring=scoring,
                   min_features_to_select=1).fit(xs, ys)
+        if info is not None:
+            info.update(estimator=repr(r), n_features=int(r.n_features_))
         return np.flatnonzero(r.support_)
     if name == "sfm":
         b0 = tau[rows].max() - BLOCK
@@ -95,6 +103,8 @@ def select(name, kind, X, y, m, tau, h, gap, rng):
                                      scoring="r2" if kind == "reg" else "roc_auc")
         sfm = SelectFromModel(mod, prefit=True, threshold="mean",
                               importance_getter=lambda _e: imp.importances_mean)
+        if info is not None:
+            info.update(estimator=repr(sfm), threshold=float(np.mean(imp.importances_mean)))
         return np.flatnonzero(sfm.get_support())
     xm = np.where(np.isnan(X[rows]), np.nanmedian(X[rows], 0), X[rows])
     ym = y[rows]
