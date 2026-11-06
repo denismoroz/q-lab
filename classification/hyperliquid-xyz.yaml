@@ -17,6 +17,7 @@ annotation_snapshots:
 - '2026-11-03'
 - '2026-11-04'
 - '2026-11-05'
+- '2026-11-06'
 sources:
   annotation:
     url: https://api.hyperliquid.xyz/info
@@ -1601,6 +1602,17 @@ instruments:
         A Perpetual Stretch Preferred Stock (Nasdaq: STRC), quoted in USD. Stretch,
         the underlying security, pays cumulative monthly cash dividends at a variable
         rate on a $100...'
+  xyz:STX:
+    listed_from: '2026-11-06'
+    listed_from_basis: first_listing_snapshot
+    delisted_since: '2026-11-06'
+    delisted_basis: seen_delisted
+    history:
+    - valid_from: '2026-11-06'
+      observed_on: '2026-11-06'
+      asset_class: unclassified
+      class_key: unclassified
+      note: the venue serves no annotation
   xyz:TLT:
     listed_from: '2026-09-17'
     listed_from_basis: first_candle

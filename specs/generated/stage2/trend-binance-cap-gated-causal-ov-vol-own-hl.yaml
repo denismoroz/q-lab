@@ -1,0 +1,411 @@
+# Stage 2 of trend-binance-cap-gated-causal-ov-vol-own (qlab.pipeline.stage2, docs/TWO_STAGE.md): made by code from
+# the stage 1 spec. The parameter values are stage 1's, untouched; do not edit by hand.
+idea_id: trend-binance-cap-gated-causal-ov-vol-own-hl
+title: 'Trend по капитализации на Binance 2019–2026, торгует только на росте и падении (определитель режима
+  только по прошлому): числа выбирает код раз в месяц только по прошлому, история Binance с 2019: надстройки
+  — уменьшать размер, когда собственные результаты стали неспокойнее обычного + размер по собственным
+  недавним результатам (второй этап: hyperliquid)'
+code_ref: qlab.strategies.retune:Retune
+params:
+  inner_code_ref: qlab.strategies.overlays:Overlaid
+  base_params:
+    inner_code_ref: qlab.strategies.retune:Retune
+    inner_params:
+      inner_code_ref: qlab.strategies.regime_gate:RegimeGate
+      base_params:
+        inner_code_ref: qlab.strategies.live.trend:LiveTrendTSMOMEnsemble
+        inner_params:
+          coins: null
+          top_k_by_market_cap: 25
+          exclude_tags:
+          - stablecoin
+          top_k_requires_history: true
+          capital_usd: 3000.0
+          lookbacks:
+          - 30
+          - 60
+          - 90
+          - 120
+          vol_window: 30
+          vol_target_daily: 0.02
+          leverage_cap: 3.0
+          risk_scale: 0.2
+          book_vol_target_ann: 0.14
+          book_vol_window_days: 60
+          book_vol_min_days: 20
+          book_vol_scale_min: 0.25
+          book_vol_scale_max: 2.0
+          book_vol_prior_ann: 0.3
+          min_history_days: 151
+      grid:
+        gate:
+          always:
+            trade_in:
+            - bull
+            - flat
+            - bear
+          only_bull_bear:
+            trade_in:
+            - bull
+            - bear
+      refit_every: M
+      window: expanding
+      objective: sharpe_net
+      score_costs:
+        taker_fee_bps: 5
+        slippage_bps: 0.9
+    overlays: []
+    costs:
+      taker_fee_bps: 5.0
+      slippage_bps: 0.9
+  grid:
+    overlay:
+      vol_target:d30-max1+own_results:w14-f0-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.0
+            mode: step
+            up_days: 1
+      vol_target:d30-max1+own_results:w14-f0-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.0
+            mode: smooth
+            up_days: 1
+      vol_target:d30-max1+own_results:w14-f0.5-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.5
+            mode: step
+            up_days: 1
+      vol_target:d30-max1+own_results:w14-f0.5-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.5
+            mode: smooth
+            up_days: 1
+      vol_target:d30-max1+own_results:w60-f0-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.0
+            mode: step
+            up_days: 1
+      vol_target:d30-max1+own_results:w60-f0-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.0
+            mode: smooth
+            up_days: 1
+      vol_target:d30-max1+own_results:w60-f0.5-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.5
+            mode: step
+            up_days: 1
+      vol_target:d30-max1+own_results:w60-f0.5-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 30
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.5
+            mode: smooth
+            up_days: 1
+      vol_target:d90-max1+own_results:w14-f0-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.0
+            mode: step
+            up_days: 1
+      vol_target:d90-max1+own_results:w14-f0-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.0
+            mode: smooth
+            up_days: 1
+      vol_target:d90-max1+own_results:w14-f0.5-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.5
+            mode: step
+            up_days: 1
+      vol_target:d90-max1+own_results:w14-f0.5-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 14
+            floor: 0.5
+            mode: smooth
+            up_days: 1
+      vol_target:d90-max1+own_results:w60-f0-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.0
+            mode: step
+            up_days: 1
+      vol_target:d90-max1+own_results:w60-f0-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.0
+            mode: smooth
+            up_days: 1
+      vol_target:d90-max1+own_results:w60-f0.5-step-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.5
+            mode: step
+            up_days: 1
+      vol_target:d90-max1+own_results:w60-f0.5-smooth-up1:
+        overlays:
+        - name: vol_target
+          params:
+            lookback_days: 90
+            max_scale: 1.0
+        - name: own_results
+          params:
+            window_days: 60
+            floor: 0.5
+            mode: smooth
+            up_days: 1
+  refit_every: M
+  window: expanding
+  objective: sharpe_net
+  score_costs:
+    taker_fee_bps: 5.0
+    slippage_bps: 0.9
+data:
+  source: hyperliquid
+  interval: 1d
+  include_spot: false
+  spot_prices: perp
+  start: '2025-01-01'
+  end: '2026-11-05'
+  min_daily_volume_usd: 1000000.0
+costs:
+  taker_fee_bps: 4.5
+  slippage_bps: 0.9
+min_leg_notional: 10.0
+simultaneous_legs: 1
+unexpressed_mechanisms: []
+differs_from_source:
+- 'Causal twin of trend-binance-cap-gated: the numbers it trades are chosen by code, every month, from
+  returns realised before the choice (the base trend-binance-cap against its regime-gated experiment);
+  the data is Binance''s history, a proxy for binance''s market, with the original''s costs and minimum
+  leg.'
+- 'Venue split (2026-10-30, docs/VENUE_SPLIT.md): this spec is judged for Binance itself. Its costs are
+  the binance row of night/costs.yaml, its minimum leg is Binance''s (venues/binance.yaml, per contract
+  where Binance states it), and the facts about execution (venue_supported, atomic_execution) are Binance''s:
+  a run that passes every rule routes needs-infrastructure because the lab has no Binance order adapter.
+  Text above that speaks of the original''s or Hyperliquid''s costs and minimum leg describes the spec
+  as it was before that day.'
+- 'Overlay variant of trend-binance-cap-gated-causal (qlab.overlay_variants, docs/OVERLAYS.md): the same
+  strategy with vol_target, own_results applied to its target weights; the strategy''s own numbers are
+  untouched. The numbers of the overlays are chosen by code every month from the past only.'
+- 'Stage 2 of the evaluation (docs/TWO_STAGE.md): the same mechanism and the same parameter values as
+  stage 1 (trend-binance-cap-gated-causal-ov-vol-own) on hyperliquid''s own perpetual contracts listed
+  at each bar; nothing was refitted.'
+- The costs are hyperliquid's (published base-tier taker fee, frab's slippage estimate), not stage 1's.
+- A coin is traded on a day only with at least $1,000,000 of daily volume, the floor hyperliquid's live
+  engine uses; stage 1 had no floor.
+- The minimum leg is hyperliquid's own, $10 (venues/hyperliquid.yaml), not stage 1's $5.
+noise_universe: panel
+measure_hedge_timing: false
+params_fixed_at: '2020-11-01'
+params_fixed_evidence: 'Inherited from stage 1 (trend-binance-cap-gated-causal-ov-vol-own): The wrapper''s
+  first causal choice (qlab.strategies.retune, docs/RETUNE.md): the base can first trade on 2020-04-01;
+  the longest warm-up of the overlay family (vol_target, own_results) is 180 days, so the overlay can
+  first act on 2020-09-28; a candidate is eligible only after one whole month re-tuning period, so the
+  first re-tuning after 2020-09-28 is 2020-10-01 and the first choice is made at the one after it, 2020-11-01.
+  The family is declared whole in docs/OVERLAYS.md before any run: 16 candidates, none chosen by looking
+  at the data it is judged on. What this does not prove: the family itself (which overlays and which settings
+  are offered) was written by people who had seen the market.'
+sources:
+  strategy_capital_usd: 'the spec''s own parameter base_params.inner_params.capital_usd = 3000: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)'
+  base_params.inner_params.refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named
+    «раз в неделю/день или месяц»'
+  base_params.inner_params.window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  base_params.inner_params.objective: docs/RETUNE.md (Sharpe after costs)
+  data.start: 'docs/VENUES.md: Binance USDT perpetuals, «свечи с 2019-09-08 (первый день в архиве лаборатории)»'
+  data.end: 'specs/trend-binance-cap-gated.yaml: the same window end'
+  base_params.inner_params.base_params.inner_params.top_k_by_market_cap: 'docs/COIN_ATTRIBUTES.md (rule
+    declared 2026-10-02: 25 largest, stablecoins excluded)'
+  base_params.inner_params.base_params.inner_params.exclude_tags: 'docs/COIN_ATTRIBUTES.md (rule declared
+    2026-10-02: 25 largest, stablecoins excluded)'
+  base_params.inner_params.base_params.inner_params.top_k_requires_history: docs/TREND_LIVE_REPLAY.md
+    (the 151-day rule, owner 2026-10-02)
+  base_params.inner_params.base_params.inner_params.coins: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.capital_usd: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.lookbacks: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.vol_window: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.vol_target_daily: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.leverage_cap: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.risk_scale: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_target_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_window_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_min_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_scale_min: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_scale_max: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.book_vol_prior_ann: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_params.min_history_days: funding-rate-arbitrage/src/frab/strategy/trend/params.py
+    (TrendParams defaults; 25-coin DEFAULT_COINS)
+  base_params.inner_params.base_params.inner_code_ref: src/qlab/strategies/live/trend.py
+  base_params.inner_params.inner_code_ref: 'src/qlab/strategies/regime_gate.py: the wrapper of trend-binance-cap-gated'
+  base_params.inner_params.grid.gate.always: 'specs/trend-binance-cap.yaml: the unchanged book of trend-binance-cap,
+    every regime traded'
+  base_params.inner_params.grid.gate.only_bull_bear.trade_in: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md:
+    every year positive on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке:
+    книга в плюсе, но слабом — заявка на «crisis alpha» подтверждается едва» -- the regimes the source
+    says trend earns in; nothing is claimed for flat'
+  base_params.inner_params.score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M
+    perpetual taker, a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231
+    (read 2026-10-25; the live table https://www.binance.com/en/fee/futureFee could not be read, the article
+    gives the rate as its example)'
+  base_params.inner_params.score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line
+    58: Binance has no measurement of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md
+    line 32) is used and marked unmeasured'
+  min_leg_notional: 'venues/hyperliquid.yaml min_leg_notional_usd: 10, the venue''s own minimum order
+    (funding-rate-arbitrage/research/SCREENING.md section 2: «HL ~$10»)'
+  regime_claim.bull: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  regime_claim.bear: 'funding-rate-arbitrage/research/trend_following/FINDINGS.md: every year positive
+    on HL coins («2021 +65%», «2022 +5%») and «Медвежий 2022-й впервые в выборке: книга в плюсе, но слабом
+    — заявка на «crisis alpha» подтверждается едва»'
+  base_params.inner_code_ref: 'specs/trend-binance-cap-gated-causal.yaml: the base''s code_ref, unchanged'
+  inner_code_ref: src/qlab/strategies/overlays/core.py (the overlay wrapper)
+  base_params.overlays: 'docs/OVERLAYS.md: the chain is empty here, every candidate of the grid replaces
+    it'
+  base_params.costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker,
+    a regular user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  base_params.costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has
+    no measurement of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md
+    line 32) is used and marked unmeasured'
+  grid.overlay: 'docs/OVERLAYS.md: the overlay families (tables of the settings)'
+  refit_every: 'docs/RETUNE.md: re-tuned every month; the owner 2026-10-02 named «раз в неделю/день или
+    месяц»'
+  window: 'docs/RETUNE.md (expanding window: no number introduced)'
+  objective: docs/RETUNE.md (Sharpe after costs)
+  score_costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 113: Binance USDⓈ-M perpetual taker, a regular
+    user, 0.0500% (5 bps), https://www.binance.com/en/support/articles/360033544231 (read 2026-10-25;
+    the live table https://www.binance.com/en/fee/futureFee could not be read, the article gives the rate
+    as its example)'
+  score_costs.slippage_bps: 'derived: 4.4 - 3.5; docs/FRAB_BINANCE_SPOT.md line 58: Binance has no measurement
+    of its own, the value measured for Hyperliquid (funding-rate-arbitrage/research/SCREENING.md line
+    32) is used and marked unmeasured'
+  code_ref: src/qlab/strategies/retune.py (existing wrapper)
+  min_daily_volume_usd: 'funding-rate-arbitrage/research/cross_sectional/crypto/cryptodata.py line 39,
+    MIN_VOL_USD = 1_000_000, ">= $1M 24h notional volume on HL": the floor the live engine selects coins
+    by'
+  costs.taker_fee_bps: 'docs/FRAB_BINANCE_SPOT.md line 56: Hyperliquid perpetual taker, base tier 0, 0.045%
+    (4.5 bps), the Fees table of https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees (read 2026-10-25);
+    a book of a few thousand dollars trades at the base tier'
+  costs.slippage_bps: 'derived: 4.4 - 3.5; funding-rate-arbitrage/research/SCREENING.md line 32, «~4.4
+    б.п. на ногу (taker 3.5 + проскальзывание)» -- Hyperliquid''s own cost estimate, whose slippage part
+    is 0.9'
+strategy_capital_usd: 3000.0
+regime_claim:
+  bull: earns
+  bear: earns
+review_answers: {}
+selects_causally: true

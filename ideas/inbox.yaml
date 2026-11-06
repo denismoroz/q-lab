@@ -180,7 +180,7 @@ ideas:
   text: 'Bv2: добавить третье, короткое окно (несколько дней), которое может только включить страховку,
     но не снять её; снимает страховку, как сейчас, правило 14 и 30 дней. Цель — резкие падения посреди
     роста, не добавляя перестановок в боковике.'
-  status: carded
+  status: implemented
   card: cards/bv2-fast-entry-third-window.yaml
   notes: карточка написана 2026-11-05; в очереди реализации
   attempts: 2
@@ -210,48 +210,20 @@ ideas:
   text: 'Для корзины 10 самых ликвидных монет пусть список кандидатов строит код: все монеты, у которых
     на дату пересмотра уже есть и монета, и бессрочный контракт с нужной историей, а не список, заданный
     вручную задним числом.'
-  status: new
-  card: null
-  notes: из записки docs/research/bv2-2026-10-28.md
-  attempts: 2
-  problems:
-  - 'reviewer: rule-incomplete: When `perp_must_exist_on` is `hyperliquid`, the rule has to check whether
-    a Hyperliquid contract existed on the review date. But `data` is Binance only (`venue: binance`, a
-    Binance panel). Hyperliquid listing dates and price history are not in that panel, and the card does
-    not say where they come from. It also does not say whether the hedge in that variant still runs on
-    the Binance contract, as the baseline''s `differs_from_source` does, or on the Hyperliquid one. An
-    engineer would have to guess the data source and the leg.'
-  - 'reviewer: rule-incomplete: The card does not say how the new block handles a few cases.'
-  review_blocks:
-  - kind: rule-incomplete
-    ref: new
-    text: 'When `perp_must_exist_on` is `hyperliquid`, the rule has to check whether a Hyperliquid contract
-      existed on the review date. But `data` is Binance only (`venue: binance`, a Binance panel). Hyperliquid
-      listing dates and price history are not in that panel, and the card does not say where they come
-      from. It also does not say whether the hedge in that variant still runs on the Binance contract,
-      as the baseline''s `differs_from_source` does, or on the Hyperliquid one. An engineer would have
-      to guess the data source and the leg.'
-  - kind: rule-incomplete
-    ref: new
-    text: The card does not say how the new block handles a few cases.
+  status: carded
+  card: cards/bv2-pit-candidates.yaml
+  notes: карточка написана 2026-11-06; в очереди реализации
+  attempts: 3
+  problems: []
+  review_blocks: []
   review_notes:
-  - '`data.start: 2023-04-28` is inherited from the baseline''s snapshot. The project rule is that a list
-    a code rule could have built on every past day is judged from the start of the data, not from the
-    day it was written down. If the all-coins panel has Binance history before 2023-04-28 (other experiments
-    use "Binance с 2019"), say why it starts later. If it does not have that history, say so.'
-  - '`perp_must_exist_on` does not follow the wording "ten most liquid coins, … and a perpetual with the
-    needed history". With `hyperliquid` the history check has to apply to the Hyperliquid contract too,
-    and the card does not say that it does. The readings are all in the grid, which is fine, but readings
-    1 and 2 only live in the `min_history_days` values 30 and 90, and the cross-combination (Hyperliquid
-    contract, 90 days) needs the Hyperliquid history, which is the gap in the first BLOCK.'
-  - '`vs_tried` entries `bv2-fixed-slow-windows-30-60` and `qlab-regime-detector-btc30` are not near this
-    idea. They are harmless, but the entry that matters is `bv2-research-top10-pool` (the baseline) plus
-    `qlab-bv2-top10-liquid-list`, whose result line says the variants cannot be told apart on those data.
-    Say what power the new check has to see a difference between the hand list and the code list.'
-  - '`plain_summary`: the 43-coin list is described as "составили вручную" in 4 of 175 weeks, but the
-    example "60 монет … 12 отсеяны" is invented. Label the example as illustrative, not measured.'
-  - The `kill_condition` and `observable` compare against the hand-list ten. That is a comparison of two
-    books, not a judgement of the idea on its own, so say which of the two the stand's verdict uses.
+  - The kill_condition still opens with "ниже, чем у десятки из ручного списка" and only then says the
+    comparison is not a verdict condition. Dropping that clause from the first sentence would read cleaner.
+  - Case (в) closes a position "по последней цене". A one-line mention of how the hedge leg is closed
+    in that case would help an engineer.
+  - The Hyperliquid variant takes a contract's listing date from its first price in the stand data. If
+    that history starts later than the real listing, the contract looks newer than it is. The card already
+    says the variant is judged only on dates where the data exists, so this is a caveat, not an error.
 - id: idea-0008
   date: '2026-10-28'
   source: agent:researcher
@@ -400,47 +372,29 @@ ideas:
   text: 'Отрез для разбора просадок считать от первого часа, где стратегия реально торгует, а не от начала
     окна данных: у FRAB окно начинается в январе 2025, часовые цены с марта 2026, и часть до отреза выходит
     почти пустой, поэтому разбирать нечего уже третью ночь; то же касается других стратегий на Hyperliquid'
-  status: new
+  status: needs-owner
   card: null
-  notes: из записки docs/research/frab-2026-10-31.md
-  attempts: 1
-  problems:
-  - 'reviewer: bad-question: The second half of `question_ru` asks whether the rule is only for FRAB or
-    for all Hyperliquid strategies. The idea already answers that: «то же касается других стратегий на
-    Hyperliquid». The owner has no choice to make there. The draft also describes the "all" outcome in
-    its own words as a general rule with a first trading hour recorded per strategy, so it could have
-    carried that reading without asking.'
-  - 'reviewer: bad-question: The first half, "send it to the researcher or to the development tasks?",
-    is a routing question about the lab''s own tooling, not a decision only the owner can make. It is
-    also vague: it never says what the owner would be choosing between in terms of consequences. The draft
-    should state a concrete, specific question. For example: should the cut date be computed from the
-    first hour a strategy actually trades, for every Hyperliquid strategy? And what counts as "actually
-    trades": the first nonzero position, or the first hour with price data?'
-  review_blocks:
-  - kind: bad-question
-    ref: new
-    text: 'The second half of `question_ru` asks whether the rule is only for FRAB or for all Hyperliquid
-      strategies. The idea already answers that: «то же касается других стратегий на Hyperliquid». The
-      owner has no choice to make there. The draft also describes the "all" outcome in its own words as
-      a general rule with a first trading hour recorded per strategy, so it could have carried that reading
-      without asking.'
-  - kind: bad-question
-    ref: new
-    text: 'The first half, "send it to the researcher or to the development tasks?", is a routing question
-      about the lab''s own tooling, not a decision only the owner can make. It is also vague: it never
-      says what the owner would be choosing between in terms of consequences. The draft should state a
-      concrete, specific question. For example: should the cut date be computed from the first hour a
-      strategy actually trades, for every Hyperliquid strategy? And what counts as "actually trades":
-      the first nonzero position, or the first hour with price data?'
+  notes: 'вопрос владельцу: Эта идея не про торговое правило, а про то, как исследователь выбирает дату
+    отреза (границу, до которой он разбирает просадки, а после которой проверяет исправления): сейчас
+    отрез считается от начала окна данных, а предлагается считать от первого часа, где стратегия реально
+    торгует. Строить по ней карточку нечего, потому что нет ни новой стратегии, ни нового блока для стенда,
+    ни проверки с данными, которую мог бы вынести код правил; это правка самого инструмента исследователя.
+    Пример из идеи: окно FRAB начинается в январе 2025, а часовые цены есть только с марта 2026, поэтому
+    часть до отреза выходит почти пустой, и разбирать в ней нечего. Идея уже говорит, что то же касается
+    других стратегий на Hyperliquid, поэтому вопрос один: что считать «реально торгует»? Первый час с
+    ненулевой позицией (дата отреза отсчитывается от первой сделки, для FRAB это не раньше марта 2026)
+    или первый час, где есть часовые цены (отсчёт от марта 2026 для FRAB, а для стратегии с более ранними
+    ценами — от них)?'
+  attempts: 2
+  problems: []
+  review_blocks: []
   review_notes:
-  - The draft cites `src/qlab/agents/researcher.py` for the "phrase about the cut date". That file only
-    has `CUT_SENTENCE` at line 48, and I did not confirm that it is where the cut date is calculated.
-    Name the exact place, or drop the file reference.
-  - The question packs two or three questions into one long paragraph. Split it into a single question
-    with short lead-in context.
-  - 'Terms like «отрез» and «разбор просадок» are explained only loosely at first use. Add one concrete
-    example from the idea: FRAB''s window starts in January 2025, hourly prices only from March 2026,
-    so the part before the cut comes out nearly empty.'
+  - The question's first half (whether to count from the first trading hour for every Hyperliquid strategy)
+    is close to what the idea already asks for. It would be tighter to keep only the choice between "first
+    nonzero position" and "first hour with price data", and say what changes in the cut date under each.
+  - The FRAB example gives the window start and the price start, but it doesn't say what the cut date
+    comes out as under each reading of "actually trades". One concrete date for each would make the owner's
+    choice easier.
 - id: idea-0023
   date: '2026-10-31'
   source: agent:researcher
@@ -459,40 +413,45 @@ ideas:
     его из записей сделок: по записям на счёте лежит около $1.65 биткоина без прикрытия, которых на кошельке,
     судя по старой сверке, нет, и они могут давать весь дневной разброс, из-за которого живая книга выглядит
     на краю стенда'
-  status: new
+  status: needs-owner
   card: null
-  notes: из записки docs/research/frab-2026-11-02.md
-  attempts: 1
-  problems:
-  - 'reviewer: bad-question: The draft asks the owner to allow a new read-only exchange query. It never
-    says why the export q-lab already pulls from the FRAB host (`export_queries`) can''t give the wallet
-    balance. `src/qlab/strategy_pnl.py:36-39` and `docs/FRAB_LIVE.md:258` show an earlier comparison already
-    used the account''s own spot value (about $2 against about $3.7 from the fills). FRAB''s `ledger.compute_equity`
-    (`ledger.py:314-406`) also takes the per-coin wallet balance (`spot_balances_by_coin`). If the host''s
-    equity snapshots or wallet snapshots hold those balances, adding that table to the export is an engineering
-    task for the researcher, not an owner decision. Only the owner can answer a question about new exchange
-    access, so the draft must first check what the host stores. If it can''t be done from stored data,
-    it must say that and name the one thing the owner has to allow.'
-  review_blocks:
-  - kind: bad-question
-    ref: new
-    text: The draft asks the owner to allow a new read-only exchange query. It never says why the export
-      q-lab already pulls from the FRAB host (`export_queries`) can't give the wallet balance. `src/qlab/strategy_pnl.py:36-39`
-      and `docs/FRAB_LIVE.md:258` show an earlier comparison already used the account's own spot value
-      (about $2 against about $3.7 from the fills). FRAB's `ledger.compute_equity` (`ledger.py:314-406`)
-      also takes the per-coin wallet balance (`spot_balances_by_coin`). If the host's equity snapshots
-      or wallet snapshots hold those balances, adding that table to the export is an engineering task
-      for the researcher, not an owner decision. Only the owner can answer a question about new exchange
-      access, so the draft must first check what the host stores. If it can't be done from stored data,
-      it must say that and name the one thing the owner has to allow.
+  notes: 'вопрос владельцу: Здесь три шага. Проверять это стендом нечем: у стенда нет ни сетки, ни данных
+    для такой проверки, это одна сверка чисел: расчёта денег стратегии по записям сделок с настоящим балансом
+    кошелька. Шаг 1, задача исследователю (решения владельца не требует, это инженерная правка без карточки
+    и без испытаний). Выгрузка, которую q-lab уже берёт с хоста FRAB (`export_queries` в `src/qlab/strategy_pnl.py`:
+    позиции, сделки, начисления, цены, бюджет), остатков монет на кошельке не содержит. Но на хосте есть
+    таблица `wallet_snapshots` (`db/models.py` во FRAB): в ней биржа, монета, время, остаток, а также
+    `account` (адрес кошелька; в старых строках он пустой, поэтому брать надо строки собственного кошелька
+    FRAB) и `source`. Движок обновляет её каждую минуту, но старые строки прореживаются до одной в час
+    (`loop.py:402-433`), так что дальняя история почасовая, а не поминутная; для ряда денег по дням этого
+    хватает. Расчёт собственного капитала FRAB (`ledger.compute_equity`) берёт из неё остатки по монетам.
+    Исследователю надо добавить эту таблицу в выгрузку и посмотреть, есть ли в ней строки по биткоину
+    (по записям сделок около 1.65 доллара остатка «без прикрытия»: это монета, у которой нет парной короткой
+    позиции, поэтому от падения её цены ничто не страхует). Шаг 2, вопрос к вам, только если строк по
+    биткоину в таблице нет (она может хранить лишь доллары). Тогда нужно разрешить один запрос к бирже,
+    только на чтение, об остатках монет на спотовом кошельке живого FRAB. Шаг 3, что делать с ответом.
+    Если биткоина на кошельке нет, то лишний разброс дня живой книги был ошибкой учёта, и ряд денег живого
+    FRAB (он собирается в `qlab.strategy_pnl`, остаток монет после продажи берётся там из записей сделок)
+    надо собирать по остатку кошелька, а не по сумме записей сделок (правка кода, её можно отправить исследователю).
+    Если биткоин на кошельке есть, то разброс настоящий, это свойство стратегии, правка ряда не нужна,
+    а вопрос про остаток монет без прикрытия остаётся у карточки frab-lot-leftover.'
+  attempts: 2
+  problems: []
+  review_blocks: []
   review_notes:
-  - The claim that the stand has no way to check this is not backed by a file. Cite the export query list
-    or the host tables that were checked.
-  - '"прибор", "ряд денег" and "сверка" appear without a first-use explanation, and `cards/SCHEMA.md`
-    asks for plain words. Say "расчёт денег стратегии по записям сделок против настоящего баланса кошелька".'
-  - The two branches of the answer are clear. The branch "биткоина на кошельке нет" should name where
-    the series is built (`qlab.strategy_pnl`, dust taken from the fill records) so the researcher can
-    act on it right away.
+  - I checked the changed lines against the FRAB code and the earlier remark is fixed. `wallet_snapshots`
+    exists (`db/models.py:195`) with per-coin `balance`. The engine refreshes it every minute (`loop.py:573`).
+    `export_queries` in `qlab/strategy_pnl.py` does not include it. The draft now says to check the stored
+    data first and ask the owner only if it holds no bitcoin rows.
+  - The draft says the table has "биржа, монета, время, остаток". It also has `account` (the wallet address)
+    and `source`. `account` is NULL on old rows, so the researcher must filter by FRAB's own wallet. Add
+    this to the sentence.
+  - '`loop.py:402-433` thins old rows to one per hour. Older history is therefore hourly, not per minute.
+    This is enough for a daily money series, but say so.'
+  - The question is long and mixes a task for the researcher, a conditional owner question and two outcomes.
+    Split it into three short steps.
+  - '"Прибор" and "без прикрытия" are unexplained jargon. Give a short explanation or an example at first
+    use.'
 - id: idea-0025
   date: '2026-11-03'
   source: agent:director
@@ -542,4 +501,14 @@ ideas:
   status: new
   card: null
   notes: из записки docs/research/frab-2026-11-05.md
+  attempts: 0
+- id: idea-0030
+  date: '2026-11-06'
+  source: agent:researcher
+  text: 'Bv3: снимать страховку по росту монеты за последние часы только тогда, когда её сроки 14 и 30
+    дней расходятся (боковик), а когда монета падает по обоим срокам — держать страховку по правилу Bv2,
+    чтобы быстрое снятие не оставляло монету без защиты в начале обвала'
+  status: new
+  card: null
+  notes: из записки docs/research/bv3-2026-11-06.md
   attempts: 0
