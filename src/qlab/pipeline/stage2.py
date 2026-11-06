@@ -175,7 +175,11 @@ def second_venue_of(spec: StrategySpec) -> str:
     runs its check on Binance's history whatever venue its file names, docs/ONE_CHECK.md)."""
     from qlab import one_check
 
-    if spec.data.source == HYPERLIQUID and not one_check.declares_lists(spec):
+    # A mixed book (Hyperliquid perps against another venue's spot, `data.spot_source`) already
+    # holds Binance's side; it has no separate «Binance version», and the stand refuses to build
+    # one (2026-11-06: seven FRAB-on-Binance-spot ideas failed in under a second each).
+    if (spec.data.source == HYPERLIQUID and not one_check.declares_lists(spec)
+            and spec.data.spot_source is None):
         return BINANCE
     return HYPERLIQUID
 
