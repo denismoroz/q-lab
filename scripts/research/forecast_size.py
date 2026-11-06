@@ -159,7 +159,7 @@ def _run(job):
     return m, r
 
 
-def run_books(work: Path, procs: int) -> None:
+def run_books(work: Path, procs: int, per_coin: float = fib.PER_COIN) -> None:
     import yaml
 
     from qlab import earning_test as et
@@ -172,11 +172,10 @@ def run_books(work: Path, procs: int) -> None:
     books = {}
     for coin in COINS:
         sp = hs.load_panel([coin], fib.START, fib.END, fib.RAW)
-        books[coin] = (sp.panel, {**params, "coins": [coin], "capital_usd": fib.PER_COIN},
-                       fib.PER_COIN)
+        books[coin] = (sp.panel, {**params, "coins": [coin], "capital_usd": per_coin}, per_coin)
     sp2 = hs.load_panel(["BTC", "AVAX"], fib.START, fib.END, fib.RAW)
     books["BTC+AVAX"] = (sp2.panel, {**params, "coins": ["BTC", "AVAX"],
-                                      "capital_usd": 2 * fib.PER_COIN}, 2 * fib.PER_COIN)
+                                      "capital_usd": 2 * per_coin}, 2 * per_coin)
     index = books["BTC"][0].prices.index
     for b in books:
         assert books[b][0].prices.index.equals(index), b
@@ -287,7 +286,9 @@ def run_books(work: Path, procs: int) -> None:
                       "placebos": sum(1 for n in names2 if "placebo" in n),
                       "two_coin_chosen": sum(int(bool(v)) for v in two_of.values())},
            "seconds": round(time.time() - t0)}
-    (work / "size.json").write_text(json.dumps(out, indent=1, default=str))
+    out["per_coin_usd"] = per_coin
+    name = "size.json" if per_coin == fib.PER_COIN else f"size-{per_coin:g}.json"
+    (work / name).write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps({"choice": choice, "judge": judge, "base_check": base_check}, indent=1,
                      default=str))
 
@@ -297,11 +298,12 @@ def main() -> None:
     ap.add_argument("phase", choices=["forecasts", "books"])
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--procs", type=int, default=12)
+    ap.add_argument("--capital", type=float, default=fib.PER_COIN, help="money per coin, USD")
     a = ap.parse_args()
     if a.phase == "forecasts":
         make_forecasts(a.work)
     else:
-        run_books(a.work, a.procs)
+        run_books(a.work, a.procs, a.capital)
 
 
 if __name__ == "__main__":
