@@ -1,4 +1,5 @@
-"""Regime and regime change instead of the next price (docs/research/regime-change-protocol-2026-11-07.md;
+"""Regime and regime change instead of the next price
+(docs/research/regime-change-protocol-2026-11-07.md;
 owner, 2026-11-07: «нам не нужно предсказывать цену ... нам нужно предсказывать движение цены, смену
 режима»). Pure functions; the runner is scripts/research/regime_change.py.
 

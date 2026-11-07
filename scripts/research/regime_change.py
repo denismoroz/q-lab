@@ -774,6 +774,137 @@ def run_oracle(work: Path) -> None:
     print("oracle written", len(jobs), out["seconds"], "s", flush=True)
 
 
+# ── book check (docs/research/regime-change-book-addendum-2026-11-07.md) ──
+
+BOOK_PASSERS = (("T7-peak", "1d"), ("T14-peak", "1d"), ("T14-peak", "4h"))
+BOOK_WAYS = ("while", "hold", "bv2 plus")
+BOOK_TOPS = (0.10, 0.20)
+PLACEBOS = 20
+
+
+def book_wishes(frames: dict) -> dict:
+    """{config: {coin: hourly wish}} of the 18 declared configurations."""
+    from qlab.strategies.live import bv2 as _bv2
+
+    feats = hourly_features(frames)
+    index = next(iter(frames.values())).index
+    n = len(index)
+    own = {}
+    for c, fr in frames.items():
+        lc = fr["logc"].ffill().to_numpy()
+        raw = rc.rule_bv2(lc, 24)
+        own[c] = _bv2._sticky(raw, 12)
+    out = {}
+    for target, grid in BOOK_PASSERS:
+        step = GRIDS[grid]
+        spd = 24 // step
+        gs = grid_series(frames, step)
+        w = supervised_walk(feats, gs, step, target, "logistic")
+        k = int(target[1:].split("-")[0])
+        for top in BOOK_TOPS:
+            for c, g in gs.items():
+                rank = past_rank(w["pred"][c], 90 * spd)
+                sig = np.where(np.isnan(rank), np.nan, (rank >= 1 - top).astype(float))
+                held = sig.copy()
+                last_on = -10**9
+                for i in range(len(sig)):
+                    if np.isnan(sig[i]):
+                        continue
+                    if sig[i] == 1.0:
+                        last_on = i
+                    held[i] = 1.0 if i - last_on < k * spd else 0.0
+                while_h = _bv2._sticky(to_hourly(n, g["rows"], sig), 12)
+                hold_h = to_hourly(n, g["rows"], held)
+                plus = np.where(np.isnan(hold_h), np.nan,
+                                np.maximum(np.nan_to_num(hold_h), own[c]))
+                for way, arr in (("while", while_h), ("hold", hold_h), ("bv2 plus", plus)):
+                    out.setdefault(f"{target} {grid} {way} top{int(top * 100)}", {})[c] = arr
+    return out
+
+
+def run_book_check(work: Path) -> None:
+    import yaml
+
+    from qlab import hedge_study as hs
+
+    t0 = time.time()
+    frames = load_frames(work)
+    params = dict(yaml.safe_load(Path("specs/bv2-binance.yaml").read_text())["params"])
+    W = book_wishes(frames)
+    print("wishes", len(W), round(time.time() - t0), "s", flush=True)
+    books, wishes = {}, {}
+    for coin in COINS:
+        sp = hs.load_panel([coin], START, END, RAW)
+        for cap in CAPITALS:
+            books[f"{coin}@{cap:g}"] = (sp.panel, {**params, "coins": [coin], "capital_usd": cap},
+                                        cap)
+        for cfg, per in W.items():
+            wishes[f"{coin}|{cfg}"] = per[coin]
+    _G.update(books=books, wishes=wishes)
+    ctx = mp.get_context("fork")
+    jobs, names = [], []
+    for book in books:
+        coin = book.split("@")[0]
+        jobs.append((book, None))
+        names.append(f"{book} production")
+        for cfg in W:
+            jobs.append((book, f"{coin}|{cfg}"))
+            names.append(f"{book} {cfg}")
+    with ctx.Pool(PROCS) as pool:
+        got = pool.map(_book_job, jobs, chunksize=2)
+    res = {nm: g[0] for nm, g in zip(names, got, strict=True)}
+
+    def gain(cfg, part, cap=1000.0, key="cap_ann"):
+        return float(np.mean([res[f"{c}@{cap:g} {cfg}"][f"{key}_{part}"]
+                              - res[f"{c}@{cap:g} production"][f"{key}_{part}"] for c in COINS]))
+
+    table = {cfg: {p: {"gain": gain(cfg, p), "dd": gain(cfg, p, key="cap_max_dd"),
+                       "gain_64": gain(cfg, p, 64.25)} for p in ("first", "last")} for cfg in W}
+    ok = [c for c in W if table[c]["first"]["dd"] >= -1.0 and table[c]["first"]["gain"] > 0]
+    chosen = max(ok, key=lambda c: table[c]["first"]["gain"]) if ok else None
+    out = {"table": table, "chosen": chosen, "results": res}
+    print("chosen", chosen, flush=True)
+    if chosen is not None:
+        index = frames["BTC"].index
+        valid = np.asarray(index >= FIRST0)
+        for s in range(PLACEBOS):
+            rng = np.random.default_rng(900 + s)
+            for coin in COINS:
+                w = W[chosen][coin].copy()
+                part = w[valid]
+                ok_ = ~np.isnan(part)
+                reloc = rc.relocate_runs(np.where(ok_, part, 0.0), rng, ok_)
+                w[valid] = np.where(ok_, reloc, np.nan)
+                wishes[f"{coin}|placebo {s}"] = w
+        _G.update(wishes=wishes)
+        jobs2, names2 = [], []
+        for book in books:
+            coin = book.split("@")[0]
+            for s in range(PLACEBOS):
+                jobs2.append((book, f"{coin}|placebo {s}"))
+                names2.append(f"{book} placebo {s}")
+        with ctx.Pool(PROCS) as pool:
+            got2 = pool.map(_book_job, jobs2, chunksize=2)
+        for nm, g in zip(names2, got2, strict=True):
+            res[nm] = g[0]
+        plac = {p: [gain(f"placebo {s}", p) for s in range(PLACEBOS)] for p in ("first", "last")}
+        plac64 = [gain(f"placebo {s}", "last", 64.25) for s in range(PLACEBOS)]
+        g_last = table[chosen]["last"]["gain"]
+        out["placebo"] = {"gain": plac, "gain_64_last": plac64,
+                          "p90_last": float(np.quantile(plac["last"], 0.9))}
+        out["verdict"] = {"gain_last": g_last, "dd_last": table[chosen]["last"]["dd"],
+                          "passes": bool(g_last > 0 and g_last > out["placebo"]["p90_last"]
+                                         and table[chosen]["last"]["dd"] >= -1.0)}
+        print("verdict", out["verdict"], flush=True)
+    out["runs"] = len(res)
+    out["seconds"] = round(time.time() - t0)
+    (work / "book.json").write_text(json.dumps(out, indent=1, default=float))
+    for cfg, row in table.items():
+        print(f"  {cfg:28s} first {row['first']['gain']:+6.1f} (dd {row['first']['dd']:+5.1f}) "
+              f"last {row['last']['gain']:+6.1f} (dd {row['last']['dd']:+5.1f}) "
+              f"$64 last {row['last']['gain_64']:+6.1f}", flush=True)
+
+
 # ── planted controls ─────────────────────────────────────────────────────
 
 
@@ -837,7 +968,7 @@ def run_planted(work: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=["data", "oracle", "detect", "planted"])
+    ap.add_argument("phase", choices=["data", "oracle", "detect", "planted", "book"])
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--rw-states", type=int, default=20)
     ap.add_argument("--rw-sup", type=int, default=10)
@@ -849,6 +980,8 @@ def main() -> None:
         run_oracle(a.work)
     elif a.phase == "planted":
         run_planted(a.work)
+    elif a.phase == "book":
+        run_book_check(a.work)
     else:
         run_detect(a.work, a.rw_states, a.rw_sup)
 

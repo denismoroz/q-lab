@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 import regime_change as R  # noqa: E402
@@ -39,7 +38,7 @@ def oracle_report(work: Path) -> dict:
             for part in ("first", "last"):
                 g = [_gain(res, b, v, part) for b in books]
                 dd = [_gain(res, b, v, part, "cap_max_dd") for b in books]
-                row[part] = {"gain_mean": float(np.mean(g)), "gain_by_coin": dict(zip(R.COINS, g)),
+                row[part] = {"gain_mean": float(np.mean(g)), "gain_by_coin": dict(zip(R.COINS, g, strict=True)),
                              "dd_change_mean": float(np.mean(dd)),
                              "ons_per_year": float(np.mean([res[f"{b} {v}"][f"ons_per_year_{part}"]
                                                            for b in books]))}
