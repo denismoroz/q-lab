@@ -473,7 +473,7 @@ def common_mask(gs: dict, labs: dict, dets: dict[str, dict]) -> dict:
 
 def past_rank(p: np.ndarray, min_obs: int) -> np.ndarray:
     s = pd.Series(p)
-    r = s.expanding(min_periods=min_obs).rank(pct=True).to_numpy()
+    r = s.expanding(min_periods=min_obs).rank(pct=True).to_numpy().copy()
     r[np.isnan(p)] = np.nan
     return r
 
@@ -559,6 +559,23 @@ def _detect_one(job):
     return out
 
 
+def _init_worker(work: str) -> None:
+    import faulthandler
+
+    faulthandler.enable()
+    _G["frames"] = load_frames(Path(work))
+
+
+def _detect_safe(job):
+    import traceback
+
+    try:
+        return job, _detect_one(job)
+    except Exception:  # noqa: BLE001 -- logged; the job stays to do
+        print("FAILED", job, traceback.format_exc(), flush=True)
+        return job, None
+
+
 def run_detect(work: Path, rw_states: int, rw_sup: int) -> None:
     t0 = time.time()
     _G["frames"] = load_frames(work)
@@ -575,11 +592,30 @@ def run_detect(work: Path, rw_states: int, rw_sup: int) -> None:
             for tgt in SUP_TARGETS[1:]:
                 for model in ("logistic", "gbm", "geometry"):
                     jobs.append((f"{tgt}|{model}", s, grid))
-    # long jobs first
+    # long jobs first; each result is kept on disk so a lost worker costs one job, not the run
     jobs.sort(key=lambda j: (j[0] != "states", j[2] != "4h", "gbm" not in j[0]))
-    ctx = mp.get_context("fork")
-    with ctx.Pool(PROCS) as pool:
-        got = pool.map(_detect_one, jobs, chunksize=1)
+    done_dir = work / "detect_jobs"
+    done_dir.mkdir(exist_ok=True)
+
+    def path_of(j):
+        return done_dir / f"{j[0].replace('|', '_')}__{j[1]}__{j[2]}.pkl"
+
+    todo = [j for j in jobs if not path_of(j).exists()]
+    print("jobs", len(jobs), "to do", len(todo), flush=True)
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(PROCS, initializer=_init_worker, initargs=(str(work),),
+                  maxtasksperchild=8) as pool:
+        for j, res in pool.imap_unordered(_detect_safe, todo):
+            if res is not None:
+                with open(path_of(j), "wb") as fh:
+                    pickle.dump(res, fh)
+    missing = [j for j in jobs if not path_of(j).exists()]
+    if missing:
+        raise SystemExit(f"{len(missing)} jobs failed; rerun to retry: {missing[:5]}")
+    got = []
+    for j in jobs:
+        with open(path_of(j), "rb") as fh:
+            got.append(pickle.load(fh))
     out = {"jobs": [list(map(str, j)) for j in jobs], "results": got,
            "seconds": round(time.time() - t0)}
     with open(work / "detect.pkl", "wb") as fh:
@@ -787,7 +823,7 @@ def run_planted(work: Path) -> None:
         f2 = hourly_features(syn)
         g2 = grid_series(syn, 24)
         un = unsupervised_on(f2["BTC"], g2["BTC"], 9 + rep)
-        truth = state[(g2["rows"] // 24)]
+        truth = state[g2["BTC"]["rows"] // 24]
         row = {}
         for nm, det in un.items():
             ok = ~np.isnan(det)

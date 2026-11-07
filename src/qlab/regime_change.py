@@ -174,7 +174,7 @@ def rule_ma_cross(logc: np.ndarray, steps_per_day: int, fast: int = 50, slow: in
     p = pd.Series(np.exp(logc))
     f = p.rolling(fast * steps_per_day, min_periods=fast * steps_per_day).mean()
     s = p.rolling(slow * steps_per_day, min_periods=slow * steps_per_day).mean()
-    out = (f < s).astype(float).to_numpy()
+    out = (f < s).astype(float).to_numpy().copy()
     out[s.isna().to_numpy()] = np.nan
     return out
 

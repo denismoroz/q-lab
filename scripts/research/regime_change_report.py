@@ -142,8 +142,106 @@ def main() -> None:
         detect_report(a.work)
 
 
+STATE_KEYS = ("ba", "detected_share", "delay_median_days", "fall_lost_mean",
+              "false_per_coin_year", "wrong_share", "fall_caught_share", "rise_lost_share",
+              "switches_per_coin_year")
+
+
 def detect_report(work: Path) -> None:
-    raise SystemExit("filled in after the detection run")
+    with open(work / "detect.pkl", "rb") as fh:
+        d = pickle.load(fh)
+    res = d["results"]
+    rep: dict = {"seconds": d["seconds"], "states": {}, "switch": {}, "t0_auc": {},
+                 "train_vs_oos": {}, "common_from": {}}
+    for grid in R.GRIDS:
+        real = next(r for r in res if r["kind"] == "states" and r["grid"] == grid
+                    and r["seed"] is None)
+        rw = [r for r in res if r["kind"] == "states" and r["grid"] == grid
+              and r["seed"] is not None]
+        rep["common_from"][grid] = real["common_from"]
+        rules = [n for n in real["states"] if n.startswith("rule")]
+        best_rule = {p: max(real["states"][n][p]["ba"] for n in rules) for p in ("first", "last")}
+        table = {}
+        for name, per in real["states"].items():
+            row = {}
+            for p in ("first", "last"):
+                ba_rw = np.array([r["states"][name][p]["ba"] for r in rw])
+                row[p] = {k: per[p][k] for k in STATE_KEYS}
+                row[p]["rw_ba_mean"] = float(ba_rw.mean())
+                row[p]["rw_ba_p95"] = float(np.quantile(ba_rw, 0.95))
+                row[p]["rw_draws"] = len(ba_rw)
+                for k in ("delay_median_days", "fall_lost_mean", "false_per_coin_year",
+                          "rise_lost_share"):
+                    row[p][f"rw_{k}_mean"] = float(np.nanmean([r["states"][name][p][k]
+                                                               for r in rw]))
+                row[p]["beats_rules"] = bool(per[p]["ba"] > best_rule[p])
+                row[p]["beats_rw"] = bool(per[p]["ba"] > row[p]["rw_ba_p95"])
+            row["passes"] = all(row[p]["beats_rules"] and row[p]["beats_rw"]
+                                for p in ("first", "last")) and not name.startswith("rule")
+            table[name] = row
+        rep["states"][grid] = {"best_rule_ba": best_rule, "table": table}
+        for model in ("logistic", "gbm"):
+            k = f"{model} T0 auc"
+            rep["t0_auc"][f"{grid} {model}"] = {
+                "real": real[k],
+                "rw_auc_last": [r[k]["last"]["auc"] for r in rw],
+                "rw_auc_first": [r[k]["first"]["auc"] for r in rw]}
+            recs = real[f"{model} T0 record"]
+            rep["train_vs_oos"][f"{grid} {model} T0"] = {
+                "auc_in_mean": float(np.nanmean([x["auc_in"] for x in recs])),
+                "auc_oos_first": real[k]["first"]["auc"], "auc_oos_last": real[k]["last"]["auc"]}
+        # switch targets
+        for tgt in R.SUP_TARGETS[1:]:
+            geo = next(r for r in res if r["kind"] == f"{tgt}|geometry" and r["grid"] == grid
+                       and r["seed"] is None)
+            for model in ("logistic", "gbm", "geometry"):
+                kind = f"{tgt}|{model}"
+                real_s = next(r for r in res if r["kind"] == kind and r["grid"] == grid
+                              and r["seed"] is None)
+                rw_s = [r for r in res if r["kind"] == kind and r["grid"] == grid
+                        and r["seed"] is not None]
+                row = {}
+                for p in ("first", "last"):
+                    a = real_s["scores"][p]
+                    rw_auc = np.array([r["scores"][p]["auc"] for r in rw_s])
+                    row[p] = {**a, "rw_auc_mean": float(np.nanmean(rw_auc)),
+                              "rw_auc_p95": float(np.nanquantile(rw_auc, 0.95)),
+                              "geometry_auc": geo["scores"][p]["auc"]}
+                    row[p]["passes"] = bool(a["auc"] > a["null_p95"]
+                                            and a["auc"] > row[p]["rw_auc_p95"]
+                                            and (model == "geometry"
+                                                 or a["auc"] > geo["scores"][p]["auc"]))
+                row["passes"] = row["first"]["passes"] and row["last"]["passes"]
+                row["auc_in_mean"] = float(np.nanmean([x["auc_in"] for x in real_s["record"]]))
+                rep["switch"][f"{grid} {kind}"] = row
+    (work / "detect-report.json").write_text(json.dumps(rep, indent=1, default=float))
+    for grid in R.GRIDS:
+        s = rep["states"][grid]
+        print(f"== states {grid}; best rule BA first {s['best_rule_ba']['first']:.3f} last "
+              f"{s['best_rule_ba']['last']:.3f}; common from {rep['common_from'][grid]}")
+        print("  name                    | BA f/l (RW mean, p95) | detected, delay d, lost, "
+              "false/yr, rise lost (last) | pass")
+        for name, row in s["table"].items():
+            f, la = row["first"], row["last"]
+            print(f"  {name:22s} | {f['ba']:.3f} ({f['rw_ba_mean']:.3f},{f['rw_ba_p95']:.3f}) "
+                  f"{la['ba']:.3f} ({la['rw_ba_mean']:.3f},{la['rw_ba_p95']:.3f}) | "
+                  f"{la['detected_share']:.2f} {la['delay_median_days']:.1f} "
+                  f"{la['fall_lost_mean']:.2f} {la['false_per_coin_year']:.1f} "
+                  f"{la['rise_lost_share']:.2f} | first: delay {f['delay_median_days']:.1f} "
+                  f"lost {f['fall_lost_mean']:.2f} false {f['false_per_coin_year']:.1f} "
+                  f"rise {f['rise_lost_share']:.2f} | RW last delay "
+                  f"{la['rw_delay_median_days_mean']:.1f} lost {la['rw_fall_lost_mean_mean']:.2f}"
+                  f" false {la['rw_false_per_coin_year_mean']:.1f} | {row['passes']}")
+    print("== switch targets: AUC first/last (null p95, RW p95, geometry) precision@10 base")
+    for k, row in rep["switch"].items():
+        f, la = row["first"], row["last"]
+        print(f"  {k:24s} {f['auc']:.3f} ({f['null_p95']:.3f},{f['rw_auc_p95']:.3f},"
+              f"{f['geometry_auc']:.3f}) | {la['auc']:.3f} ({la['null_p95']:.3f},"
+              f"{la['rw_auc_p95']:.3f},{la['geometry_auc']:.3f}) p10 {la['precision_top10']:.3f}"
+              f" base {la['base_rate']:.3f} in-sample {row['auc_in_mean']:.3f} | {row['passes']}")
+    print("== T0 AUC", json.dumps({k: {p: round(v["real"][p]["auc"], 3) for p in ("first", "last")}
+                                   for k, v in rep["t0_auc"].items()}))
+    print("== train vs oos", json.dumps(rep["train_vs_oos"]))
 
 
 if __name__ == "__main__":
