@@ -19,6 +19,8 @@ import pickle
 import time
 from pathlib import Path
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")  # one thread per worker: the pool is the parallelism
+
 import numpy as np
 import pandas as pd
 
@@ -217,7 +219,8 @@ def grid_series(frames: dict, step: int) -> dict:
         r = r[r >= r[0]]
         v = pd.Series(lc[rows]).ffill().to_numpy()
         keep = rows >= r[0]
-        out[coin] = {"rows": rows[keep], "logc": v[keep], "time": index[rows[keep]]}
+        out[coin] = {"rows": rows[keep], "logc": v[keep],
+                     "time": index[rows[keep]].as_unit("ns")}
     return out
 
 
@@ -614,7 +617,7 @@ def money(rec, panel, capital: float) -> tuple[dict, pd.Series]:
                 d = ev["decision"]
                 ons += int(((ev["kind"] == "on") & (d >= lo) & (d < hi)).sum())
         out[f"ons_per_year_{part}"] = ons / years / len(rec.stepped.columns)
-        hedged = rec.in_pos.iloc[:, 0][sel]
+        hedged = rec.in_pos.iloc[:, 0].reindex(r.index)[sel]
         out[f"hedged_share_{part}"] = float(hedged.mean())
     out["liquidations"] = int(rec.run.liquidations)
     return out, r
@@ -735,9 +738,70 @@ def run_oracle(work: Path) -> None:
     print("oracle written", len(jobs), out["seconds"], "s", flush=True)
 
 
+# ── planted controls ─────────────────────────────────────────────────────
+
+
+def run_planted(work: Path) -> None:
+    """(1) a planted feature (the true T0 with 25% of days flipped) must be found; (2) HMM and
+    jump models must recover two planted regimes; written to DIR/planted.json."""
+    t0 = time.time()
+    frames = load_frames(work)
+    feats = hourly_features(frames)
+    gs = grid_series(frames, 24)
+    labs = {c: labels_for(g, X_MAIN) for c, g in gs.items()}
+    rng = np.random.default_rng(77)
+    planted = {}
+    for c in gs:
+        st = rc.r1_state(np.exp(gs[c]["logc"]), X_MAIN, fill_tail=True)[0]
+        flip = rng.random(len(st)) < 0.25
+        planted[c] = np.where(np.isnan(st), np.nan, np.where(flip, 1 - st, st))
+    out = {"planted_feature": {}}
+    for model in ("logistic", "gbm"):
+        w = supervised_walk(feats, gs, 24, "T0", model, planted=planted)
+        dets = {"x": {c: np.where(np.isnan(w["pred"][c]), np.nan, (w["pred"][c] > 0.5) * 1.0)
+                      for c in gs}}
+        m = measure_states(gs, labs, dets, 24, common_mask(gs, labs, dets))["x"]
+        out["planted_feature"][model] = {p: m[p]["ba"] for p in m}
+    # two planted regimes
+    idx = frames["BTC"].index
+    days = len(idx) // 24
+    res = {}
+    for rep in range(3):
+        r = np.random.default_rng(500 + rep)
+        state = np.zeros(days)
+        s = 0
+        for d in range(days):
+            if r.random() < 1 / 60:
+                s = 1 - s
+            state[d] = s
+        mu = np.where(state == 1, -0.0035, 0.0025) / 24
+        sd = np.where(state == 1, 0.06, 0.03) / np.sqrt(24)
+        hr = r.normal(np.repeat(mu, 24), np.repeat(sd, 24))
+        n = days * 24
+        fr = pd.DataFrame(index=idx[:n])
+        fr["logc"] = np.log(100) + np.cumsum(hr)
+        fr["rv"] = hr ** 2
+        for col in ("basis", "funding", "qv", "tq", "mq"):
+            fr[col] = 1.0
+        syn = {"BTC": fr}
+        f2 = hourly_features(syn)
+        g2 = grid_series(syn, 24)
+        un = unsupervised_on(f2["BTC"], g2["BTC"], 9 + rep)
+        truth = state[(g2["rows"] // 24)]
+        row = {}
+        for nm, det in un.items():
+            ok = ~np.isnan(det)
+            row[nm] = float((det[ok] == truth[ok]).mean())
+        res[f"rep{rep}"] = row
+    out["planted_regimes"] = res
+    out["seconds"] = round(time.time() - t0)
+    (work / "planted.json").write_text(json.dumps(out, indent=1))
+    print(json.dumps(out, indent=1), flush=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=["data", "oracle", "detect"])
+    ap.add_argument("phase", choices=["data", "oracle", "detect", "planted"])
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--rw-states", type=int, default=20)
     ap.add_argument("--rw-sup", type=int, default=10)
@@ -747,6 +811,8 @@ def main() -> None:
         build_frames(a.work)
     elif a.phase == "oracle":
         run_oracle(a.work)
+    elif a.phase == "planted":
+        run_planted(a.work)
     else:
         run_detect(a.work, a.rw_states, a.rw_sup)
 
